@@ -9,17 +9,24 @@ class TimeGridTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bool active = slot.recorded;
     return GestureDetector(
       onTap: onTap,
       child: Container(
         margin: const EdgeInsets.all(2),
         decoration: BoxDecoration(
-          color: slot.priority.color.withOpacity(0.9),
+          color: active ? Colors.blueAccent.withOpacity(0.9) : Colors.grey[200],
           borderRadius: BorderRadius.circular(4),
-          boxShadow: [if(slot.priority != Priority.none) BoxShadow(color: Colors.black12, blurRadius: 2)],
+          boxShadow: [
+            if (active) BoxShadow(color: Colors.black12, blurRadius: 2)
+          ],
         ),
         child: Center(
-          child: Text("${slot.minute10}", style: const TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold)),
+          child: Text("${slot.minute10}",
+              style: TextStyle(
+                  fontSize: 10,
+                  color: active ? Colors.white : Colors.black54,
+                  fontWeight: FontWeight.bold)),
         ),
       ),
     );
