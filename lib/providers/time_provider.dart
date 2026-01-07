@@ -1,40 +1,57 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import '../models/time_slot.dart';
+import '../models/time_slot.dart'; // 确保导入了模型
 
 class TimeProvider with ChangeNotifier {
-  List<TimeSlot> _slots = List.generate(144, (i) => TimeSlot(hour: i ~/ 6, minute10: (i % 6) * 10));
+  DateTime _currentDate = DateTime.now();
 
-  List<TimeSlot> get slots => _slots;
+  // 存储模型对象 Map
+  final Map<String, List<TimeSlot>> _dailySlots = {};
 
-  void togglePriority(int index) {
-    int nextIndex = (_slots[index].priority.index + 1) % Priority.values.length;
-    _slots[index].priority = Priority.values[nextIndex];
+  DateTime get currentDate => _currentDate;
+
+  List<TimeSlot> get slots {
+    String dateKey = _getDateKey(_currentDate);
+    return _dailySlots.putIfAbsent(dateKey, () => _generateInitialSlots());
+  }
+
+  // 生成一天 144 个初始槽位对象
+  List<TimeSlot> _generateInitialSlots() {
+    return List.generate(144, (index) {
+      int h = index ~/ 6;
+      int m10 = index % 6;
+      return TimeSlot(hour: h, minute10: m10, recorded: false);
+    });
+  }
+
+  String _getDateKey(DateTime date) {
+    return "${date.year}-${date.month}-${date.day}";
+  }
+
+  void previousDay() {
+    _currentDate = _currentDate.subtract(const Duration(days: 1));
     notifyListeners();
   }
 
-  // 统计每个优先级占用的分钟数
-  Map<Priority, int> getStatistics() {
-    Map<Priority, int> stats = {Priority.high: 0, Priority.medium: 0, Priority.low: 0};
-    for (var slot in _slots) {
-      if (slot.priority != Priority.none) {
-        stats[slot.priority] = stats[slot.priority]! + 10;
-      }
-    }
-    return stats;
+  void nextDay() {
+    _currentDate = _currentDate.add(const Duration(days: 1));
+    notifyListeners();
   }
 
-  // 导出为 JSON 字符串
-  String exportData() => jsonEncode(_slots.map((s) => s.toJson()).toList());
+  void toggleSlot(int index) {
+    List<TimeSlot> currentSlots = slots;
+    // 假设 TimeSlot 类有一个 recorded 属性，并且没有使用 final 修饰它
+    // 或者你需要创建一个新的对象（取决于你的模型定义）
+    currentSlots[index].recorded = !currentSlots[index].recorded;
+    notifyListeners();
+  }
 
-  // 从 JSON 字符串导入
-  void importData(String jsonString) {
-    try {
-      Iterable decoded = jsonDecode(jsonString);
-      _slots = decoded.map((model) => TimeSlot.fromJson(model)).toList();
-      notifyListeners();
-    } catch (e) {
-      debugPrint("导入失败: $e");
-    }
+  void clearAll() {
+    String dateKey = _getDateKey(_currentDate);
+    _dailySlots[dateKey] = _generateInitialSlots();
+    notifyListeners();
+  }
+
+  void undo() {
+    // 暂留逻辑
   }
 }
