@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/time_slot.dart'; // 确保导入了模型
 import '../models/category.dart';
+import 'dart:convert';
 
 class TimeProvider with ChangeNotifier {
   DateTime _currentDate = DateTime.now();
@@ -9,6 +10,9 @@ class TimeProvider with ChangeNotifier {
   final Map<String, List<TimeSlot>> _dailySlots = {};
 
   DateTime get currentDate => _currentDate;
+
+  final Map<String, List<List<TimeSlot>>> _undoStacks = {};
+  final int _maxStackSize = 20; // 最大支持撤回 20 步
 
   List<TimeSlot> get slots {
     String dateKey = _getDateKey(_currentDate);
@@ -47,17 +51,50 @@ class TimeProvider with ChangeNotifier {
   }
 
   void clearAll() {
+    _saveSnapshot(); // 修改前保存快照
+
     String dateKey = _getDateKey(_currentDate);
     _dailySlots[dateKey] = _generateInitialSlots();
     notifyListeners();
   }
 
+  void _saveSnapshot() {
+    String dateKey = _getDateKey(_currentDate);
+    _undoStacks.putIfAbsent(dateKey, () => []);
+
+    // 深度拷贝当前的 slots
+    List<TimeSlot> snapshot = slots
+        .map((s) => TimeSlot(
+              hour: s.hour,
+              minute10: s.minute10,
+              recorded: s.recorded,
+              label: s.label,
+              color: s.color,
+            ))
+        .toList();
+
+    _undoStacks[dateKey]!.add(snapshot);
+
+    // 如果超过最大步数，移除最早的一条
+    if (_undoStacks[dateKey]!.length > _maxStackSize) {
+      _undoStacks[dateKey]!.removeAt(0);
+    }
+  }
+
   void undo() {
-    // 暂留逻辑
+    String dateKey = _getDateKey(_currentDate);
+    if (_undoStacks[dateKey] != null && _undoStacks[dateKey]!.isNotEmpty) {
+      _dailySlots[dateKey] = _undoStacks[dateKey]!.removeLast();
+      notifyListeners();
+    }
   }
 
   void assignCategoryToSlots(Set<int> indices, Category category,
       {String? subLabel}) {
+    if (indices.isEmpty) return; // 如果没有选中任何格子，不需要保存快照
+
+    _saveSnapshot(); // 【关键】在循环修改数据之前保存当前状态
+
     for (var index in indices) {
       slots[index].recorded = true;
       slots[index].label = subLabel ?? category.name;
