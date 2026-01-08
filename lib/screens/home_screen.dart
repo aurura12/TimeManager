@@ -252,7 +252,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ? _dragEndIndex!
               : _dragStartIndex!;
           Set<int> rangeIndices = {};
-          for (int i = s; i <= e; i++) rangeIndices.add(i);
+          for (int i = s; i <= e; i++) {
+            rangeIndices.add(i);
+          }
           provider.assignCategoryToSlots(rangeIndices, cat);
           setState(() {
             _dragStartIndex = null;
