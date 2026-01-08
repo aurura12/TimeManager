@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/time_slot.dart'; // 确保导入了模型
+import '../models/category.dart';
 
 class TimeProvider with ChangeNotifier {
   DateTime _currentDate = DateTime.now();
@@ -53,5 +54,15 @@ class TimeProvider with ChangeNotifier {
 
   void undo() {
     // 暂留逻辑
+  }
+
+  void assignCategoryToSlots(Set<int> indices, Category category,
+      {String? subLabel}) {
+    for (var index in indices) {
+      slots[index].recorded = true;
+      slots[index].label = subLabel ?? category.name;
+      slots[index].color = category.color;
+    }
+    notifyListeners();
   }
 }
