@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/time_slot.dart'; // 确保导入了模型
 import '../models/category.dart';
 import 'dart:convert';
+import '../services/google_calendar_service.dart';
 
 class TimeProvider with ChangeNotifier {
   DateTime _currentDate = DateTime.now();
@@ -56,6 +57,7 @@ class TimeProvider with ChangeNotifier {
     String dateKey = _getDateKey(_currentDate);
     _dailySlots[dateKey] = _generateInitialSlots();
     notifyListeners();
+    _triggerAutoSync();
   }
 
   void _saveSnapshot() {
@@ -86,6 +88,7 @@ class TimeProvider with ChangeNotifier {
     if (_undoStacks[dateKey] != null && _undoStacks[dateKey]!.isNotEmpty) {
       _dailySlots[dateKey] = _undoStacks[dateKey]!.removeLast();
       notifyListeners();
+      _triggerAutoSync();
     }
   }
 
@@ -101,5 +104,13 @@ class TimeProvider with ChangeNotifier {
       slots[index].color = category.color;
     }
     notifyListeners();
+    _triggerAutoSync();
+  }
+
+  // 触发自动同步
+  void _triggerAutoSync() {
+    if (GoogleCalendarService.currentUser != null) {
+      GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
+    }
   }
 }
