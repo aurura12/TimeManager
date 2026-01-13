@@ -47,7 +47,7 @@ class _HomeScreenState extends State<HomeScreen> {
     double adjustedDy = localOffset.dy + _scrollController.offset;
 
     double topPadding = 8.0;
-    int row = ((adjustedDy - topPadding) / 47).floor().clamp(0, 23);
+    int row = ((adjustedDy - topPadding) / 45).floor().clamp(0, 23);
 
     double gridWidth = box.size.width;
     int col =
@@ -105,6 +105,7 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Expanded(
             child: ListView.builder(
+              key: _gridKey,
               controller: _scrollController,
               // 如果你想让网格区域完全不响应滚动手势，只响应选中手势：
               // physics: const ClampingScrollPhysics(), // 或者默认
@@ -142,8 +143,6 @@ class _HomeScreenState extends State<HomeScreen> {
             onPanStart: (d) => _handleSelect(d.globalPosition, isStart: true),
             onPanUpdate: (d) => _handleSelect(d.globalPosition),
             child: Container(
-              // 只有第一行挂载 key 用于坐标计算
-              key: h == 0 ? _gridKey : null,
               child: _buildGridRow(h, provider),
             ),
           ),
