@@ -26,7 +26,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
               // 已登录状态：展示头像和昵称
               CircleAvatar(
                 radius: 40,
-                backgroundImage: NetworkImage(user.photoUrl ?? ''),
+                // 如果有 URL 则使用 backgroundImage
+                backgroundImage:
+                    (user.photoUrl != null && user.photoUrl!.isNotEmpty)
+                        ? NetworkImage(user.photoUrl!)
+                        : null,
+                // 如果没有图片，则显示后备内容（如图标或文字）
+                child: (user.photoUrl == null || user.photoUrl!.isEmpty)
+                    ? const Icon(Icons.person, size: 40)
+                    : null,
               ),
               const SizedBox(height: 16),
               Text(user.displayName ?? '谷歌用户',
