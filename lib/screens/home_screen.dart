@@ -43,11 +43,15 @@ class _HomeScreenState extends State<HomeScreen> {
     if (box == null) return 0;
 
     final Offset localOffset = box.globalToLocal(globalPosition);
+    // 注意：这里的 adjustedDy 需要根据整个滚动视图的偏移来计算
     double adjustedDy = localOffset.dy + _scrollController.offset;
 
-    // 47 = 45(高度) + 2(上下边距总和)
-    int row = (adjustedDy / 47).floor().clamp(0, 23);
-    int col = (localOffset.dx / (box.size.width / 6)).floor().clamp(0, 5);
+    double topPadding = 8.0;
+    int row = ((adjustedDy - topPadding) / 47).floor().clamp(0, 23);
+
+    double gridWidth = box.size.width;
+    int col =
+        ((localOffset.dx - 55) / ((gridWidth - 55) / 6)).floor().clamp(0, 5);
 
     return row * 6 + col;
   }
@@ -61,6 +65,33 @@ class _HomeScreenState extends State<HomeScreen> {
     return index >= s && index <= e;
   }
 
+  void _handleSelect(Offset globalPosition,
+      {bool isClick = false, bool isStart = false}) {
+    int currentIndex = _calculateIndex(globalPosition);
+
+    setState(() {
+      if (isClick) {
+        // --- 逻辑修复：点击切换 ---
+        // 如果当前已经选中了东西，且点击的是选中的范围，则清空
+        if (_dragStartIndex == currentIndex && _dragEndIndex == currentIndex) {
+          _dragStartIndex = null;
+          _dragEndIndex = null;
+        } else {
+          // 否则，单选当前格子
+          _dragStartIndex = currentIndex;
+          _dragEndIndex = currentIndex;
+        }
+      } else {
+        // --- 逻辑修复：滑动逻辑 ---
+        if (isStart) {
+          // 每次重新开始滑动时，重置起始点和终点为当前点
+          _dragStartIndex = currentIndex;
+        }
+        _dragEndIndex = currentIndex;
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final timeProvider = Provider.of<TimeProvider>(context);
@@ -72,37 +103,26 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Row(
         children: [
-          // 中间主内容区
           Expanded(
-            child: GestureDetector(
-              onPanStart: (d) => setState(() {
-                _dragStartIndex = _calculateIndex(d.globalPosition);
-                _dragEndIndex = _dragStartIndex;
-              }),
-              onPanUpdate: (d) => setState(() {
-                _dragEndIndex = _calculateIndex(d.globalPosition);
-              }),
-              child: ListView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                itemCount: 24,
-                itemBuilder: (context, h) =>
-                    _buildIntegratedRow(h, timeProvider),
-              ),
+            child: ListView.builder(
+              controller: _scrollController,
+              // 如果你想让网格区域完全不响应滚动手势，只响应选中手势：
+              // physics: const ClampingScrollPhysics(), // 或者默认
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              itemCount: 24,
+              itemBuilder: (context, h) => _buildIntegratedRow(h, timeProvider),
             ),
           ),
-          // 右侧侧边栏
           _buildCategorySidebar(timeProvider),
         ],
       ),
     );
   }
 
-  // 将时间轴和网格集成在一行，解决滑动和对齐问题
   Widget _buildIntegratedRow(int h, TimeProvider provider) {
     return Row(
       children: [
-        // 左侧时间轴文字
+        // 左侧时间轴：保留默认行为，可以触发 ListView 滚动
         Container(
           width: 55,
           height: 45,
@@ -114,9 +134,18 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         // 右侧网格
         Expanded(
-          child: Container(
-            key: h == 0 ? _gridKey : null, // 只在第一行挂载 Key 用于计算宽度
-            child: _buildGridRow(h, provider),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            // 关键：点击事件
+            onTapDown: (d) => _handleSelect(d.globalPosition, isClick: true),
+            // 关键：滑动开始时，传入 isStart: true 来重置索引
+            onPanStart: (d) => _handleSelect(d.globalPosition, isStart: true),
+            onPanUpdate: (d) => _handleSelect(d.globalPosition),
+            child: Container(
+              // 只有第一行挂载 key 用于坐标计算
+              key: h == 0 ? _gridKey : null,
+              child: _buildGridRow(h, provider),
+            ),
           ),
         ),
       ],
