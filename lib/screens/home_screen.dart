@@ -18,6 +18,9 @@ class _HomeScreenState extends State<HomeScreen> {
   int? _dragStartIndex;
   int? _dragEndIndex;
 
+  // 管理分类的展开状态
+  final Map<int, bool> _expandedCategories = {};
+
   final List<Category> categories = [
     Category(
         name: '学习',
@@ -260,44 +263,473 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildCategorySidebar(TimeProvider provider) {
     return Container(
-      width: 80,
+      width: 90,
       color: Colors.grey[100],
-      child: ListView(
-        children:
-            categories.map((cat) => _buildCategoryItem(cat, provider)).toList(),
+      child: ListView.builder(
+        itemCount: categories.length + 1,
+        itemBuilder: (context, index) {
+          if (index == categories.length) {
+            // 最后一个是添加按钮
+            return Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: ElevatedButton.icon(
+                onPressed: () => _showAddCategoryDialog(context),
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('添加', style: TextStyle(fontSize: 12)),
+              ),
+            );
+          }
+          return _buildCategoryItem(index, categories[index], provider);
+        },
       ),
     );
   }
 
-  Widget _buildCategoryItem(Category cat, TimeProvider provider) {
-    return InkWell(
-      onTap: () {
-        if (_dragStartIndex != null && _dragEndIndex != null) {
-          int s = _dragStartIndex! < _dragEndIndex!
-              ? _dragStartIndex!
-              : _dragEndIndex!;
-          int e = _dragStartIndex! < _dragEndIndex!
-              ? _dragEndIndex!
-              : _dragStartIndex!;
-          Set<int> rangeIndices = {};
-          for (int i = s; i <= e; i++) {
-            rangeIndices.add(i);
-          }
-          provider.assignCategoryToSlots(rangeIndices, cat);
-          setState(() {
-            _dragStartIndex = null;
-            _dragEndIndex = null;
-          });
-        }
-      },
-      child: Container(
-        margin: const EdgeInsets.all(4),
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-            color: cat.color, borderRadius: BorderRadius.circular(8)),
-        child: Text(cat.name,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white)),
+  Widget _buildCategoryItem(int catIndex, Category cat, TimeProvider provider) {
+    bool isExpanded = _expandedCategories[catIndex] ?? false;
+
+    return Column(
+      children: [
+        // 事件项
+        InkWell(
+          onTap: () => _assignCategory(cat, provider),
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            decoration: BoxDecoration(
+              color: cat.color,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              children: [
+                // 展开按钮
+                GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _expandedCategories[catIndex] = !isExpanded;
+                    });
+                  },
+                  child: Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                ),
+                // 事件名称
+                Expanded(
+                  child: Text(
+                    cat.name,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // 展开后显示子事件
+        if (isExpanded)
+          Padding(
+            padding: const EdgeInsets.only(left: 8.0, right: 4.0),
+            child: Column(
+              children: [
+                ...cat.subCategories.asMap().entries.map((entry) {
+                  int subIndex = entry.key;
+                  String subCat = entry.value;
+                  return InkWell(
+                    onTap: () => _assignSubCategory(cat, subCat, provider),
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 4, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: cat.color.withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                          color: Colors.white,
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              subCat,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          GestureDetector(
+                            onTap: () => _removeSubCategory(catIndex, subIndex),
+                            child: const Icon(Icons.close,
+                                color: Colors.white, size: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+                // 添加子事件按钮 - 显示在子事件列表的最后
+                GestureDetector(
+                  onTap: () =>
+                      _showAddSubCategoryDialog(context, catIndex, cat),
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: cat.color.withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: Colors.white,
+                        width: 1,
+                      ),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.add, color: Colors.white, size: 14),
+                        SizedBox(width: 4),
+                        Text(
+                          '添加',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _assignCategory(Category cat, TimeProvider provider) {
+    if (_dragStartIndex != null && _dragEndIndex != null) {
+      int s =
+          _dragStartIndex! < _dragEndIndex! ? _dragStartIndex! : _dragEndIndex!;
+      int e =
+          _dragStartIndex! < _dragEndIndex! ? _dragEndIndex! : _dragStartIndex!;
+      Set<int> rangeIndices = {};
+      for (int i = s; i <= e; i++) {
+        rangeIndices.add(i);
+      }
+      provider.assignCategoryToSlots(rangeIndices, cat);
+      setState(() {
+        _dragStartIndex = null;
+        _dragEndIndex = null;
+      });
+    }
+  }
+
+  void _assignSubCategory(Category cat, String subCat, TimeProvider provider) {
+    if (_dragStartIndex != null && _dragEndIndex != null) {
+      int s =
+          _dragStartIndex! < _dragEndIndex! ? _dragStartIndex! : _dragEndIndex!;
+      int e =
+          _dragStartIndex! < _dragEndIndex! ? _dragEndIndex! : _dragStartIndex!;
+      Set<int> rangeIndices = {};
+      for (int i = s; i <= e; i++) {
+        rangeIndices.add(i);
+      }
+      // 创建虚拟类别用于子事件
+      Category subCategory = Category(
+        name: subCat,
+        color: cat.color,
+      );
+      provider.assignCategoryToSlots(rangeIndices, subCategory);
+      setState(() {
+        _dragStartIndex = null;
+        _dragEndIndex = null;
+      });
+    }
+  }
+
+  void _removeSubCategory(int catIndex, int subIndex) {
+    setState(() {
+      List<String> newSubs = List.from(categories[catIndex].subCategories);
+      newSubs.removeAt(subIndex);
+      categories[catIndex] = categories[catIndex].copyWith(
+        subCategories: newSubs,
+      );
+    });
+  }
+
+  void _showAddCategoryDialog(BuildContext context) {
+    String newCatName = '';
+    Color selectedColor = Colors.blue;
+    String hexColor = 'FF2196F3';
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('添加事件'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  decoration: const InputDecoration(
+                    labelText: '事件名称',
+                    hintText: '请输入事件名称',
+                  ),
+                  onChanged: (value) {
+                    newCatName = value;
+                  },
+                ),
+                const SizedBox(height: 20),
+                const Text('选择颜色:',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                // 颜色调色盘
+                _buildColorPalette(selectedColor, (color) {
+                  setDialogState(() {
+                    selectedColor = color;
+                    hexColor =
+                        '${(color.value).toRadixString(16).toUpperCase().padLeft(8, '0').substring(2)}';
+                  });
+                }),
+                const SizedBox(height: 12),
+                // 颜色预览
+                Row(
+                  children: [
+                    Container(
+                      width: 50,
+                      height: 50,
+                      decoration: BoxDecoration(
+                        color: selectedColor,
+                        border: Border.all(color: Colors.grey),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('十六进制颜色代码:',
+                              style: TextStyle(fontSize: 12)),
+                          TextField(
+                            decoration: const InputDecoration(
+                              hintText: '输入十六进制代码 (如: FF2196F3)',
+                              prefixText: '#',
+                              contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                            ),
+                            controller: TextEditingController(text: hexColor),
+                            onChanged: (value) {
+                              try {
+                                // 移除 # 号并处理输入
+                                String cleanValue =
+                                    value.replaceAll('#', '').toUpperCase();
+                                if (cleanValue.length == 6) {
+                                  cleanValue = 'FF' + cleanValue;
+                                } else if (cleanValue.length != 8) {
+                                  return;
+                                }
+                                final color = Color(int.parse('0x$cleanValue'));
+                                setDialogState(() {
+                                  selectedColor = color;
+                                  hexColor = cleanValue;
+                                });
+                              } catch (e) {
+                                // 无效的颜色代码，忽略
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                // 预设颜色快速选择
+                const Text('预设颜色:', style: TextStyle(fontSize: 12)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    Colors.red,
+                    Colors.blue,
+                    Colors.green,
+                    Colors.orange,
+                    Colors.purple,
+                    Colors.cyan,
+                    Colors.pink,
+                    Colors.amber,
+                    Colors.teal,
+                    Colors.indigo,
+                    const Color(0xFFD4AF37),
+                    const Color(0xFF9CB86A),
+                  ].map((color) {
+                    return GestureDetector(
+                      onTap: () {
+                        setDialogState(() {
+                          selectedColor = color;
+                          hexColor =
+                              '${(color.value).toRadixString(16).toUpperCase().padLeft(8, '0').substring(2)}';
+                        });
+                      },
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: color,
+                          border: Border.all(
+                            color: selectedColor == color
+                                ? Colors.black
+                                : Colors.grey,
+                            width: selectedColor == color ? 3 : 1,
+                          ),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () {
+                if (newCatName.isNotEmpty) {
+                  setState(() {
+                    categories.add(Category(
+                      name: newCatName,
+                      color: selectedColor,
+                    ));
+                  });
+                  Navigator.pop(context);
+                }
+              },
+              child: const Text('添加'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 生成渐变颜色调色盘
+  Widget _buildColorPalette(
+      Color currentColor, Function(Color) onColorChanged) {
+    // 生成一个颜色矩阵：水平是色调，垂直是亮度
+    List<Color> hues = [
+      Colors.red,
+      Colors.orange,
+      Colors.yellow,
+      Colors.green,
+      Colors.cyan,
+      Colors.blue,
+      Colors.purple,
+      Colors.pink,
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Column(
+        children: List.generate(8, (row) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(
+              children: List.generate(8, (col) {
+                Color baseColor = hues[col];
+                // 根据行数调整亮度
+                double brightness = 0.3 + (row / 7) * 0.7;
+                Color color = Color.lerp(
+                  Colors.black,
+                  baseColor,
+                  brightness,
+                )!;
+
+                return Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    child: GestureDetector(
+                      onTap: () => onColorChanged(color),
+                      child: Container(
+                        height: 20,
+                        decoration: BoxDecoration(
+                          color: color,
+                          border: Border.all(
+                            color: currentColor == color
+                                ? Colors.white
+                                : Colors.transparent,
+                            width: 2,
+                          ),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  void _showAddSubCategoryDialog(
+      BuildContext context, int catIndex, Category cat) {
+    String newSubCatName = '';
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('添加子事件'),
+        content: TextField(
+          decoration: const InputDecoration(
+            labelText: '子事件名称',
+            hintText: '请输入子事件名称',
+          ),
+          onChanged: (value) {
+            newSubCatName = value;
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              if (newSubCatName.isNotEmpty) {
+                setState(() {
+                  List<String> newSubs =
+                      List.from(categories[catIndex].subCategories);
+                  newSubs.add(newSubCatName);
+                  categories[catIndex] =
+                      categories[catIndex].copyWith(subCategories: newSubs);
+                });
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('添加'),
+          ),
+        ],
       ),
     );
   }
