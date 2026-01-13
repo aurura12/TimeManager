@@ -1,5 +1,5 @@
 name: time_manager
-description: "A new Flutter project."
+description: 'A new Flutter project.'
 publish_to: 'none'
 
 # 添加下面这段环境配置
@@ -10,6 +10,10 @@ dependencies:
   flutter:
     sdk: flutter
   provider: ^6.1.1
+  google_sign_in: ^6.2.1
+  googleapis: ^13.2.0
+  extension_google_sign_in_as_googleapis_auth: ^2.0.12
+  logger: ^2.0.0
 
 dev_dependencies:
   flutter_test:
