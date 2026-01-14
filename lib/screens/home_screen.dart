@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 import '../models/category.dart';
+import 'dart:async';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -14,6 +15,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final GlobalKey _gridKey = GlobalKey();
   // 使用初始化好的控制器，解决 late 初始化可能导致的 Bug
   final ScrollController _scrollController = ScrollController();
+  StreamSubscription? _syncSubscription;
 
   int? _dragStartIndex;
   int? _dragEndIndex;
@@ -30,10 +32,21 @@ class _HomeScreenState extends State<HomeScreen> {
       // 在第一帧构建完成后执行滚动
       _scrollController.jumpTo(timeProvider.startHour * 45.0);
     });
+
+    // 监听同步状态并显示提示
+    _syncSubscription = timeProvider.syncStatusStream.listen((message) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(message), duration: const Duration(seconds: 1)),
+        );
+      }
+    });
   }
 
   @override
   void dispose() {
+    _syncSubscription?.cancel();
     _scrollController.dispose();
     super.dispose();
   }

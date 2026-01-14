@@ -36,14 +36,14 @@ class GoogleCalendarService {
   }
 
   /// 核心逻辑：将 TimeSlots 合并为 Google Calendar 事件并同步
-  static Future<void> syncSlotsToGoogle(
+  static Future<bool> syncSlotsToGoogle(
       List<TimeSlot> slots, DateTime date) async {
     final api = await getCalendarApi();
     // 如果未登录，直接返回不报错，方便自动同步调用
-    if (api == null) return;
+    if (api == null) return false;
 
-    // 1. 清理当天的旧数据（防止重复和处理撤销/删除的情况）
     try {
+      // 1. 清理当天的旧数据（防止重复和处理撤销/删除的情况）
       final startOfDay = DateTime(date.year, date.month, date.day);
       final endOfDay = startOfDay.add(const Duration(days: 1));
 
@@ -62,50 +62,53 @@ class GoogleCalendarService {
           }
         }
       }
-    } catch (e) {
-      _logger.e("清理旧事件失败: $e");
-    }
 
-    int i = 0;
-    while (i < slots.length) {
-      if (slots[i].recorded && slots[i].label != null) {
-        String currentLabel = slots[i].label!;
-        int startIdx = i;
+      // 2. 插入新数据
+      int i = 0;
+      while (i < slots.length) {
+        if (slots[i].recorded && slots[i].label != null) {
+          String currentLabel = slots[i].label!;
+          int startIdx = i;
 
-        // 查找连续相同 label 的块
-        while (i < slots.length &&
-            slots[i].recorded &&
-            slots[i].label == currentLabel) {
+          // 查找连续相同 label 的块
+          while (i < slots.length &&
+              slots[i].recorded &&
+              slots[i].label == currentLabel) {
+            i++;
+          }
+          int endIdx = i; // 不包含 i
+
+          // 计算开始和结束时间
+          // 每个索引代表 10 分钟
+          DateTime startTime = DateTime(date.year, date.month, date.day,
+              startIdx ~/ 6, (startIdx % 6) * 10);
+          DateTime endTime = DateTime(
+              date.year, date.month, date.day, endIdx ~/ 6, (endIdx % 6) * 10);
+
+          // 构建谷歌日历事件
+          var event = calendar.Event(
+            summary: currentLabel,
+            description: _appSignature, // 添加标记
+            start: calendar.EventDateTime(
+              dateTime: startTime.toUtc(),
+              timeZone: "UTC", // 建议使用 UTC 避免时区混乱
+            ),
+            end: calendar.EventDateTime(
+              dateTime: endTime.toUtc(),
+              timeZone: "UTC",
+            ),
+          );
+
+          // 插入到主日历
+          await api.events.insert(event, 'primary');
+        } else {
           i++;
         }
-        int endIdx = i; // 不包含 i
-
-        // 计算开始和结束时间
-        // 每个索引代表 10 分钟
-        DateTime startTime = DateTime(date.year, date.month, date.day,
-            startIdx ~/ 6, (startIdx % 6) * 10);
-        DateTime endTime = DateTime(
-            date.year, date.month, date.day, endIdx ~/ 6, (endIdx % 6) * 10);
-
-        // 构建谷歌日历事件
-        var event = calendar.Event(
-          summary: currentLabel,
-          description: _appSignature, // 添加标记
-          start: calendar.EventDateTime(
-            dateTime: startTime.toUtc(),
-            timeZone: "UTC", // 建议使用 UTC 避免时区混乱
-          ),
-          end: calendar.EventDateTime(
-            dateTime: endTime.toUtc(),
-            timeZone: "UTC",
-          ),
-        );
-
-        // 插入到主日历
-        await api.events.insert(event, 'primary');
-      } else {
-        i++;
       }
+      return true;
+    } catch (e) {
+      _logger.e("同步到 Google Calendar 失败: $e");
+      return false;
     }
   }
 }

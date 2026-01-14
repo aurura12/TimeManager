@@ -4,6 +4,7 @@ import '../models/category.dart';
 import 'dart:convert';
 import '../services/google_calendar_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
 
 class TimeProvider with ChangeNotifier {
   DateTime _currentDate = DateTime.now();
@@ -16,6 +17,17 @@ class TimeProvider with ChangeNotifier {
   List<Category> get categories => _categories;
   int _startHour = 7; // 默认从 7 点开始
   int get startHour => _startHour;
+
+  // 用于发送同步状态消息的 Stream
+  final StreamController<String> _syncStatusController =
+      StreamController<String>.broadcast();
+  Stream<String> get syncStatusStream => _syncStatusController.stream;
+
+  @override
+  void dispose() {
+    _syncStatusController.close();
+    super.dispose();
+  }
 
   TimeProvider() {
     _init();
@@ -260,9 +272,13 @@ class TimeProvider with ChangeNotifier {
   }
 
   // 触发自动同步
-  void _triggerAutoSync() {
+  Future<void> _triggerAutoSync() async {
     if (GoogleCalendarService.currentUser != null) {
-      GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
+      bool success =
+          await GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
+      if (success) {
+        _syncStatusController.add("同步成功");
+      }
     }
   }
 }
