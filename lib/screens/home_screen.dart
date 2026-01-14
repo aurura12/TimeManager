@@ -137,16 +137,32 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         // 右侧网格
         Expanded(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            // 关键：点击事件
-            onTapDown: (d) => _handleSelect(d.globalPosition, isClick: true),
-            // 关键：滑动开始时，传入 isStart: true 来重置索引
-            onPanStart: (d) => _handleSelect(d.globalPosition, isStart: true),
-            onPanUpdate: (d) => _handleSelect(d.globalPosition),
-            child: Container(
-              child: _buildGridRow(h, provider),
-            ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                // 关键：点击事件
+                onTapDown: (d) =>
+                    _handleSelect(d.globalPosition, isClick: true),
+                // 双击删除单个时间块的事件
+                onDoubleTapDown: (d) {
+                  // 使用局部坐标计算，比全局计算更稳定
+                  double width = constraints.maxWidth;
+                  int col =
+                      (d.localPosition.dx / (width / 6)).floor().clamp(0, 5);
+                  int index = h * 6 + col;
+                  provider.removeEventFromSlot(index);
+                },
+                onDoubleTap: () {}, // 必须注册 onDoubleTap 以启用双击手势识别
+                // 关键：滑动开始时，传入 isStart: true 来重置索引
+                onPanStart: (d) =>
+                    _handleSelect(d.globalPosition, isStart: true),
+                onPanUpdate: (d) => _handleSelect(d.globalPosition),
+                child: Container(
+                  child: _buildGridRow(h, provider),
+                ),
+              );
+            },
           ),
         ),
       ],

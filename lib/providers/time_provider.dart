@@ -131,6 +131,22 @@ class TimeProvider with ChangeNotifier {
     _triggerAutoSync();
   }
 
+  // 移除指定时间块的事件
+  void removeEventFromSlot(int index) {
+    if (index >= 0 && index < slots.length) {
+      // 只有当该时间块确实有记录时才执行删除和保存快照
+      if (slots[index].recorded) {
+        _saveSnapshot();
+        slots[index].recorded = false;
+        slots[index].label = null;
+        slots[index].color = null;
+        _saveData();
+        notifyListeners();
+        _triggerAutoSync();
+      }
+    }
+  }
+
   // --- 分类管理方法 (从 HomeScreen 移入) ---
 
   void addCategory(Category category) {
