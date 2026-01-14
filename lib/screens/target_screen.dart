@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
-import '../models/time_slot.dart';
 
-class StatisticsScreen extends StatelessWidget {
+class TargetScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('每日统计'),
+        title: Text('目标'),
       ),
       body: Consumer<TimeProvider>(
         builder: (context, timeProvider, child) {
