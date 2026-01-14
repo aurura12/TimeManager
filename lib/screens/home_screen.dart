@@ -286,7 +286,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildCategoryItem(int catIndex, Category cat, TimeProvider provider) {
-    bool isExpanded = _expandedCategories[catIndex] ?? false;
+    bool isExpanded = _expandedCategories[catIndex] ?? true;
 
     return Column(
       children: [
