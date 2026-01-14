@@ -21,18 +21,6 @@ class _HomeScreenState extends State<HomeScreen> {
   // 管理分类的展开状态
   final Map<int, bool> _expandedCategories = {};
 
-  final List<Category> categories = [
-    Category(
-        name: '学习',
-        color: const Color(0xFFD4AF37),
-        subCategories: ['阅读', '编程']),
-    Category(
-        name: '工作',
-        color: const Color(0xFF9CB86A),
-        subCategories: ['会议', '文档']),
-    Category(name: '运动', color: const Color(0xFF4A90E2)),
-  ];
-
   @override
   void dispose() {
     _scrollController.dispose();
@@ -266,20 +254,21 @@ class _HomeScreenState extends State<HomeScreen> {
       width: 90,
       color: Colors.grey[100],
       child: ListView.builder(
-        itemCount: categories.length + 1,
+        itemCount: provider.categories.length + 1,
         itemBuilder: (context, index) {
-          if (index == categories.length) {
+          if (index == provider.categories.length) {
             // 最后一个是添加按钮
             return Padding(
               padding: const EdgeInsets.all(8.0),
               child: ElevatedButton.icon(
-                onPressed: () => _showAddCategoryDialog(context),
+                onPressed: () => _showAddCategoryDialog(context, provider),
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('添加', style: TextStyle(fontSize: 12)),
               ),
             );
           }
-          return _buildCategoryItem(index, categories[index], provider);
+          return _buildCategoryItem(
+              index, provider.categories[index], provider);
         },
       ),
     );
@@ -369,7 +358,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                           GestureDetector(
-                            onTap: () => _removeSubCategory(catIndex, subIndex),
+                            onTap: () => _removeSubCategory(
+                                catIndex, subIndex, provider),
                             child: const Icon(Icons.close,
                                 color: Colors.white, size: 12),
                           ),
@@ -380,8 +370,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 }),
                 // 添加子事件按钮 - 显示在子事件列表的最后
                 GestureDetector(
-                  onTap: () =>
-                      _showAddSubCategoryDialog(context, catIndex, cat),
+                  onTap: () => _showAddSubCategoryDialog(
+                      context, catIndex, cat, provider),
                   child: Container(
                     margin: const EdgeInsets.symmetric(vertical: 2),
                     padding:
@@ -458,17 +448,16 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _removeSubCategory(int catIndex, int subIndex) {
-    setState(() {
-      List<String> newSubs = List.from(categories[catIndex].subCategories);
-      newSubs.removeAt(subIndex);
-      categories[catIndex] = categories[catIndex].copyWith(
-        subCategories: newSubs,
-      );
-    });
+  void _removeSubCategory(int catIndex, int subIndex, TimeProvider provider) {
+    List<String> newSubs =
+        List.from(provider.categories[catIndex].subCategories);
+    newSubs.removeAt(subIndex);
+    Category newCat =
+        provider.categories[catIndex].copyWith(subCategories: newSubs);
+    provider.updateCategory(catIndex, newCat);
   }
 
-  void _showAddCategoryDialog(BuildContext context) {
+  void _showAddCategoryDialog(BuildContext context, TimeProvider provider) {
     String newCatName = '';
     Color selectedColor = Colors.blue;
     String hexColor = 'FF2196F3';
@@ -614,12 +603,10 @@ class _HomeScreenState extends State<HomeScreen> {
             TextButton(
               onPressed: () {
                 if (newCatName.isNotEmpty) {
-                  setState(() {
-                    categories.add(Category(
-                      name: newCatName,
-                      color: selectedColor,
-                    ));
-                  });
+                  provider.addCategory(Category(
+                    name: newCatName,
+                    color: selectedColor,
+                  ));
                   Navigator.pop(context);
                 }
               },
@@ -693,7 +680,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showAddSubCategoryDialog(
-      BuildContext context, int catIndex, Category cat) {
+      BuildContext context, int catIndex, Category cat, TimeProvider provider) {
     String newSubCatName = '';
 
     showDialog(
@@ -717,13 +704,10 @@ class _HomeScreenState extends State<HomeScreen> {
           TextButton(
             onPressed: () {
               if (newSubCatName.isNotEmpty) {
-                setState(() {
-                  List<String> newSubs =
-                      List.from(categories[catIndex].subCategories);
-                  newSubs.add(newSubCatName);
-                  categories[catIndex] =
-                      categories[catIndex].copyWith(subCategories: newSubs);
-                });
+                List<String> newSubs = List.from(cat.subCategories);
+                newSubs.add(newSubCatName);
+                Category newCat = cat.copyWith(subCategories: newSubs);
+                provider.updateCategory(catIndex, newCat);
                 Navigator.pop(context);
               }
             },

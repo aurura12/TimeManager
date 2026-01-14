@@ -16,6 +16,15 @@ class GoogleCalendarService {
   static Future<GoogleSignInAccount?> login() => _googleSignIn.signIn();
   static Future<void> logout() => _googleSignIn.signOut();
 
+  // 尝试静默登录（恢复登录状态）
+  static Future<void> restoreSignIn() async {
+    try {
+      await _googleSignIn.signInSilently();
+    } catch (e) {
+      _logger.e("恢复登录失败: $e");
+    }
+  }
+
   // 获取用户信息
   static GoogleSignInAccount? get currentUser => _googleSignIn.currentUser;
 
