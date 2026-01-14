@@ -14,6 +14,8 @@ class TimeProvider with ChangeNotifier {
   // 分类列表移至 Provider 管理
   List<Category> _categories = [];
   List<Category> get categories => _categories;
+  int _startHour = 7; // 默认从 7 点开始
+  int get startHour => _startHour;
 
   TimeProvider() {
     _init();

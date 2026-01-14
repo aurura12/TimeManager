@@ -22,6 +22,17 @@ class _HomeScreenState extends State<HomeScreen> {
   final Map<int, bool> _expandedCategories = {};
 
   @override
+  void initState() {
+    super.initState();
+    // 初始滚动到配置的开始时间
+    final timeProvider = Provider.of<TimeProvider>(context, listen: false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // 在第一帧构建完成后执行滚动
+      _scrollController.jumpTo(timeProvider.startHour * 45.0);
+    });
+  }
+
+  @override
   void dispose() {
     _scrollController.dispose();
     super.dispose();
@@ -101,7 +112,7 @@ class _HomeScreenState extends State<HomeScreen> {
               // 如果你想让网格区域完全不响应滚动手势，只响应选中手势：
               // physics: const ClampingScrollPhysics(), // 或者默认
               padding: const EdgeInsets.symmetric(vertical: 8),
-              itemCount: 24,
+              itemCount: 24, // 保持 24 小时
               itemBuilder: (context, h) => _buildIntegratedRow(h, timeProvider),
             ),
           ),
@@ -120,7 +131,7 @@ class _HomeScreenState extends State<HomeScreen> {
           height: 45,
           alignment: Alignment.center,
           child: Text(
-            "${h.toString().padLeft(2, '0')}:00",
+            "${h.toString().padLeft(2, '0')}:00", // 显示实际小时数
             style: TextStyle(color: Colors.grey[600], fontSize: 12),
           ),
         ),
