@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:time_manager/screens/profile_screen.dart';
 import 'home_screen.dart';
-import 'statistics_screen.dart';
+import 'target_screen.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -14,9 +14,9 @@ class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
 
   static final List<Widget> _widgetOptions = <Widget>[
-    HomeScreen(),
-    StatisticsScreen(),
-    ProfileScreen(),
+    const HomeScreen(),
+    TargetScreen(),
+    const ProfileScreen(),
   ];
 
   void _onItemTapped(int index) {
@@ -38,8 +38,8 @@ class _MainScreenState extends State<MainScreen> {
             label: '记录',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.bar_chart),
-            label: '统计',
+            icon: Icon(Icons.flag),
+            label: '目标',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.person),
