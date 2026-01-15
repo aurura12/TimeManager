@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 import 'target_detail_screen.dart';
+import 'add_target_screen.dart';
 
 class TargetScreen extends StatelessWidget {
+  const TargetScreen({super.key});
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -17,8 +19,15 @@ class TargetScreen extends StatelessWidget {
         // 如果是在底部导航栏的主页，通常不需要 leading 返回键，如有需要可自行开启
         actions: [
           IconButton(
-              icon: const Icon(Icons.add, color: Colors.white),
-              onPressed: () {}),
+            icon: const Icon(Icons.add, color: Colors.white),
+            onPressed: () {
+              // 点击跳转到添加目标页面
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => AddTargetScreen()),
+              );
+            },
+          ),
         ],
       ),
       body: Consumer<TimeProvider>(
