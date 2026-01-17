@@ -293,4 +293,10 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
     _saveData(); // 假设你有这个持久化方法
   }
+
+  void deleteCategory(int index) {
+    categories.removeAt(index);
+    notifyListeners();
+    _saveData(); // 确保保存更改
+  }
 }
