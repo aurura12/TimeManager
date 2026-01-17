@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 import '../models/category.dart';
 import 'dart:async';
+import 'package:flutter_slidable/flutter_slidable.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -293,27 +294,58 @@ class _HomeScreenState extends State<HomeScreen> {
     return Container(
       width: 90,
       color: Colors.grey[100],
-      // 使用 ReorderableListView 替换 ListView
       child: ReorderableListView.builder(
-        // 设置构建器
+        // 1. 核心排序逻辑
         itemCount: provider.categories.length,
         onReorder: (oldIndex, newIndex) {
           provider.reorderCategories(oldIndex, newIndex);
         },
-        // 底部添加按钮需要放在 footer 中，因为它不可排序
+
+        // 2. 补齐底部添加按钮
         footer: Padding(
           padding: const EdgeInsets.all(8.0),
-          child: ElevatedButton.icon(
-            onPressed: () => _showAddCategoryDialog(context, provider),
-            icon: const Icon(Icons.add, size: 16),
-            label: const Text('添加', style: TextStyle(fontSize: 12)),
+          child: ElevatedButton(
+            onPressed: () =>
+                _showCategoryDialog(context, provider), // 调用通用对话框（添加模式）
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.grey[700],
+              elevation: 0,
+              side: BorderSide(color: Colors.grey[300]!),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Icon(Icons.add, size: 24),
           ),
         ),
+
+        // 3. 列表项构建
         itemBuilder: (context, index) {
-          // 必须为每一个 Item 提供唯一的 Key，以便框架识别位置
           final category = provider.categories[index];
-          return Container(
-            key: ValueKey('cat_${category.name}_$index'),
+
+          return Slidable(
+            // Slidable 必须有唯一的 Key 才能在排序时保持状态
+            key: ValueKey('slidable_${category.name}_$index'),
+
+            // 配置左滑删除按钮
+            endActionPane: ActionPane(
+              motion: const DrawerMotion(),
+              extentRatio: 0.6, // 侧滑展开的宽度比例
+              children: [
+                SlidableAction(
+                  onPressed: (context) => _showDeleteConfirmDialog(
+                      context, index, category, provider),
+                  backgroundColor: const Color(0xFFFE4A49),
+                  foregroundColor: Colors.white,
+                  icon: Icons.delete,
+                  label: '删除',
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ],
+            ),
+
+            // 包装原有的分类 UI
             child: _buildCategoryItem(index, category, provider),
           );
         },
@@ -415,10 +447,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   );
                 }),
-                // 添加子事件按钮 - 显示在子事件列表的最后
                 GestureDetector(
-                  onTap: () => _showAddSubCategoryDialog(
-                      context, catIndex, cat, provider),
+                  onTap: () => _showCategoryDialog(context, provider,
+                      index: catIndex, existingCat: cat), // 统一调用
                   child: Container(
                     margin: const EdgeInsets.symmetric(vertical: 2),
                     padding:
@@ -426,23 +457,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     decoration: BoxDecoration(
                       color: cat.color.withValues(alpha: 0.4),
                       borderRadius: BorderRadius.circular(4),
-                      border: Border.all(
-                        color: Colors.white,
-                        width: 1,
-                      ),
+                      border: Border.all(color: Colors.white, width: 1),
                     ),
                     child: const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.add, color: Colors.white, size: 14),
+                        Icon(Icons.edit,
+                            color: Colors.white, size: 14), // 修改图标为编辑
                         SizedBox(width: 4),
-                        Text(
-                          '添加',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                          ),
-                        ),
+                        Text('编辑',
+                            style:
+                                TextStyle(color: Colors.white, fontSize: 11)),
                       ],
                     ),
                   ),
@@ -504,163 +529,186 @@ class _HomeScreenState extends State<HomeScreen> {
     provider.updateCategory(catIndex, newCat);
   }
 
-  void _showAddCategoryDialog(BuildContext context, TimeProvider provider) {
-    String newCatName = '';
-    Color selectedColor = Colors.blue;
-    String hexColor = 'FF2196F3';
+  void _showCategoryDialog(BuildContext context, TimeProvider provider,
+      {int? index, Category? existingCat}) {
+    bool isEdit = index != null && existingCat != null;
+
+    // 1. 初始化变量和控制器 (必须放在 showDialog 外部)
+    String catName = isEdit ? existingCat.name : '';
+    Color selectedColor = isEdit ? existingCat.color : Colors.blue;
+    List<String> tempSubCategories =
+        isEdit ? List.from(existingCat.subCategories) : [];
+
+    // 初始化颜色代码字符串
+    String hexColorStr = (selectedColor.value)
+        .toRadixString(16)
+        .toUpperCase()
+        .padLeft(8, '0')
+        .substring(2);
+
+    final nameController = TextEditingController(text: catName);
+    final subCatController = TextEditingController();
+    final hexController = TextEditingController(text: hexColorStr);
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('添加事件'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  decoration: const InputDecoration(
-                    labelText: '事件名称',
-                    hintText: '请输入事件名称',
-                  ),
-                  onChanged: (value) {
-                    newCatName = value;
-                  },
-                ),
-                const SizedBox(height: 20),
-                const Text('选择颜色:',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 12),
-                // 颜色调色盘
-                _buildColorPalette(selectedColor, (color) {
-                  setDialogState(() {
-                    selectedColor = color;
-                    hexColor =
-                        '${(color.value).toRadixString(16).toUpperCase().padLeft(8, '0').substring(2)}';
-                  });
-                }),
-                const SizedBox(height: 12),
-                // 颜色预览
-                Row(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: Text(isEdit ? '编辑事件' : '添加事件'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // 事件名称输入
+                    TextField(
+                      decoration: const InputDecoration(
+                          labelText: '事件名称', hintText: '请输入名称'),
+                      controller: nameController,
+                      onChanged: (value) => catName = value,
+                    ),
+                    const SizedBox(height: 20),
+
+                    // 颜色选择器
+                    const Text('选择颜色:',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 13)),
+                    _buildColorPalette(selectedColor, (color) {
+                      setDialogState(() {
+                        selectedColor = color;
+                        String newHex = (color.value)
+                            .toRadixString(16)
+                            .toUpperCase()
+                            .padLeft(8, '0')
+                            .substring(2);
+                        hexController.text = newHex; // 选色盘同步给输入框
+                      });
+                    }),
+
+                    // 十六进制代码输入
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: hexController,
+                      decoration: const InputDecoration(
+                        labelText: '十六进制代码',
+                        prefixText: '#',
+                        hintText: '例如: FF2196F3',
+                      ),
+                      onChanged: (value) {
+                        try {
+                          String cleanValue =
+                              value.replaceAll('#', '').toUpperCase();
+                          if (cleanValue.length == 6)
+                            cleanValue = 'FF$cleanValue';
+                          if (cleanValue.length == 8) {
+                            final newColor = Color(int.parse('0x$cleanValue'));
+                            setDialogState(() => selectedColor = newColor);
+                          }
+                        } catch (e) {/* 无效输入时不更新 */}
+                      },
+                    ),
+                    const SizedBox(height: 20),
+
+                    // 子事件管理区域
+                    const Divider(),
+                    const Text('编辑子事件 (点击删除，长按排序)',
+                        style: TextStyle(color: Colors.grey, fontSize: 12)),
+                    const SizedBox(height: 10),
+
                     Container(
-                      width: 50,
-                      height: 50,
-                      decoration: BoxDecoration(
-                        color: selectedColor,
-                        border: Border.all(color: Colors.grey),
-                        borderRadius: BorderRadius.circular(6),
+                      constraints: const BoxConstraints(maxHeight: 200),
+                      child: ReorderableListView(
+                        shrinkWrap: true,
+                        onReorder: (oldIdx, newIdx) {
+                          setDialogState(() {
+                            if (oldIdx < newIdx) newIdx -= 1;
+                            final String item =
+                                tempSubCategories.removeAt(oldIdx);
+                            tempSubCategories.insert(newIdx, item);
+                          });
+                        },
+                        children:
+                            tempSubCategories.asMap().entries.map((entry) {
+                          return ListTile(
+                            key: ValueKey('sub_${entry.key}_${entry.value}'),
+                            dense: true,
+                            title: Text(entry.value),
+                            trailing: const Icon(Icons.drag_handle, size: 20),
+                            onTap: () {
+                              setDialogState(
+                                  () => tempSubCategories.removeAt(entry.key));
+                            },
+                          );
+                        }).toList(),
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('十六进制颜色代码:',
-                              style: TextStyle(fontSize: 12)),
-                          TextField(
+
+                    // 添加子事件输入框 (支持连续添加)
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: subCatController,
                             decoration: const InputDecoration(
-                              hintText: '输入十六进制代码 (如: FF2196F3)',
-                              prefixText: '#',
-                              contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 4),
-                            ),
-                            controller: TextEditingController(text: hexColor),
-                            onChanged: (value) {
-                              try {
-                                // 移除 # 号并处理输入
-                                String cleanValue =
-                                    value.replaceAll('#', '').toUpperCase();
-                                if (cleanValue.length == 6) {
-                                  cleanValue = 'FF' + cleanValue;
-                                } else if (cleanValue.length != 8) {
-                                  return;
-                                }
-                                final color = Color(int.parse('0x$cleanValue'));
+                                hintText: '添加子事件', isDense: true),
+                            onSubmitted: (value) {
+                              // 支持回车添加
+                              if (value.isNotEmpty) {
                                 setDialogState(() {
-                                  selectedColor = color;
-                                  hexColor = cleanValue;
+                                  tempSubCategories.add(value);
+                                  subCatController.clear();
                                 });
-                              } catch (e) {
-                                // 无效的颜色代码，忽略
                               }
                             },
                           ),
-                        ],
-                      ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.add_circle,
+                              color: Color(0xFF9CB86A)),
+                          onPressed: () {
+                            if (subCatController.text.isNotEmpty) {
+                              setDialogState(() {
+                                tempSubCategories.add(subCatController.text);
+                                subCatController.clear(); // 清空后可以立即再次输入
+                              });
+                            }
+                          },
+                        ),
+                      ],
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                // 预设颜色快速选择
-                const Text('预设颜色:', style: TextStyle(fontSize: 12)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    Colors.red,
-                    Colors.blue,
-                    Colors.green,
-                    Colors.orange,
-                    Colors.purple,
-                    Colors.cyan,
-                    Colors.pink,
-                    Colors.amber,
-                    Colors.teal,
-                    Colors.indigo,
-                    const Color(0xFFD4AF37),
-                    const Color(0xFF9CB86A),
-                  ].map((color) {
-                    return GestureDetector(
-                      onTap: () {
-                        setDialogState(() {
-                          selectedColor = color;
-                          hexColor =
-                              '${(color.value).toRadixString(16).toUpperCase().padLeft(8, '0').substring(2)}';
-                        });
-                      },
-                      child: Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: color,
-                          border: Border.all(
-                            color: selectedColor == color
-                                ? Colors.black
-                                : Colors.grey,
-                            width: selectedColor == color ? 3 : 1,
-                          ),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                      ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('取消')),
+              ElevatedButton(
+                onPressed: () {
+                  if (catName.isNotEmpty) {
+                    Category newCat = Category(
+                      name: catName,
+                      color: selectedColor,
+                      subCategories: tempSubCategories,
                     );
-                  }).toList(),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
-            ),
-            TextButton(
-              onPressed: () {
-                if (newCatName.isNotEmpty) {
-                  provider.addCategory(Category(
-                    name: newCatName,
-                    color: selectedColor,
-                  ));
-                  Navigator.pop(context);
-                }
-              },
-              child: const Text('添加'),
-            ),
-          ],
-        ),
+                    if (isEdit) {
+                      provider.updateCategory(index, newCat);
+                    } else {
+                      provider.addCategory(newCat);
+                    }
+                    Navigator.pop(context);
+                  }
+                },
+                child: Text(isEdit ? '保存修改' : '确认添加'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -726,45 +774,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showAddSubCategoryDialog(
-      BuildContext context, int catIndex, Category cat, TimeProvider provider) {
-    String newSubCatName = '';
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('添加子事件'),
-        content: TextField(
-          decoration: const InputDecoration(
-            labelText: '子事件名称',
-            hintText: '请输入子事件名称',
-          ),
-          onChanged: (value) {
-            newSubCatName = value;
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              if (newSubCatName.isNotEmpty) {
-                List<String> newSubs = List.from(cat.subCategories);
-                newSubs.add(newSubCatName);
-                Category newCat = cat.copyWith(subCategories: newSubs);
-                provider.updateCategory(catIndex, newCat);
-                Navigator.pop(context);
-              }
-            },
-            child: const Text('添加'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildAppBarTitle(TimeProvider provider, DateTime date) {
     return Row(
       children: [
@@ -800,6 +809,31 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.pop(context);
               },
               child: const Text("确定")),
+        ],
+      ),
+    );
+  }
+
+  void _showDeleteConfirmDialog(
+      BuildContext context, int index, Category cat, TimeProvider provider) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("确认删除"),
+        content: Text("确定要删除“${cat.name}”及其所有子事件吗？"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("取消"),
+          ),
+          TextButton(
+            onPressed: () {
+              provider.deleteCategory(index); // 在 Provider 中实现此方法
+              Navigator.pop(context);
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text("删除"),
+          ),
         ],
       ),
     );
