@@ -4,6 +4,7 @@ import '../providers/time_provider.dart';
 import '../models/category.dart';
 import 'dart:async';
 import 'package:flutter_slidable/flutter_slidable.dart';
+import 'package:reorderables/reorderables.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -533,120 +534,128 @@ class _HomeScreenState extends State<HomeScreen> {
       {int? index, Category? existingCat}) {
     bool isEdit = index != null && existingCat != null;
 
-    // 1. 初始化变量和控制器 (必须放在 showDialog 外部)
     String catName = isEdit ? existingCat.name : '';
     Color selectedColor = isEdit ? existingCat.color : Colors.blue;
     List<String> tempSubCategories =
         isEdit ? List.from(existingCat.subCategories) : [];
 
-    // 初始化颜色代码字符串
-    String hexColorStr = (selectedColor.value)
+    final nameController = TextEditingController(text: catName);
+    final subCatController = TextEditingController();
+
+    String currentHex = (selectedColor.value)
         .toRadixString(16)
         .toUpperCase()
         .padLeft(8, '0')
         .substring(2);
-
-    final nameController = TextEditingController(text: catName);
-    final subCatController = TextEditingController();
-    final hexController = TextEditingController(text: hexColorStr);
+    final hexController = TextEditingController(text: currentHex);
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           return AlertDialog(
-            title: Text(isEdit ? '编辑事件' : '添加事件'),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Text(isEdit ? '编辑事件' : '添加事件',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
             content: SizedBox(
-              width: double.maxFinite,
+              width: MediaQuery.of(context).size.width * 0.8,
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 事件名称输入
+                    // 1. 事件名称
                     TextField(
-                      decoration: const InputDecoration(
-                          labelText: '事件名称', hintText: '请输入名称'),
                       controller: nameController,
+                      decoration: const InputDecoration(labelText: '事件名称'),
                       onChanged: (value) => catName = value,
                     ),
                     const SizedBox(height: 20),
 
-                    // 颜色选择器
+                    // 2. 颜色选择器
                     const Text('选择颜色:',
                         style: TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 13)),
+                            fontSize: 14, fontWeight: FontWeight.w500)),
                     _buildColorPalette(selectedColor, (color) {
                       setDialogState(() {
                         selectedColor = color;
-                        String newHex = (color.value)
+                        hexController.text = (color.value)
                             .toRadixString(16)
                             .toUpperCase()
                             .padLeft(8, '0')
                             .substring(2);
-                        hexController.text = newHex; // 选色盘同步给输入框
                       });
                     }),
 
-                    // 十六进制代码输入
-                    const SizedBox(height: 10),
+                    // 3. 十六进制输入
                     TextField(
                       controller: hexController,
                       decoration: const InputDecoration(
                         labelText: '十六进制代码',
                         prefixText: '#',
-                        hintText: '例如: FF2196F3',
+                        border: InputBorder.none, // 移除自带下划线
+                        isDense: true,
                       ),
                       onChanged: (value) {
                         try {
-                          String cleanValue =
+                          String clean =
                               value.replaceAll('#', '').toUpperCase();
-                          if (cleanValue.length == 6)
-                            cleanValue = 'FF$cleanValue';
-                          if (cleanValue.length == 8) {
-                            final newColor = Color(int.parse('0x$cleanValue'));
-                            setDialogState(() => selectedColor = newColor);
+                          if (clean.length == 6) clean = 'FF$clean';
+                          if (clean.length == 8) {
+                            setDialogState(() =>
+                                selectedColor = Color(int.parse('0x$clean')));
                           }
-                        } catch (e) {/* 无效输入时不更新 */}
+                        } catch (e) {}
                       },
                     ),
-                    const SizedBox(height: 20),
 
-                    // 子事件管理区域
-                    const Divider(),
-                    const Text('编辑子事件 (点击删除，长按排序)',
-                        style: TextStyle(color: Colors.grey, fontSize: 12)),
+                    // 统一的单分隔线
+                    const Divider(height: 1, thickness: 1),
+                    const SizedBox(height: 15),
+
+                    // 4. 子事件区域
+                    Text('编辑子事件 (点击删除，长按拖动排序)',
+                        style:
+                            TextStyle(color: Colors.grey[600], fontSize: 11)),
                     const SizedBox(height: 10),
 
-                    Container(
-                      constraints: const BoxConstraints(maxHeight: 200),
-                      child: ReorderableListView(
-                        shrinkWrap: true,
-                        onReorder: (oldIdx, newIdx) {
-                          setDialogState(() {
-                            if (oldIdx < newIdx) newIdx -= 1;
-                            final String item =
-                                tempSubCategories.removeAt(oldIdx);
-                            tempSubCategories.insert(newIdx, item);
-                          });
-                        },
-                        children:
-                            tempSubCategories.asMap().entries.map((entry) {
-                          return ListTile(
-                            key: ValueKey('sub_${entry.key}_${entry.value}'),
-                            dense: true,
-                            title: Text(entry.value),
-                            trailing: const Icon(Icons.drag_handle, size: 20),
-                            onTap: () {
-                              setDialogState(
-                                  () => tempSubCategories.removeAt(entry.key));
-                            },
-                          );
-                        }).toList(),
-                      ),
+                    // 横向可排序标签组
+                    ReorderableWrap(
+                      spacing: 8.0,
+                      runSpacing: 8.0,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      onReorder: (oldIndex, newIndex) {
+                        setDialogState(() {
+                          final String item =
+                              tempSubCategories.removeAt(oldIndex);
+                          tempSubCategories.insert(newIndex, item);
+                        });
+                      },
+                      children: tempSubCategories.asMap().entries.map((entry) {
+                        return GestureDetector(
+                          key: ValueKey('sub_chip_${entry.value}_${entry.key}'),
+                          onTap: () => setDialogState(
+                              () => tempSubCategories.removeAt(entry.key)),
+                          child: Chip(
+                            visualDensity: VisualDensity.compact,
+                            backgroundColor: selectedColor.withOpacity(0.8),
+                            label: Text(entry.value,
+                                style: const TextStyle(
+                                    color: Colors.white, fontSize: 12)),
+                            deleteIcon: const Icon(Icons.close,
+                                size: 14, color: Colors.white70),
+                            onDeleted: () => setDialogState(
+                                () => tempSubCategories.removeAt(entry.key)),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8)),
+                            side: BorderSide.none,
+                          ),
+                        );
+                      }).toList(),
                     ),
 
-                    // 添加子事件输入框 (支持连续添加)
+                    // 5. 添加子事件输入
                     const SizedBox(height: 10),
                     Row(
                       children: [
@@ -655,11 +664,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             controller: subCatController,
                             decoration: const InputDecoration(
                                 hintText: '添加子事件', isDense: true),
-                            onSubmitted: (value) {
-                              // 支持回车添加
-                              if (value.isNotEmpty) {
+                            onSubmitted: (val) {
+                              if (val.isNotEmpty) {
                                 setDialogState(() {
-                                  tempSubCategories.add(value);
+                                  tempSubCategories.add(val);
                                   subCatController.clear();
                                 });
                               }
@@ -673,7 +681,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             if (subCatController.text.isNotEmpty) {
                               setDialogState(() {
                                 tempSubCategories.add(subCatController.text);
-                                subCatController.clear(); // 清空后可以立即再次输入
+                                subCatController.clear();
                               });
                             }
                           },
@@ -689,6 +697,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: () => Navigator.pop(context),
                   child: const Text('取消')),
               ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF9CB86A),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
                 onPressed: () {
                   if (catName.isNotEmpty) {
                     Category newCat = Category(
@@ -696,11 +710,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       color: selectedColor,
                       subCategories: tempSubCategories,
                     );
-                    if (isEdit) {
-                      provider.updateCategory(index, newCat);
-                    } else {
-                      provider.addCategory(newCat);
-                    }
+                    isEdit
+                        ? provider.updateCategory(index, newCat)
+                        : provider.addCategory(newCat);
                     Navigator.pop(context);
                   }
                 },
