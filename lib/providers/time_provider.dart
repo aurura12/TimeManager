@@ -281,4 +281,16 @@ class TimeProvider with ChangeNotifier {
       }
     }
   }
+
+  void reorderCategories(int oldIndex, int newIndex) {
+    if (oldIndex < newIndex) {
+      newIndex -= 1;
+    }
+    final Category item = categories.removeAt(oldIndex);
+    categories.insert(newIndex, item);
+
+    // 通知 UI 更新并保存到本地存储
+    notifyListeners();
+    _saveData(); // 假设你有这个持久化方法
+  }
 }

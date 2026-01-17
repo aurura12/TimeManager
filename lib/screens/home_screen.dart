@@ -293,22 +293,29 @@ class _HomeScreenState extends State<HomeScreen> {
     return Container(
       width: 90,
       color: Colors.grey[100],
-      child: ListView.builder(
-        itemCount: provider.categories.length + 1,
+      // 使用 ReorderableListView 替换 ListView
+      child: ReorderableListView.builder(
+        // 设置构建器
+        itemCount: provider.categories.length,
+        onReorder: (oldIndex, newIndex) {
+          provider.reorderCategories(oldIndex, newIndex);
+        },
+        // 底部添加按钮需要放在 footer 中，因为它不可排序
+        footer: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: ElevatedButton.icon(
+            onPressed: () => _showAddCategoryDialog(context, provider),
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('添加', style: TextStyle(fontSize: 12)),
+          ),
+        ),
         itemBuilder: (context, index) {
-          if (index == provider.categories.length) {
-            // 最后一个是添加按钮
-            return Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: ElevatedButton.icon(
-                onPressed: () => _showAddCategoryDialog(context, provider),
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('添加', style: TextStyle(fontSize: 12)),
-              ),
-            );
-          }
-          return _buildCategoryItem(
-              index, provider.categories[index], provider);
+          // 必须为每一个 Item 提供唯一的 Key，以便框架识别位置
+          final category = provider.categories[index];
+          return Container(
+            key: ValueKey('cat_${category.name}_$index'),
+            child: _buildCategoryItem(index, category, provider),
+          );
         },
       ),
     );
