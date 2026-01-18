@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 import 'target_detail_screen.dart';
 import 'add_target_screen.dart';
+import '../models/target.dart';
 
 class TargetScreen extends StatelessWidget {
   const TargetScreen({super.key});
@@ -32,49 +33,53 @@ class TargetScreen extends StatelessWidget {
       ),
       body: Consumer<TimeProvider>(
         builder: (context, timeProvider, child) {
-          // --- 逻辑计算部分：保留并优化你原始代码的逻辑 ---
-          final recordedSlots =
-              timeProvider.slots.where((s) => s.recorded).toList();
-          final totalMinutes = recordedSlots.length * 10;
-          final double hours = totalMinutes / 60.0;
-
-          // 假设目标是 6 小时 (360 分钟)
-          final double percent = (totalMinutes / 360.0 * 100).clamp(0.0, 100.0);
+          if (timeProvider.targets.isEmpty) {
+            return const Center(
+              child: Text("暂无计划，点击右上角添加", style: TextStyle(color: Colors.grey)),
+            );
+          }
 
           return ListView(
             padding: const EdgeInsets.symmetric(vertical: 12),
-            children: [
-              // 1. 运动目标卡片 (红色)
-              _buildTargetCard(
-                subtitle: "每周",
-                title: "运动超过6小时",
-                progressText:
-                    "已完成：${hours.toStringAsFixed(1)}小时(${percent.toStringAsFixed(1)}%)",
-                color: const Color(0xFFF16B77),
+            children: timeProvider.targets.map((target) {
+              // 动态计算进度 (目前主要实现时长类型的计算)
+              String progressText = "";
+              String title = "";
+
+              if (target.type == TargetType.duration) {
+                final recordedSlots = timeProvider.slots
+                    .where((s) => s.recorded && s.label == target.name)
+                    .toList();
+                final totalMinutes = recordedSlots.length * 10;
+                final double hours = totalMinutes / 60.0;
+                final double percent = target.durationHours > 0
+                    ? (hours / target.durationHours * 100).clamp(0.0, 100.0)
+                    : 0.0;
+                progressText =
+                    "已完成：${hours.toStringAsFixed(1)}小时(${percent.toStringAsFixed(1)}%)";
+                title =
+                    "${target.name}${target.compareType}${target.durationHours}小时";
+              } else {
+                // 其他类型暂显示默认文本
+                progressText = "进行中...";
+                title = "${target.name} ${target.compareType} ...";
+              }
+
+              return _buildTargetCard(
+                subtitle: target.period,
+                title: title,
+                progressText: progressText,
+                color: target.color,
                 onTap: () {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                        builder: (context) => TargetDetailScreen()),
+                        builder: (context) =>
+                            TargetDetailScreen(target: target)),
                   );
                 },
-              ),
-
-              // 2. 睡眠目标卡片 (橙色)
-              _buildTargetCard(
-                title: "22:00之前睡觉",
-                progressText: "坚持了：0天",
-                color: const Color(0xFFF98E45),
-              ),
-
-              // 3. 冥想目标卡片 (黄色)
-              _buildTargetCard(
-                subtitle: "每周",
-                title: "冥想超过3次",
-                progressText: "已完成：0/3",
-                color: const Color(0xFFD9BD2E),
-              ),
-            ],
+              );
+            }).toList(),
           );
         },
       ),
