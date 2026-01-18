@@ -15,7 +15,7 @@ class TimeProvider with ChangeNotifier {
   // 分类列表移至 Provider 管理
   List<Category> _categories = [];
   List<Category> get categories => _categories;
-  int _startHour = 7; // 默认从 7 点开始
+  final int _startHour = 7; // 默认从 7 点开始
   int get startHour => _startHour;
 
   // 用于发送同步状态消息的 Stream
@@ -185,7 +185,7 @@ class TimeProvider with ChangeNotifier {
     List<String> catList = _categories.map((c) {
       return json.encode({
         'name': c.name,
-        'color': c.color.value, // 保存颜色整数值
+        'color': c.color, // 保存颜色整数值
         'subCategories': c.subCategories,
       });
     }).toList();
@@ -202,7 +202,7 @@ class TimeProvider with ChangeNotifier {
           recordedSlots.add({
             'i': i, // 索引
             'l': slots[i].label,
-            'c': slots[i].color?.value,
+            'c': slots[i].color?..toARGB32(),
           });
         }
       }

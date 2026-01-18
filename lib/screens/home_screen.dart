@@ -542,7 +542,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final nameController = TextEditingController(text: catName);
     final subCatController = TextEditingController();
 
-    String currentHex = (selectedColor.value)
+    String currentHex = (selectedColor.toARGB32())
         .toRadixString(16)
         .toUpperCase()
         .padLeft(8, '0')
@@ -580,7 +580,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     _buildColorPalette(selectedColor, (color) {
                       setDialogState(() {
                         selectedColor = color;
-                        hexController.text = (color.value)
+                        hexController.text = (color.toARGB32())
                             .toRadixString(16)
                             .toUpperCase()
                             .padLeft(8, '0')
@@ -606,7 +606,13 @@ class _HomeScreenState extends State<HomeScreen> {
                             setDialogState(() =>
                                 selectedColor = Color(int.parse('0x$clean')));
                           }
-                        } catch (e) {}
+                        } catch (e) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                                content: Text(
+                                    '请输入合法的6位/8位十六进制颜色值（如 #FFFFFF 或 #FFFFFFFF）')),
+                          );
+                        }
                       },
                     ),
 
@@ -639,7 +645,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               () => tempSubCategories.removeAt(entry.key)),
                           child: Chip(
                             visualDensity: VisualDensity.compact,
-                            backgroundColor: selectedColor.withOpacity(0.8),
+                            backgroundColor:
+                                selectedColor.withValues(alpha: 0.8),
                             label: Text(entry.value,
                                 style: const TextStyle(
                                     color: Colors.white, fontSize: 12)),

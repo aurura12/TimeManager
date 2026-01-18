@@ -130,7 +130,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                                     label: Text(sub,
                                         style: const TextStyle(fontSize: 12)),
                                     backgroundColor:
-                                        category.color.withOpacity(0.2),
+                                        category.color.withValues(alpha: 0.2),
                                     visualDensity: VisualDensity.compact,
                                     onPressed: () {
                                       setState(() => _eventName = sub);
@@ -376,7 +376,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
             onTap: () => setState(() => _selectedColorIndex = index),
             child: CircleAvatar(
               radius: 18,
-              backgroundColor: _themeColors[index].withOpacity(0.3),
+              backgroundColor: _themeColors[index].withValues(alpha: 0.3),
               child: CircleAvatar(
                 radius: 14,
                 backgroundColor: _themeColors[index],
