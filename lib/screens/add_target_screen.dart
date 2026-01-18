@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/time_provider.dart';
 
 enum TargetType { duration, timePoint, frequency }
 
@@ -82,6 +84,79 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
     }
   }
 
+  // --- 辅助方法：事件选择弹窗 ---
+  void _showEventSelectionDialog() {
+    final provider = Provider.of<TimeProvider>(context, listen: false);
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("选择事件"),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: provider.categories.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.all(16.0),
+                    child: Text("暂无已有事件，请先在首页添加"),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: provider.categories.length,
+                    itemBuilder: (context, index) {
+                      final category = provider.categories[index];
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor: category.color,
+                              radius: 8,
+                            ),
+                            title: Text(category.name),
+                            onTap: () {
+                              setState(() => _eventName = category.name);
+                              Navigator.pop(context);
+                            },
+                          ),
+                          if (category.subCategories.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                  left: 56.0, bottom: 8.0),
+                              child: Wrap(
+                                spacing: 8.0,
+                                runSpacing: 4.0,
+                                children: category.subCategories.map((sub) {
+                                  return ActionChip(
+                                    label: Text(sub,
+                                        style: const TextStyle(fontSize: 12)),
+                                    backgroundColor:
+                                        category.color.withOpacity(0.2),
+                                    visualDensity: VisualDensity.compact,
+                                    onPressed: () {
+                                      setState(() => _eventName = sub);
+                                      Navigator.pop(context);
+                                    },
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                          const Divider(height: 1),
+                        ],
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("取消"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     Color activeColor = _themeColors[_selectedColorIndex];
@@ -91,6 +166,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF96B462),
         elevation: 0,
+        leadingWidth: 80,
         leading: TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text("确定",
@@ -184,11 +260,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
         children: [
-          _buildFormRow(
-              "事件名称",
-              _eventName,
-              () =>
-                  _showInputDialog("事件名称", _eventName, (v) => _eventName = v)),
+          _buildFormRow("事件名称", _eventName, () => _showEventSelectionDialog()),
           _buildFormRow("比较类型", _compareType, () {
             // 循环切换比较类型
             List<String> types = ["超过", "少于", "等于"];
