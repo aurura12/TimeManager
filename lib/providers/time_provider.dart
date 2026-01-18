@@ -5,12 +5,17 @@ import 'dart:convert';
 import '../services/google_calendar_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
+import '../models/target.dart';
 
 class TimeProvider with ChangeNotifier {
   DateTime _currentDate = DateTime.now();
 
   // 存储模型对象 Map
   final Map<String, List<TimeSlot>> _dailySlots = {};
+
+  // 目标列表移至 Provider 管理
+  final List<Target> _targets = [];
+  List<Target> get targets => _targets;
 
   // 分类列表移至 Provider 管理
   List<Category> _categories = [];
@@ -185,13 +190,18 @@ class TimeProvider with ChangeNotifier {
     List<String> catList = _categories.map((c) {
       return json.encode({
         'name': c.name,
-        'color': c.color, // 保存颜色整数值
+        'color': c.color.toARGB32(), // 修正：必须保存 .value 整数值，否则 json.encode 会报错
         'subCategories': c.subCategories,
       });
     }).toList();
     await prefs.setStringList('categories', catList);
 
-    // 2. 保存时间块
+    // 2. 保存目标 (新增)
+    List<String> targetList =
+        _targets.map((t) => json.encode(t.toJson())).toList();
+    await prefs.setStringList('targets', targetList);
+
+    // 3. 保存时间块
     // 为了节省空间，只保存已记录(recorded=true)的块
     Map<String, dynamic> slotsJson = {};
     _dailySlots.forEach((dateKey, slots) {
@@ -242,7 +252,15 @@ class TimeProvider with ChangeNotifier {
       ];
     }
 
-    // 2. 加载时间块
+    // 2. 加载目标 (新增)
+    List<String>? targetList = prefs.getStringList('targets');
+    if (targetList != null) {
+      _targets.clear();
+      _targets.addAll(
+          targetList.map((str) => Target.fromJson(json.decode(str))).toList());
+    }
+
+    // 3. 加载时间块
     String? slotsStr = prefs.getString('daily_slots');
     if (slotsStr != null) {
       try {
@@ -298,5 +316,17 @@ class TimeProvider with ChangeNotifier {
     categories.removeAt(index);
     notifyListeners();
     _saveData(); // 确保保存更改
+  }
+
+  void addTarget(Target target) {
+    _targets.add(target);
+    _saveData(); // 添加后保存
+    notifyListeners();
+  }
+
+  void deleteTarget(Target target) {
+    _targets.remove(target);
+    _saveData(); // 删除后保存
+    notifyListeners();
   }
 }

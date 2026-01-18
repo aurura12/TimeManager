@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
-
-enum TargetType { duration, timePoint, frequency }
+import '../models/target.dart';
 
 class AddTargetScreen extends StatefulWidget {
   const AddTargetScreen({super.key});
@@ -168,7 +167,23 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
         elevation: 0,
         leadingWidth: 80,
         leading: TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            final provider = Provider.of<TimeProvider>(context, listen: false);
+            final newTarget = Target(
+              name: _eventName,
+              type: _selectedType,
+              color: activeColor,
+              period: _selectedPeriod,
+              compareType: _compareType,
+              durationHours: double.tryParse(_durationValue) ?? 0,
+              frequencyCount: int.tryParse(_frequencyCount) ?? 0,
+              targetTime: _targetTime,
+              startTime: _startTime,
+              endTime: _endTime,
+            );
+            provider.addTarget(newTarget);
+            Navigator.pop(context);
+          },
           child: const Text("确定",
               style: TextStyle(color: Colors.white, fontSize: 16)),
         ),
