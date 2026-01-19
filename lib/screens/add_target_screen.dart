@@ -274,10 +274,11 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
+        // 【关键修复】：显式设置内部列的所有组件从左侧开始排列
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildFormRow("事件名称", _eventName, () => _showEventSelectionDialog()),
           _buildFormRow("比较类型", _compareType, () {
-            // 循环切换比较类型
             List<String> types = ["超过", "少于", "等于"];
             int index = types.indexOf(_compareType);
             setState(() {
@@ -302,9 +303,13 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
             _buildFormRow("比较时间", _targetTime,
                 () => _pickTime(_targetTime, (v) => _targetTime = v)),
             const SizedBox(height: 10),
-            _buildSectionTitle("有效时间区间:", padding: 0),
+            // 现在这个 Text 会受到上面 crossAxisAlignment.start 的影响而居左
+            const Text("有效时间区间:",
+                style: TextStyle(fontSize: 16, color: Colors.black87)),
             const SizedBox(height: 10),
             Row(
+              // 同时也确保这个 Row 内部的按钮也是从左开始
+              mainAxisAlignment: MainAxisAlignment.start,
               children: [
                 _buildSmallBtn(_startTime,
                     () => _pickTime(_startTime, (v) => _startTime = v)),
