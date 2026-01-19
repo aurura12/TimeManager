@@ -4,6 +4,7 @@ import '../providers/time_provider.dart';
 import 'target_detail_screen.dart';
 import 'add_target_screen.dart';
 import '../models/target.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 
 class TargetScreen extends StatelessWidget {
   const TargetScreen({super.key});
@@ -76,20 +77,61 @@ class TargetScreen extends StatelessWidget {
                     "${target.targetTime}${target.compareType}${target.name}";
               }
 
-              return _buildTargetCard(
-                key: ValueKey(target),
-                subtitle: target.period,
-                title: title,
-                progressText: progressText,
-                color: target.color,
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
+              return Slidable(
+                key: ValueKey(target), // 必须有 Key
+                endActionPane: ActionPane(
+                  motion: const ScrollMotion(),
+                  extentRatio: 0.2, // 侧滑按钮占据的宽度比例
+                  children: [
+                    // 编辑和删除按钮上下排列
+                    Expanded(
+                      child: Column(
+                        children: [
+                          // 编辑按钮
+                          Expanded(
+                            child: InkWell(
+                              onTap: () {
+                                // 处理编辑逻辑
+                                print("编辑 ${target.name}");
+                              },
+                              child: const Center(
+                                child:
+                                    Icon(Icons.edit, color: Color(0xFF96B462)),
+                              ),
+                            ),
+                          ),
+                          // 删除按钮
+                          Expanded(
+                            child: InkWell(
+                              onTap: () =>
+                                  _confirmDelete(context, timeProvider, target),
+                              child: const Center(
+                                child: Icon(Icons.delete_forever,
+                                    color: Colors.redAccent),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                child: _buildTargetCard(
+                  key: ValueKey("card_${target.name}"), // 这里用不同的 key 区分
+                  subtitle: target.period,
+                  title: title,
+                  progressText: progressText,
+                  color: target.color,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
                         builder: (context) =>
-                            TargetDetailScreen(target: target)),
-                  );
-                },
+                            TargetDetailScreen(target: target),
+                      ),
+                    );
+                  },
+                ),
               );
             }).toList(),
           );
@@ -151,6 +193,30 @@ class TargetScreen extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete(
+      BuildContext context, TimeProvider provider, Target target) async {
+    return showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认删除'),
+        content: Text('确定要删除目标“${target.name}”吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              provider.deleteTarget(target); // 请确保你的 TimeProvider 中有这个方法
+              Navigator.pop(context);
+            },
+            child: const Text('确认', style: TextStyle(color: Colors.red)),
+          ),
+        ],
       ),
     );
   }
