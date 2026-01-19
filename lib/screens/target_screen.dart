@@ -39,8 +39,11 @@ class TargetScreen extends StatelessWidget {
             );
           }
 
-          return ListView(
+          return ReorderableListView(
             padding: const EdgeInsets.symmetric(vertical: 12),
+            onReorder: (oldIndex, newIndex) {
+              timeProvider.reorderTargets(oldIndex, newIndex);
+            },
             children: timeProvider.targets.map((target) {
               // 动态计算进度 (目前主要实现时长类型的计算)
               String progressText = "";
@@ -74,6 +77,7 @@ class TargetScreen extends StatelessWidget {
               }
 
               return _buildTargetCard(
+                key: ValueKey(target),
                 subtitle: target.period,
                 title: title,
                 progressText: progressText,
@@ -96,6 +100,7 @@ class TargetScreen extends StatelessWidget {
 
   // 自定义目标卡片构建方法
   Widget _buildTargetCard({
+    required Key key,
     String? subtitle,
     required String title,
     required String progressText,
@@ -103,6 +108,7 @@ class TargetScreen extends StatelessWidget {
     VoidCallback? onTap,
   }) {
     return GestureDetector(
+      key: key,
       onTap: onTap,
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
@@ -112,7 +118,7 @@ class TargetScreen extends StatelessWidget {
           borderRadius: BorderRadius.circular(12.0),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
+              color: Colors.black.withValues(alpha: 0.05),
               blurRadius: 4,
               offset: const Offset(0, 2),
             ),

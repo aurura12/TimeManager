@@ -330,6 +330,16 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  void reorderTargets(int oldIndex, int newIndex) {
+    if (oldIndex < newIndex) {
+      newIndex -= 1;
+    }
+    final Target item = _targets.removeAt(oldIndex);
+    _targets.insert(newIndex, item);
+    _saveData();
+    notifyListeners();
+  }
+
   int getTargetPersistenceDays(String targetName) {
     int count = 0;
     _dailySlots.forEach((_, daySlots) {
