@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 enum TargetType { duration, timePoint, frequency }
 
 class Target {
+  final String id;
   final String name;
   final TargetType type;
   final Color color;
@@ -17,6 +18,7 @@ class Target {
   final String endTime;
 
   Target({
+    required this.id,
     required this.name,
     required this.type,
     required this.color,
@@ -32,6 +34,7 @@ class Target {
   // 将对象转换为 Map (JSON)
   Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'name': name,
       'type': type.index, // 存储枚举的索引
       'color': color.toARGB32(), // 存储颜色的整数值
@@ -48,6 +51,7 @@ class Target {
   // 从 Map (JSON) 创建对象
   factory Target.fromJson(Map<String, dynamic> json) {
     return Target(
+      id: json['id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
       name: json['name'],
       type: TargetType.values[json['type']],
       color: Color(json['color']),

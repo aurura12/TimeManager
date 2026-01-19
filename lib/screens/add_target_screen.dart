@@ -170,6 +170,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
           onPressed: () {
             final provider = Provider.of<TimeProvider>(context, listen: false);
             final newTarget = Target(
+              id: DateTime.now().millisecondsSinceEpoch.toString(),
               name: _eventName,
               type: _selectedType,
               color: activeColor,
