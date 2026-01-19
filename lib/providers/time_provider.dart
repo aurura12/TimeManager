@@ -329,4 +329,14 @@ class TimeProvider with ChangeNotifier {
     _saveData(); // 删除后保存
     notifyListeners();
   }
+
+  int getTargetPersistenceDays(String targetName) {
+    int count = 0;
+    _dailySlots.forEach((_, daySlots) {
+      if (daySlots.any((s) => s.recorded && s.label == targetName)) {
+        count++;
+      }
+    });
+    return count;
+  }
 }

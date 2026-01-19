@@ -60,12 +60,15 @@ class TargetScreen extends StatelessWidget {
                 title =
                     "${target.name}${target.compareType}${target.durationHours}小时";
               } else if (target.type == TargetType.frequency) {
-                // 其他类型暂显示默认文本
-                progressText = "已完成";
+                final currentCount = timeProvider.slots
+                    .where((s) => s.recorded && s.label == target.name)
+                    .length;
+                progressText = "已完成 $currentCount/${target.frequencyCount}";
                 title =
                     "${target.name}${target.compareType}${target.frequencyCount}次";
               } else {
-                progressText = "坚持了";
+                final days = timeProvider.getTargetPersistenceDays(target.name);
+                progressText = "坚持了$days天";
                 title =
                     "${target.targetTime}${target.compareType}${target.name}";
               }
