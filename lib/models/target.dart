@@ -34,7 +34,7 @@ class Target {
     return {
       'name': name,
       'type': type.index, // 存储枚举的索引
-      'color': color.value, // 存储颜色的整数值
+      'color': color.toARGB32(), // 存储颜色的整数值
       'period': period,
       'compareType': compareType,
       'durationHours': durationHours,

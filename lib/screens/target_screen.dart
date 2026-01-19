@@ -59,10 +59,15 @@ class TargetScreen extends StatelessWidget {
                     "已完成：${hours.toStringAsFixed(1)}小时(${percent.toStringAsFixed(1)}%)";
                 title =
                     "${target.name}${target.compareType}${target.durationHours}小时";
-              } else {
+              } else if (target.type == TargetType.frequency) {
                 // 其他类型暂显示默认文本
-                progressText = "进行中...";
-                title = "${target.name} ${target.compareType} ...";
+                progressText = "已完成";
+                title =
+                    "${target.name}${target.compareType}${target.frequencyCount}次";
+              } else {
+                progressText = "坚持了";
+                title =
+                    "${target.targetTime}${target.compareType}${target.name}";
               }
 
               return _buildTargetCard(
