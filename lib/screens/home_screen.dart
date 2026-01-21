@@ -809,6 +809,9 @@ class _HomeScreenState extends State<HomeScreen> {
         IconButton(
             icon: const Icon(Icons.delete_sweep),
             onPressed: () => _showClearDialog(context, provider)),
+        IconButton(
+            icon: const Icon(Icons.sync),
+            onPressed: () => provider.synchronizeWithGoogle()),
       ],
     );
   }
