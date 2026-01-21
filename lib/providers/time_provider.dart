@@ -190,7 +190,7 @@ class TimeProvider with ChangeNotifier {
     List<String> catList = _categories.map((c) {
       return json.encode({
         'name': c.name,
-        'color': c.color.toARGB32(), // 修正：必须保存 .value 整数值，否则 json.encode 会报错
+        'color': c.color.toARGB32(), // 修正：使用 .toARGB32() 替代已弃用的 .value
         'subCategories': c.subCategories,
       });
     }).toList();
@@ -212,7 +212,7 @@ class TimeProvider with ChangeNotifier {
           recordedSlots.add({
             'i': i, // 索引
             'l': slots[i].label,
-            'c': slots[i].color?..toARGB32(),
+            'c': slots[i].color?.toARGB32(),
           });
         }
       }
