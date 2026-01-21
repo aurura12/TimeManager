@@ -148,6 +148,20 @@ class TimeProvider with ChangeNotifier {
     _triggerAutoSync();
   }
 
+  void synchronizeWithGoogle() async {
+    if (GoogleCalendarService.currentUser != null) {
+      bool success =
+          await GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
+      if (success) {
+        _syncStatusController.add("同步成功");
+      } else {
+        _syncStatusController.add("同步失败，请稍后重试");
+      }
+    } else {
+      _syncStatusController.add("未登录谷歌账号，无法同步");
+    }
+  }
+
   // 移除指定时间块的事件
   void removeEventFromSlot(int index) {
     if (index >= 0 && index < slots.length) {
