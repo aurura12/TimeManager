@@ -445,7 +445,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
             .map((p) => ChoiceChip(
                   label: Text(p),
                   selected: _selectedPeriod == p,
-                  onSelected: (val) {
+                  onSelected: (val) async {
                     if (p == "每n天" || p == "n天内") {
                       _showInputDialog("天数", _durationValue, (v) {
                         setState(() {
@@ -453,6 +453,21 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                           _durationValue = v;
                         });
                       }, isNumber: true);
+                    } else if (p == "起止日期") {
+                      final DateTimeRange? picked = await showDateRangePicker(
+                        context: context,
+                        firstDate: DateTime(2000),
+                        lastDate: DateTime(2100),
+                      );
+                      if (picked != null) {
+                        setState(() {
+                          String start =
+                              "${picked.start.year}-${picked.start.month.toString().padLeft(2, '0')}-${picked.start.day.toString().padLeft(2, '0')}";
+                          String end =
+                              "${picked.end.year}-${picked.end.month.toString().padLeft(2, '0')}-${picked.end.day.toString().padLeft(2, '0')}";
+                          _selectedPeriod = "$start~$end";
+                        });
+                      }
                     } else {
                       setState(() => _selectedPeriod = p);
                     }
