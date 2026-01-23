@@ -55,9 +55,16 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
               onPressed: () => Navigator.pop(context), child: const Text("取消")),
           TextButton(
             onPressed: () {
-              onSave(controller.text);
-              Navigator.pop(context);
-              setState(() {});
+              if (controller.text.isEmpty) {
+                // Show a message if the input is empty.
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('请输入天数')),
+                );
+              } else {
+                onSave(controller.text);
+                Navigator.pop(context);
+                setState(() {});
+              }
             },
             child: const Text("确定"),
           ),
@@ -66,7 +73,6 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
     );
   }
 
-  // --- 辅助方法：时间选择器 ---
   Future<void> _pickTime(String initialTime, Function(String) onSave) async {
     final parts = initialTime.split(':');
     final TimeOfDay? picked = await showTimePicker(
@@ -430,6 +436,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
       "起止日期"
     ];
     return Padding(
+      // ----- 弹窗输入天数 -----
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Wrap(
         spacing: 8,
@@ -438,11 +445,18 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
             .map((p) => ChoiceChip(
                   label: Text(p),
                   selected: _selectedPeriod == p,
-                  onSelected: (val) => setState(() => _selectedPeriod = p),
-                  selectedColor: const Color(0xFF96B462),
-                  labelStyle: TextStyle(
-                      color:
-                          _selectedPeriod == p ? Colors.white : Colors.black54),
+                  onSelected: (val) {
+                    if (p == "每n天" || p == "n天内") {
+                      _showInputDialog("天数", _durationValue, (v) {
+                        setState(() {
+                          _selectedPeriod = p.replaceAll('n', v);
+                          _durationValue = v;
+                        });
+                      }, isNumber: true);
+                    } else {
+                      setState(() => _selectedPeriod = p);
+                    }
+                  },
                 ))
             .toList(),
       ),
