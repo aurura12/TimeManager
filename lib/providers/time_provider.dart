@@ -397,6 +397,81 @@ class TimeProvider with ChangeNotifier {
     return count;
   }
 
+  // 获取目标的历史记录，合并连续时间块
+  Map<String, List<String>> getTargetHistory(Target target) {
+    Map<String, List<String>> history = {};
+
+    // 1. 找出所有包含该目标记录的日期
+    List<String> validDates = _dailySlots.keys.where((dateKey) {
+      return _dailySlots[dateKey]!
+          .any((s) => s.recorded && s.label == target.name);
+    }).toList();
+
+    // 2. 按日期倒序排列 (最新的在前面)
+    validDates.sort((a, b) {
+      List<String> partsA = a.split('-');
+      List<String> partsB = b.split('-');
+      DateTime dA = DateTime(
+          int.parse(partsA[0]), int.parse(partsA[1]), int.parse(partsA[2]));
+      DateTime dB = DateTime(
+          int.parse(partsB[0]), int.parse(partsB[1]), int.parse(partsB[2]));
+      return dB.compareTo(dA);
+    });
+
+    // 3. 生成时间段字符串
+    for (String dateKey in validDates) {
+      List<TimeSlot> daySlots = _dailySlots[dateKey]!;
+      List<String> ranges = [];
+      int? startIdx;
+      int? endIdx;
+
+      for (int i = 0; i < daySlots.length; i++) {
+        bool isTarget =
+            daySlots[i].recorded && daySlots[i].label == target.name;
+        if (isTarget) {
+          if (startIdx == null) startIdx = i;
+          endIdx = i;
+        } else {
+          if (startIdx != null) {
+            ranges.add(_formatRange(startIdx, endIdx!));
+            startIdx = null;
+            endIdx = null;
+          }
+        }
+      }
+      // 处理一天结束时的最后一段
+      if (startIdx != null) {
+        ranges.add(_formatRange(startIdx, endIdx!));
+      }
+
+      if (ranges.isNotEmpty) {
+        List<String> parts = dateKey.split('-');
+        String formattedDate =
+            "${parts[0]}.${parts[1].padLeft(2, '0')}.${parts[2].padLeft(2, '0')}";
+        history[formattedDate] = ranges;
+      }
+    }
+    return history;
+  }
+
+  String _formatRange(int startIdx, int endIdx) {
+    int startH = startIdx ~/ 6;
+    int startM = (startIdx % 6) * 10;
+    // endIdx 是闭区间，结束时间是 endIdx + 1 个格子的开始时间
+    int endTotalIdx = endIdx + 1;
+    int endH = endTotalIdx ~/ 6;
+    int endM = (endTotalIdx % 6) * 10;
+
+    String startStr =
+        "${startH.toString().padLeft(2, '0')}:${startM.toString().padLeft(2, '0')}";
+    String endStr =
+        "${endH.toString().padLeft(2, '0')}:${endM.toString().padLeft(2, '0')}";
+    // 特殊处理 24:00
+    if (endH == 24 && endM == 0) endStr = "24:00";
+
+    return "$startStr~$endStr";
+  }
+
   int _parseTime(String time) {
     if (time.isEmpty) return 0;
     try {
