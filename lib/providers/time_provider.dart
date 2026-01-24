@@ -363,4 +363,73 @@ class TimeProvider with ChangeNotifier {
     });
     return count;
   }
+
+  // 计算目标在当前周期内的进度
+  double calculateTargetProgress(Target target) {
+    DateTime now = DateTime.now();
+    // 归一化到当天的 00:00:00
+    DateTime startDate = DateTime(now.year, now.month, now.day);
+    DateTime endDate = startDate.add(const Duration(days: 1));
+
+    // 1. 确定统计的时间范围
+    if (target.period == "每周" || target.period == "本周") {
+      // 假设周一为一周开始
+      startDate = startDate.subtract(Duration(days: startDate.weekday - 1));
+      endDate = startDate.add(const Duration(days: 7));
+    } else if (target.period == "每月" || target.period == "本月") {
+      startDate = DateTime(now.year, now.month, 1);
+      endDate = DateTime(now.year, now.month + 1, 1);
+    } else if (target.period == "每年" || target.period == "今年") {
+      startDate = DateTime(now.year, 1, 1);
+      endDate = DateTime(now.year + 1, 1, 1);
+    } else if (target.period.startsWith("每") &&
+        target.period.endsWith("天") &&
+        target.period != "每天") {
+      try {
+        final match = RegExp(r'每(\d+)天').firstMatch(target.period);
+        if (match != null) {
+          int periodDays = int.parse(match.group(1)!);
+          DateTime createTime =
+              DateTime.fromMillisecondsSinceEpoch(int.parse(target.id));
+          DateTime startOfCreate =
+              DateTime(createTime.year, createTime.month, createTime.day);
+          int daysSince = startDate.difference(startOfCreate).inDays;
+          if (daysSince >= 0) {
+            int cycleIndex = daysSince ~/ periodDays;
+            startDate =
+                startOfCreate.add(Duration(days: cycleIndex * periodDays));
+            endDate = startDate.add(Duration(days: periodDays));
+          }
+        }
+      } catch (_) {}
+    }
+
+    double totalValue = 0.0;
+    for (DateTime d = startDate;
+        d.isBefore(endDate);
+        d = d.add(const Duration(days: 1))) {
+      String key = _getDateKey(d);
+      if (_dailySlots.containsKey(key)) {
+        List<TimeSlot> slots = _dailySlots[key]!;
+        if (target.type == TargetType.duration) {
+          totalValue +=
+              slots.where((s) => s.recorded && s.label == target.name).length *
+                  10.0 /
+                  60.0;
+        } else if (target.type == TargetType.frequency) {
+          bool inBlock = false;
+          for (var slot in slots) {
+            bool isTarget = slot.recorded && slot.label == target.name;
+            if (isTarget && !inBlock) {
+              totalValue += 1;
+              inBlock = true;
+            } else if (!isTarget) {
+              inBlock = false;
+            }
+          }
+        }
+      }
+    }
+    return totalValue;
+  }
 }
