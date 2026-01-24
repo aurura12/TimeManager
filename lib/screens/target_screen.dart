@@ -51,12 +51,12 @@ class TargetScreen extends StatelessWidget {
               String progressText = "";
               String title = "";
 
+              // 使用 Provider 计算当前周期的进度
+              double currentValue =
+                  timeProvider.calculateTargetProgress(target);
+
               if (target.type == TargetType.duration) {
-                final recordedSlots = timeProvider.slots
-                    .where((s) => s.recorded && s.label == target.name)
-                    .toList();
-                final totalMinutes = recordedSlots.length * 10;
-                final double hours = totalMinutes / 60.0;
+                final double hours = currentValue;
                 final double percent = target.durationHours > 0
                     ? (hours / target.durationHours * 100).clamp(0.0, 100.0)
                     : 0.0;
@@ -65,10 +65,8 @@ class TargetScreen extends StatelessWidget {
                 title =
                     "${target.name}${target.compareType}${target.durationHours}小时";
               } else if (target.type == TargetType.frequency) {
-                final currentCount = timeProvider.slots
-                    .where((s) => s.recorded && s.label == target.name)
-                    .length;
-                progressText = "已完成 $currentCount/${target.frequencyCount}";
+                final int count = currentValue.toInt();
+                progressText = "已完成 $count/${target.frequencyCount}";
                 title =
                     "${target.name}${target.compareType}${target.frequencyCount}次";
               } else {
