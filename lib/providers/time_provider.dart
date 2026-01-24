@@ -354,14 +354,57 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  int getTargetPersistenceDays(String targetName) {
+  int getTargetPersistenceDays(Target target) {
     int count = 0;
     _dailySlots.forEach((_, daySlots) {
-      if (daySlots.any((s) => s.recorded && s.label == targetName)) {
-        count++;
+      // 1. 筛选出当天的相关事件
+      var slots = daySlots.where((s) => s.recorded && s.label == target.name);
+
+      if (slots.isNotEmpty) {
+        // 如果是时间点目标，需要进行额外的时间区间和比较逻辑判断
+        if (target.type == TargetType.timePoint) {
+          // 2. 有效时间区间过滤 (如果设置了)
+          if (target.startTime.isNotEmpty && target.endTime.isNotEmpty) {
+            int startMins = _parseTime(target.startTime);
+            int endMins = _parseTime(target.endTime);
+            slots = slots.where((s) {
+              int t = s.hour * 60 + s.minute10 * 10;
+              return t >= startMins && t < endMins;
+            });
+          }
+
+          if (slots.isNotEmpty) {
+            // 3. 比较目标时间
+            int targetMins = _parseTime(target.targetTime);
+            // 取最早的一次记录作为比较对象
+            int earliestMins = slots
+                .map((s) => s.hour * 60 + s.minute10 * 10)
+                .reduce((a, b) => a < b ? a : b);
+
+            if (target.compareType.contains("前") ||
+                target.compareType.contains("少")) {
+              if (earliestMins <= targetMins) count++;
+            } else {
+              if (earliestMins >= targetMins) count++;
+            }
+          }
+        } else {
+          // 非时间点目标，只要有记录就算坚持了一天 (保持原有逻辑)
+          count++;
+        }
       }
     });
     return count;
+  }
+
+  int _parseTime(String time) {
+    if (time.isEmpty) return 0;
+    try {
+      final parts = time.split(':');
+      return int.parse(parts[0]) * 60 + int.parse(parts[1]);
+    } catch (_) {
+      return 0;
+    }
   }
 
   // 计算目标在当前周期内的进度
