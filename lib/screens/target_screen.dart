@@ -70,7 +70,7 @@ class TargetScreen extends StatelessWidget {
                 title =
                     "${target.name}${target.compareType}${target.frequencyCount}次";
               } else {
-                final days = timeProvider.getTargetPersistenceDays(target.name);
+                final days = timeProvider.getTargetPersistenceDays(target);
                 progressText = "坚持了$days天";
                 title =
                     "${target.targetTime}${target.compareType}${target.name}";
