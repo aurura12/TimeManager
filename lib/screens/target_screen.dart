@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
@@ -77,6 +78,57 @@ class TargetScreen extends StatelessWidget {
                     "${target.targetTime}${target.compareType}${target.name}";
               }
 
+              Widget? topRightWidget;
+              if (target.period.startsWith("每") &&
+                  target.period.endsWith("天") &&
+                  target.period != "每天") {
+                try {
+                  final createTime =
+                      DateTime.fromMillisecondsSinceEpoch(int.parse(target.id));
+                  final now = DateTime.now();
+                  final d1 = DateTime(
+                      createTime.year, createTime.month, createTime.day);
+                  final d2 = DateTime(now.year, now.month, now.day);
+                  final days = d2.difference(d1).inDays + 1;
+                  topRightWidget = Text("第$days天",
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 15));
+                } catch (_) {}
+              } else {
+                DateTime? endTime;
+                // 获取当前 UTC 时间并转换为北京时间（UTC+8）的日期组件
+                final nowUtc = DateTime.now().toUtc();
+                final nowBeijing = nowUtc.add(const Duration(hours: 8));
+
+                // 计算北京时间下的截止时间（此时得到的 targetBeijing 是以 UTC 容器存储的北京时间墙钟）
+                DateTime? targetBeijing;
+                if (target.period == "今天") {
+                  targetBeijing = DateTime.utc(
+                      nowBeijing.year, nowBeijing.month, nowBeijing.day + 1);
+                } else if (target.period == "本周") {
+                  targetBeijing = DateTime.utc(
+                      nowBeijing.year,
+                      nowBeijing.month,
+                      nowBeijing.day + (8 - nowBeijing.weekday));
+                } else if (target.period == "本月") {
+                  targetBeijing =
+                      DateTime.utc(nowBeijing.year, nowBeijing.month + 1, 1);
+                } else if (target.period == "今年") {
+                  targetBeijing = DateTime.utc(nowBeijing.year + 1, 1, 1);
+                }
+
+                if (targetBeijing != null) {
+                  // 将北京时间的截止时间还原为真实的 UTC 时间戳
+                  // 因为 targetBeijing 是北京时间（比 UTC 快 8 小时），所以要减去 8 小时才是真实的 UTC 截止时间
+                  endTime = targetBeijing.subtract(const Duration(hours: 8));
+
+                  topRightWidget = _CountdownText(
+                    endTime: endTime,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                  );
+                }
+              }
+
               return Slidable(
                 key: ValueKey(target), // 必须有 Key
                 endActionPane: ActionPane(
@@ -121,6 +173,7 @@ class TargetScreen extends StatelessWidget {
                   subtitle: target.period,
                   title: title,
                   progressText: progressText,
+                  topRightWidget: topRightWidget,
                   color: target.color,
                   onTap: () {
                     Navigator.push(
@@ -146,6 +199,7 @@ class TargetScreen extends StatelessWidget {
     String? subtitle,
     required String title,
     required String progressText,
+    Widget? topRightWidget,
     required Color color,
     VoidCallback? onTap,
   }) {
@@ -169,11 +223,17 @@ class TargetScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (subtitle != null)
-              Text(
-                subtitle,
-                style: const TextStyle(color: Colors.white70, fontSize: 13),
-              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                if (subtitle != null)
+                  Text(
+                    subtitle,
+                    style: const TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                if (topRightWidget != null) topRightWidget,
+              ],
+            ),
             const SizedBox(height: 4),
             Text(
               title,
@@ -219,5 +279,62 @@ class TargetScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _CountdownText extends StatefulWidget {
+  final DateTime endTime;
+  final TextStyle style;
+
+  const _CountdownText({required this.endTime, required this.style});
+
+  @override
+  State<_CountdownText> createState() => _CountdownTextState();
+}
+
+class _CountdownTextState extends State<_CountdownText> {
+  late Timer _timer;
+  Duration _remaining = Duration.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _updateTime();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _updateTime());
+  }
+
+  void _updateTime() {
+    final now = DateTime.now().toUtc();
+    final diff = widget.endTime.difference(now);
+    if (mounted) {
+      setState(() {
+        _remaining = diff.isNegative ? Duration.zero : diff;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final days = _remaining.inDays;
+    final hours = _remaining.inHours % 24;
+    final minutes = _remaining.inMinutes % 60;
+    final seconds = _remaining.inSeconds % 60;
+
+    String text;
+    if (days > 0) {
+      text =
+          "$days天 ${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}";
+    } else {
+      text =
+          "${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}";
+    }
+
+    return Text(" $text", style: widget.style);
   }
 }
