@@ -4,7 +4,9 @@ import '../providers/time_provider.dart';
 import '../models/target.dart';
 
 class AddTargetScreen extends StatefulWidget {
-  const AddTargetScreen({super.key});
+  final Target? target; // 接收可选的目标对象用于编辑
+
+  const AddTargetScreen({super.key, this.target});
 
   @override
   State<AddTargetScreen> createState() => _AddTargetScreenState();
@@ -33,6 +35,35 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
     const Color(0xFF9575CD),
     const Color(0xFFE91E63),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    // 如果传入了 target，则初始化表单数据（回显）
+    if (widget.target != null) {
+      final t = widget.target!;
+      _eventName = t.name;
+      _selectedType = t.type;
+      _selectedPeriod = t.period;
+      _compareType = t.compareType;
+
+      // 查找颜色索引
+      int colorIndex = _themeColors.indexWhere((c) => c.value == t.color.value);
+      if (colorIndex != -1) _selectedColorIndex = colorIndex;
+
+      // 根据类型回显具体数值
+      if (t.type == TargetType.duration) {
+        _durationValue =
+            t.durationHours.toString().replaceAll(RegExp(r'\.0$'), '');
+      } else if (t.type == TargetType.frequency) {
+        _frequencyCount = t.frequencyCount.toString();
+      } else if (t.type == TargetType.timePoint) {
+        _targetTime = t.targetTime;
+        _startTime = t.startTime;
+        _endTime = t.endTime;
+      }
+    }
+  }
 
   // --- 辅助方法：显示输入弹窗 ---
   Future<void> _showInputDialog(
@@ -176,7 +207,10 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
           onPressed: () {
             final provider = Provider.of<TimeProvider>(context, listen: false);
             final newTarget = Target(
-              id: DateTime.now().millisecondsSinceEpoch.toString(),
+              id: widget.target?.id ??
+                  DateTime.now()
+                      .millisecondsSinceEpoch
+                      .toString(), // 编辑时保持 ID 不变
               name: _eventName,
               type: _selectedType,
               color: activeColor,
@@ -188,13 +222,18 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
               startTime: _startTime,
               endTime: _endTime,
             );
-            provider.addTarget(newTarget);
+            if (widget.target != null) {
+              provider.updateTarget(newTarget);
+            } else {
+              provider.addTarget(newTarget);
+            }
             Navigator.pop(context);
           },
           child: const Text("确定",
               style: TextStyle(color: Colors.white, fontSize: 16)),
         ),
-        title: const Text("制定计划", style: TextStyle(color: Colors.white)),
+        title: Text(widget.target != null ? "编辑计划" : "制定计划",
+            style: const TextStyle(color: Colors.white)),
         centerTitle: true,
         actions: [
           PopupMenuButton<TargetType>(

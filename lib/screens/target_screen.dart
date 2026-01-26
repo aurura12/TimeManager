@@ -142,7 +142,13 @@ class TargetScreen extends StatelessWidget {
                             child: InkWell(
                               onTap: () {
                                 // 处理编辑逻辑
-                                print("编辑 ${target.name}");
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        AddTargetScreen(target: target),
+                                  ),
+                                );
                               },
                               child: const Center(
                                 child:
