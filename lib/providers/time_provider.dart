@@ -381,6 +381,15 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  void updateTarget(Target newTarget) {
+    int index = _targets.indexWhere((t) => t.id == newTarget.id);
+    if (index != -1) {
+      _targets[index] = newTarget;
+      _saveData(); // 更新后保存
+      notifyListeners();
+    }
+  }
+
   void deleteTarget(Target target) {
     _targets.remove(target);
     _saveData(); // 删除后保存

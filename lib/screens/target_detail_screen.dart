@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 import '../models/target.dart';
+import 'add_target_screen.dart';
 
 class TargetDetailScreen extends StatelessWidget {
   final Target target;
@@ -26,13 +27,39 @@ class TargetDetailScreen extends StatelessWidget {
         actions: [
           IconButton(
               icon: const Icon(Icons.edit, color: Colors.white),
-              onPressed: () {}),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => AddTargetScreen(target: target),
+                  ),
+                );
+              }),
           IconButton(
               icon: const Icon(Icons.delete_outline, color: Colors.white),
               onPressed: () {
-                Provider.of<TimeProvider>(context, listen: false)
-                    .deleteTarget(target);
-                Navigator.pop(context);
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text("确认删除"),
+                    content: Text("确定要删除目标“${target.name}”吗？"),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text("取消")),
+                      TextButton(
+                          onPressed: () {
+                            Provider.of<TimeProvider>(context, listen: false)
+                                .deleteTarget(target);
+                            Navigator.pop(context); // 关闭弹窗
+                            Navigator.pop(context); // 关闭详情页
+                          },
+                          style:
+                              TextButton.styleFrom(foregroundColor: Colors.red),
+                          child: const Text("删除")),
+                    ],
+                  ),
+                );
               }),
         ],
       ),
