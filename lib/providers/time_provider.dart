@@ -315,24 +315,28 @@ class TimeProvider with ChangeNotifier {
 
   // 触发自动同步
   Future<void> _triggerAutoSync() async {
-    // 如果已有定时器在运行，直接取消它，重新计时
-    if (_debounceTimer?.isActive ?? false) {
-      _debounceTimer!.cancel();
-    }
+    if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
 
-    // 设置延迟执行，比如 2 秒（2000 毫秒）
-    // 用户连续涂抹格子时，只有停止操作 2 秒后才会真正发起网络请求
     _debounceTimer = Timer(const Duration(milliseconds: 2000), () async {
       if (GoogleCalendarService.currentUser != null) {
-        _syncStatusController.add("正在自动同步..."); // 给用户一个中间态反馈
+        // 先提示开始同步
+        _syncStatusController.add("开始同步");
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (_syncStatusController.isClosed) return;
+        _syncStatusController.add("SYNCING");
 
         bool success =
             await GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
 
         if (success) {
           _syncStatusController.add("同步成功");
+          // 3秒后清空状态，让进度条消失
+          Future.delayed(const Duration(seconds: 3),
+              () => _syncStatusController.add("IDLE"));
         } else {
-          _syncStatusController.add("同步失败，请检查网络");
+          _syncStatusController.add("同步失败");
+          Future.delayed(const Duration(seconds: 3),
+              () => _syncStatusController.add("IDLE"));
         }
       }
     });

@@ -37,10 +37,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // 监听同步状态并显示提示
     _syncSubscription = timeProvider.syncStatusStream.listen((message) {
-      if (mounted) {
+      // 只对最终状态（成功/失败）的消息弹出提示，避免 "SYNCING" 和 "IDLE" 弹出
+      if (mounted && message != "SYNCING" && message != "IDLE") {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(message), duration: const Duration(seconds: 1)),
+              content: Text(message), duration: const Duration(seconds: 2)),
         );
       }
     });
@@ -118,20 +119,44 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: const Color(0xFF9CB86A),
         title: _buildAppBarTitle(timeProvider, timeProvider.currentDate),
       ),
-      body: Row(
+      body: Column(
         children: [
           Expanded(
-            child: ListView.builder(
-              key: _gridKey,
-              controller: _scrollController,
-              // 如果你想让网格区域完全不响应滚动手势，只响应选中手势：
-              // physics: const ClampingScrollPhysics(), // 或者默认
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              itemCount: 24, // 保持 24 小时
-              itemBuilder: (context, h) => _buildIntegratedRow(h, timeProvider),
+            child: Row(
+              children: [
+                Expanded(
+                  child: ListView.builder(
+                    key: _gridKey,
+                    controller: _scrollController,
+                    // 如果你想让网格区域完全不响应滚动手势，只响应选中手势：
+                    // physics: const ClampingScrollPhysics(), // 或者默认
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: 24, // 保持 24 小时
+                    itemBuilder: (context, h) =>
+                        _buildIntegratedRow(h, timeProvider),
+                  ),
+                ),
+                _buildCategorySidebar(timeProvider),
+              ],
             ),
           ),
-          _buildCategorySidebar(timeProvider),
+          // 使用 StreamBuilder 监听同步状态
+          StreamBuilder<String>(
+            stream: timeProvider.syncStatusStream,
+            builder: (context, snapshot) {
+              final status = snapshot.data ?? "IDLE";
+
+              // 当状态为 SYNCING 时，显示运动的进度条
+              if (status == "SYNCING") {
+                return const LinearProgressIndicator(
+                  backgroundColor: Colors.transparent,
+                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF9CB86A)),
+                  minHeight: 3, // 线条粗细
+                );
+              }
+              return const SizedBox(height: 3); // 占位，保持高度一致
+            },
+          ),
         ],
       ),
     );
