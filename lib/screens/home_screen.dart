@@ -295,73 +295,113 @@ class _HomeScreenState extends State<HomeScreen> {
     return Container(
       width: 90,
       color: Colors.grey[100],
-      child: ReorderableListView.builder(
-        // 1. 核心排序逻辑
-        itemCount: provider.categories.length,
-        onReorder: (oldIndex, newIndex) {
-          provider.reorderCategories(oldIndex, newIndex);
-        },
+      child: Column(
+        children: [
+          Expanded(
+            child: ReorderableListView.builder(
+              // 1. 核心排序逻辑
+              itemCount: provider.categories.length,
+              onReorder: (oldIndex, newIndex) {
+                provider.reorderCategories(oldIndex, newIndex);
+              },
 
-        // 2. 补齐底部添加按钮
-        footer: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: ElevatedButton(
-            onPressed: () =>
-                _showCategoryDialog(context, provider), // 调用通用对话框（添加模式）
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              backgroundColor: Colors.white,
-              foregroundColor: Colors.grey[700],
-              elevation: 0,
-              side: BorderSide(color: Colors.grey[300]!),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8)),
+              // 2. 补齐底部添加按钮
+              footer: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: ElevatedButton(
+                  onPressed: () =>
+                      _showCategoryDialog(context, provider), // 调用通用对话框（添加模式）
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    backgroundColor: Colors.white,
+                    foregroundColor: Colors.grey[700],
+                    elevation: 0,
+                    side: BorderSide(color: Colors.grey[300]!),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: const Icon(Icons.add, size: 24),
+                ),
+              ),
+
+              // 3. 列表项构建
+              itemBuilder: (context, index) {
+                final category = provider.categories[index];
+
+                return Slidable(
+                  // Slidable 必须有唯一的 Key 才能在排序时保持状态
+                  key: ValueKey('slidable_${category.name}_$index'),
+
+                  // 配置左滑删除按钮
+                  endActionPane: ActionPane(
+                    motion: const DrawerMotion(),
+                    extentRatio: 0.6, // 侧滑展开的宽度比例
+                    children: [
+                      SlidableAction(
+                        onPressed: (context) => _showDeleteConfirmDialog(
+                            context, index, category, provider),
+                        backgroundColor: const Color(0xFFFE4A49),
+                        foregroundColor: Colors.white,
+                        icon: Icons.delete,
+                        label: '删除',
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ],
+                  ),
+
+                  // 包装原有的分类 UI
+                  child: _buildCategoryItem(index, category, provider),
+                );
+              },
             ),
-            child: const Icon(Icons.add, size: 24),
           ),
-        ),
-
-        // 3. 列表项构建
-        itemBuilder: (context, index) {
-          final category = provider.categories[index];
-
-          return Slidable(
-            // Slidable 必须有唯一的 Key 才能在排序时保持状态
-            key: ValueKey('slidable_${category.name}_$index'),
-
-            // 配置左滑删除按钮
-            endActionPane: ActionPane(
-              motion: const DrawerMotion(),
-              extentRatio: 0.6, // 侧滑展开的宽度比例
-              children: [
-                SlidableAction(
-                  onPressed: (context) => _showDeleteConfirmDialog(
-                      context, index, category, provider),
-                  backgroundColor: const Color(0xFFFE4A49),
-                  foregroundColor: Colors.white,
-                  icon: Icons.delete,
-                  label: '删除',
+          /*
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: InkWell(
+              onTap: () => _showTemporaryEventDialog(provider),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.grey[400],
                   borderRadius: BorderRadius.circular(6),
                 ),
-              ],
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.add_task, color: Colors.white, size: 16),
+                    SizedBox(width: 4),
+                    Text(
+                      "临时",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-
-            // 包装原有的分类 UI
-            child: _buildCategoryItem(index, category, provider),
-          );
-        },
+          ),
+          */
+        ],
       ),
     );
   }
 
   Widget _buildCategoryItem(int catIndex, Category cat, TimeProvider provider) {
     bool isExpanded = _expandedCategories[catIndex] ?? true;
+    bool isTemporary = cat.name == '临时';
 
     return Column(
       children: [
         // 事件项
         InkWell(
-          onTap: () => _assignCategory(cat, provider),
+          onTap: () => isTemporary
+              ? _showTemporaryEventDialog(provider)
+              : _assignCategory(cat, provider),
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
@@ -372,18 +412,19 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Row(
               children: [
                 // 展开按钮
-                GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _expandedCategories[catIndex] = !isExpanded;
-                    });
-                  },
-                  child: Icon(
-                    isExpanded ? Icons.expand_less : Icons.expand_more,
-                    color: Colors.white,
-                    size: 16,
+                if (!isTemporary)
+                  GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _expandedCategories[catIndex] = !isExpanded;
+                      });
+                    },
+                    child: Icon(
+                      isExpanded ? Icons.expand_less : Icons.expand_more,
+                      color: Colors.white,
+                      size: 16,
+                    ),
                   ),
-                ),
                 // 事件名称
                 Expanded(
                   child: Text(
@@ -402,7 +443,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         // 展开后显示子事件
-        if (isExpanded)
+        if (isExpanded && !isTemporary)
           Padding(
             padding: const EdgeInsets.only(left: 8.0, right: 4.0),
             child: Column(
@@ -528,6 +569,54 @@ class _HomeScreenState extends State<HomeScreen> {
     Category newCat =
         provider.categories[catIndex].copyWith(subCategories: newSubs);
     provider.updateCategory(catIndex, newCat);
+  }
+
+  void _showTemporaryEventDialog(TimeProvider provider) {
+    if (_dragStartIndex == null || _dragEndIndex == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text("请先在左侧网格中选择时间块"), duration: Duration(seconds: 2)),
+      );
+      return;
+    }
+
+    final nameController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("临时事件"),
+          content: TextField(
+            controller: nameController,
+            decoration: const InputDecoration(hintText: "请输入事件名称"),
+            autofocus: true,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("取消"),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (nameController.text.isNotEmpty) {
+                  // 创建一个新的 Category 对象，并添加到 categories 列表中
+                  final tempCategory = Category(
+                    name: nameController.text,
+                    color: Colors.grey[500]!, // A neutral color
+                  );
+                  Category tempCat =
+                      Category(name: nameController.text, color: Colors.grey);
+                  _assignCategory(tempCat, provider);
+                  Navigator.pop(context);
+                }
+              },
+              child: const Text("确认"),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _showCategoryDialog(BuildContext context, TimeProvider provider,
