@@ -6,8 +6,11 @@ import '../services/google_calendar_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import '../models/target.dart';
+import 'dart:async';
 
 class TimeProvider with ChangeNotifier {
+  Timer? _debounceTimer;
+
   DateTime _currentDate = DateTime.now();
 
   // 存储模型对象 Map
@@ -30,6 +33,7 @@ class TimeProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _syncStatusController.close();
     super.dispose();
   }
@@ -311,13 +315,27 @@ class TimeProvider with ChangeNotifier {
 
   // 触发自动同步
   Future<void> _triggerAutoSync() async {
-    if (GoogleCalendarService.currentUser != null) {
-      bool success =
-          await GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
-      if (success) {
-        _syncStatusController.add("同步成功");
-      }
+    // 如果已有定时器在运行，直接取消它，重新计时
+    if (_debounceTimer?.isActive ?? false) {
+      _debounceTimer!.cancel();
     }
+
+    // 设置延迟执行，比如 2 秒（2000 毫秒）
+    // 用户连续涂抹格子时，只有停止操作 2 秒后才会真正发起网络请求
+    _debounceTimer = Timer(const Duration(milliseconds: 2000), () async {
+      if (GoogleCalendarService.currentUser != null) {
+        _syncStatusController.add("正在自动同步..."); // 给用户一个中间态反馈
+
+        bool success =
+            await GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
+
+        if (success) {
+          _syncStatusController.add("同步成功");
+        } else {
+          _syncStatusController.add("同步失败，请检查网络");
+        }
+      }
+    });
   }
 
   void reorderCategories(int oldIndex, int newIndex) {
