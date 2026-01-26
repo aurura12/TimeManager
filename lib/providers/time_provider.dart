@@ -12,6 +12,7 @@ class TimeProvider with ChangeNotifier {
   Timer? _debounceTimer;
 
   DateTime _currentDate = DateTime.now();
+  bool _isSyncing = false; // 添加同步锁标志，防止并发同步导致重复
 
   // 存储模型对象 Map
   final Map<String, List<TimeSlot>> _dailySlots = {};
@@ -153,13 +154,20 @@ class TimeProvider with ChangeNotifier {
   }
 
   void synchronizeWithGoogle() async {
+    if (_isSyncing) return; // 如果正在同步，直接返回
+
     if (GoogleCalendarService.currentUser != null) {
-      bool success =
-          await GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
-      if (success) {
-        _syncStatusController.add("同步成功");
-      } else {
-        _syncStatusController.add("同步失败，请稍后重试");
+      _isSyncing = true; // 加锁
+      try {
+        bool success =
+            await GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
+        if (success) {
+          _syncStatusController.add("同步成功");
+        } else {
+          _syncStatusController.add("同步失败，请稍后重试");
+        }
+      } finally {
+        _isSyncing = false; // 无论成功失败，最后都要解锁
       }
     } else {
       _syncStatusController.add("未登录谷歌账号，无法同步");
@@ -318,25 +326,32 @@ class TimeProvider with ChangeNotifier {
     if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
 
     _debounceTimer = Timer(const Duration(milliseconds: 2000), () async {
+      if (_isSyncing) return; // 如果正在同步，跳过本次自动同步
+
       if (GoogleCalendarService.currentUser != null) {
-        // 先提示开始同步
-        _syncStatusController.add("开始同步");
-        await Future.delayed(const Duration(milliseconds: 500));
-        if (_syncStatusController.isClosed) return;
-        _syncStatusController.add("SYNCING");
+        _isSyncing = true; // 加锁
+        try {
+          // 先提示开始同步
+          _syncStatusController.add("开始同步");
+          await Future.delayed(const Duration(milliseconds: 500));
+          if (_syncStatusController.isClosed) return;
+          _syncStatusController.add("SYNCING");
 
-        bool success =
-            await GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
+          bool success = await GoogleCalendarService.syncSlotsToGoogle(
+              slots, _currentDate);
 
-        if (success) {
-          _syncStatusController.add("同步成功");
-          // 3秒后清空状态，让进度条消失
-          Future.delayed(const Duration(seconds: 3),
-              () => _syncStatusController.add("IDLE"));
-        } else {
-          _syncStatusController.add("同步失败");
-          Future.delayed(const Duration(seconds: 3),
-              () => _syncStatusController.add("IDLE"));
+          if (success) {
+            _syncStatusController.add("同步成功");
+            // 3秒后清空状态，让进度条消失
+            Future.delayed(const Duration(seconds: 3),
+                () => _syncStatusController.add("IDLE"));
+          } else {
+            _syncStatusController.add("同步失败");
+            Future.delayed(const Duration(seconds: 3),
+                () => _syncStatusController.add("IDLE"));
+          }
+        } finally {
+          _isSyncing = false; // 解锁
         }
       }
     });
