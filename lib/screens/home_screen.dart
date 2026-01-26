@@ -355,37 +355,6 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
           ),
-          /*
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-            child: InkWell(
-              onTap: () => _showTemporaryEventDialog(provider),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.grey[400],
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.add_task, color: Colors.white, size: 16),
-                    SizedBox(width: 4),
-                    Text(
-                      "临时",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          */
         ],
       ),
     );
@@ -586,10 +555,10 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text("临时事件"),
+          title: const Text("请输入临时事件名称"),
           content: TextField(
             controller: nameController,
-            decoration: const InputDecoration(hintText: "请输入事件名称"),
+            decoration: const InputDecoration(hintText: "名称尽量短"),
             autofocus: true,
           ),
           actions: [
