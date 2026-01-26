@@ -251,6 +251,11 @@ class TimeProvider with ChangeNotifier {
           subCategories: List<String>.from(map['subCategories'] ?? []),
         );
       }).toList();
+
+      // 确保存在“临时”分类，并添加到列表末尾
+      if (!_categories.any((c) => c.name == '临时')) {
+        _categories.add(Category(name: '临时', color: const Color(0xFF9E9E9E)));
+      }
     } else {
       // 默认分类
       _categories = [
@@ -263,6 +268,7 @@ class TimeProvider with ChangeNotifier {
             color: const Color(0xFF9CB86A),
             subCategories: ['会议', '文档']),
         Category(name: '运动', color: const Color(0xFF4A90E2)),
+        Category(name: '临时', color: const Color(0xFF9E9E9E)),
       ];
     }
 
