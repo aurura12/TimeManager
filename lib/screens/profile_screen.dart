@@ -391,6 +391,7 @@ class _ProfileScreenState extends State<ProfileScreen>
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: ListTile(
+              dense: true,
               onTap: () {
                 // 点击跳转到详情页，传入事件名称
                 Navigator.push(
