@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../services/google_calendar_service.dart';
 import '../providers/time_provider.dart';
+import 'event_detail_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -379,6 +380,18 @@ class _ProfileScreenState extends State<ProfileScreen>
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: ListTile(
+              onTap: () {
+                // 点击跳转到详情页，传入事件名称
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => EventDetailScreen(
+                      eventName: key,
+                      tabIndex: tabIndex,
+                    ),
+                  ),
+                );
+              },
               leading: Container(
                 width: 12,
                 height: 12,
