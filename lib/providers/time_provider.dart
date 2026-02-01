@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import '../models/target.dart';
 import 'dart:async';
+import 'package:fl_chart/fl_chart.dart';
 
 class TimeProvider with ChangeNotifier {
   Timer? _debounceTimer;
@@ -601,5 +602,25 @@ class TimeProvider with ChangeNotifier {
       }
     }
     return totalValue;
+  }
+
+  Map<String, double> getStatistics(DateTime start, DateTime end) {
+    Map<String, double> stats = {};
+
+    // 遍历日期范围内的每一天
+    for (int i = 0; i <= end.difference(start).inDays; i++) {
+      DateTime date = start.add(Duration(days: i));
+      String key = _getDateKey(date);
+
+      if (_dailySlots.containsKey(key)) {
+        for (var slot in _dailySlots[key]!) {
+          if (slot.recorded && slot.label != null) {
+            // 每个格子代表 1/6 小时 (10分钟)
+            stats[slot.label!] = (stats[slot.label!] ?? 0) + (1 / 6);
+          }
+        }
+      }
+    }
+    return stats;
   }
 }
