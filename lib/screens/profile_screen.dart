@@ -16,6 +16,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   int _groupValue = 0; // 0: 列表, 1: 饼图
+  int _touchedIndex = -1;
 
   @override
   void initState() {
@@ -209,6 +210,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       ),
       child: TabBar(
         controller: _tabController,
+        indicatorSize: TabBarIndicatorSize.label,
         indicator: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
@@ -221,10 +223,18 @@ class _ProfileScreenState extends State<ProfileScreen>
         unselectedLabelColor: Colors.grey[600],
         labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
         tabs: const [
-          Tab(text: "今天"),
-          Tab(text: "最近一周"),
-          Tab(text: "最近一月"),
-          Tab(text: "总览")
+          Tab(
+              child: SizedBox(
+                  width: 70, height: 32, child: Center(child: Text("今天")))),
+          Tab(
+              child: SizedBox(
+                  width: 70, height: 32, child: Center(child: Text("最近一周")))),
+          Tab(
+              child: SizedBox(
+                  width: 70, height: 32, child: Center(child: Text("最近一月")))),
+          Tab(
+              child: SizedBox(
+                  width: 70, height: 32, child: Center(child: Text("总览")))),
         ],
         onTap: (index) => setState(() {}),
       ),
@@ -373,7 +383,8 @@ class _ProfileScreenState extends State<ProfileScreen>
                 width: 12,
                 height: 12,
                 decoration: BoxDecoration(
-                    color: itemColor.withValues(alpha: 0.6), shape: BoxShape.circle),
+                    color: itemColor.withValues(alpha: 0.6),
+                    shape: BoxShape.circle),
               ),
               title: Text(key,
                   style: const TextStyle(
@@ -414,24 +425,49 @@ class _ProfileScreenState extends State<ProfileScreen>
       child: Column(
         children: [
           SizedBox(
-            height: 200,
+            height: 260,
             child: PieChart(
               PieChartData(
+                pieTouchData: PieTouchData(
+                  touchCallback: (FlTouchEvent event, pieTouchResponse) {
+                    setState(() {
+                      if (!event.isInterestedForInteractions ||
+                          pieTouchResponse == null ||
+                          pieTouchResponse.touchedSection == null) {
+                        if (event is FlTapUpEvent) {
+                          _touchedIndex = -1;
+                        }
+                        return;
+                      }
+                      _touchedIndex =
+                          pieTouchResponse.touchedSection!.touchedSectionIndex;
+                    });
+                  },
+                ),
                 sectionsSpace: 2,
                 centerSpaceRadius: 40,
                 sections: List.generate(stats.length, (i) {
                   final entry = stats[i];
                   final color = Colors.primaries[i % Colors.primaries.length];
                   final percentage = (entry.value / total * 100);
+                  final isTouched = i == _touchedIndex;
+                  final double fontSize = isTouched ? 14.0 : 12.0;
+                  final double radius = isTouched ? 60.0 : 50.0;
+
                   return PieChartSectionData(
                     color: color,
                     value: entry.value,
-                    title: '${percentage.toStringAsFixed(1)}%',
-                    radius: 50,
-                    titleStyle: const TextStyle(
-                        fontSize: 12,
+                    title: isTouched
+                        ? '${entry.key}\n${percentage.toStringAsFixed(1)}%'
+                        : (percentage < 5
+                            ? ''
+                            : '${percentage.toStringAsFixed(1)}%'),
+                    radius: radius,
+                    titlePositionPercentageOffset: isTouched ? 1.5 : 0.5,
+                    titleStyle: TextStyle(
+                        fontSize: fontSize,
                         fontWeight: FontWeight.bold,
-                        color: Colors.white),
+                        color: isTouched ? Colors.black87 : Colors.white),
                   );
                 }),
               ),
