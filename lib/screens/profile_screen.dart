@@ -33,7 +33,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
-        title: const Text("统计与账户",
+        title: const Text("个人中心",
             style:
                 TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.transparent,
@@ -62,7 +62,7 @@ class _ProfileScreenState extends State<ProfileScreen>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text("详细分类统计",
+              const Text("分类统计",
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
               CupertinoSegmentedControl<int>(
                 groupValue: _groupValue,
@@ -204,38 +204,49 @@ class _ProfileScreenState extends State<ProfileScreen>
   Widget _buildCustomTabBar() {
     return Container(
       height: 45,
-      padding: const EdgeInsets.all(4),
+      // 如果 TabBar 放在过窄的容器里，可以尝试稍微调大外层宽度或减小 padding
+      padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
         color: Colors.grey[200],
         borderRadius: BorderRadius.circular(15),
       ),
       child: TabBar(
         controller: _tabController,
-        indicatorSize: TabBarIndicatorSize.label,
+        // 1. 关闭滚动，确保 TabBar 整体填满 Container，滑块在内部滑动
+        isScrollable: false,
+
+        // 2. 将指示器设置为 tab，这样白色块会填满整个选项区域，滑动感更强
+        indicatorSize: TabBarIndicatorSize.tab,
+
+        // 3. 移除默认的底部横线
+        dividerColor: Colors.transparent,
+
         indicator: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05), blurRadius: 5)
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 5,
+            )
           ],
         ),
         labelColor: const Color(0xFF9CB86A),
         unselectedLabelColor: Colors.grey[600],
-        labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+        labelStyle: const TextStyle(
+          fontWeight: FontWeight.bold,
+          fontSize: 13,
+          height: 1.1, // 微调行高，防止文字偏下
+        ),
+
+        // 4. 关键：将 labelPadding 设为极小值，给文字留出最大空间
+        labelPadding: const EdgeInsets.symmetric(horizontal: 2),
+
         tabs: const [
-          Tab(
-              child: SizedBox(
-                  width: 70, height: 32, child: Center(child: Text("今天")))),
-          Tab(
-              child: SizedBox(
-                  width: 70, height: 32, child: Center(child: Text("最近一周")))),
-          Tab(
-              child: SizedBox(
-                  width: 70, height: 32, child: Center(child: Text("最近一月")))),
-          Tab(
-              child: SizedBox(
-                  width: 70, height: 32, child: Center(child: Text("总览")))),
+          Tab(child: Center(child: Text("今天", maxLines: 1))),
+          Tab(child: Center(child: Text("最近一周", maxLines: 1))),
+          Tab(child: Center(child: Text("最近一月", maxLines: 1))),
+          Tab(child: Center(child: Text("总览", maxLines: 1))),
         ],
         onTap: (index) => setState(() {}),
       ),
