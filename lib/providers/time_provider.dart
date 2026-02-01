@@ -623,4 +623,57 @@ class TimeProvider with ChangeNotifier {
     }
     return stats;
   }
+
+  // 在 TimeProvider 类中添加
+  Map<String, List<String>> getEventHistory(String eventName, int tabIndex) {
+    Map<String, List<String>> history = {};
+
+    // 确定起始日期
+    DateTime now = DateTime.now();
+    DateTime start;
+    if (tabIndex == 0)
+      start = DateTime(now.year, now.month, now.day);
+    else if (tabIndex == 1)
+      start = now.subtract(const Duration(days: 7));
+    else if (tabIndex == 2)
+      start = DateTime(now.year, now.month - 1, now.day);
+    else
+      start = DateTime(2025);
+
+    // 遍历日期
+    for (int i = 0; i <= now.difference(start).inDays; i++) {
+      DateTime date = now.subtract(Duration(days: i));
+      String dateKey = _getDateKey(date);
+
+      if (_dailySlots.containsKey(dateKey)) {
+        List<TimeSlot> daySlots = _dailySlots[dateKey]!;
+        List<String> ranges = [];
+
+        int j = 0;
+        while (j < daySlots.length) {
+          if (daySlots[j].recorded && daySlots[j].label == eventName) {
+            int startIdx = j;
+            while (j < daySlots.length &&
+                daySlots[j].recorded &&
+                daySlots[j].label == eventName) {
+              j++;
+            }
+            // 转换索引为时间字符串，例如 "08:00 - 08:30"
+            String startT =
+                "${(startIdx ~/ 6).toString().padLeft(2, '0')}:${(startIdx % 6 * 10).toString().padLeft(2, '0')}";
+            String endT =
+                "${(j ~/ 6).toString().padLeft(2, '0')}:${(j % 6 * 10).toString().padLeft(2, '0')}";
+            ranges.add("$startT - $endT");
+          } else {
+            j++;
+          }
+        }
+
+        if (ranges.isNotEmpty) {
+          history["${date.month}月${date.day}日"] = ranges;
+        }
+      }
+    }
+    return history;
+  }
 }
