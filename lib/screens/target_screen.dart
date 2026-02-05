@@ -27,7 +27,8 @@ class TargetScreen extends StatelessWidget {
               // 点击跳转到添加目标页面
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => AddTargetScreen()),
+                MaterialPageRoute(
+                    builder: (context) => const AddTargetScreen()),
               );
             },
           ),

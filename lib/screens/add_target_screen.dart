@@ -48,8 +48,10 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
       _compareType = t.compareType;
 
       // 查找颜色索引
-      int colorIndex = _themeColors.indexWhere((c) => c.value == t.color.value);
-      if (colorIndex != -1) _selectedColorIndex = colorIndex;
+      int colorIndex = _themeColors.indexWhere((Color c) => c == t.color);
+      if (colorIndex != -1) {
+        _selectedColorIndex = colorIndex;
+      }
 
       // 根据类型回显具体数值
       if (t.type == TargetType.duration) {
