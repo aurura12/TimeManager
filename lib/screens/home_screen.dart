@@ -594,11 +594,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ElevatedButton(
               onPressed: () {
                 if (nameController.text.isNotEmpty) {
-                  // 创建一个新的 Category 对象，并添加到 categories 列表中
-                  final tempCategory = Category(
-                    name: nameController.text,
-                    color: Colors.grey[500]!, // A neutral color
-                  );
                   Category tempCat =
                       Category(name: nameController.text, color: Colors.grey);
                   _assignCategory(tempCat, provider);

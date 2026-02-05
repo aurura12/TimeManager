@@ -6,8 +6,6 @@ import '../services/google_calendar_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import '../models/target.dart';
-import 'dart:async';
-import 'package:fl_chart/fl_chart.dart';
 
 class TimeProvider with ChangeNotifier {
   Timer? _debounceTimer;
@@ -102,7 +100,7 @@ class TimeProvider with ChangeNotifier {
     _dailySlots[dateKey] = _generateInitialSlots();
     _saveData(); // 保存更改
     notifyListeners();
-    _triggerAutoSync();
+    synchronizeWithGoogle(delay: true);
   }
 
   void _saveSnapshot() {
@@ -134,7 +132,7 @@ class TimeProvider with ChangeNotifier {
       _dailySlots[dateKey] = _undoStacks[dateKey]!.removeLast();
       _saveData(); // 撤销后保存
       notifyListeners();
-      _triggerAutoSync();
+      synchronizeWithGoogle(delay: true);
     }
   }
 
@@ -151,27 +149,56 @@ class TimeProvider with ChangeNotifier {
     }
     _saveData(); // 保存更改
     notifyListeners();
-    _triggerAutoSync();
+    synchronizeWithGoogle(delay: true);
   }
 
-  void synchronizeWithGoogle() async {
-    if (_isSyncing) return; // 如果正在同步，直接返回
+  // 合并后的同步方法
+  // delay: true 表示自动同步（带防抖），false 表示手动同步（立即执行）
+  Future<void> synchronizeWithGoogle({bool delay = false}) async {
+    if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
 
-    if (GoogleCalendarService.currentUser != null) {
-      _isSyncing = true; // 加锁
+    Future<void> executeSync() async {
+      if (_isSyncing) return;
+
+      if (GoogleCalendarService.currentUser == null) {
+        // 手动同步时提示未登录，自动同步则静默
+        if (!delay) _syncStatusController.add("未登录谷歌账号，无法同步");
+        return;
+      }
+
+      _isSyncing = true;
       try {
+        _syncStatusController.add("开始同步");
+        if (delay) await Future.delayed(const Duration(milliseconds: 500));
+
+        if (!_syncStatusController.isClosed) {
+          _syncStatusController.add("SYNCING");
+        }
+
         bool success =
             await GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
+
         if (success) {
           _syncStatusController.add("同步成功");
         } else {
           _syncStatusController.add("同步失败，请稍后重试");
         }
+
+        // 延迟重置状态
+        Future.delayed(const Duration(seconds: 3), () {
+          if (!_syncStatusController.isClosed) {
+            _syncStatusController.add("IDLE");
+          }
+        });
       } finally {
-        _isSyncing = false; // 无论成功失败，最后都要解锁
+        _isSyncing = false;
       }
+    }
+
+    if (delay) {
+      _debounceTimer = Timer(const Duration(seconds: 2), executeSync);
     } else {
-      _syncStatusController.add("未登录谷歌账号，无法同步");
+      await executeSync();
     }
   }
 
@@ -186,7 +213,7 @@ class TimeProvider with ChangeNotifier {
         slots[index].color = null;
         _saveData();
         notifyListeners();
-        _triggerAutoSync();
+        synchronizeWithGoogle(delay: true);
       }
     }
   }
@@ -322,42 +349,6 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
-  // 触发自动同步
-  Future<void> _triggerAutoSync() async {
-    if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
-
-    _debounceTimer = Timer(const Duration(milliseconds: 2000), () async {
-      if (_isSyncing) return; // 如果正在同步，跳过本次自动同步
-
-      if (GoogleCalendarService.currentUser != null) {
-        _isSyncing = true; // 加锁
-        try {
-          // 先提示开始同步
-          _syncStatusController.add("开始同步");
-          await Future.delayed(const Duration(milliseconds: 500));
-          if (_syncStatusController.isClosed) return;
-          _syncStatusController.add("SYNCING");
-
-          bool success = await GoogleCalendarService.syncSlotsToGoogle(
-              slots, _currentDate);
-
-          if (success) {
-            _syncStatusController.add("同步成功");
-            // 3秒后清空状态，让进度条消失
-            Future.delayed(const Duration(seconds: 3),
-                () => _syncStatusController.add("IDLE"));
-          } else {
-            _syncStatusController.add("同步失败");
-            Future.delayed(const Duration(seconds: 3),
-                () => _syncStatusController.add("IDLE"));
-          }
-        } finally {
-          _isSyncing = false; // 解锁
-        }
-      }
-    });
-  }
-
   void reorderCategories(int oldIndex, int newIndex) {
     if (oldIndex < newIndex) {
       newIndex -= 1;
@@ -482,7 +473,7 @@ class TimeProvider with ChangeNotifier {
         bool isTarget =
             daySlots[i].recorded && daySlots[i].label == target.name;
         if (isTarget) {
-          if (startIdx == null) startIdx = i;
+          startIdx ??= i;
           endIdx = i;
         } else {
           if (startIdx != null) {
@@ -631,14 +622,15 @@ class TimeProvider with ChangeNotifier {
     // 确定起始日期
     DateTime now = DateTime.now();
     DateTime start;
-    if (tabIndex == 0)
+    if (tabIndex == 0) {
       start = DateTime(now.year, now.month, now.day);
-    else if (tabIndex == 1)
+    } else if (tabIndex == 1) {
       start = now.subtract(const Duration(days: 7));
-    else if (tabIndex == 2)
+    } else if (tabIndex == 2) {
       start = DateTime(now.year, now.month - 1, now.day);
-    else
+    } else {
       start = DateTime(2025);
+    }
 
     // 遍历日期
     for (int i = 0; i <= now.difference(start).inDays; i++) {

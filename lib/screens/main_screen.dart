@@ -15,7 +15,7 @@ class _MainScreenState extends State<MainScreen> {
 
   static final List<Widget> _widgetOptions = <Widget>[
     const HomeScreen(),
-    TargetScreen(),
+    const TargetScreen(),
     const ProfileScreen(),
   ];
 

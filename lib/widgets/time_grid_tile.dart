@@ -15,10 +15,12 @@ class TimeGridTile extends StatelessWidget {
       child: Container(
         margin: const EdgeInsets.all(2),
         decoration: BoxDecoration(
-          color: active ? Colors.blueAccent.withOpacity(0.9) : Colors.grey[200],
+          color: active
+              ? Colors.blueAccent.withValues(alpha: 0.9)
+              : Colors.grey[200],
           borderRadius: BorderRadius.circular(4),
           boxShadow: [
-            if (active) BoxShadow(color: Colors.black12, blurRadius: 2)
+            if (active) const BoxShadow(color: Colors.black12, blurRadius: 2)
           ],
         ),
         child: Center(
