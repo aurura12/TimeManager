@@ -5,7 +5,7 @@ import 'package:logger/logger.dart';
 import '../models/time_slot.dart';
 
 class GoogleCalendarService {
-  static const String _appSignature = "Created by TimeManager";
+  static const String _appSignature = "乖乖🥰晶晶";
   static final _logger = Logger();
 
   // 申请日历事件读写权限
@@ -47,62 +47,42 @@ class GoogleCalendarService {
       final startOfDay = DateTime(date.year, date.month, date.day);
       final endOfDay = startOfDay.add(const Duration(days: 1));
 
-      var existingEvents = await api.events.list(
+      // --- 步骤 1: 获取日历上已有的本应用事件 ---
+      var existingEventsResponse = await api.events.list(
         'primary',
         timeMin: startOfDay.toUtc(),
         timeMax: endOfDay.toUtc(),
         singleEvents: true,
       );
+      List<calendar.Event> remoteEvents = existingEventsResponse.items
+              ?.where((e) => e.description == _appSignature)
+              .toList() ??
+          [];
+      List<calendar.Event> localEvents = _convertToMergedEvents(slots, date);
 
-      if (existingEvents.items != null) {
-        for (var e in existingEvents.items!) {
-          // 仅删除由本应用创建的事件（通过 description 判断）
-          if (e.description == _appSignature) {
-            await api.events.delete('primary', e.id!);
-          }
+      // A. 找出需要删除的：远程有，但本地没有完全匹配的（时间+内容）
+      for (var re in remoteEvents) {
+        bool stillExists = localEvents.any((le) =>
+            le.summary == re.summary &&
+            le.start?.dateTime?.toUtc() == re.start?.dateTime?.toUtc() &&
+            le.end?.dateTime?.toUtc() == re.end?.dateTime?.toUtc());
+
+        if (!stillExists) {
+          await api.events.delete('primary', re.id!);
+          // _logger.i("删除过时事件: ${re.summary}");
         }
       }
 
-      // 2. 插入新数据
-      int i = 0;
-      while (i < slots.length) {
-        if (slots[i].recorded && slots[i].label != null) {
-          String currentLabel = slots[i].label!;
-          int startIdx = i;
+      // B. 找出需要新增的：本地有，但远程没有完全匹配的
+      for (var le in localEvents) {
+        bool alreadyUploaded = remoteEvents.any((re) =>
+            re.summary == le.summary &&
+            re.start?.dateTime?.toUtc() == le.start?.dateTime?.toUtc() &&
+            re.end?.dateTime?.toUtc() == le.end?.dateTime?.toUtc());
 
-          // 查找连续相同 label 的块
-          while (i < slots.length &&
-              slots[i].recorded &&
-              slots[i].label == currentLabel) {
-            i++;
-          }
-          int endIdx = i; // 不包含 i
-
-          // 计算开始和结束时间
-          // 每个索引代表 10 分钟
-          DateTime startTime = DateTime(date.year, date.month, date.day,
-              startIdx ~/ 6, (startIdx % 6) * 10);
-          DateTime endTime = DateTime(
-              date.year, date.month, date.day, endIdx ~/ 6, (endIdx % 6) * 10);
-
-          // 构建谷歌日历事件
-          var event = calendar.Event(
-            summary: currentLabel,
-            description: _appSignature, // 添加标记
-            start: calendar.EventDateTime(
-              dateTime: startTime.toUtc(),
-              timeZone: "UTC", // 建议使用 UTC 避免时区混乱
-            ),
-            end: calendar.EventDateTime(
-              dateTime: endTime.toUtc(),
-              timeZone: "UTC",
-            ),
-          );
-
-          // 插入到主日历
-          await api.events.insert(event, 'primary');
-        } else {
-          i++;
+        if (!alreadyUploaded) {
+          await api.events.insert(le, 'primary');
+          // _logger.i("新增事件: ${le.summary}");
         }
       }
       return true;
@@ -110,5 +90,39 @@ class GoogleCalendarService {
       _logger.e("同步到 Google Calendar 失败: $e");
       return false;
     }
+  }
+
+  static List<calendar.Event> _convertToMergedEvents(
+      List<TimeSlot> slots, DateTime date) {
+    List<calendar.Event> merged = [];
+    int i = 0;
+    while (i < slots.length) {
+      if (slots[i].recorded && slots[i].label != null) {
+        String label = slots[i].label!;
+        int startIdx = i;
+        while (
+            i < slots.length && slots[i].recorded && slots[i].label == label) {
+          i++;
+        }
+        int endIdx = i;
+
+        DateTime startTime = DateTime(date.year, date.month, date.day,
+            startIdx ~/ 6, (startIdx % 6) * 10);
+        DateTime endTime = DateTime(
+            date.year, date.month, date.day, endIdx ~/ 6, (endIdx % 6) * 10);
+
+        merged.add(calendar.Event(
+          summary: label,
+          description: _appSignature,
+          start: calendar.EventDateTime(
+              dateTime: startTime.toUtc(), timeZone: "UTC"),
+          end: calendar.EventDateTime(
+              dateTime: endTime.toUtc(), timeZone: "UTC"),
+        ));
+      } else {
+        i++;
+      }
+    }
+    return merged;
   }
 }
