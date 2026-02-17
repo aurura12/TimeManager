@@ -889,7 +889,7 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () => _showClearDialog(context, provider)),
         IconButton(
             icon: const Icon(Icons.sync),
-            onPressed: () => provider.synchronizeWithGoogle()),
+            onPressed: () => provider.synchronizeCalendar()),
       ],
     );
   }

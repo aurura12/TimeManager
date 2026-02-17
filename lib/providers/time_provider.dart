@@ -3,6 +3,7 @@ import '../models/time_slot.dart'; // 确保导入了模型
 import '../models/category.dart';
 import 'dart:convert';
 import '../services/google_calendar_service.dart';
+import '../services/feishu_calendar_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import '../models/target.dart';
@@ -100,7 +101,7 @@ class TimeProvider with ChangeNotifier {
     _dailySlots[dateKey] = _generateInitialSlots();
     _saveData(); // 保存更改
     notifyListeners();
-    synchronizeWithGoogle(delay: true);
+    synchronizeCalendar(delay: true);
   }
 
   void _saveSnapshot() {
@@ -132,7 +133,7 @@ class TimeProvider with ChangeNotifier {
       _dailySlots[dateKey] = _undoStacks[dateKey]!.removeLast();
       _saveData(); // 撤销后保存
       notifyListeners();
-      synchronizeWithGoogle(delay: true);
+      synchronizeCalendar(delay: true);
     }
   }
 
@@ -149,20 +150,23 @@ class TimeProvider with ChangeNotifier {
     }
     _saveData(); // 保存更改
     notifyListeners();
-    synchronizeWithGoogle(delay: true);
+    synchronizeCalendar(delay: true);
   }
 
   // 合并后的同步方法
   // delay: true 表示自动同步（带防抖），false 表示手动同步（立即执行）
-  Future<void> synchronizeWithGoogle({bool delay = false}) async {
+  Future<void> synchronizeCalendar({bool delay = false}) async {
     if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
 
     Future<void> executeSync() async {
       if (_isSyncing) return;
 
-      if (GoogleCalendarService.currentUser == null) {
+      final googleUser = GoogleCalendarService.currentUser;
+      final feishuUser = FeishuCalendarService.currentUser;
+
+      if (googleUser == null && feishuUser == null) {
         // 手动同步时提示未登录，自动同步则静默
-        if (!delay) _syncStatusController.add("未登录谷歌账号，无法同步");
+        if (!delay) _syncStatusController.add("未登录账号，无法同步");
         return;
       }
 
@@ -175,8 +179,14 @@ class TimeProvider with ChangeNotifier {
           _syncStatusController.add("SYNCING");
         }
 
-        bool success =
-            await GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
+        bool success = false;
+        if (googleUser != null) {
+          success = await GoogleCalendarService.syncSlotsToGoogle(
+              slots, _currentDate);
+        } else if (feishuUser != null) {
+          success = await FeishuCalendarService.syncSlotsToFeishu(
+              slots, _currentDate);
+        }
 
         if (success) {
           _syncStatusController.add("同步成功");
@@ -213,7 +223,7 @@ class TimeProvider with ChangeNotifier {
         slots[index].color = null;
         _saveData();
         notifyListeners();
-        synchronizeWithGoogle(delay: true);
+        synchronizeCalendar(delay: true);
       }
     }
   }
