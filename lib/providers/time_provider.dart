@@ -211,7 +211,7 @@ class TimeProvider with ChangeNotifier {
     }
 
     if (delay) {
-      _debounceTimer = Timer(const Duration(seconds: 2), executeSync);
+      _debounceTimer = Timer(const Duration(seconds: 3), executeSync);
     } else {
       await executeSync();
     }
