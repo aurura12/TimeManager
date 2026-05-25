@@ -85,6 +85,11 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  void goToDate(DateTime date) {
+    _currentDate = DateTime(date.year, date.month, date.day);
+    notifyListeners();
+  }
+
   void toggleSlot(int index) {
     List<TimeSlot> currentSlots = slots;
     // 假设 TimeSlot 类有一个 recorded 属性，并且没有使用 final 修饰它

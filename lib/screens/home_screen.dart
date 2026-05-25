@@ -5,6 +5,7 @@ import '../models/category.dart';
 import 'dart:async';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:reorderables/reorderables.dart';
+import '../widgets/date_picker_panel.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -24,6 +25,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // 管理分类的展开状态
   final Map<int, bool> _expandedCategories = {};
+  bool _isDatePickerVisible = false;
 
   @override
   void initState() {
@@ -119,44 +121,69 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: const Color(0xFF9CB86A),
         title: _buildAppBarTitle(timeProvider, timeProvider.currentDate),
       ),
-      body: Column(
+      body: Stack(
         children: [
-          Expanded(
-            child: Row(
-              children: [
-                Expanded(
-                  child: ListView.builder(
-                    key: _gridKey,
-                    controller: _scrollController,
-                    // 如果你想让网格区域完全不响应滚动手势，只响应选中手势：
-                    // physics: const ClampingScrollPhysics(), // 或者默认
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    itemCount: 24, // 保持 24 小时
-                    itemBuilder: (context, h) =>
-                        _buildIntegratedRow(h, timeProvider),
-                  ),
+          Column(
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: ListView.builder(
+                        key: _gridKey,
+                        controller: _scrollController,
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        itemCount: 24,
+                        itemBuilder: (context, h) =>
+                            _buildIntegratedRow(h, timeProvider),
+                      ),
+                    ),
+                    _buildCategorySidebar(timeProvider),
+                  ],
                 ),
-                _buildCategorySidebar(timeProvider),
-              ],
+              ),
+              StreamBuilder<String>(
+                stream: timeProvider.syncStatusStream,
+                builder: (context, snapshot) {
+                  final status = snapshot.data ?? "IDLE";
+                  if (status == "SYNCING") {
+                    return const LinearProgressIndicator(
+                      backgroundColor: Colors.transparent,
+                      valueColor:
+                          AlwaysStoppedAnimation<Color>(Color(0xFF9CB86A)),
+                      minHeight: 3,
+                    );
+                  }
+                  return const SizedBox(height: 3);
+                },
+              ),
+            ],
+          ),
+          if (_isDatePickerVisible) ...[
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () => setState(() => _isDatePickerVisible = false),
+                child: Container(color: Colors.black54),
+              ),
             ),
-          ),
-          // 使用 StreamBuilder 监听同步状态
-          StreamBuilder<String>(
-            stream: timeProvider.syncStatusStream,
-            builder: (context, snapshot) {
-              final status = snapshot.data ?? "IDLE";
-
-              // 当状态为 SYNCING 时，显示运动的进度条
-              if (status == "SYNCING") {
-                return const LinearProgressIndicator(
-                  backgroundColor: Colors.transparent,
-                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF9CB86A)),
-                  minHeight: 3, // 线条粗细
-                );
-              }
-              return const SizedBox(height: 3); // 占位，保持高度一致
-            },
-          ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: DatePickerPanel(
+                initialDate: timeProvider.currentDate,
+                onDateSelected: (selected) {
+                  timeProvider.goToDate(selected);
+                  setState(() {
+                    _isDatePickerVisible = false;
+                    _dragStartIndex = null;
+                    _dragEndIndex = null;
+                  });
+                },
+                onClose: () => setState(() => _isDatePickerVisible = false),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -877,7 +904,16 @@ class _HomeScreenState extends State<HomeScreen> {
         IconButton(
             icon: const Icon(Icons.arrow_back_ios, size: 18),
             onPressed: () => provider.previousDay()),
-        Text("${date.month}月${date.day}日"),
+        GestureDetector(
+          onTap: () => _showDatePicker(),
+          child: Text(
+            "${date.month}月${date.day}日",
+            style: const TextStyle(
+              decoration: TextDecoration.underline,
+              decorationColor: Colors.white70,
+            ),
+          ),
+        ),
         IconButton(
             icon: const Icon(Icons.arrow_forward_ios, size: 18),
             onPressed: () => provider.nextDay()),
@@ -892,6 +928,10 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () => provider.synchronizeCalendar()),
       ],
     );
+  }
+
+  void _showDatePicker() {
+    setState(() => _isDatePickerVisible = true);
   }
 
   void _showClearDialog(BuildContext context, TimeProvider provider) {
