@@ -898,6 +898,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  String _syncButtonTooltip(TimeProvider provider) {
+    if (!provider.hasPendingSyncForCurrentDate) return '同步到日历';
+    if (!provider.canSyncToCalendar) return '本地已改，登录后可同步到日历';
+    return '待同步到日历';
+  }
+
   Widget _buildAppBarTitle(TimeProvider provider, DateTime date) {
     return Row(
       children: [
@@ -924,8 +930,28 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: const Icon(Icons.delete_sweep),
             onPressed: () => _showClearDialog(context, provider)),
         IconButton(
-            icon: const Icon(Icons.sync),
-            onPressed: () => provider.synchronizeCalendar()),
+          tooltip: _syncButtonTooltip(provider),
+          onPressed: () => provider.synchronizeCalendar(),
+          icon: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              const Icon(Icons.sync),
+              if (provider.hasPendingSyncForCurrentDate)
+                Positioned(
+                  right: -1,
+                  top: -1,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: Colors.orange,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ],
     );
   }

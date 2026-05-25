@@ -10,9 +10,17 @@ import '../models/target.dart';
 
 class TimeProvider with ChangeNotifier {
   Timer? _debounceTimer;
+  Future<void>? _ongoingSave;
 
   DateTime _currentDate = DateTime.now();
   bool _isSyncing = false; // 添加同步锁标志，防止并发同步导致重复
+
+  /// 本地已改、尚未成功同步到日历的日期（dateKey 列表）
+  final Set<String> _pendingSyncDates = {};
+  Set<String> get pendingSyncDates => Set.unmodifiable(_pendingSyncDates);
+  bool get hasPendingSync => _pendingSyncDates.isNotEmpty;
+  bool get hasPendingSyncForCurrentDate =>
+      _pendingSyncDates.contains(_getDateKey(_currentDate));
 
   // 存储模型对象 Map
   final Map<String, List<TimeSlot>> _dailySlots = {};
@@ -104,9 +112,10 @@ class TimeProvider with ChangeNotifier {
 
     String dateKey = _getDateKey(_currentDate);
     _dailySlots[dateKey] = _generateInitialSlots();
-    _saveData(); // 保存更改
+    _markPendingSync();
+    _saveData();
     notifyListeners();
-    synchronizeCalendar(delay: true);
+    _scheduleCalendarSync();
   }
 
   void _saveSnapshot() {
@@ -136,9 +145,10 @@ class TimeProvider with ChangeNotifier {
     String dateKey = _getDateKey(_currentDate);
     if (_undoStacks[dateKey] != null && _undoStacks[dateKey]!.isNotEmpty) {
       _dailySlots[dateKey] = _undoStacks[dateKey]!.removeLast();
-      _saveData(); // 撤销后保存
+      _markPendingSync();
+      _saveData();
       notifyListeners();
-      synchronizeCalendar(delay: true);
+      _scheduleCalendarSync();
     }
   }
 
@@ -153,9 +163,42 @@ class TimeProvider with ChangeNotifier {
       slots[index].label = subLabel ?? category.name;
       slots[index].color = category.color;
     }
-    _saveData(); // 保存更改
+    _markPendingSync();
+    _saveData();
     notifyListeners();
+    _scheduleCalendarSync();
+  }
+
+  /// 是否已登录可同步的日历账号（Google 或飞书）
+  bool get canSyncToCalendar =>
+      GoogleCalendarService.currentUser != null ||
+      FeishuCalendarService.currentUser != null;
+
+  /// 走防抖自动同步（待同步标记由调用方在 _saveData 前写入）
+  void _scheduleCalendarSync() {
     synchronizeCalendar(delay: true);
+  }
+
+  /// 本地与云端日历不一致时标记（与是否已登录无关）
+  void _markPendingSync() {
+    if (_pendingSyncDates.add(_getDateKey(_currentDate))) {
+      notifyListeners();
+    }
+  }
+
+  void _clearPendingSyncForCurrentDate() {
+    final key = _getDateKey(_currentDate);
+    if (_pendingSyncDates.remove(key)) {
+      notifyListeners();
+      _saveData();
+    }
+  }
+
+  /// 应用切到后台：取消防抖计时、立即把本地数据与待同步标记写入磁盘
+  Future<void> onAppBackgrounded() async {
+    _debounceTimer?.cancel();
+    _debounceTimer = null;
+    await _saveData();
   }
 
   // 合并后的同步方法
@@ -194,9 +237,13 @@ class TimeProvider with ChangeNotifier {
         }
 
         if (success) {
+          _clearPendingSyncForCurrentDate();
           _syncStatusController.add("同步成功");
         } else {
-          _syncStatusController.add("同步失败，请稍后重试");
+          // 失败或中途被杀进程：待同步标记保留，下次可重试
+          if (!delay) {
+            _syncStatusController.add("同步失败，请稍后重试");
+          }
         }
 
         // 延迟重置状态
@@ -226,9 +273,10 @@ class TimeProvider with ChangeNotifier {
         slots[index].recorded = false;
         slots[index].label = null;
         slots[index].color = null;
+        _markPendingSync();
         _saveData();
         notifyListeners();
-        synchronizeCalendar(delay: true);
+        _scheduleCalendarSync();
       }
     }
   }
@@ -252,6 +300,18 @@ class TimeProvider with ChangeNotifier {
   // --- 数据持久化逻辑 ---
 
   Future<void> _saveData() async {
+    final previous = _ongoingSave;
+    final save = _saveDataImpl();
+    _ongoingSave = save;
+    try {
+      if (previous != null) await previous;
+      await save;
+    } finally {
+      if (_ongoingSave == save) _ongoingSave = null;
+    }
+  }
+
+  Future<void> _saveDataImpl() async {
     final prefs = await SharedPreferences.getInstance();
 
     // 1. 保存分类
@@ -290,6 +350,10 @@ class TimeProvider with ChangeNotifier {
       }
     });
     await prefs.setString('daily_slots', json.encode(slotsJson));
+
+    // 4. 待同步日期
+    await prefs.setStringList(
+        'pending_sync_dates', _pendingSyncDates.toList());
   }
 
   Future<void> _loadData() async {
@@ -362,6 +426,11 @@ class TimeProvider with ChangeNotifier {
         debugPrint("加载时间块数据出错: $e");
       }
     }
+
+    // 4. 待同步日期
+    _pendingSyncDates
+      ..clear()
+      ..addAll(prefs.getStringList('pending_sync_dates') ?? []);
   }
 
   void reorderCategories(int oldIndex, int newIndex) {
