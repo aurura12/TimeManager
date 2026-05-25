@@ -44,11 +44,11 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> _init() async {
-    // 1. 恢复谷歌登录状态
-    await GoogleCalendarService.restoreSignIn();
-    // 2. 加载本地数据
+    // 先加载本地数据并刷新 UI，避免等待 Google 静默登录阻塞首屏
     await _loadData();
     notifyListeners();
+    // 后台恢复谷歌登录，供后续日历同步使用
+    GoogleCalendarService.restoreSignIn();
   }
 
   DateTime get currentDate => _currentDate;
