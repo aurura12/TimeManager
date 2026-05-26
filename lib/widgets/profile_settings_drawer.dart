@@ -128,8 +128,10 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               title: const Text('导出备份'),
               subtitle: const Text('保存 JSON 到本地'),
               onTap: () async {
+                final rootContext =
+                    Navigator.of(context, rootNavigator: true).context;
                 Navigator.pop(context);
-                await _handleExport(context, provider);
+                await _handleExport(rootContext, provider);
               },
             ),
             ListTile(
@@ -137,8 +139,10 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               title: const Text('导入备份'),
               subtitle: const Text('从 JSON 恢复数据'),
               onTap: () async {
+                final rootContext =
+                    Navigator.of(context, rootNavigator: true).context;
                 Navigator.pop(context);
-                await _handleImport(context, provider);
+                await _handleImport(rootContext, provider);
               },
             ),
             ListTile(
