@@ -19,6 +19,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
 
   // --- 可编辑的表单数据 ---
   String _eventName = "运动";
+  String _categoryId = "";
   String _compareType = "超过";
   String _durationValue = "6"; // 仅数字部分
   String _frequencyCount = "3";
@@ -43,6 +44,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
     if (widget.target != null) {
       final t = widget.target!;
       _eventName = t.name;
+      _categoryId = t.categoryId;
       _selectedType = t.type;
       _selectedPeriod = t.period;
       _compareType = t.compareType;
@@ -152,7 +154,10 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                             ),
                             title: Text(category.name),
                             onTap: () {
-                              setState(() => _eventName = category.name);
+                              setState(() {
+                                _eventName = category.name;
+                                _categoryId = category.id;
+                              });
                               Navigator.pop(context);
                             },
                           ),
@@ -171,7 +176,10 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                                         category.color.withValues(alpha: 0.2),
                                     visualDensity: VisualDensity.compact,
                                     onPressed: () {
-                                      setState(() => _eventName = sub);
+                                      setState(() {
+                                        _eventName = sub;
+                                        _categoryId = category.id;
+                                      });
                                       Navigator.pop(context);
                                     },
                                   );
@@ -208,12 +216,16 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
         leading: TextButton(
           onPressed: () {
             final provider = Provider.of<TimeProvider>(context, listen: false);
+            final categoryId = _categoryId.isNotEmpty
+                ? _categoryId
+                : (provider.resolveCategoryIdForLabel(_eventName) ?? '');
             final newTarget = Target(
               id: widget.target?.id ??
                   DateTime.now()
                       .millisecondsSinceEpoch
-                      .toString(), // 编辑时保持 ID 不变
+                      .toString(),
               name: _eventName,
+              categoryId: categoryId,
               type: _selectedType,
               color: activeColor,
               period: _selectedPeriod,

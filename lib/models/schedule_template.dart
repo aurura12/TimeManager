@@ -1,23 +1,27 @@
 class TemplateSlot {
   final int index;
   final String label;
+  final String? categoryId;
   final int? colorArgb;
 
   TemplateSlot({
     required this.index,
     required this.label,
+    this.categoryId,
     this.colorArgb,
   });
 
   Map<String, dynamic> toJson() => {
         'i': index,
         'l': label,
+        if (categoryId != null && categoryId!.isNotEmpty) 'cid': categoryId,
         if (colorArgb != null) 'c': colorArgb,
       };
 
   factory TemplateSlot.fromJson(Map<String, dynamic> json) => TemplateSlot(
         index: json['i'] as int,
         label: json['l'] as String,
+        categoryId: json['cid'] as String?,
         colorArgb: json['c'] as int?,
       );
 }

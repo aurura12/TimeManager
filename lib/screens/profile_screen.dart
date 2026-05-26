@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../widgets/profile_settings_drawer.dart';
+import '../widgets/calendar_sync_status_badge.dart';
 import '../providers/time_provider.dart';
 import 'event_detail_screen.dart';
 
@@ -39,6 +40,11 @@ class _ProfileScreenState extends State<ProfileScreen>
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
+        actions: [
+          CalendarSyncStatusBadge(
+            onNotLoggedIn: () => Scaffold.of(context).openDrawer(),
+          ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),

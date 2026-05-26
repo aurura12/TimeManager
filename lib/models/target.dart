@@ -5,12 +5,12 @@ enum TargetType { duration, timePoint, frequency }
 class Target {
   final String id;
   final String name;
+  final String categoryId;
   final TargetType type;
   final Color color;
   final String period;
   final String compareType;
 
-  // 根据类型不同的可选字段
   final double durationHours;
   final int frequencyCount;
   final String targetTime;
@@ -20,6 +20,7 @@ class Target {
   Target({
     required this.id,
     required this.name,
+    this.categoryId = '',
     required this.type,
     required this.color,
     required this.period,
@@ -31,13 +32,43 @@ class Target {
     this.endTime = "",
   });
 
-  // 将对象转换为 Map (JSON)
+  Target copyWith({
+    String? id,
+    String? name,
+    String? categoryId,
+    TargetType? type,
+    Color? color,
+    String? period,
+    String? compareType,
+    double? durationHours,
+    int? frequencyCount,
+    String? targetTime,
+    String? startTime,
+    String? endTime,
+  }) {
+    return Target(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      categoryId: categoryId ?? this.categoryId,
+      type: type ?? this.type,
+      color: color ?? this.color,
+      period: period ?? this.period,
+      compareType: compareType ?? this.compareType,
+      durationHours: durationHours ?? this.durationHours,
+      frequencyCount: frequencyCount ?? this.frequencyCount,
+      targetTime: targetTime ?? this.targetTime,
+      startTime: startTime ?? this.startTime,
+      endTime: endTime ?? this.endTime,
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'id': id,
       'name': name,
-      'type': type.index, // 存储枚举的索引
-      'color': color.toARGB32(), // 存储颜色的整数值
+      if (categoryId.isNotEmpty) 'categoryId': categoryId,
+      'type': type.index,
+      'color': color.toARGB32(),
       'period': period,
       'compareType': compareType,
       'durationHours': durationHours,
@@ -48,11 +79,11 @@ class Target {
     };
   }
 
-  // 从 Map (JSON) 创建对象
   factory Target.fromJson(Map<String, dynamic> json) {
     return Target(
       id: json['id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
       name: json['name'],
+      categoryId: json['categoryId'] as String? ?? '',
       type: TargetType.values[json['type']],
       color: Color(json['color']),
       period: json['period'],

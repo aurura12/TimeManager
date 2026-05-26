@@ -8,6 +8,7 @@ import 'dart:async';
 import '../models/target.dart';
 import '../models/schedule_template.dart';
 import '../models/calendar_block.dart';
+import '../models/search_result.dart';
 import '../services/home_widget_service.dart';
 
 class BackupPreview {
@@ -161,6 +162,7 @@ class TimeProvider with ChangeNotifier {
               minute10: s.minute10,
               recorded: s.recorded,
               label: s.label,
+              categoryId: s.categoryId,
               color: s.color,
               isFromCalendar: s.isFromCalendar,
               calendarEventId: s.calendarEventId,
@@ -188,13 +190,15 @@ class TimeProvider with ChangeNotifier {
 
   void assignCategoryToSlots(Set<int> indices, Category category,
       {String? subLabel}) {
-    if (indices.isEmpty) return; // 如果没有选中任何格子，不需要保存快照
+    if (indices.isEmpty) return;
 
-    _saveSnapshot(); // 【关键】在循环修改数据之前保存当前状态
+    _saveSnapshot();
 
+    final label = subLabel ?? category.name;
     for (var index in indices) {
       slots[index].recorded = true;
-      slots[index].label = subLabel ?? category.name;
+      slots[index].label = label;
+      slots[index].categoryId = category.id;
       slots[index].color = category.color;
       slots[index].isFromCalendar = false;
       slots[index].calendarEventId = null;
@@ -323,6 +327,7 @@ class TimeProvider with ChangeNotifier {
   void _clearSlotAt(List<TimeSlot> daySlots, int index) {
     daySlots[index].recorded = false;
     daySlots[index].label = null;
+    daySlots[index].categoryId = null;
     daySlots[index].color = null;
     daySlots[index].isFromCalendar = false;
     daySlots[index].calendarEventId = null;
@@ -501,32 +506,39 @@ class TimeProvider with ChangeNotifier {
 
   // --- 日程模板 ---
 
-  List<Map<String, dynamic>> _serializeRecordedSlots(List<TimeSlot> slotList) {
+  List<Map<String, dynamic>> _serializeRecordedSlots(List<TimeSlot> slotList,
+      {bool excludeCalendar = false}) {
     final recorded = <Map<String, dynamic>>[];
     for (int i = 0; i < slotList.length; i++) {
-      if (slotList[i].recorded) {
-        final entry = <String, dynamic>{
-          'i': i,
-          'l': slotList[i].label,
-          'c': slotList[i].color?.toARGB32(),
-        };
-        if (slotList[i].isFromCalendar) {
-          entry['fc'] = true;
-        }
-        if (slotList[i].calendarEventId != null) {
-          entry['eid'] = slotList[i].calendarEventId;
-        }
-        recorded.add(entry);
+      if (!slotList[i].recorded) continue;
+      if (excludeCalendar && slotList[i].isFromCalendar) continue;
+      final entry = <String, dynamic>{
+        'i': i,
+        'l': slotList[i].label,
+        'c': slotList[i].color?.toARGB32(),
+      };
+      if (slotList[i].categoryId != null &&
+          slotList[i].categoryId!.isNotEmpty) {
+        entry['cid'] = slotList[i].categoryId;
       }
+      if (slotList[i].isFromCalendar) {
+        entry['fc'] = true;
+      }
+      if (slotList[i].calendarEventId != null) {
+        entry['eid'] = slotList[i].calendarEventId;
+      }
+      recorded.add(entry);
     }
     return recorded;
   }
 
-  List<TemplateSlot> _recordedSlotsFromDay(List<TimeSlot> slotList) {
-    return _serializeRecordedSlots(slotList)
+  List<TemplateSlot> _recordedSlotsFromDay(List<TimeSlot> slotList,
+      {bool excludeCalendar = false}) {
+    return _serializeRecordedSlots(slotList, excludeCalendar: excludeCalendar)
         .map((m) => TemplateSlot(
               index: m['i'] as int,
               label: m['l'] as String? ?? '',
+              categoryId: m['cid'] as String?,
               colorArgb: m['c'] as int?,
             ))
         .where((s) => s.label.isNotEmpty)
@@ -570,6 +582,11 @@ class TimeProvider with ChangeNotifier {
 
   bool _slotMatchesTemplateEntry(TimeSlot slot, TemplateSlot entry) {
     if (!slot.recorded || slot.label != entry.label) return false;
+    if (entry.categoryId != null &&
+        entry.categoryId!.isNotEmpty &&
+        slot.categoryId != entry.categoryId) {
+      return false;
+    }
     if (entry.colorArgb == null) return true;
     return slot.color?.toARGB32() == entry.colorArgb;
   }
@@ -580,6 +597,53 @@ class TimeProvider with ChangeNotifier {
     final template = _templates[index];
     if (template.slots.isEmpty) return;
 
+    _applySlotEntries(template.slots, mode);
+  }
+
+  DateTime get _yesterdayDate =>
+      _currentDate.subtract(const Duration(days: 1));
+
+  List<TimeSlot>? get _yesterdaySlots {
+    final key = _getDateKey(_yesterdayDate);
+    return _dailySlots[key];
+  }
+
+  /// 昨天是否有可复制的用户记录（不含日历导入）
+  bool get hasYesterdayToCopy {
+    final daySlots = _yesterdaySlots;
+    if (daySlots == null) return false;
+    return daySlots.any((s) => s.recorded && !s.isFromCalendar);
+  }
+
+  List<TemplateSlot> _yesterdayCopyEntries() {
+    final daySlots = _yesterdaySlots;
+    if (daySlots == null) return [];
+    return _recordedSlotsFromDay(daySlots, excludeCalendar: true);
+  }
+
+  /// 复制昨天安排是否与当天已有记录冲突
+  bool hasCopyYesterdayConflict() {
+    final entries = _yesterdayCopyEntries();
+    if (entries.isEmpty) return false;
+    final daySlots = slots;
+    for (final entry in entries) {
+      if (entry.index < 0 || entry.index >= daySlots.length) continue;
+      final slot = daySlots[entry.index];
+      if (!slot.recorded) continue;
+      if (!_slotMatchesTemplateEntry(slot, entry)) return true;
+    }
+    return false;
+  }
+
+  /// 将昨天安排复制到当前日；无可复制内容时返回 false
+  bool copyFromYesterday({ApplyTemplateMode mode = ApplyTemplateMode.fillEmptyOnly}) {
+    final entries = _yesterdayCopyEntries();
+    if (entries.isEmpty) return false;
+    _applySlotEntries(entries, mode);
+    return true;
+  }
+
+  void _applySlotEntries(List<TemplateSlot> entries, ApplyTemplateMode mode) {
     _saveSnapshot();
 
     final dateKey = _getDateKey(_currentDate);
@@ -588,7 +652,7 @@ class TimeProvider with ChangeNotifier {
     }
 
     final daySlots = slots;
-    for (final entry in template.slots) {
+    for (final entry in entries) {
       if (entry.index < 0 || entry.index >= daySlots.length) continue;
       if (mode == ApplyTemplateMode.fillEmptyOnly &&
           daySlots[entry.index].recorded) {
@@ -596,6 +660,8 @@ class TimeProvider with ChangeNotifier {
       }
       daySlots[entry.index].recorded = true;
       daySlots[entry.index].label = entry.label;
+      daySlots[entry.index].categoryId = entry.categoryId ??
+          resolveCategoryIdForLabel(entry.label);
       daySlots[entry.index].isFromCalendar = false;
       daySlots[entry.index].calendarEventId = null;
       if (entry.colorArgb != null) {
@@ -634,10 +700,142 @@ class TimeProvider with ChangeNotifier {
   }
 
   void updateCategory(int index, Category newCategory) {
-    if (index >= 0 && index < _categories.length) {
-      _categories[index] = newCategory;
+    if (index < 0 || index >= _categories.length) return;
+
+    final oldCategory = _categories[index];
+    final updated = newCategory.id.isEmpty
+        ? newCategory.copyWith(id: oldCategory.id)
+        : newCategory;
+    final categoryId = oldCategory.id;
+
+    if (oldCategory.name != updated.name) {
+      _propagateLabelRename(categoryId, oldCategory.name, updated.name);
+    }
+
+    final oldSubs = oldCategory.subCategories;
+    final newSubs = updated.subCategories;
+    if (oldSubs.length == newSubs.length) {
+      for (int i = 0; i < oldSubs.length; i++) {
+        if (oldSubs[i] != newSubs[i]) {
+          _propagateLabelRename(categoryId, oldSubs[i], newSubs[i]);
+        }
+      }
+    }
+
+    _categories[index] = updated;
+    _saveData();
+    notifyListeners();
+  }
+
+  /// 时间块是否计入目标进度（categoryId + label 双重匹配，兼容旧数据）
+  bool slotMatchesTarget(TimeSlot slot, Target target) {
+    if (!slot.recorded || slot.label == null) return false;
+    if (target.categoryId.isNotEmpty &&
+        slot.categoryId != null &&
+        slot.categoryId!.isNotEmpty) {
+      return slot.categoryId == target.categoryId &&
+          slot.label == target.name;
+    }
+    return slot.label == target.name;
+  }
+
+  /// 根据显示名称解析所属分类 ID（主分类名或子分类名）
+  String? resolveCategoryIdForLabel(String label) {
+    return _labelToCategoryIdMap()[label];
+  }
+
+  Map<String, String> _labelToCategoryIdMap() {
+    final map = <String, String>{};
+    for (final cat in _categories) {
+      map[cat.name] = cat.id;
+      for (final sub in cat.subCategories) {
+        map[sub] = cat.id;
+      }
+    }
+    return map;
+  }
+
+  void _propagateLabelRename(
+      String categoryId, String oldLabel, String newLabel) {
+    if (oldLabel == newLabel) return;
+
+    _dailySlots.forEach((_, daySlots) {
+      for (final slot in daySlots) {
+        if (slot.categoryId == categoryId && slot.label == oldLabel) {
+          slot.label = newLabel;
+        }
+      }
+    });
+
+    for (int i = 0; i < _targets.length; i++) {
+      final target = _targets[i];
+      if (target.categoryId == categoryId && target.name == oldLabel) {
+        _targets[i] = target.copyWith(name: newLabel);
+      }
+    }
+
+    for (int i = 0; i < _templates.length; i++) {
+      final template = _templates[i];
+      var changed = false;
+      final newSlots = template.slots.map((entry) {
+        if (entry.categoryId == categoryId && entry.label == oldLabel) {
+          changed = true;
+          return TemplateSlot(
+            index: entry.index,
+            label: newLabel,
+            categoryId: entry.categoryId,
+            colorArgb: entry.colorArgb,
+          );
+        }
+        return entry;
+      }).toList();
+      if (changed) {
+        _templates[i] = template.copyWith(slots: newSlots);
+      }
+    }
+  }
+
+  void _migrateToCategoryIds() {
+    final labelMap = _labelToCategoryIdMap();
+    var categoriesChanged = false;
+    _categories = _categories.map((cat) {
+      if (cat.id.isEmpty) {
+        categoriesChanged = true;
+        return cat.copyWith(
+            id: DateTime.now().microsecondsSinceEpoch.toString());
+      }
+      return cat;
+    }).toList();
+
+    var slotsChanged = false;
+    _dailySlots.forEach((_, daySlots) {
+      for (final slot in daySlots) {
+        if (slot.recorded &&
+            (slot.categoryId == null || slot.categoryId!.isEmpty) &&
+            slot.label != null) {
+          final cid = labelMap[slot.label!];
+          if (cid != null) {
+            slot.categoryId = cid;
+            slotsChanged = true;
+          }
+        }
+      }
+    });
+
+    var targetsChanged = false;
+    for (int i = 0; i < _targets.length; i++) {
+      final target = _targets[i];
+      if (target.categoryId.isEmpty) {
+        final cid = labelMap[target.name];
+        if (cid != null) {
+          _targets[i] = target.copyWith(categoryId: cid);
+          targetsChanged = true;
+        }
+      }
+    }
+
+    if (categoriesChanged || slotsChanged || targetsChanged) {
       _saveData();
-      notifyListeners();
     }
   }
 
@@ -662,8 +860,9 @@ class TimeProvider with ChangeNotifier {
     // 将 Category 对象转换为 JSON 列表
     List<String> catList = _categories.map((c) {
       return json.encode({
+        'id': c.id,
         'name': c.name,
-        'color': c.color.toARGB32(), // 修正：使用 .toARGB32() 替代已弃用的 .value
+        'color': c.color.toARGB32(),
         'subCategories': c.subCategories,
       });
     }).toList();
@@ -738,6 +937,7 @@ class TimeProvider with ChangeNotifier {
       'exportedAt': DateTime.now().toIso8601String(),
       'categories': _categories
           .map((c) => {
+                'id': c.id,
                 'name': c.name,
                 'color': c.color.toARGB32(),
                 'subCategories': c.subCategories,
@@ -782,6 +982,7 @@ class TimeProvider with ChangeNotifier {
   Future<void> importBackupJson(String jsonStr) async {
     final data = _parseBackupRoot(jsonStr);
     _applyBackupMap(data);
+    _migrateToCategoryIds();
     await _saveData();
     notifyListeners();
   }
@@ -808,6 +1009,7 @@ class TimeProvider with ChangeNotifier {
         .map((e) {
           final map = Map<String, dynamic>.from(e as Map);
           return Category(
+            id: map['id'] as String?,
             name: map['name'] as String,
             color: Color(map['color'] as int),
             subCategories: List<String>.from(map['subCategories'] ?? []),
@@ -879,6 +1081,7 @@ class TimeProvider with ChangeNotifier {
         if (idx >= 0 && idx < daySlots.length) {
           daySlots[idx].recorded = true;
           daySlots[idx].label = map['l'] as String?;
+          daySlots[idx].categoryId = map['cid'] as String?;
           if (map['c'] != null) {
             daySlots[idx].color = Color(map['c'] as int);
           }
@@ -903,6 +1106,7 @@ class TimeProvider with ChangeNotifier {
       _categories = catList.map((str) {
         Map<String, dynamic> map = json.decode(str);
         return Category(
+          id: map['id'] as String?,
           name: map['name'],
           color: Color(map['color']),
           subCategories: List<String>.from(map['subCategories'] ?? []),
@@ -967,6 +1171,8 @@ class TimeProvider with ChangeNotifier {
     _pendingSyncDates
       ..clear()
       ..addAll(prefs.getStringList('pending_sync_dates') ?? []);
+
+    _migrateToCategoryIds();
   }
 
   void reorderCategories(int oldIndex, int newIndex) {
@@ -1022,7 +1228,7 @@ class TimeProvider with ChangeNotifier {
     int count = 0;
     _dailySlots.forEach((_, daySlots) {
       // 1. 筛选出当天的相关事件
-      var slots = daySlots.where((s) => s.recorded && s.label == target.name);
+      var slots = daySlots.where((s) => slotMatchesTarget(s, target));
 
       if (slots.isNotEmpty) {
         // 如果是时间点目标，需要进行额外的时间区间和比较逻辑判断
@@ -1068,7 +1274,7 @@ class TimeProvider with ChangeNotifier {
     // 1. 找出所有包含该目标记录的日期
     List<String> validDates = _dailySlots.keys.where((dateKey) {
       return _dailySlots[dateKey]!
-          .any((s) => s.recorded && s.label == target.name);
+          .any((s) => slotMatchesTarget(s, target));
     }).toList();
 
     // 2. 按日期倒序排列 (最新的在前面)
@@ -1090,8 +1296,7 @@ class TimeProvider with ChangeNotifier {
       int? endIdx;
 
       for (int i = 0; i < daySlots.length; i++) {
-        bool isTarget =
-            daySlots[i].recorded && daySlots[i].label == target.name;
+        bool isTarget = slotMatchesTarget(daySlots[i], target);
         if (isTarget) {
           startIdx ??= i;
           endIdx = i;
@@ -1195,13 +1400,13 @@ class TimeProvider with ChangeNotifier {
         List<TimeSlot> slots = _dailySlots[key]!;
         if (target.type == TargetType.duration) {
           totalValue +=
-              slots.where((s) => s.recorded && s.label == target.name).length *
+              slots.where((s) => slotMatchesTarget(s, target)).length *
                   10.0 /
                   60.0;
         } else if (target.type == TargetType.frequency) {
           bool inBlock = false;
           for (var slot in slots) {
-            bool isTarget = slot.recorded && slot.label == target.name;
+            bool isTarget = slotMatchesTarget(slot, target);
             if (isTarget && !inBlock) {
               totalValue += 1;
               inBlock = true;
@@ -1287,5 +1492,99 @@ class TimeProvider with ChangeNotifier {
       }
     }
     return history;
+  }
+
+  Category? findCategoryById(String? id) {
+    if (id == null || id.isEmpty) return null;
+    for (final cat in _categories) {
+      if (cat.id == id) return cat;
+    }
+    return null;
+  }
+
+  /// 可搜索的事件名称：分类、子分类及历史记录中出现过的 label
+  List<String> getSearchableLabels() {
+    final labels = <String>{};
+    for (final cat in _categories) {
+      labels.add(cat.name);
+      labels.addAll(cat.subCategories);
+    }
+    for (final daySlots in _dailySlots.values) {
+      for (final slot in daySlots) {
+        if (slot.recorded &&
+            slot.label != null &&
+            slot.label!.isNotEmpty) {
+          labels.add(slot.label!);
+        }
+      }
+    }
+    final list = labels.toList()..sort();
+    return list;
+  }
+
+  bool _slotMatchesSearchQuery(TimeSlot slot, String queryLower) {
+    if (!slot.recorded || slot.label == null) return false;
+    if (slot.label!.toLowerCase().contains(queryLower)) return true;
+    final cat = findCategoryById(slot.categoryId);
+    if (cat != null && cat.name.toLowerCase().contains(queryLower)) {
+      return true;
+    }
+    return false;
+  }
+
+  /// 按关键词搜索历史记录，结果按日期倒序
+  List<SearchRecordGroup> searchRecords(
+    String query, {
+    DateTime? startDate,
+    DateTime? endDate,
+  }) {
+    final queryLower = query.trim().toLowerCase();
+    if (queryLower.isEmpty) return [];
+
+    final now = DateTime.now();
+    final endDay = endDate != null
+        ? DateTime(endDate.year, endDate.month, endDate.day)
+        : DateTime(now.year, now.month, now.day);
+    final startDay = startDate != null
+        ? DateTime(startDate.year, startDate.month, startDate.day)
+        : DateTime(2020);
+
+    final groups = <SearchRecordGroup>[];
+    var current = endDay;
+
+    while (!current.isBefore(startDay)) {
+      final dateKey = _getDateKey(current);
+      final daySlots = _dailySlots[dateKey];
+      if (daySlots != null) {
+        final entries = <SearchRecordEntry>[];
+        int i = 0;
+        while (i < daySlots.length) {
+          if (!_slotMatchesSearchQuery(daySlots[i], queryLower)) {
+            i++;
+            continue;
+          }
+          final label = daySlots[i].label!;
+          final color = daySlots[i].color;
+          final startIdx = i;
+          while (i < daySlots.length &&
+              daySlots[i].recorded &&
+              daySlots[i].label == label &&
+              _slotMatchesSearchQuery(daySlots[i], queryLower)) {
+            i++;
+          }
+          entries.add(SearchRecordEntry(
+            label: label,
+            timeRange: _formatRange(startIdx, i - 1),
+            color: color,
+            durationMinutes: (i - startIdx) * 10,
+          ));
+        }
+        if (entries.isNotEmpty) {
+          groups.add(SearchRecordGroup(date: current, entries: entries));
+        }
+      }
+      current = current.subtract(const Duration(days: 1));
+    }
+    return groups;
   }
 }

@@ -6,12 +6,14 @@ class TemplateBar extends StatelessWidget {
   final TimeProvider provider;
   final void Function(ScheduleTemplate template) onTemplateTap;
   final VoidCallback onManageTap;
+  final VoidCallback onCopyYesterdayTap;
 
   const TemplateBar({
     super.key,
     required this.provider,
     required this.onTemplateTap,
     required this.onManageTap,
+    required this.onCopyYesterdayTap,
   });
 
   @override
@@ -37,6 +39,41 @@ class TemplateBar extends StatelessWidget {
                   fontSize: 14,
                   color: Colors.grey[800],
                   fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Material(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(6),
+                child: InkWell(
+                  onTap: onCopyYesterdayTap,
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: const Color(0xFF9CB86A).withValues(alpha: 0.6),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.content_copy,
+                            size: 12, color: Colors.grey[700]),
+                        const SizedBox(width: 3),
+                        Text(
+                          '复制昨天',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey[800],
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
               const Spacer(),
