@@ -47,6 +47,10 @@ class DailyReviewNotificationService {
     _onTap = onTap;
 
     if (_initialized) return;
+    if (!_isAndroid) {
+      _initialized = true;
+      return;
+    }
 
     await _initTimezoneAndPlugin();
     _initialized = true;
@@ -96,6 +100,8 @@ class DailyReviewNotificationService {
 
   /// App 冷启动时：通知点击 或 原生 Intent 带入的日期
   static Future<void> handleColdStartNavigation() async {
+    if (!_isAndroid || !_initialized) return;
+
     final launchDetails = await _plugin.getNotificationAppLaunchDetails();
     if (launchDetails?.didNotificationLaunchApp ?? false) {
       final payload = launchDetails!.notificationResponse?.payload;
