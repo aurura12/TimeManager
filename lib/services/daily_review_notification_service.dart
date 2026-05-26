@@ -36,6 +36,8 @@ class DailyReviewNotificationService {
   static AndroidFlutterLocalNotificationsPlugin? get _androidPlugin =>
       _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
+  static bool get _isAndroid =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   static Future<void> initialize({
     GlobalKey<NavigatorState>? navigatorKey,
@@ -207,10 +209,16 @@ class DailyReviewNotificationService {
 
   static Future<void> _registerNextReminder(DailyReviewReminder settings) async {
     try {
-      await AndroidAlarmManager.cancel(_alarmId);
+      if (_isAndroid) {
+        await AndroidAlarmManager.cancel(_alarmId);
+      }
       await _plugin.cancel(id: _notificationId);
 
       if (!settings.enabled) return;
+      if (!_isAndroid) {
+        debugPrint('当前平台不支持 AndroidAlarmManager，跳过后台闹钟注册');
+        return;
+      }
 
       if (!_initialized) {
         await _initTimezoneAndPlugin();
@@ -318,7 +326,9 @@ class DailyReviewNotificationService {
   }
 
   static Future<void> cancel() async {
-    await AndroidAlarmManager.cancel(_alarmId);
+    if (_isAndroid) {
+      await AndroidAlarmManager.cancel(_alarmId);
+    }
     await _plugin.cancel(id: _notificationId);
   }
 
