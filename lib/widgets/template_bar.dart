@@ -16,9 +16,17 @@ class TemplateBar extends StatelessWidget {
     required this.onCopyYesterdayTap,
   });
 
+  static const double _chipHeight = 30;
+  static const double _chipGap = 3;
+  static const double _maxListHeight = 126;
+
   @override
   Widget build(BuildContext context) {
     final templates = provider.templates;
+    final chipCount = templates.length + 1;
+    final listHeight = (chipCount * _chipHeight + (chipCount - 1) * _chipGap)
+        .clamp(_chipHeight, _maxListHeight)
+        .toDouble();
 
     return Container(
       width: double.infinity,
@@ -41,41 +49,6 @@ class TemplateBar extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              const SizedBox(width: 6),
-              Material(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(6),
-                child: InkWell(
-                  onTap: onCopyYesterdayTap,
-                  borderRadius: BorderRadius.circular(6),
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                        color: const Color(0xFF9CB86A).withValues(alpha: 0.6),
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.content_copy,
-                            size: 12, color: Colors.grey[700]),
-                        const SizedBox(width: 3),
-                        Text(
-                          '复制昨天',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey[800],
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
               const Spacer(),
               IconButton(
                 onPressed: onManageTap,
@@ -87,11 +60,39 @@ class TemplateBar extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 4),
-          if (templates.isEmpty)
+          SizedBox(
+            height: templates.isEmpty ? _chipHeight : listHeight,
+            child: templates.isEmpty
+                ? _TemplateChip(
+                    name: '昨天',
+                    onTap: onCopyYesterdayTap,
+                  )
+                : ListView.separated(
+                    padding: EdgeInsets.zero,
+                    itemCount: chipCount,
+                    separatorBuilder: (_, __) =>
+                        const SizedBox(height: _chipGap),
+                    itemBuilder: (context, index) {
+                      if (index == 0) {
+                        return _TemplateChip(
+                          name: '昨天',
+                          onTap: onCopyYesterdayTap,
+                        );
+                      }
+                      final template = templates[index - 1];
+                      return _TemplateChip(
+                        name: template.name,
+                        onTap: () => onTemplateTap(template),
+                      );
+                    },
+                  ),
+          ),
+          if (templates.isEmpty) ...[
+            const SizedBox(height: _chipGap),
             GestureDetector(
               onTap: onManageTap,
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 6),
+                height: _chipHeight,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -103,23 +104,8 @@ class TemplateBar extends StatelessWidget {
                   style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                 ),
               ),
-            )
-          else
-            SizedBox(
-              height: 30,
-              child: ListView.separated(
-                scrollDirection: Axis.vertical,
-                itemCount: templates.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 3),
-                itemBuilder: (context, index) {
-                  final template = templates[index];
-                  return _TemplateChip(
-                    name: template.name,
-                    onTap: () => onTemplateTap(template),
-                  );
-                },
-              ),
             ),
+          ],
         ],
       ),
     );
@@ -143,7 +129,8 @@ class _TemplateChip extends StatelessWidget {
           onTap: onTap,
           borderRadius: BorderRadius.circular(6),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+            height: TemplateBar._chipHeight,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
             alignment: Alignment.center,
             child: Text(
               name,
