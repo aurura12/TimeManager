@@ -6,6 +6,8 @@ import 'dart:async';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:reorderables/reorderables.dart';
 import '../widgets/date_picker_panel.dart';
+import '../widgets/template_bar.dart';
+import '../models/schedule_template.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -345,10 +347,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildCategorySidebar(TimeProvider provider) {
     return Container(
-      width: 90,
+      width: 100,
       color: Colors.grey[100],
       child: Column(
         children: [
+          TemplateBar(
+            provider: provider,
+            onTemplateTap: (template) => _onTemplateTap(template, provider),
+            onManageTap: () => _showTemplateManageSheet(provider),
+          ),
           Expanded(
             child: ReorderableListView.builder(
               // 1. 核心排序逻辑
@@ -975,6 +982,254 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.pop(context);
               },
               child: const Text("确定")),
+        ],
+      ),
+    );
+  }
+
+  void _onTemplateTap(ScheduleTemplate template, TimeProvider provider) {
+    if (provider.hasTemplateConflictWithCurrentDay(template.id)) {
+      _showApplyTemplateDialog(template, provider);
+    } else {
+      provider.applyTemplate(template.id, ApplyTemplateMode.fillEmptyOnly);
+    }
+  }
+
+  void _showApplyTemplateDialog(
+      ScheduleTemplate template, TimeProvider provider) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('套用「${template.name}」'),
+        content: const Text('当天部分时段已有不同记录，请选择套用方式：'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              provider.applyTemplate(
+                  template.id, ApplyTemplateMode.fillEmptyOnly);
+              Navigator.pop(context);
+            },
+            child: const Text('仅填充空白'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF9CB86A),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              provider.applyTemplate(template.id, ApplyTemplateMode.replaceAll);
+              Navigator.pop(context);
+            },
+            child: const Text('覆盖全天'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showTemplateManageSheet(TimeProvider provider) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final templates = provider.templates;
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(context).viewInsets.bottom,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+                      child: Row(
+                        children: [
+                          const Text(
+                            '模板管理',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (templates.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          '暂无模板，可从今日记录保存',
+                          style: TextStyle(color: Colors.grey[600]),
+                        ),
+                      )
+                    else
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: MediaQuery.of(context).size.height * 0.4,
+                        ),
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: templates.length,
+                          separatorBuilder: (_, __) =>
+                              const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final t = templates[index];
+                            return ListTile(
+                              title: Text(t.name),
+                              subtitle: Text('共 ${t.slots.length} 格'),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.edit_outlined,
+                                        size: 20),
+                                    onPressed: () {
+                                      _showRenameTemplateDialog(
+                                        t,
+                                        provider,
+                                        onRenamed: () => setSheetState(() {}),
+                                      );
+                                    },
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline,
+                                        size: 20, color: Colors.red),
+                                    onPressed: () {
+                                      provider.deleteTemplate(t.id);
+                                      setSheetState(() {});
+                                    },
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF9CB86A),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          icon: const Icon(Icons.save_alt),
+                          label: const Text('从今日保存新模板'),
+                          onPressed: () {
+                            _showSaveTemplateDialog(
+                              provider,
+                              onSaved: () => setSheetState(() {}),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showSaveTemplateDialog(TimeProvider provider,
+      {VoidCallback? onSaved}) {
+    final nameController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('保存为模板'),
+        content: TextField(
+          controller: nameController,
+          decoration: const InputDecoration(
+            hintText: '例如：周一、工作日',
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF9CB86A),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              final ok =
+                  provider.saveTemplateFromCurrentDay(nameController.text);
+              Navigator.pop(context);
+              if (!ok) {
+                ScaffoldMessenger.of(this.context).showSnackBar(
+                  const SnackBar(
+                    content: Text('今天还没有可保存的记录'),
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              } else {
+                onSaved?.call();
+              }
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRenameTemplateDialog(
+    ScheduleTemplate template,
+    TimeProvider provider, {
+    VoidCallback? onRenamed,
+  }) {
+    final nameController = TextEditingController(text: template.name);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('重命名模板'),
+        content: TextField(
+          controller: nameController,
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF9CB86A),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              provider.renameTemplate(template.id, nameController.text);
+              Navigator.pop(context);
+              onRenamed?.call();
+            },
+            child: const Text('保存'),
+          ),
         ],
       ),
     );

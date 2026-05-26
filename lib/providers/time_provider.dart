@@ -3,12 +3,14 @@ import '../models/time_slot.dart'; // 确保导入了模型
 import '../models/category.dart';
 import 'dart:convert';
 import '../services/google_calendar_service.dart';
-import '../services/feishu_calendar_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import '../models/target.dart';
+import '../models/schedule_template.dart';
+import '../models/calendar_block.dart';
 
 class TimeProvider with ChangeNotifier {
+  static const Color calendarImportColor = Color(0xFF78909C);
   Timer? _debounceTimer;
   Future<void>? _ongoingSave;
 
@@ -25,6 +27,9 @@ class TimeProvider with ChangeNotifier {
   // 存储模型对象 Map
   final Map<String, List<TimeSlot>> _dailySlots = {};
 
+  /// 用户在 App 内删除的 Google 日历导入（按日期），不再自动拉回
+  final Map<String, Set<String>> _ignoredCalendarImports = {};
+
   // 目标列表移至 Provider 管理
   final List<Target> _targets = [];
   List<Target> get targets => _targets;
@@ -32,6 +37,9 @@ class TimeProvider with ChangeNotifier {
   // 分类列表移至 Provider 管理
   List<Category> _categories = [];
   List<Category> get categories => _categories;
+
+  final List<ScheduleTemplate> _templates = [];
+  List<ScheduleTemplate> get templates => List.unmodifiable(_templates);
   final int _startHour = 7; // 默认从 7 点开始
   int get startHour => _startHour;
 
@@ -85,17 +93,19 @@ class TimeProvider with ChangeNotifier {
   void previousDay() {
     _currentDate = _currentDate.subtract(const Duration(days: 1));
     notifyListeners();
-    // 切换日期不需要保存，因为数据都在 _dailySlots 里
+    pullGoogleCalendarForCurrentDate();
   }
 
   void nextDay() {
     _currentDate = _currentDate.add(const Duration(days: 1));
     notifyListeners();
+    pullGoogleCalendarForCurrentDate();
   }
 
   void goToDate(DateTime date) {
     _currentDate = DateTime(date.year, date.month, date.day);
     notifyListeners();
+    pullGoogleCalendarForCurrentDate();
   }
 
   void toggleSlot(int index) {
@@ -130,6 +140,8 @@ class TimeProvider with ChangeNotifier {
               recorded: s.recorded,
               label: s.label,
               color: s.color,
+              isFromCalendar: s.isFromCalendar,
+              calendarEventId: s.calendarEventId,
             ))
         .toList();
 
@@ -162,6 +174,8 @@ class TimeProvider with ChangeNotifier {
       slots[index].recorded = true;
       slots[index].label = subLabel ?? category.name;
       slots[index].color = category.color;
+      slots[index].isFromCalendar = false;
+      slots[index].calendarEventId = null;
     }
     _markPendingSync();
     _saveData();
@@ -169,10 +183,8 @@ class TimeProvider with ChangeNotifier {
     _scheduleCalendarSync();
   }
 
-  /// 是否已登录可同步的日历账号（Google 或飞书）
-  bool get canSyncToCalendar =>
-      GoogleCalendarService.currentUser != null ||
-      FeishuCalendarService.currentUser != null;
+  /// 是否已登录可同步的 Google 日历账号
+  bool get canSyncToCalendar => GoogleCalendarService.currentUser != null;
 
   /// 走防抖自动同步（待同步标记由调用方在 _saveData 前写入）
   void _scheduleCalendarSync() {
@@ -210,11 +222,9 @@ class TimeProvider with ChangeNotifier {
       if (_isSyncing) return;
 
       final googleUser = GoogleCalendarService.currentUser;
-      final feishuUser = FeishuCalendarService.currentUser;
 
-      if (googleUser == null && feishuUser == null) {
-        // 手动同步时提示未登录，自动同步则静默
-        if (!delay) _syncStatusController.add("未登录账号，无法同步");
+      if (googleUser == null) {
+        if (!delay) _syncStatusController.add("未登录 Google 账号，无法同步");
         return;
       }
 
@@ -227,21 +237,24 @@ class TimeProvider with ChangeNotifier {
           _syncStatusController.add("SYNCING");
         }
 
-        bool success = false;
-        if (googleUser != null) {
-          success = await GoogleCalendarService.syncSlotsToGoogle(
-              slots, _currentDate);
-        } else if (feishuUser != null) {
-          success = await FeishuCalendarService.syncSlotsToFeishu(
-              slots, _currentDate);
-        }
+        bool pullOk = await pullGoogleCalendarForDate(_currentDate,
+            notify: false);
+        final success = await GoogleCalendarService.syncSlotsToGoogle(
+            slots, _currentDate);
 
         if (success) {
           _clearPendingSyncForCurrentDate();
-          _syncStatusController.add("同步成功");
-        } else {
-          // 失败或中途被杀进程：待同步标记保留，下次可重试
           if (!delay) {
+            if (!pullOk) {
+              _syncStatusController.add("同步成功（日历拉取失败）");
+            } else {
+              _syncStatusController.add("同步成功");
+            }
+          }
+        } else if (!delay) {
+          if (!pullOk) {
+            _syncStatusController.add("从 Google 日历拉取失败");
+          } else {
             _syncStatusController.add("同步失败，请稍后重试");
           }
         }
@@ -267,18 +280,327 @@ class TimeProvider with ChangeNotifier {
   // 移除指定时间块的事件
   void removeEventFromSlot(int index) {
     if (index >= 0 && index < slots.length) {
-      // 只有当该时间块确实有记录时才执行删除和保存快照
       if (slots[index].recorded) {
+        final wasFromCalendar = slots[index].isFromCalendar;
         _saveSnapshot();
-        slots[index].recorded = false;
-        slots[index].label = null;
-        slots[index].color = null;
-        _markPendingSync();
-        _saveData();
-        notifyListeners();
-        _scheduleCalendarSync();
+        if (wasFromCalendar) {
+          _dismissCalendarImportAt(index);
+        } else {
+          _clearSlot(index);
+          _markPendingSync();
+          _scheduleCalendarSync();
+          _saveData();
+          notifyListeners();
+        }
       }
     }
+  }
+
+  void _clearSlot(int index) => _clearSlotAt(slots, index);
+
+  void _clearSlotAt(List<TimeSlot> daySlots, int index) {
+    daySlots[index].recorded = false;
+    daySlots[index].label = null;
+    daySlots[index].color = null;
+    daySlots[index].isFromCalendar = false;
+    daySlots[index].calendarEventId = null;
+  }
+
+  Future<void> _dismissCalendarImportAt(int index) async {
+    final dateKey = _getDateKey(_currentDate);
+    final daySlots = slots;
+
+    final label = daySlots[index].label ?? '';
+    int start = index;
+    while (start > 0 &&
+        daySlots[start - 1].isFromCalendar &&
+        daySlots[start - 1].label == label) {
+      start--;
+    }
+    int end = index + 1;
+    while (end < daySlots.length &&
+        daySlots[end].isFromCalendar &&
+        daySlots[end].label == label) {
+      end++;
+    }
+
+    final rangeStart = _slotIndexToDateTime(start);
+    final rangeEnd = _slotIndexToDateTime(end);
+    var eventId = daySlots[index].calendarEventId;
+    eventId ??= await _resolveGoogleEventId(label, rangeStart, rangeEnd);
+
+    for (int i = 0; i < daySlots.length; i++) {
+      final sameEvent = eventId != null &&
+          eventId.isNotEmpty &&
+          daySlots[i].calendarEventId == eventId;
+      final inRange = i >= start &&
+          i < end &&
+          daySlots[i].isFromCalendar &&
+          daySlots[i].label == label;
+      if (sameEvent || inRange) {
+        _clearSlotAt(daySlots, i);
+      }
+    }
+
+    if (eventId != null && eventId.isNotEmpty) {
+      final deleted =
+          await GoogleCalendarService.deleteExternalEvent(eventId);
+      if (!deleted) {
+        _ignoredCalendarImports.putIfAbsent(dateKey, () => {}).add(eventId);
+        if (!_syncStatusController.isClosed) {
+          _syncStatusController.add("删除 Google 日历事件失败");
+        }
+      }
+    } else {
+      _ignoredCalendarImports.putIfAbsent(dateKey, () => {}).add(
+            _calendarBlockFingerprint(label, rangeStart, rangeEnd),
+          );
+    }
+
+    await _saveData();
+    notifyListeners();
+  }
+
+  Future<String?> _resolveGoogleEventId(
+      String title, DateTime rangeStart, DateTime rangeEnd) async {
+    final blocks =
+        await GoogleCalendarService.fetchExternalEvents(_currentDate);
+    if (blocks == null) return null;
+
+    for (final block in blocks) {
+      if (block.title != title) continue;
+      if (block.eventId == null || block.eventId!.isEmpty) continue;
+      if (block.start.isAtSameMomentAs(rangeStart) &&
+          block.end.isAtSameMomentAs(rangeEnd)) {
+        return block.eventId;
+      }
+      if (!block.end.isAfter(rangeStart) || !block.start.isBefore(rangeEnd)) {
+        continue;
+      }
+      return block.eventId;
+    }
+    return null;
+  }
+
+  String _calendarBlockFingerprint(
+      String title, DateTime start, DateTime end) {
+    return 'fp:$title|${start.millisecondsSinceEpoch}|${end.millisecondsSinceEpoch}';
+  }
+
+  bool _isCalendarBlockIgnored(String dateKey, CalendarBlock block) {
+    final ignored = _ignoredCalendarImports[dateKey];
+    if (ignored == null || ignored.isEmpty) return false;
+    if (block.eventId != null &&
+        block.eventId!.isNotEmpty &&
+        ignored.contains(block.eventId)) {
+      return true;
+    }
+    return ignored.contains(_calendarBlockFingerprint(
+      block.title,
+      block.start,
+      block.end,
+    ));
+  }
+
+  DateTime _slotIndexToDateTime(int index) {
+    final d = _currentDate;
+    return DateTime(d.year, d.month, d.day, index ~/ 6, (index % 6) * 10);
+  }
+
+  // --- Google 日历下拉 ---
+
+  Future<void> pullGoogleCalendarForCurrentDate() async {
+    await pullGoogleCalendarForDate(_currentDate);
+  }
+
+  /// 从 Google 拉取外部会议并合并到指定日期；未登录 Google 时返回 false
+  Future<bool> pullGoogleCalendarForDate(DateTime date,
+      {bool notify = true}) async {
+    if (GoogleCalendarService.currentUser == null) return false;
+
+    final blocks = await GoogleCalendarService.fetchExternalEvents(date);
+    if (blocks == null) return false;
+    final dateKey = _getDateKey(date);
+    _mergeCalendarBlocks(dateKey, blocks, date);
+    await _saveData();
+    if (notify) notifyListeners();
+    return true;
+  }
+
+  void _mergeCalendarBlocks(
+      String dateKey, List<CalendarBlock> blocks, DateTime day) {
+    final daySlots =
+        _dailySlots.putIfAbsent(dateKey, () => _generateInitialSlots());
+
+    for (int i = 0; i < daySlots.length; i++) {
+      if (daySlots[i].isFromCalendar) {
+        _clearSlotAt(daySlots, i);
+      }
+    }
+
+    for (final block in blocks) {
+      if (_isCalendarBlockIgnored(dateKey, block)) continue;
+
+      final indices = _timeRangeToSlotIndices(block.start, block.end, day);
+      for (final index in indices) {
+        if (index < 0 || index >= daySlots.length) continue;
+        if (daySlots[index].recorded) continue;
+        daySlots[index].recorded = true;
+        daySlots[index].label = block.title;
+        daySlots[index].color = calendarImportColor;
+        daySlots[index].isFromCalendar = true;
+        daySlots[index].calendarEventId = block.eventId;
+      }
+    }
+  }
+
+  List<int> _timeRangeToSlotIndices(
+      DateTime start, DateTime end, DateTime day) {
+    final dayStart = DateTime(day.year, day.month, day.day);
+    final dayEnd = dayStart.add(const Duration(days: 1));
+
+    var s = start.isBefore(dayStart) ? dayStart : start;
+    var e = end.isAfter(dayEnd) ? dayEnd : end;
+    if (!e.isAfter(s)) return [];
+
+    final startIndex = s.hour * 6 + s.minute ~/ 10;
+    final endIndex = _endSlotIndexExclusive(e);
+    if (endIndex <= startIndex) return [];
+
+    return List.generate(endIndex - startIndex, (i) => startIndex + i);
+  }
+
+  int _endSlotIndexExclusive(DateTime end) {
+    if (end.minute % 10 == 0 && end.second == 0 && end.millisecond == 0) {
+      return end.hour * 6 + end.minute ~/ 10;
+    }
+    return end.hour * 6 + (end.minute + 9) ~/ 10;
+  }
+
+  // --- 日程模板 ---
+
+  List<Map<String, dynamic>> _serializeRecordedSlots(List<TimeSlot> slotList) {
+    final recorded = <Map<String, dynamic>>[];
+    for (int i = 0; i < slotList.length; i++) {
+      if (slotList[i].recorded) {
+        final entry = <String, dynamic>{
+          'i': i,
+          'l': slotList[i].label,
+          'c': slotList[i].color?.toARGB32(),
+        };
+        if (slotList[i].isFromCalendar) {
+          entry['fc'] = true;
+        }
+        if (slotList[i].calendarEventId != null) {
+          entry['eid'] = slotList[i].calendarEventId;
+        }
+        recorded.add(entry);
+      }
+    }
+    return recorded;
+  }
+
+  List<TemplateSlot> _recordedSlotsFromDay(List<TimeSlot> slotList) {
+    return _serializeRecordedSlots(slotList)
+        .map((m) => TemplateSlot(
+              index: m['i'] as int,
+              label: m['l'] as String? ?? '',
+              colorArgb: m['c'] as int?,
+            ))
+        .where((s) => s.label.isNotEmpty)
+        .toList();
+  }
+
+  /// 从当日记录保存模板；无记录时返回 false
+  bool saveTemplateFromCurrentDay(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return false;
+
+    final entries = _recordedSlotsFromDay(slots);
+    if (entries.isEmpty) return false;
+
+    _templates.add(ScheduleTemplate(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      name: trimmed,
+      slots: entries,
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+    ));
+    _saveData();
+    notifyListeners();
+    return true;
+  }
+
+  /// 模板格与当日已记录格在相同索引上内容不一致时视为冲突
+  bool hasTemplateConflictWithCurrentDay(String id) {
+    final index = _templates.indexWhere((t) => t.id == id);
+    if (index == -1) return false;
+    final template = _templates[index];
+    final daySlots = slots;
+
+    for (final entry in template.slots) {
+      if (entry.index < 0 || entry.index >= daySlots.length) continue;
+      final slot = daySlots[entry.index];
+      if (!slot.recorded) continue;
+      if (!_slotMatchesTemplateEntry(slot, entry)) return true;
+    }
+    return false;
+  }
+
+  bool _slotMatchesTemplateEntry(TimeSlot slot, TemplateSlot entry) {
+    if (!slot.recorded || slot.label != entry.label) return false;
+    if (entry.colorArgb == null) return true;
+    return slot.color?.toARGB32() == entry.colorArgb;
+  }
+
+  void applyTemplate(String id, ApplyTemplateMode mode) {
+    final index = _templates.indexWhere((t) => t.id == id);
+    if (index == -1) return;
+    final template = _templates[index];
+    if (template.slots.isEmpty) return;
+
+    _saveSnapshot();
+
+    final dateKey = _getDateKey(_currentDate);
+    if (mode == ApplyTemplateMode.replaceAll) {
+      _dailySlots[dateKey] = _generateInitialSlots();
+    }
+
+    final daySlots = slots;
+    for (final entry in template.slots) {
+      if (entry.index < 0 || entry.index >= daySlots.length) continue;
+      if (mode == ApplyTemplateMode.fillEmptyOnly &&
+          daySlots[entry.index].recorded) {
+        continue;
+      }
+      daySlots[entry.index].recorded = true;
+      daySlots[entry.index].label = entry.label;
+      daySlots[entry.index].isFromCalendar = false;
+      daySlots[entry.index].calendarEventId = null;
+      if (entry.colorArgb != null) {
+        daySlots[entry.index].color = Color(entry.colorArgb!);
+      }
+    }
+
+    _markPendingSync();
+    _saveData();
+    notifyListeners();
+    _scheduleCalendarSync();
+  }
+
+  void renameTemplate(String id, String newName) {
+    final trimmed = newName.trim();
+    if (trimmed.isEmpty) return;
+    final index = _templates.indexWhere((t) => t.id == id);
+    if (index == -1) return;
+    _templates[index] = _templates[index].copyWith(name: trimmed);
+    _saveData();
+    notifyListeners();
+  }
+
+  void deleteTemplate(String id) {
+    _templates.removeWhere((t) => t.id == id);
+    _saveData();
+    notifyListeners();
   }
 
   // --- 分类管理方法 (从 HomeScreen 移入) ---
@@ -333,25 +655,28 @@ class TimeProvider with ChangeNotifier {
     // 3. 保存时间块
     // 为了节省空间，只保存已记录(recorded=true)的块
     Map<String, dynamic> slotsJson = {};
-    _dailySlots.forEach((dateKey, slots) {
-      // 筛选出有数据的格子进行保存
-      List<Map<String, dynamic>> recordedSlots = [];
-      for (int i = 0; i < slots.length; i++) {
-        if (slots[i].recorded) {
-          recordedSlots.add({
-            'i': i, // 索引
-            'l': slots[i].label,
-            'c': slots[i].color?.toARGB32(),
-          });
-        }
-      }
+    _dailySlots.forEach((dateKey, daySlots) {
+      final recordedSlots = _serializeRecordedSlots(daySlots);
       if (recordedSlots.isNotEmpty) {
         slotsJson[dateKey] = recordedSlots;
       }
     });
     await prefs.setString('daily_slots', json.encode(slotsJson));
 
-    // 4. 待同步日期
+    // 4. 日程模板
+    await prefs.setString(
+      'schedule_templates',
+      json.encode(_templates.map((t) => t.toJson()).toList()),
+    );
+
+    // 5. 已忽略的 Google 日历导入
+    final ignoredJson = <String, dynamic>{};
+    _ignoredCalendarImports.forEach((dateKey, ids) {
+      if (ids.isNotEmpty) ignoredJson[dateKey] = ids.toList();
+    });
+    await prefs.setString('ignored_calendar_imports', json.encode(ignoredJson));
+
+    // 6. 待同步日期
     await prefs.setStringList(
         'pending_sync_dates', _pendingSyncDates.toList());
   }
@@ -418,6 +743,12 @@ class TimeProvider with ChangeNotifier {
               if (item['c'] != null) {
                 daySlots[idx].color = Color(item['c']);
               }
+              if (item['fc'] == true) {
+                daySlots[idx].isFromCalendar = true;
+              }
+              if (item['eid'] != null) {
+                daySlots[idx].calendarEventId = item['eid'] as String?;
+              }
             }
           }
           _dailySlots[dateKey] = daySlots;
@@ -427,7 +758,38 @@ class TimeProvider with ChangeNotifier {
       }
     }
 
-    // 4. 待同步日期
+    // 4. 日程模板
+    final templatesStr = prefs.getString('schedule_templates');
+    if (templatesStr != null) {
+      try {
+        final list = json.decode(templatesStr) as List<dynamic>;
+        _templates
+          ..clear()
+          ..addAll(list
+              .map((e) =>
+                  ScheduleTemplate.fromJson(e as Map<String, dynamic>))
+              .toList());
+      } catch (e) {
+        debugPrint("加载模板数据出错: $e");
+      }
+    }
+
+    // 5. 已忽略的 Google 日历导入
+    final ignoredStr = prefs.getString('ignored_calendar_imports');
+    if (ignoredStr != null) {
+      try {
+        final ignoredJson = json.decode(ignoredStr) as Map<String, dynamic>;
+        _ignoredCalendarImports.clear();
+        ignoredJson.forEach((dateKey, value) {
+          _ignoredCalendarImports[dateKey] =
+              Set<String>.from(value as List<dynamic>);
+        });
+      } catch (e) {
+        debugPrint("加载忽略日历列表出错: $e");
+      }
+    }
+
+    // 6. 待同步日期
     _pendingSyncDates
       ..clear()
       ..addAll(prefs.getStringList('pending_sync_dates') ?? []);

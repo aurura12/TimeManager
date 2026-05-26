@@ -3,6 +3,7 @@ import 'package:googleapis/calendar/v3.dart' as calendar;
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import 'package:logger/logger.dart';
 import '../models/time_slot.dart';
+import '../models/calendar_block.dart';
 
 class GoogleCalendarService {
   static const String _appSignature = "乖乖🥰晶晶";
@@ -33,6 +34,86 @@ class GoogleCalendarService {
     final httpClient = await _googleSignIn.authenticatedClient();
     if (httpClient == null) return null;
     return calendar.CalendarApi(httpClient);
+  }
+
+  /// 拉取当天非本 App 创建的 Google 日历事件
+  static Future<List<CalendarBlock>?> fetchExternalEvents(DateTime date) async {
+    final api = await getCalendarApi();
+    if (api == null) return null;
+
+    try {
+      final startOfDay = DateTime(date.year, date.month, date.day);
+      final endOfDay = startOfDay.add(const Duration(days: 1));
+
+      final response = await api.events.list(
+        'primary',
+        timeMin: startOfDay.toUtc(),
+        timeMax: endOfDay.toUtc(),
+        singleEvents: true,
+      );
+
+      final items = response.items ?? [];
+      final blocks = <CalendarBlock>[];
+
+      for (final event in items) {
+        if (event.description == _appSignature) continue;
+        final block = _eventToBlock(event, date);
+        if (block != null) blocks.add(block);
+      }
+      return blocks;
+    } catch (e) {
+      _logger.e("从 Google Calendar 拉取失败: $e");
+      return null;
+    }
+  }
+
+  static CalendarBlock? _eventToBlock(calendar.Event event, DateTime date) {
+    final startDt = event.start?.dateTime;
+    final endDt = event.end?.dateTime;
+    if (startDt == null || endDt == null) return null;
+
+    final title = event.summary?.trim();
+    if (title == null || title.isEmpty) return null;
+
+    final localStart = startDt.toLocal();
+    final localEnd = endDt.toLocal();
+    final dayStart = DateTime(date.year, date.month, date.day);
+    final dayEnd = dayStart.add(const Duration(days: 1));
+
+    if (!localEnd.isAfter(dayStart) || !localStart.isBefore(dayEnd)) {
+      return null;
+    }
+
+    final clippedStart =
+        localStart.isBefore(dayStart) ? dayStart : localStart;
+    final clippedEnd = localEnd.isAfter(dayEnd) ? dayEnd : localEnd;
+    if (!clippedEnd.isAfter(clippedStart)) return null;
+
+    return CalendarBlock(
+      title: title,
+      start: clippedStart,
+      end: clippedEnd,
+      eventId: event.id,
+    );
+  }
+
+  /// 删除 Google 日历中的外部事件（非本 App 创建）
+  static Future<bool> deleteExternalEvent(String eventId) async {
+    final api = await getCalendarApi();
+    if (api == null) return false;
+
+    try {
+      final event = await api.events.get('primary', eventId);
+      if (event.description == _appSignature) {
+        _logger.w("拒绝删除本 App 创建的日历事件: $eventId");
+        return false;
+      }
+      await api.events.delete('primary', eventId);
+      return true;
+    } catch (e) {
+      _logger.e("删除 Google 日历事件失败: $e");
+      return false;
+    }
   }
 
   /// 核心逻辑：将 TimeSlots 合并为 Google Calendar 事件并同步
@@ -97,11 +178,15 @@ class GoogleCalendarService {
     List<calendar.Event> merged = [];
     int i = 0;
     while (i < slots.length) {
-      if (slots[i].recorded && slots[i].label != null) {
+      if (slots[i].recorded &&
+          !slots[i].isFromCalendar &&
+          slots[i].label != null) {
         String label = slots[i].label!;
         int startIdx = i;
-        while (
-            i < slots.length && slots[i].recorded && slots[i].label == label) {
+        while (i < slots.length &&
+            slots[i].recorded &&
+            !slots[i].isFromCalendar &&
+            slots[i].label == label) {
           i++;
         }
         int endIdx = i;
