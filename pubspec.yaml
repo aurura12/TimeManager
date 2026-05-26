@@ -1,7 +1,7 @@
 name: time_manager
 description: "A new Flutter project."
 publish_to: "none"
-version: 1.7.0+1
+version: 1.9.0+1
 
 # 添加下面这段环境配置
 environment:
@@ -21,6 +21,7 @@ dependencies:
   fl_chart: ^0.66.0 # 强大的图表库
   intl: ^0.19.0
   http: ^1.6.0
+  home_widget: ^0.9.2
 
 dev_dependencies:
   flutter_test:
