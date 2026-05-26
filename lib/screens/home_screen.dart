@@ -909,12 +909,35 @@ class _HomeScreenState extends State<HomeScreen> {
     return '待同步到日历';
   }
 
+  Widget _appBarIconButton({
+    required IconData icon,
+    required VoidCallback onPressed,
+    String? tooltip,
+    double? iconSize,
+    Widget? iconWidget,
+    bool compact = false,
+  }) {
+    final size = iconSize ?? (compact ? 16.0 : 23.0);
+    final minSide = compact ? 32.0 : 40.0;
+    final minHeight = compact ? 40.0 : 48.0;
+    return IconButton(
+      onPressed: onPressed,
+      tooltip: tooltip,
+      padding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      constraints: BoxConstraints(minWidth: minSide, minHeight: minHeight),
+      icon: iconWidget ?? Icon(icon, size: size),
+    );
+  }
+
   Widget _buildAppBarTitle(TimeProvider provider, DateTime date) {
     return Row(
       children: [
-        IconButton(
-            icon: const Icon(Icons.arrow_back_ios, size: 18),
-            onPressed: () => provider.previousDay()),
+        _appBarIconButton(
+          icon: Icons.arrow_back_ios,
+          compact: true,
+          onPressed: () => provider.previousDay(),
+        ),
         GestureDetector(
           onTap: () => _showDatePicker(),
           child: Text(
@@ -925,12 +948,14 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ),
-        IconButton(
-            icon: const Icon(Icons.arrow_forward_ios, size: 18),
-            onPressed: () => provider.nextDay()),
-        const Spacer(),
-        IconButton(
-          icon: const Icon(Icons.search),
+        _appBarIconButton(
+          icon: Icons.arrow_forward_ios,
+          compact: true,
+          onPressed: () => provider.nextDay(),
+        ),
+        const Expanded(child: SizedBox()),
+        _appBarIconButton(
+          icon: Icons.search,
           tooltip: '搜索记录',
           onPressed: () {
             Navigator.push(
@@ -941,18 +966,22 @@ class _HomeScreenState extends State<HomeScreen> {
             );
           },
         ),
-        IconButton(
-            icon: const Icon(Icons.undo), onPressed: () => provider.undo()),
-        IconButton(
-            icon: const Icon(Icons.delete_sweep),
-            onPressed: () => _showClearDialog(context, provider)),
-        IconButton(
+        _appBarIconButton(
+          icon: Icons.undo,
+          onPressed: () => provider.undo(),
+        ),
+        _appBarIconButton(
+          icon: Icons.delete_sweep,
+          onPressed: () => _showClearDialog(context, provider),
+        ),
+        _appBarIconButton(
           tooltip: _syncButtonTooltip(provider),
+          icon: Icons.sync,
           onPressed: () => provider.synchronizeCalendar(),
-          icon: Stack(
+          iconWidget: Stack(
             clipBehavior: Clip.none,
             children: [
-              const Icon(Icons.sync),
+              const Icon(Icons.sync, size: 23),
               if (provider.hasPendingSyncForCurrentDate)
                 Positioned(
                   right: -1,
