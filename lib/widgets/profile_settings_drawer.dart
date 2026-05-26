@@ -98,26 +98,6 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     }
   }
 
-  Future<void> _testNotification() async {
-    final granted = await DailyReviewNotificationService.requestPermission();
-    if (!granted && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先允许通知和「闹钟和提醒」权限')),
-      );
-      return;
-    }
-
-    final ok = await DailyReviewNotificationService.showTestNotification();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          ok ? '测试通知已发送，点击通知可打开复盘页' : '测试通知发送失败',
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final googleUser = GoogleCalendarService.currentUser;
@@ -211,12 +191,6 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                   Navigator.pop(context);
                   DailyReviewScreen.open(context);
                 },
-              ),
-              ListTile(
-                leading: const Icon(Icons.notifications_active_outlined),
-                title: const Text('测试通知'),
-                subtitle: const Text('发送提醒通知，点击可进入复盘页'),
-                onTap: _testNotification,
               ),
             ],
             const Spacer(),
