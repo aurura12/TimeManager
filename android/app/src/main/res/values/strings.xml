@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_timeline_desc">今日时间轴</string>
+    <string name="widget_description">时间块今日概览</string>
+</resources>

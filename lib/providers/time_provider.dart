@@ -8,6 +8,7 @@ import 'dart:async';
 import '../models/target.dart';
 import '../models/schedule_template.dart';
 import '../models/calendar_block.dart';
+import '../services/home_widget_service.dart';
 
 class TimeProvider with ChangeNotifier {
   static const Color calendarImportColor = Color(0xFF78909C);
@@ -63,6 +64,7 @@ class TimeProvider with ChangeNotifier {
     // 先加载本地数据并刷新 UI，避免等待 Google 静默登录阻塞首屏
     await _loadData();
     notifyListeners();
+    await _refreshHomeWidget();
     // 后台恢复谷歌登录，供后续日历同步使用
     GoogleCalendarService.restoreSignIn();
   }
@@ -93,18 +95,21 @@ class TimeProvider with ChangeNotifier {
   void previousDay() {
     _currentDate = _currentDate.subtract(const Duration(days: 1));
     notifyListeners();
+    _refreshHomeWidget();
     pullGoogleCalendarForCurrentDate();
   }
 
   void nextDay() {
     _currentDate = _currentDate.add(const Duration(days: 1));
     notifyListeners();
+    _refreshHomeWidget();
     pullGoogleCalendarForCurrentDate();
   }
 
   void goToDate(DateTime date) {
     _currentDate = DateTime(date.year, date.month, date.day);
     notifyListeners();
+    _refreshHomeWidget();
     pullGoogleCalendarForCurrentDate();
   }
 
@@ -679,6 +684,20 @@ class TimeProvider with ChangeNotifier {
     // 6. 待同步日期
     await prefs.setStringList(
         'pending_sync_dates', _pendingSyncDates.toList());
+
+    await _refreshHomeWidget();
+  }
+
+  Future<void> _refreshHomeWidget() async {
+    try {
+      await HomeWidgetService.updateFromDay(
+        slots: slots,
+        date: _currentDate,
+        pendingSync: hasPendingSyncForCurrentDate,
+      );
+    } catch (e) {
+      debugPrint('更新桌面小组件失败: $e');
+    }
   }
 
   Future<void> _loadData() async {
