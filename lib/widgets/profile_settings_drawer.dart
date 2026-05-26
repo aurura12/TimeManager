@@ -2,14 +2,118 @@ import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
+import '../models/daily_review_reminder.dart';
 import '../providers/time_provider.dart';
 import '../services/data_backup_service.dart';
+import '../services/daily_review_notification_service.dart';
 import '../services/google_calendar_service.dart';
 
-class ProfileSettingsDrawer extends StatelessWidget {
+class ProfileSettingsDrawer extends StatefulWidget {
   final VoidCallback onChanged;
 
   const ProfileSettingsDrawer({super.key, required this.onChanged});
+
+  @override
+  State<ProfileSettingsDrawer> createState() => _ProfileSettingsDrawerState();
+}
+
+class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
+  DailyReviewReminder _reminder = const DailyReviewReminder();
+  bool _reminderLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadReminder();
+  }
+
+  Future<void> _loadReminder() async {
+    final settings = await DailyReviewNotificationService.loadSettings();
+    if (mounted) {
+      setState(() {
+        _reminder = settings;
+        _reminderLoaded = true;
+      });
+    }
+  }
+
+  Future<void> _setReminderEnabled(bool enabled) async {
+    if (enabled) {
+      final granted = await DailyReviewNotificationService.requestPermission();
+      if (!granted && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('需要通知权限和「闹钟和提醒」权限才能准时推送'),
+          ),
+        );
+        return;
+      }
+    }
+
+    final updated = _reminder.copyWith(enabled: enabled);
+    await DailyReviewNotificationService.saveSettings(updated);
+    if (mounted) {
+      setState(() => _reminder = updated);
+    }
+  }
+
+  Future<void> _pickReminderTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: _reminder.hour, minute: _reminder.minute),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Color(0xFF9CB86A),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked == null) return;
+
+    var updated = _reminder.copyWith(
+      hour: picked.hour,
+      minute: picked.minute,
+    );
+    if (!updated.enabled) {
+      final granted = await DailyReviewNotificationService.requestPermission();
+      if (!granted && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('需要通知权限和「闹钟和提醒」权限才能准时推送'),
+          ),
+        );
+        return;
+      }
+      updated = updated.copyWith(enabled: true);
+    }
+
+    await DailyReviewNotificationService.saveSettings(updated);
+    if (mounted) {
+      setState(() => _reminder = updated);
+    }
+  }
+
+  Future<void> _testNotification() async {
+    final granted = await DailyReviewNotificationService.requestPermission();
+    if (!granted && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先允许通知和「闹钟和提醒」权限')),
+      );
+      return;
+    }
+
+    final ok = await DailyReviewNotificationService.showTestNotification();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ok ? '测试通知已发送，请看通知栏' : '测试通知发送失败'),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -53,6 +157,56 @@ class ProfileSettingsDrawer extends StatelessWidget {
                 await _handleImport(context, provider);
               },
             ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+              child: Text(
+                '提醒',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ),
+            if (!_reminderLoaded)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              )
+            else ...[
+              SwitchListTile(
+                secondary: const Icon(Icons.notifications_outlined),
+                title: const Text('每日复盘'),
+                subtitle: Text(
+                  _reminder.enabled
+                      ? '每天 ${_reminder.timeLabel} 推送当日总结'
+                      : '已关闭',
+                ),
+                value: _reminder.enabled,
+                activeThumbColor: const Color(0xFF9CB86A),
+                onChanged: _setReminderEnabled,
+              ),
+              ListTile(
+                leading: const Icon(Icons.schedule_outlined),
+                title: const Text('提醒时间'),
+                subtitle: Text(_reminder.timeLabel),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _pickReminderTime,
+              ),
+              ListTile(
+                leading: const Icon(Icons.notifications_active_outlined),
+                title: const Text('测试通知'),
+                subtitle: const Text('确认通知权限和渠道是否正常'),
+                onTap: _testNotification,
+              ),
+            ],
             const Spacer(),
             _buildVersionFooter(),
           ],
@@ -158,7 +312,7 @@ class ProfileSettingsDrawer extends StatelessWidget {
                 label: const Text('退出登录'),
                 onPressed: () async {
                   await GoogleCalendarService.logout();
-                  onChanged();
+                  widget.onChanged();
                   if (context.mounted) Navigator.pop(context);
                 },
               ),
@@ -215,7 +369,7 @@ class ProfileSettingsDrawer extends StatelessWidget {
               onPressed: () async {
                 await GoogleCalendarService.login();
                 provider.synchronizeCalendar();
-                onChanged();
+                widget.onChanged();
                 if (context.mounted) Navigator.pop(context);
               },
             ),
