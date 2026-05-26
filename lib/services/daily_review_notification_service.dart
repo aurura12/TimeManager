@@ -2,24 +2,25 @@ import 'dart:async';
 
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 import '../models/daily_review_reminder.dart';
+import '../screens/daily_review_screen.dart';
 import 'daily_review_alarm.dart';
 import 'daily_review_native.dart';
 import 'daily_review_summary.dart';
+
+typedef DailyReviewTapHandler = void Function(DateTime date);
 
 class DailyReviewNotificationService {
   static const _prefEnabled = 'daily_review_enabled';
   static const _prefHour = 'daily_review_hour';
   static const _prefMinute = 'daily_review_minute';
-  /// 到点 AI 完成后展示的通知
-  static const _displayNotificationId = 1001;
-  /// 到点占位用的定时通知（与展示通知分开，避免注册次日任务时误删刚弹出的通知）
-  static const _scheduledNotificationId = 1002;
+  static const _notificationId = 1001;
   static const _alarmId = 1001;
   static const _channelId = 'daily_review_v2';
   static const _channelName = '每日复盘';
@@ -29,23 +30,20 @@ class DailyReviewNotificationService {
 
   static bool _initialized = false;
   static Future<void>? _ongoingSchedule;
+  static GlobalKey<NavigatorState>? _navigatorKey;
+  static DailyReviewTapHandler? _onTap;
 
   static AndroidFlutterLocalNotificationsPlugin? get _androidPlugin =>
       _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
 
-  static NotificationDetails get _notificationDetails => NotificationDetails(
-        android: AndroidNotificationDetails(
-          _channelId,
-          _channelName,
-          channelDescription: '每天根据记录生成当日复盘总结',
-          importance: Importance.high,
-          priority: Priority.high,
-          category: AndroidNotificationCategory.reminder,
-        ),
-      );
+  static Future<void> initialize({
+    GlobalKey<NavigatorState>? navigatorKey,
+    DailyReviewTapHandler? onTap,
+  }) async {
+    _navigatorKey = navigatorKey;
+    _onTap = onTap;
 
-  static Future<void> initialize() async {
     if (_initialized) return;
 
     await _initTimezoneAndPlugin();
@@ -72,16 +70,66 @@ class DailyReviewNotificationService {
     const androidSettings =
         AndroidInitializationSettings('@mipmap/launcher_icon');
     const initSettings = InitializationSettings(android: androidSettings);
-    await _plugin.initialize(settings: initSettings);
+    await _plugin.initialize(
+      settings: initSettings,
+      onDidReceiveNotificationResponse: _onNotificationResponse,
+    );
 
     const androidChannel = AndroidNotificationChannel(
       _channelId,
       _channelName,
-      description: '每天根据记录生成当日复盘总结',
+      description: '每日复盘提醒',
       importance: Importance.high,
     );
 
     await _androidPlugin?.createNotificationChannel(androidChannel);
+  }
+
+  static void _onNotificationResponse(NotificationResponse response) {
+    final date = DailyReviewSummaryBuilder.dateFromPayload(response.payload);
+    if (date != null) {
+      _openReviewPage(date);
+    }
+  }
+
+  /// App 冷启动时：通知点击 或 原生 Intent 带入的日期
+  static Future<void> handleColdStartNavigation() async {
+    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+    if (launchDetails?.didNotificationLaunchApp ?? false) {
+      final payload = launchDetails!.notificationResponse?.payload;
+      final date = DailyReviewSummaryBuilder.dateFromPayload(payload);
+      if (date != null) {
+        _openReviewPage(date);
+        return;
+      }
+    }
+
+    final nativeDateKey = await DailyReviewNative.consumeLaunchReviewDate();
+    if (nativeDateKey != null) {
+      final parts = nativeDateKey.split('-');
+      if (parts.length == 3) {
+        final year = int.tryParse(parts[0]);
+        final month = int.tryParse(parts[1]);
+        final day = int.tryParse(parts[2]);
+        if (year != null && month != null && day != null) {
+          _openReviewPage(DateTime(year, month, day));
+        }
+      }
+    }
+  }
+
+  static void _openReviewPage(DateTime date) {
+    final normalized = DateTime(date.year, date.month, date.day);
+    final handler = _onTap;
+    if (handler != null) {
+      handler(normalized);
+      return;
+    }
+
+    final navigator = _navigatorKey?.currentState;
+    if (navigator != null) {
+      DailyReviewScreen.open(navigator.context, date: normalized);
+    }
   }
 
   static Future<DailyReviewReminder> loadSettings() async {
@@ -125,28 +173,26 @@ class DailyReviewNotificationService {
     return await androidPlugin.canScheduleExactNotifications() ?? true;
   }
 
-  /// 立即发一条测试通知，用于确认通知渠道和权限正常
   static Future<bool> showTestNotification() async {
     if (!_initialized) {
       await _initTimezoneAndPlugin();
       _initialized = true;
     }
 
-    const summary = DailyReviewSummary(
-      title: '测试通知',
-      body: '如果你看到这条消息，说明通知权限和渠道配置正常。',
+    final today = DateTime.now();
+    return _showReminderNotification(
+      date: DateTime(today.year, today.month, today.day),
+      aiReady: true,
+      isTest: true,
     );
-    return _showNotification(summary);
   }
 
-  /// App 启动时恢复提醒；改时间/开关也只注册定时任务，不调用 AI
   static Future<void> syncReminderIfEnabled() async {
     final settings = await loadSettings();
     if (!settings.enabled) return;
     await schedule(settings);
   }
 
-  /// 仅注册下一次提醒，不请求 AI
   static Future<void> schedule(DailyReviewReminder settings) async {
     final previous = _ongoingSchedule;
     final job = _registerNextReminder(settings);
@@ -159,16 +205,10 @@ class DailyReviewNotificationService {
     }
   }
 
-  static Future<void> _registerNextReminder(
-    DailyReviewReminder settings, {
-    bool cancelVisibleNotification = true,
-  }) async {
+  static Future<void> _registerNextReminder(DailyReviewReminder settings) async {
     try {
       await AndroidAlarmManager.cancel(_alarmId);
-      await _plugin.cancel(id: _scheduledNotificationId);
-      if (cancelVisibleNotification) {
-        await _plugin.cancel(id: _displayNotificationId);
-      }
+      await _plugin.cancel(id: _notificationId);
 
       if (!settings.enabled) return;
 
@@ -179,9 +219,6 @@ class DailyReviewNotificationService {
 
       final next = _nextInstance(settings.hour, settings.minute);
       final useExact = await canScheduleExactAlarms();
-
-      await _schedulePlaceholderNotification(next, useExact: useExact);
-
       final fireAt = DateTime(
         next.year,
         next.month,
@@ -202,31 +239,14 @@ class DailyReviewNotificationService {
       );
 
       debugPrint(
-        '每日提醒已注册: $fireAt, exact=$useExact, alarmClock=$useExact, ok=$scheduled',
+        '每日提醒已注册: $fireAt, exact=$useExact, ok=$scheduled',
       );
     } catch (e, st) {
       debugPrint('注册每日提醒失败: $e\n$st');
     }
   }
 
-  static Future<void> _schedulePlaceholderNotification(
-    tz.TZDateTime next, {
-    required bool useExact,
-  }) async {
-    await _plugin.zonedSchedule(
-      id: _scheduledNotificationId,
-      title: '今日复盘',
-      body: '正在生成今日总结，请稍候…',
-      scheduledDate: next,
-      notificationDetails: _notificationDetails,
-      androidScheduleMode: useExact
-          ? AndroidScheduleMode.exactAllowWhileIdle
-          : AndroidScheduleMode.inexactAllowWhileIdle,
-      matchDateTimeComponents: DateTimeComponents.time,
-    );
-  }
-
-  /// 到点触发：此时才请求 AI（或本地兜底）并弹出通知
+  /// 到点：生成 AI 复盘并发送简短提醒通知
   static Future<void> onReminderFired() async {
     try {
       debugPrint('每日提醒到点触发');
@@ -241,47 +261,52 @@ class DailyReviewNotificationService {
       if (!settings.enabled) return;
 
       final now = tz.TZDateTime.now(tz.local);
-      final summary = await DailyReviewSummaryBuilder.buildForDate(
-        DateTime(now.year, now.month, now.day),
-        allowNetworkAi: true,
+      final date = DateTime(now.year, now.month, now.day);
+
+      final result = await DailyReviewSummaryBuilder.fetchAiForDate(date);
+      debugPrint('AI 复盘生成: success=${result.isSuccess}');
+
+      await _showReminderNotification(
+        date: date,
+        aiReady: result.isSuccess,
       );
 
-      final shown = await _showNotification(summary);
-      debugPrint('每日提醒通知已展示: $shown');
-
-      // 不要 cancel 刚展示的通知，只重新注册明天的定时任务
-      await _registerNextReminder(
-        settings,
-        cancelVisibleNotification: false,
-      );
+      await _registerNextReminder(settings);
     } catch (e, st) {
       debugPrint('每日提醒触发失败: $e\n$st');
     }
   }
 
-  static Future<bool> _showNotification(DailyReviewSummary summary) async {
-    // 后台 isolate 优先走原生通知，更可靠
-    var shown = await DailyReviewNative.showNotification(
-      title: summary.title,
-      body: summary.body,
-    );
+  static Future<bool> _showReminderNotification({
+    required DateTime date,
+    required bool aiReady,
+    bool isTest = false,
+  }) async {
+    final payload = DailyReviewSummaryBuilder.payloadForDate(date);
+    final title = isTest ? '测试 · 今日复盘' : '今日复盘';
+    final body = aiReady ? 'AI 总结已就绪，点击查看' : '生成失败，点击查看并重试';
 
+    var shown = await DailyReviewNative.showNotification(
+      title: title,
+      body: body,
+      dateKey: DailyReviewSummaryBuilder.dateKey(date),
+    );
     if (shown) return true;
 
     try {
       await _plugin.show(
-        id: _displayNotificationId,
-        title: summary.title,
-        body: summary.body,
+        id: _notificationId,
+        title: title,
+        body: body,
+        payload: payload,
         notificationDetails: NotificationDetails(
           android: AndroidNotificationDetails(
             _channelId,
             _channelName,
-            channelDescription: '每天根据记录生成当日复盘总结',
+            channelDescription: '每日复盘提醒',
             importance: Importance.high,
             priority: Priority.high,
             category: AndroidNotificationCategory.reminder,
-            styleInformation: BigTextStyleInformation(summary.body),
           ),
         ),
       );
@@ -294,8 +319,7 @@ class DailyReviewNotificationService {
 
   static Future<void> cancel() async {
     await AndroidAlarmManager.cancel(_alarmId);
-    await _plugin.cancel(id: _displayNotificationId);
-    await _plugin.cancel(id: _scheduledNotificationId);
+    await _plugin.cancel(id: _notificationId);
   }
 
   static tz.TZDateTime _nextInstance(int hour, int minute) {

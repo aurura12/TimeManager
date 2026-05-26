@@ -3,18 +3,61 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'siliconflow_ai_service.dart';
 
-class DailyReviewSummary {
-  final String title;
-  final String body;
+enum DailyReviewAiError {
+  noApiKey,
+  networkFailed,
+  timeout,
+}
 
-  const DailyReviewSummary({
+class DailyReviewAiResult {
+  final DateTime date;
+  final String title;
+  final String? body;
+  final bool fromCache;
+  final DailyReviewAiError? error;
+
+  const DailyReviewAiResult({
+    required this.date,
     required this.title,
-    required this.body,
+    this.body,
+    this.fromCache = false,
+    this.error,
   });
+
+  bool get isSuccess => body != null && body!.isNotEmpty;
+
+  String get errorMessage {
+    switch (error) {
+      case DailyReviewAiError.noApiKey:
+        return '未配置 AI API Key，请在 lib/config/siliconflow_config.dart 中填写。';
+      case DailyReviewAiError.networkFailed:
+        return 'AI 生成失败，请检查网络后重试。';
+      case DailyReviewAiError.timeout:
+        return 'AI 响应超时（可能网络较慢或后台受限），请打开 App 后点击重新生成。';
+      case null:
+        return '未知错误';
+    }
+  }
 }
 
 class DailyReviewSummaryBuilder {
   static const _cachePrefix = 'daily_review_ai_cache_';
+  static const payloadPrefix = 'daily_review:';
+
+  static String payloadForDate(DateTime date) =>
+      '$payloadPrefix${dateKey(date)}';
+
+  static DateTime? dateFromPayload(String? payload) {
+    if (payload == null || !payload.startsWith(payloadPrefix)) return null;
+    final key = payload.substring(payloadPrefix.length);
+    final parts = key.split('-');
+    if (parts.length != 3) return null;
+    final year = int.tryParse(parts[0]);
+    final month = int.tryParse(parts[1]);
+    final day = int.tryParse(parts[2]);
+    if (year == null || month == null || day == null) return null;
+    return DateTime(year, month, day);
+  }
 
   static Future<void> clearAiCache() async {
     final prefs = await SharedPreferences.getInstance();
@@ -28,60 +71,58 @@ class DailyReviewSummaryBuilder {
   static String dateKey(DateTime date) =>
       '${date.year}-${date.month}-${date.day}';
 
-  static Future<DailyReviewSummary> buildForDate(
+  static Future<DailyReviewAiResult?> loadCachedAi(DateTime date) async {
+    final prefs = await SharedPreferences.getInstance();
+    final dataHash = _hashDayData(prefs, date);
+    final body = await _loadCachedAiBody(
+      prefs: prefs,
+      date: date,
+      dataHash: dataHash,
+    );
+    if (body == null) return null;
+    return DailyReviewAiResult(
+      date: date,
+      title: _titleForDate(date),
+      body: body,
+      fromCache: true,
+    );
+  }
+
+  /// 仅 AI 生成复盘，无本地写死兜底
+  static Future<DailyReviewAiResult> fetchAiForDate(
     DateTime date, {
-    bool allowNetworkAi = true,
+    bool forceRefresh = false,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final todayStats = await _loadDayStats(prefs, date);
     final yesterday = date.subtract(const Duration(days: 1));
     final yesterdayStats = await _loadDayStats(prefs, yesterday);
-
-    final title = '${date.month}月${date.day}日 · 今日复盘';
     final dataHash = _hashDayData(prefs, date);
+    final title = _titleForDate(date);
 
-    final aiBody = await _loadOrFetchAiBody(
-      prefs: prefs,
-      date: date,
-      dataHash: dataHash,
-      todayStats: todayStats,
-      yesterdayStats: yesterdayStats,
-      allowNetworkAi: allowNetworkAi,
-    );
-
-    final body = aiBody ??
-        _composeFallbackBody(
-          todayStats: todayStats,
-          yesterdayMinutes: yesterdayStats.totalMinutes,
-        );
-
-    return DailyReviewSummary(title: title, body: body);
-  }
-
-  static Future<String?> _loadOrFetchAiBody({
-    required SharedPreferences prefs,
-    required DateTime date,
-    required String dataHash,
-    required _DayStats todayStats,
-    required _DayStats yesterdayStats,
-    bool allowNetworkAi = true,
-  }) async {
-    final apiKey = SiliconFlowAiService.hasApiKeyConfigured;
-    if (!apiKey) return null;
-
-    final cacheKey = '$_cachePrefix${dateKey(date)}';
-    final cachedRaw = prefs.getString(cacheKey);
-    if (cachedRaw != null) {
-      try {
-        final cached = json.decode(cachedRaw) as Map<String, dynamic>;
-        if (cached['hash'] == dataHash) {
-          final body = cached['body'] as String?;
-          if (body != null && body.isNotEmpty) return body;
-        }
-      } catch (_) {}
+    if (!SiliconFlowAiService.hasApiKeyConfigured) {
+      return DailyReviewAiResult(
+        date: date,
+        title: title,
+        error: DailyReviewAiError.noApiKey,
+      );
     }
 
-    if (!allowNetworkAi) return null;
+    if (!forceRefresh) {
+      final cached = await _loadCachedAiBody(
+        prefs: prefs,
+        date: date,
+        dataHash: dataHash,
+      );
+      if (cached != null) {
+        return DailyReviewAiResult(
+          date: date,
+          title: title,
+          body: cached,
+          fromCache: true,
+        );
+      }
+    }
 
     final prompt = _buildAiPrompt(
       date: date,
@@ -93,13 +134,53 @@ class DailyReviewSummaryBuilder {
     final aiText = await SiliconFlowAiService.generateDailyReview(
       userPrompt: prompt,
     );
-    if (aiText == null) return null;
+
+    if (aiText == null || aiText.isEmpty) {
+      return DailyReviewAiResult(
+        date: date,
+        title: title,
+        error: SiliconFlowAiService.lastCallTimedOut
+            ? DailyReviewAiError.timeout
+            : DailyReviewAiError.networkFailed,
+      );
+    }
 
     await prefs.setString(
-      cacheKey,
+      '$_cachePrefix${dateKey(date)}',
       json.encode({'hash': dataHash, 'body': aiText}),
     );
-    return aiText;
+
+    return DailyReviewAiResult(
+      date: date,
+      title: title,
+      body: aiText,
+      fromCache: false,
+    );
+  }
+
+  static String _titleForDate(DateTime date) =>
+      '${date.month}月${date.day}日 · 今日复盘';
+
+  static Future<String?> _loadCachedAiBody({
+    required SharedPreferences prefs,
+    required DateTime date,
+    required String dataHash,
+  }) async {
+    final cacheKey = '$_cachePrefix${dateKey(date)}';
+    final cachedRaw = prefs.getString(cacheKey);
+    if (cachedRaw == null) return null;
+    try {
+      final cached = json.decode(cachedRaw) as Map<String, dynamic>;
+        if (cached['hash'] == dataHash) {
+          final body = cached['body'] as String?;
+          if (body != null &&
+              body.isNotEmpty &&
+              !SiliconFlowAiService.looksLikeThinkingProcess(body)) {
+            return body;
+          }
+        }
+    } catch (_) {}
+    return null;
   }
 
   static String _buildAiPrompt({
@@ -270,53 +351,6 @@ class DailyReviewSummaryBuilder {
     } catch (_) {
       return const _DayStats.empty();
     }
-  }
-
-  static String _composeFallbackBody({
-    required _DayStats todayStats,
-    required int yesterdayMinutes,
-  }) {
-    final total = todayStats.totalMinutes;
-    if (total == 0) {
-      return '今天还没有任何时间记录。回顾一下实际做了什么，补记后会更清楚今天过得怎样。';
-    }
-
-    final parts = <String>[];
-    parts.add('今天共记录 ${_formatDuration(total)}');
-
-    final top = todayStats.topLabels(limit: 2);
-    if (top.isNotEmpty) {
-      final topText = top
-          .map((e) => '${e.key}${_formatDuration(e.value, short: true)}')
-          .join('、');
-      parts.add('主要在 $topText');
-    }
-
-    if (todayStats.calendarMinutes > 0 && todayStats.userMinutes > 0) {
-      parts.add(
-          '其中会议/日程 ${_formatDuration(todayStats.calendarMinutes, short: true)}，自主安排 ${_formatDuration(todayStats.userMinutes, short: true)}');
-    }
-
-    final delta = total - yesterdayMinutes;
-    if (yesterdayMinutes > 0 && delta.abs() >= 30) {
-      if (delta > 0) {
-        parts.add('比昨天多记了 ${_formatDuration(delta, short: true)}');
-      } else {
-        parts.add('比昨天少 ${_formatDuration(-delta, short: true)}，节奏更松');
-      }
-    }
-
-    parts.add(_closingRemark(total, todayStats));
-    return parts.join('。');
-  }
-
-  static String _closingRemark(int totalMinutes, _DayStats stats) {
-    if (totalMinutes >= 480) return '今天安排很满，别忘了留点时间给自己';
-    if (totalMinutes >= 240) return '节奏紧凑的一天，看看有没有漏记';
-    if (stats.userMinutes < 60 && stats.calendarMinutes == 0) {
-      return '记录还不多，补记几个时段会更有复盘价值';
-    }
-    return '整体节奏还不错';
   }
 
   static String _formatDuration(int minutes, {bool short = false}) {
