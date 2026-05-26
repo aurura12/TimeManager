@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:home_widget/home_widget.dart';
 import '../models/time_slot.dart';
 
@@ -10,6 +12,20 @@ class HomeWidgetService {
   static const int dayStartHour = 7;
   static const int dayEndHour = 24;
   static int get daySpanHours => dayEndHour - dayStartHour;
+
+  /// 小组件时间轴专用色板：按时间顺序为每个连续时段分配，与 App 内分类色无关
+  static const List<int> _timelinePalette = [
+    0xFF9CB86A, // 绿
+    0xFF4A90E2, // 蓝
+    0xFFD4AF37, // 金
+    0xFF7986CB, // 靛
+    0xFF4DB6AC, // 青
+    0xFFE57373, // 红
+    0xFFFF8A65, // 橙
+    0xFFBA68C8, // 紫
+    0xFFA1887F, // 棕
+    0xFF26A69A, // 深青
+  ];
 
   static Future<void> updateFromDay({
     required List<TimeSlot> slots,
@@ -37,14 +53,14 @@ class HomeWidgetService {
       nextText = '接下来：—';
     }
 
-    final hourColors = _hourColorsString(slots);
+    final timelineBlocks = _timelineBlocksJson(slots);
 
     await HomeWidget.saveWidgetData<String>('widget_date', dateLabel);
     await HomeWidget.saveWidgetData<String>('widget_stats', statsText);
     await HomeWidget.saveWidgetData<String>('widget_top_categories', topCategories);
     await HomeWidget.saveWidgetData<String>('widget_current', currentText);
     await HomeWidget.saveWidgetData<String>('widget_next', nextText);
-    await HomeWidget.saveWidgetData<String>('widget_hour_colors', hourColors);
+    await HomeWidget.saveWidgetData<String>('widget_timeline_blocks', timelineBlocks);
     await HomeWidget.saveWidgetData<bool>('widget_pending_sync', pendingSync);
     await HomeWidget.saveWidgetData<bool>('widget_is_today', isToday);
     await HomeWidget.saveWidgetData<int>(
@@ -151,23 +167,56 @@ class HomeWidgetService {
     return '接下来：无';
   }
 
-  /// 7:00–24:00，每小时一个色块（共 17 段）
-  static String _hourColorsString(List<TimeSlot> slots) {
-    final parts = <String>[];
-    for (int h = dayStartHour; h < dayEndHour; h++) {
-      int? argb;
-      for (int m = 0; m < 6; m++) {
-        final idx = h * 6 + m;
-        if (idx < slots.length &&
-            slots[idx].recorded &&
-            slots[idx].color != null) {
-          argb = slots[idx].color!.toARGB32();
-          break;
-        }
-      }
-      parts.add(argb != null ? argb.toRadixString(16).padLeft(8, '0') : '0');
+  /// 连续时段 JSON，供原生时间轴绘制色块与名称
+  static String _timelineBlocksJson(List<TimeSlot> slots) {
+    final blocks = _timelineBlocksWithPalette(slots);
+    final dayStartMin = dayStartHour * 60;
+    final dayEndMin = dayEndHour * 60;
+
+    final list = <Map<String, dynamic>>[];
+    for (final block in blocks) {
+      final startMin = _slotIndexToMinutes(block.startIndex);
+      final endMin = _slotIndexToMinutes(block.endIndex + 1);
+      if (endMin <= dayStartMin || startMin >= dayEndMin) continue;
+      list.add({
+        's': startMin,
+        'e': endMin,
+        'l': block.label,
+        'c': block.colorArgb,
+      });
     }
-    return parts.join(',');
+    return json.encode(list);
+  }
+
+  static int _slotIndexToMinutes(int index) =>
+      (index ~/ 6) * 60 + (index % 6) * 10;
+
+  /// 将一天拆成连续记录段，每段使用色板中不同颜色（相邻段必可区分）
+  static List<_TimelineBlock> _timelineBlocksWithPalette(List<TimeSlot> slots) {
+    final blocks = <_TimelineBlock>[];
+    int paletteIndex = 0;
+    int i = 0;
+    while (i < slots.length) {
+      if (slots[i].recorded && (slots[i].label?.isNotEmpty ?? false)) {
+        final label = slots[i].label;
+        final start = i;
+        while (i < slots.length &&
+            slots[i].recorded &&
+            slots[i].label == label) {
+          i++;
+        }
+        blocks.add(_TimelineBlock(
+          startIndex: start,
+          endIndex: i - 1,
+          label: label!,
+          colorArgb: _timelinePalette[paletteIndex % _timelinePalette.length],
+        ));
+        paletteIndex++;
+      } else {
+        i++;
+      }
+    }
+    return blocks;
   }
 
   static bool _isSameDay(DateTime a, DateTime b) =>
@@ -178,4 +227,18 @@ class HomeWidgetService {
     final w = weekdays[date.weekday - 1];
     return '${date.month}月${date.day}日 $w';
   }
+}
+
+class _TimelineBlock {
+  final int startIndex;
+  final int endIndex;
+  final String label;
+  final int colorArgb;
+
+  _TimelineBlock({
+    required this.startIndex,
+    required this.endIndex,
+    required this.label,
+    required this.colorArgb,
+  });
 }

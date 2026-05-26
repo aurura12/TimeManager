@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 时间轴条高度：与位图生成像素一致，避免 fitXY 拉伸文字 -->
+    <dimen name="widget_timeline_height">32dp</dimen>
+</resources>
