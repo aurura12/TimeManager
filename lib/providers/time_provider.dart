@@ -1440,6 +1440,40 @@ class TimeProvider with ChangeNotifier {
     return stats;
   }
 
+  /// 统计每个事件在日期范围内出现的连续块次数（用于词云权重）
+  Map<String, int> getEventOccurrenceCounts(DateTime start, DateTime end) {
+    final counts = <String, int>{};
+
+    for (int i = 0; i <= end.difference(start).inDays; i++) {
+      final date = start.add(Duration(days: i));
+      final key = _getDateKey(date);
+      final daySlots = _dailySlots[key];
+      if (daySlots == null || daySlots.isEmpty) continue;
+
+      var j = 0;
+      while (j < daySlots.length) {
+        final slot = daySlots[j];
+        if (!(slot.recorded && slot.label != null && slot.label!.isNotEmpty)) {
+          j++;
+          continue;
+        }
+
+        final label = slot.label!;
+        counts[label] = (counts[label] ?? 0) + 1;
+
+        // 跳过同一连续块
+        j++;
+        while (j < daySlots.length &&
+            daySlots[j].recorded &&
+            daySlots[j].label == label) {
+          j++;
+        }
+      }
+    }
+
+    return counts;
+  }
+
   // 在 TimeProvider 类中添加
   Map<String, List<String>> getEventHistory(String eventName, int tabIndex) {
     Map<String, List<String>> history = {};
