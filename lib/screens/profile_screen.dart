@@ -336,12 +336,11 @@ class _ProfileScreenState extends State<ProfileScreen>
           double percent = (val / total) * 100;
           Color itemColor = Colors.primaries[index % Colors.primaries.length];
 
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
+          return Material(
+            color: Colors.transparent,
             child: ListTile(
               dense: true,
               onTap: () {
-                // 点击跳转到详情页，传入事件名称
                 Navigator.push(
                   context,
                   MaterialPageRoute(

@@ -6,5 +6,5 @@ class SiliconFlowConfig {
   static const String baseUrl =
       'https://api.siliconflow.cn/v1/chat/completions';
 
-  static const String model = 'Qwen/Qwen3.5-9B';
+  static const String model = 'Qwen/Qwen2.5-7B-Instruct';
 }
