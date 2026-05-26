@@ -10,7 +10,24 @@ import '../models/schedule_template.dart';
 import '../models/calendar_block.dart';
 import '../services/home_widget_service.dart';
 
+class BackupPreview {
+  final String? exportedAt;
+  final int dayCount;
+  final int targetCount;
+  final int categoryCount;
+  final int templateCount;
+
+  const BackupPreview({
+    this.exportedAt,
+    required this.dayCount,
+    required this.targetCount,
+    required this.categoryCount,
+    required this.templateCount,
+  });
+}
+
 class TimeProvider with ChangeNotifier {
+  static const int backupVersion = 1;
   static const Color calendarImportColor = Color(0xFF78909C);
   Timer? _debounceTimer;
   Future<void>? _ongoingSave;
@@ -700,6 +717,183 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
+  Map<String, dynamic> toBackupMap() {
+    final slotsJson = <String, dynamic>{};
+    _dailySlots.forEach((dateKey, daySlots) {
+      final recorded = _serializeRecordedSlots(daySlots);
+      if (recorded.isNotEmpty) {
+        slotsJson[dateKey] = recorded;
+      }
+    });
+
+    final ignoredJson = <String, dynamic>{};
+    _ignoredCalendarImports.forEach((dateKey, ids) {
+      if (ids.isNotEmpty) {
+        ignoredJson[dateKey] = ids.toList();
+      }
+    });
+
+    return {
+      'version': backupVersion,
+      'exportedAt': DateTime.now().toIso8601String(),
+      'categories': _categories
+          .map((c) => {
+                'name': c.name,
+                'color': c.color.toARGB32(),
+                'subCategories': c.subCategories,
+              })
+          .toList(),
+      'targets': _targets.map((t) => t.toJson()).toList(),
+      'dailySlots': slotsJson,
+      'scheduleTemplates': _templates.map((t) => t.toJson()).toList(),
+      'ignoredCalendarImports': ignoredJson,
+      'pendingSyncDates': _pendingSyncDates.toList(),
+    };
+  }
+
+  String exportBackupJson() {
+    return const JsonEncoder.withIndent('  ').convert(toBackupMap());
+  }
+
+  BackupPreview? previewBackupJson(String jsonStr) {
+    try {
+      final data = _parseBackupRoot(jsonStr);
+      final categories = data['categories'];
+      final targets = data['targets'];
+      final dailySlots = data['dailySlots'];
+      final templates = data['scheduleTemplates'];
+
+      if (categories is! List || dailySlots is! Map) {
+        return null;
+      }
+
+      return BackupPreview(
+        exportedAt: data['exportedAt'] as String?,
+        dayCount: dailySlots.length,
+        targetCount: targets is List ? targets.length : 0,
+        categoryCount: categories.length,
+        templateCount: templates is List ? templates.length : 0,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> importBackupJson(String jsonStr) async {
+    final data = _parseBackupRoot(jsonStr);
+    _applyBackupMap(data);
+    await _saveData();
+    notifyListeners();
+  }
+
+  Map<String, dynamic> _parseBackupRoot(String jsonStr) {
+    final decoded = json.decode(jsonStr);
+    if (decoded is! Map) {
+      throw const FormatException('备份文件格式无效');
+    }
+    final data = Map<String, dynamic>.from(decoded);
+
+    final version = data['version'];
+    if (version is num && version > backupVersion) {
+      throw FormatException('备份版本过新（v$version），请先升级 App');
+    }
+    if (data['categories'] is! List || data['dailySlots'] is! Map) {
+      throw const FormatException('备份文件缺少必要数据');
+    }
+    return data;
+  }
+
+  void _applyBackupMap(Map<String, dynamic> data) {
+    _categories = (data['categories'] as List)
+        .map((e) {
+          final map = Map<String, dynamic>.from(e as Map);
+          return Category(
+            name: map['name'] as String,
+            color: Color(map['color'] as int),
+            subCategories: List<String>.from(map['subCategories'] ?? []),
+          );
+        })
+        .toList();
+    _ensureTempCategory();
+
+    _targets
+      ..clear()
+      ..addAll(
+        ((data['targets'] as List?) ?? [])
+            .map((e) => Target.fromJson(Map<String, dynamic>.from(e as Map))),
+      );
+
+    _dailySlots.clear();
+    _loadDailySlotsFromJson(Map<String, dynamic>.from(data['dailySlots'] as Map));
+
+    _templates
+      ..clear()
+      ..addAll(
+        ((data['scheduleTemplates'] as List?) ?? [])
+            .map((e) =>
+                ScheduleTemplate.fromJson(Map<String, dynamic>.from(e as Map)))
+            .toList(),
+      );
+
+    _ignoredCalendarImports.clear();
+    final ignored = data['ignoredCalendarImports'];
+    if (ignored is Map) {
+      ignored.forEach((dateKey, value) {
+        _ignoredCalendarImports[dateKey as String] =
+            Set<String>.from(value as List<dynamic>);
+      });
+    }
+
+    _pendingSyncDates
+      ..clear()
+      ..addAll(
+        ((data['pendingSyncDates'] as List?) ?? []).cast<String>(),
+      );
+  }
+
+  void _ensureTempCategory() {
+    if (!_categories.any((c) => c.name == '临时')) {
+      _categories.add(Category(name: '临时', color: const Color(0xFF9E9E9E)));
+    }
+  }
+
+  List<Category> _defaultCategories() => [
+        Category(
+            name: '学习',
+            color: const Color(0xFFD4AF37),
+            subCategories: ['阅读', '编程']),
+        Category(
+            name: '工作',
+            color: const Color(0xFF9CB86A),
+            subCategories: ['会议', '文档']),
+        Category(name: '运动', color: const Color(0xFF4A90E2)),
+        Category(name: '临时', color: const Color(0xFF9E9E9E)),
+      ];
+
+  void _loadDailySlotsFromJson(Map<String, dynamic> slotsJson) {
+    slotsJson.forEach((dateKey, value) {
+      final daySlots = _generateInitialSlots();
+      for (final item in value as List<dynamic>) {
+        final map = Map<String, dynamic>.from(item as Map);
+        final idx = map['i'] as int;
+        if (idx >= 0 && idx < daySlots.length) {
+          daySlots[idx].recorded = true;
+          daySlots[idx].label = map['l'] as String?;
+          if (map['c'] != null) {
+            daySlots[idx].color = Color(map['c'] as int);
+          }
+          if (map['fc'] == true) {
+            daySlots[idx].isFromCalendar = true;
+          }
+          if (map['eid'] != null) {
+            daySlots[idx].calendarEventId = map['eid'] as String?;
+          }
+        }
+      }
+      _dailySlots[dateKey] = daySlots;
+    });
+  }
+
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -714,28 +908,12 @@ class TimeProvider with ChangeNotifier {
           subCategories: List<String>.from(map['subCategories'] ?? []),
         );
       }).toList();
-
-      // 确保存在“临时”分类，并添加到列表末尾
-      if (!_categories.any((c) => c.name == '临时')) {
-        _categories.add(Category(name: '临时', color: const Color(0xFF9E9E9E)));
-      }
+      _ensureTempCategory();
     } else {
-      // 默认分类
-      _categories = [
-        Category(
-            name: '学习',
-            color: const Color(0xFFD4AF37),
-            subCategories: ['阅读', '编程']),
-        Category(
-            name: '工作',
-            color: const Color(0xFF9CB86A),
-            subCategories: ['会议', '文档']),
-        Category(name: '运动', color: const Color(0xFF4A90E2)),
-        Category(name: '临时', color: const Color(0xFF9E9E9E)),
-      ];
+      _categories = _defaultCategories();
     }
 
-    // 2. 加载目标 (新增)
+    // 2. 加载目标
     List<String>? targetList = prefs.getStringList('targets');
     if (targetList != null) {
       _targets.clear();
@@ -747,31 +925,8 @@ class TimeProvider with ChangeNotifier {
     String? slotsStr = prefs.getString('daily_slots');
     if (slotsStr != null) {
       try {
-        Map<String, dynamic> slotsJson = json.decode(slotsStr);
-        slotsJson.forEach((dateKey, value) {
-          // 先生成当天的空白数据
-          List<TimeSlot> daySlots = _generateInitialSlots();
-          List<dynamic> recordedList = value;
-
-          // 填充已保存的数据
-          for (var item in recordedList) {
-            int idx = item['i'];
-            if (idx >= 0 && idx < daySlots.length) {
-              daySlots[idx].recorded = true;
-              daySlots[idx].label = item['l'];
-              if (item['c'] != null) {
-                daySlots[idx].color = Color(item['c']);
-              }
-              if (item['fc'] == true) {
-                daySlots[idx].isFromCalendar = true;
-              }
-              if (item['eid'] != null) {
-                daySlots[idx].calendarEventId = item['eid'] as String?;
-              }
-            }
-          }
-          _dailySlots[dateKey] = daySlots;
-        });
+        _dailySlots.clear();
+        _loadDailySlotsFromJson(json.decode(slotsStr) as Map<String, dynamic>);
       } catch (e) {
         debugPrint("加载时间块数据出错: $e");
       }

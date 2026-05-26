@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
-import '../services/google_calendar_service.dart';
-import 'package:google_sign_in/google_sign_in.dart';
+import '../widgets/profile_settings_drawer.dart';
 import '../providers/time_provider.dart';
 import 'event_detail_screen.dart';
 
@@ -28,11 +27,11 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   @override
   Widget build(BuildContext context) {
-    final googleUser = GoogleCalendarService.currentUser;
     final provider = Provider.of<TimeProvider>(context);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
+      drawer: ProfileSettingsDrawer(onChanged: () => setState(() {})),
       appBar: AppBar(
         title: const Text("个人中心",
             style:
@@ -44,19 +43,12 @@ class _ProfileScreenState extends State<ProfileScreen>
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         children: [
-          // 1. 用户信息卡片
-          _buildUserHeader(googleUser, provider),
-          const SizedBox(height: 20),
-
-          // 2. 双曲线折线图 (移到这里，展示最近一月趋势)
           _buildTrendChart(provider),
           const SizedBox(height: 20),
 
-          // 3. 统计维度切换 (今天、一周、一月、总览)
           _buildCustomTabBar(),
           const SizedBox(height: 20),
 
-          // 4. 统计概览数字卡片 (在 Tab 下方显示对应时段数据)
           _buildSummaryCards(provider, _tabController.index),
           const SizedBox(height: 20),
 
@@ -86,7 +78,6 @@ class _ProfileScreenState extends State<ProfileScreen>
           ),
           const SizedBox(height: 12),
 
-          // 5. 事件详情列表
           _groupValue == 0
               ? _buildDetailList(provider, _tabController.index)
               : _buildPieChart(provider, _tabController.index),
@@ -251,86 +242,6 @@ class _ProfileScreenState extends State<ProfileScreen>
         ],
         onTap: (index) => setState(() {}),
       ),
-    );
-  }
-
-  // 用户信息
-  Widget _buildUserHeader(GoogleSignInAccount? googleUser, TimeProvider provider) {
-    final isGoogleLoggedIn = googleUser != null;
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(25),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 15)
-        ],
-      ),
-      child: isGoogleLoggedIn
-          ? Row(
-              children: [
-                CircleAvatar(
-                  radius: 35,
-                  backgroundColor:
-                      const Color(0xFF9CB86A).withValues(alpha: 0.1),
-                  backgroundImage: googleUser.photoUrl != null
-                      ? NetworkImage(googleUser.photoUrl!)
-                      : null,
-                  child: googleUser.photoUrl == null
-                      ? const Icon(Icons.person,
-                          size: 35, color: Color(0xFF9CB86A))
-                      : null,
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(googleUser.displayName ?? 'Google 用户',
-                          style: const TextStyle(
-                              fontSize: 20, fontWeight: FontWeight.bold)),
-                      Text(googleUser.email,
-                          style:
-                              TextStyle(color: Colors.grey[500], fontSize: 13)),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  icon: Icon(Icons.logout_rounded, color: Colors.grey[400]),
-                  onPressed: () async {
-                    await GoogleCalendarService.logout();
-                    setState(() {});
-                  },
-                )
-              ],
-            )
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text("同步数据",
-                    style:
-                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
-                Text("连接 Google 日历以备份和同步您的时间记录",
-                    style: TextStyle(color: Colors.grey[500], fontSize: 12)),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.g_mobiledata, size: 28),
-                    label: const Text("Google 日历"),
-                    style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12)),
-                    onPressed: () async {
-                      await GoogleCalendarService.login();
-                      provider.synchronizeCalendar();
-                      setState(() {});
-                    },
-                  ),
-                ),
-              ],
-            ),
     );
   }
 
