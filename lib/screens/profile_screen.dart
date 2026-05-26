@@ -3,8 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../services/google_calendar_service.dart';
-import '../services/feishu_calendar_service.dart';
-import 'package:flutter/services.dart'; // 用于复制粘贴板
+import 'package:google_sign_in/google_sign_in.dart';
 import '../providers/time_provider.dart';
 import 'event_detail_screen.dart';
 
@@ -30,7 +29,6 @@ class _ProfileScreenState extends State<ProfileScreen>
   @override
   Widget build(BuildContext context) {
     final googleUser = GoogleCalendarService.currentUser;
-    final feishuUser = FeishuCalendarService.currentUser;
     final provider = Provider.of<TimeProvider>(context);
 
     return Scaffold(
@@ -47,7 +45,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         children: [
           // 1. 用户信息卡片
-          _buildUserHeader(googleUser, feishuUser, provider),
+          _buildUserHeader(googleUser, provider),
           const SizedBox(height: 20),
 
           // 2. 双曲线折线图 (移到这里，展示最近一月趋势)
@@ -257,11 +255,8 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   // 用户信息
-  Widget _buildUserHeader(
-      var googleUser, FeishuUser? feishuUser, TimeProvider provider) {
-    // 优先显示已登录的用户，如果都登录了（理论上互斥，看你逻辑），优先显示 Google 或做切换
+  Widget _buildUserHeader(GoogleSignInAccount? googleUser, TimeProvider provider) {
     final isGoogleLoggedIn = googleUser != null;
-    final isFeishuLoggedIn = feishuUser != null;
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -272,24 +267,17 @@ class _ProfileScreenState extends State<ProfileScreen>
           BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 15)
         ],
       ),
-      child: (isGoogleLoggedIn || isFeishuLoggedIn)
+      child: isGoogleLoggedIn
           ? Row(
               children: [
                 CircleAvatar(
                   radius: 35,
                   backgroundColor:
                       const Color(0xFF9CB86A).withValues(alpha: 0.1),
-                  backgroundImage: isGoogleLoggedIn
-                      ? (googleUser.photoUrl != null
-                          ? NetworkImage(googleUser.photoUrl!)
-                          : null)
-                      : (feishuUser?.avatarUrl != null
-                          ? NetworkImage(feishuUser!.avatarUrl!)
-                          : null),
-                  child: (isGoogleLoggedIn
-                              ? googleUser.photoUrl
-                              : feishuUser?.avatarUrl) ==
-                          null
+                  backgroundImage: googleUser.photoUrl != null
+                      ? NetworkImage(googleUser.photoUrl!)
+                      : null,
+                  child: googleUser.photoUrl == null
                       ? const Icon(Icons.person,
                           size: 35, color: Color(0xFF9CB86A))
                       : null,
@@ -299,13 +287,10 @@ class _ProfileScreenState extends State<ProfileScreen>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                          isGoogleLoggedIn
-                              ? (googleUser.displayName ?? 'Google 用户')
-                              : (feishuUser?.name ?? '飞书用户'),
+                      Text(googleUser.displayName ?? 'Google 用户',
                           style: const TextStyle(
                               fontSize: 20, fontWeight: FontWeight.bold)),
-                      Text(isGoogleLoggedIn ? (googleUser.email) : "已连接飞书日历",
+                      Text(googleUser.email,
                           style:
                               TextStyle(color: Colors.grey[500], fontSize: 13)),
                     ],
@@ -314,11 +299,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                 IconButton(
                   icon: Icon(Icons.logout_rounded, color: Colors.grey[400]),
                   onPressed: () async {
-                    if (isGoogleLoggedIn) {
-                      await GoogleCalendarService.logout();
-                    } else {
-                      await FeishuCalendarService.logout();
-                    }
+                    await GoogleCalendarService.logout();
                     setState(() {});
                   },
                 )
@@ -331,100 +312,26 @@ class _ProfileScreenState extends State<ProfileScreen>
                     style:
                         TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 4),
-                Text("选择一个平台以备份和同步您的时间记录",
+                Text("连接 Google 日历以备份和同步您的时间记录",
                     style: TextStyle(color: Colors.grey[500], fontSize: 12)),
                 const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        icon: const Icon(Icons.g_mobiledata, size: 28),
-                        label: const Text("Google"),
-                        style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12)),
-                        onPressed: () async {
-                          await GoogleCalendarService.login();
-                          provider.synchronizeCalendar();
-                          setState(() {});
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        icon: const Icon(Icons.cloud_sync_outlined, size: 22),
-                        label: const Text("飞书"),
-                        style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12)),
-                        onPressed: () async {
-                          await _handleFeishuLogin(context, provider);
-                          setState(() {});
-                        },
-                      ),
-                    ),
-                  ],
-                )
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.g_mobiledata, size: 28),
+                    label: const Text("Google 日历"),
+                    style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12)),
+                    onPressed: () async {
+                      await GoogleCalendarService.login();
+                      provider.synchronizeCalendar();
+                      setState(() {});
+                    },
+                  ),
+                ),
               ],
             ),
     );
-  }
-
-  // 处理飞书自动登录流程
-  Future<void> _handleFeishuLogin(
-      BuildContext context, TimeProvider provider) async {
-    BuildContext? dialogContext;
-
-    final user = await FeishuCalendarService.login(onAuthUrlGenerated: (url) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) {
-          dialogContext = ctx;
-          return AlertDialog(
-            title: const Text("连接飞书日历"),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text("请复制链接在浏览器中打开，授权成功后应用将自动登录。",
-                    style: TextStyle(fontSize: 13, color: Colors.grey)),
-                const SizedBox(height: 12),
-                SelectableText(url,
-                    style: const TextStyle(fontSize: 12, color: Colors.blue)),
-                const SizedBox(height: 12),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.copy, size: 16),
-                  label: const Text("复制链接"),
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: url));
-                    ScaffoldMessenger.of(context)
-                        .showSnackBar(const SnackBar(content: Text("链接已复制")));
-                  },
-                ),
-                const SizedBox(height: 10),
-                const CircularProgressIndicator(),
-                const SizedBox(height: 10),
-                const Text("等待授权...", style: TextStyle(fontSize: 12)),
-              ],
-            ),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(ctx), child: const Text("取消")),
-            ],
-          );
-        },
-      );
-    });
-
-    // 登录成功后，如果对话框还开着，则关闭它
-    if (user != null &&
-        dialogContext != null &&
-        Navigator.canPop(dialogContext!)) {
-      Navigator.pop(dialogContext!);
-    }
-
-    if (user != null) {
-      provider.synchronizeCalendar();
-    }
   }
 
   // 概览卡片
