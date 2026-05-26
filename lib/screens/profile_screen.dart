@@ -77,6 +77,10 @@ class _ProfileScreenState extends State<ProfileScreen>
                     padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                     child: Icon(Icons.pie_chart_outline, size: 20),
                   ),
+                  2: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    child: Icon(Icons.bubble_chart_outlined, size: 20),
+                  ),
                 },
                 onValueChanged: (value) => setState(() => _groupValue = value),
               ),
@@ -86,7 +90,9 @@ class _ProfileScreenState extends State<ProfileScreen>
 
           _groupValue == 0
               ? _buildDetailList(provider, _tabController.index)
-              : _buildPieChart(provider, _tabController.index),
+              : _groupValue == 1
+                  ? _buildPieChart(provider, _tabController.index)
+                  : _buildWordCloud(provider, _tabController.index),
           const SizedBox(height: 30),
         ],
       ),
@@ -475,6 +481,108 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
+  Widget _buildWordCloud(TimeProvider provider, int tabIndex) {
+    final rawStats = _getDataByTab(provider, tabIndex);
+    if (rawStats.isEmpty) {
+      return Center(
+        child: Text("本时段暂无记录", style: TextStyle(color: Colors.grey[400])),
+      );
+    }
+
+    final items = _buildWordCloudItems(provider, tabIndex, rawStats);
+    if (items.isEmpty) {
+      return Center(
+        child: Text("本时段暂无可用词云数据", style: TextStyle(color: Colors.grey[400])),
+      );
+    }
+
+    final maxWeight =
+        items.map((e) => e.weight).fold<double>(0, (a, b) => a > b ? a : b);
+    final minWeight = items
+        .map((e) => e.weight)
+        .fold<double>(items.first.weight, (a, b) => a < b ? a : b);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(25),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '词云权重 = 60%时长 + 40%出现次数',
+            style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 12,
+            children: List.generate(items.length, (i) {
+              final item = items[i];
+              final normalized = (maxWeight - minWeight).abs() < 0.0001
+                  ? 1.0
+                  : ((item.weight - minWeight) / (maxWeight - minWeight))
+                      .clamp(0.0, 1.0);
+              final fontSize = 12.0 + normalized * 24.0;
+              final color = Color.lerp(
+                const Color(0xFF9CB86A),
+                const Color(0xFF4A90E2),
+                (i % 6) / 5,
+              )!;
+              return Tooltip(
+                message:
+                    '${item.label}\n时长: ${item.hours.toStringAsFixed(2)}h\n出现: ${item.blocks}次',
+                child: Text(
+                  item.label,
+                  style: TextStyle(
+                    fontSize: fontSize,
+                    color: color,
+                    fontWeight: normalized > 0.55
+                        ? FontWeight.w700
+                        : FontWeight.w500,
+                    height: 1.1,
+                  ),
+                ),
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<_WordCloudItem> _buildWordCloudItems(
+    TimeProvider provider,
+    int tabIndex,
+    Map<String, double> rawStats,
+  ) {
+    final items = <_WordCloudItem>[];
+    for (final entry in rawStats.entries) {
+      final label = entry.key.trim();
+      if (label.isEmpty) continue;
+
+      final history = provider.getEventHistory(label, tabIndex);
+      final blocks = history.values.fold<int>(0, (sum, ranges) {
+        return sum + ranges.length;
+      });
+      final hours = entry.value;
+      final weight = (hours * 0.6) + (blocks * 0.4);
+      items.add(
+        _WordCloudItem(
+          label: label,
+          hours: hours,
+          blocks: blocks,
+          weight: weight,
+        ),
+      );
+    }
+
+    items.sort((a, b) => b.weight.compareTo(a.weight));
+    return items.take(40).toList();
+  }
+
   // 获取数据方法保持不变
   Map<String, double> _getDataByTab(TimeProvider provider, int index) {
     DateTime now = DateTime.now();
@@ -516,4 +624,18 @@ class _ProfileScreenState extends State<ProfileScreen>
     }
     return spots;
   }
+}
+
+class _WordCloudItem {
+  final String label;
+  final double hours;
+  final int blocks;
+  final double weight;
+
+  _WordCloudItem({
+    required this.label,
+    required this.hours,
+    required this.blocks,
+    required this.weight,
+  });
 }

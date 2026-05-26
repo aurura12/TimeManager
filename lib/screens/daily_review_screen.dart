@@ -27,61 +27,319 @@ class DailyReviewScreen extends StatefulWidget {
 }
 
 class _DailyReviewScreenState extends State<DailyReviewScreen> {
-  DailyReviewAiResult? _result;
-  bool _loading = true;
+  static final _earliestDate = DateTime(2020, 1, 1);
+  static const _dateItemExtent = 62.0;
+  static const _initialDays = 30;
+  static const _appendDays = 30;
+  static const _estimatedCardHeight = 280.0;
+
+  final ScrollController _leftController = ScrollController();
+  final ScrollController _rightController = ScrollController();
+  final List<_ReviewEntry> _entries = [];
+  final List<GlobalKey> _cardKeys = [];
+
   late DateTime _selectedDate;
+  bool _loadingMore = false;
 
   @override
   void initState() {
     super.initState();
-    _selectedDate = widget.date;
-    _loadReview(forceRefresh: false);
+    _selectedDate = _normalizeDate(widget.date);
+    _appendRecentDays(_initialDays);
+    _ensureDateLoaded(_selectedDate);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollLeftToSelected(jump: true);
+      _jumpRightToDate(_selectedDate, jump: true);
+    });
+    _preloadInitialCards();
   }
 
-  Future<void> _loadReview({required bool forceRefresh}) async {
-    setState(() => _loading = true);
+  @override
+  void dispose() {
+    _leftController.dispose();
+    _rightController.dispose();
+    super.dispose();
+  }
 
-    if (!forceRefresh) {
-      final cached = await DailyReviewSummaryBuilder.loadCachedAi(_selectedDate);
-      if (cached != null && mounted) {
-        setState(() {
-          _result = cached;
-          _loading = false;
-        });
-        return;
+  DateTime _normalizeDate(DateTime date) =>
+      DateTime(date.year, date.month, date.day);
+
+  bool _sameDate(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  int _indexOfDate(DateTime date) =>
+      _entries.indexWhere((e) => _sameDate(e.date, date));
+
+  void _appendRecentDays(int count) {
+    if (_entries.isNotEmpty) return;
+    final today = _normalizeDate(DateTime.now());
+    var cursor = today;
+    for (var i = 0; i < count && !cursor.isBefore(_earliestDate); i++) {
+      _entries.add(_ReviewEntry(date: cursor));
+      _cardKeys.add(GlobalKey());
+      cursor = cursor.subtract(const Duration(days: 1));
+    }
+  }
+
+  void _appendOlderDays(int count) {
+    if (_entries.isEmpty) return;
+    var cursor = _entries.last.date.subtract(const Duration(days: 1));
+    for (var i = 0; i < count && !cursor.isBefore(_earliestDate); i++) {
+      _entries.add(_ReviewEntry(date: cursor));
+      _cardKeys.add(GlobalKey());
+      cursor = cursor.subtract(const Duration(days: 1));
+    }
+  }
+
+  void _ensureDateLoaded(DateTime date) {
+    final target = _normalizeDate(date);
+    final today = _normalizeDate(DateTime.now());
+    if (target.isAfter(today) || target.isBefore(_earliestDate)) return;
+    while (_indexOfDate(target) < 0) {
+      final before = _entries.length;
+      _appendOlderDays(_appendDays);
+      if (_entries.length == before) break;
+    }
+  }
+
+  void _scrollLeftToSelected({bool jump = false}) {
+    if (!_leftController.hasClients) return;
+    final index = _indexOfDate(_selectedDate);
+    if (index < 0) return;
+    final target = (index * _dateItemExtent).clamp(
+      0.0,
+      _leftController.position.maxScrollExtent,
+    );
+    if (jump) {
+      _leftController.jumpTo(target);
+    } else {
+      _leftController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
+  Future<void> _jumpToDate(DateTime date) async {
+    final normalized = _normalizeDate(date);
+    _ensureDateLoaded(normalized);
+    if (_indexOfDate(normalized) < 0) return;
+
+    setState(() {
+      _selectedDate = normalized;
+    });
+    _scrollLeftToSelected();
+    await _jumpRightToDate(normalized);
+  }
+
+  Future<void> _jumpRightToDate(DateTime date, {bool jump = false}) async {
+    if (!_rightController.hasClients) return;
+    final index = _indexOfDate(date);
+    if (index < 0) return;
+
+    final key = _cardKeys[index];
+    final ctx = key.currentContext;
+    if (ctx != null) {
+      await Scrollable.ensureVisible(
+        ctx,
+        duration: jump ? Duration.zero : const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+        alignment: 0.02,
+      );
+    } else {
+      final target = (index * _estimatedCardHeight).clamp(
+        0.0,
+        _rightController.position.maxScrollExtent,
+      );
+      if (jump) {
+        _rightController.jumpTo(target);
+      } else {
+        await _rightController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
+        );
       }
     }
 
-    final result = await DailyReviewSummaryBuilder.fetchAiForDate(
-      _selectedDate,
-      forceRefresh: forceRefresh,
-    );
+    await _loadEntry(index);
+  }
 
-    if (mounted) {
-      setState(() {
-        _result = result;
-        _loading = false;
-      });
+  Future<void> _preloadInitialCards() async {
+    final selectedIndex = _indexOfDate(_selectedDate);
+    if (selectedIndex >= 0) {
+      await _loadEntry(selectedIndex);
     }
+    for (var i = 0; i < _entries.length && i < 3; i++) {
+      if (i != selectedIndex) {
+        await _loadEntry(i, cachedOnly: true);
+      }
+    }
+  }
+
+  Future<void> _loadEntry(
+    int index, {
+    bool forceRefresh = false,
+    bool cachedOnly = false,
+  }) async {
+    if (index < 0 || index >= _entries.length) return;
+    final entry = _entries[index];
+    if (entry.loading) return;
+    if (entry.result != null && !forceRefresh) return;
+
+    setState(() {
+      entry.loading = true;
+    });
+
+    DailyReviewAiResult? result;
+    if (!forceRefresh) {
+      result = await DailyReviewSummaryBuilder.loadCachedAi(entry.date);
+    }
+    if (!cachedOnly && result == null) {
+      result = await DailyReviewSummaryBuilder.fetchAiForDate(
+        entry.date,
+        forceRefresh: forceRefresh,
+      );
+    }
+
+    if (!mounted) return;
+    setState(() {
+      entry.result = result;
+      entry.loading = false;
+    });
   }
 
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
       context: context,
       initialDate: _selectedDate,
-      firstDate: DateTime(2020, 1, 1),
+      firstDate: _earliestDate,
       lastDate: DateTime.now(),
       locale: const Locale('zh', 'CN'),
     );
     if (picked == null) return;
 
-    final normalized = DateTime(picked.year, picked.month, picked.day);
-    if (normalized == _selectedDate) return;
+    await _jumpToDate(picked);
+  }
+
+  Future<void> _refreshSelected() async {
+    final index = _indexOfDate(_selectedDate);
+    if (index < 0) return;
+    await _loadEntry(index, forceRefresh: true);
+  }
+
+  void _onRightScroll() {
+    if (!_rightController.hasClients || _entries.isEmpty) return;
+
+    final offset = _rightController.offset;
+    final approxIndex = (offset / _estimatedCardHeight).round();
+    if (approxIndex >= 0 && approxIndex < _entries.length) {
+      final date = _entries[approxIndex].date;
+      if (!_sameDate(date, _selectedDate)) {
+        setState(() {
+          _selectedDate = date;
+        });
+        _scrollLeftToSelected();
+      }
+      _loadEntry(approxIndex, cachedOnly: true);
+    }
+
+    final nearBottom = offset >=
+        (_rightController.position.maxScrollExtent - _estimatedCardHeight);
+    if (nearBottom) {
+      _loadMoreDates();
+    }
+  }
+
+  Future<void> _loadMoreDates() async {
+    if (_loadingMore || _entries.isEmpty) return;
+    if (_entries.last.date.isBefore(_earliestDate) ||
+        _sameDate(_entries.last.date, _earliestDate)) {
+      return;
+    }
+    setState(() => _loadingMore = true);
+    final before = _entries.length;
+    _appendOlderDays(_appendDays);
+    if (!mounted) return;
     setState(() {
-      _selectedDate = normalized;
-      _result = null;
+      _loadingMore = false;
     });
-    await _loadReview(forceRefresh: false);
+    if (_entries.length > before) {
+      final start = before;
+      final end = (_entries.length).clamp(before, before + 3);
+      for (var i = start; i < end; i++) {
+        _loadEntry(i, cachedOnly: true);
+      }
+    }
+  }
+
+  String _weekdayLabel(DateTime date) {
+    const names = ['一', '二', '三', '四', '五', '六', '日'];
+    return '周${names[date.weekday - 1]}';
+  }
+
+  Widget _buildDateRail() {
+    final today = _normalizeDate(DateTime.now());
+    return Container(
+      width: 90,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          right: BorderSide(color: Color(0x11000000)),
+        ),
+      ),
+      child: ListView.builder(
+        controller: _leftController,
+        itemExtent: _dateItemExtent,
+        itemCount: _entries.length,
+        itemBuilder: (context, index) {
+          final date = _entries[index].date;
+          final selected = _sameDate(date, _selectedDate);
+          final isToday = _sameDate(date, today);
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Material(
+              color: selected
+                  ? const Color(0xFF9CB86A).withValues(alpha: 0.18)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => _jumpToDate(date),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      '${date.month}/${date.day}',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight:
+                            selected ? FontWeight.w700 : FontWeight.w500,
+                        color: selected
+                            ? const Color(0xFF6B8E3A)
+                            : Colors.grey[800],
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      isToday ? '今天' : _weekdayLabel(date),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: selected
+                            ? const Color(0xFF6B8E3A)
+                            : Colors.grey[500],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -89,9 +347,9 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
-        title: Text(
-          '${_selectedDate.month}月${_selectedDate.day}日 · 今日复盘',
-          style: const TextStyle(
+        title: const Text(
+          '每日复盘',
+          style: TextStyle(
             color: Colors.black87,
             fontWeight: FontWeight.bold,
           ),
@@ -102,112 +360,50 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
         actions: [
           IconButton(
             tooltip: '选择日期',
-            onPressed: _loading ? null : _pickDate,
+            onPressed: _pickDate,
             icon: const Icon(Icons.calendar_month_outlined),
           ),
           IconButton(
             tooltip: '重新生成',
-            onPressed: _loading ? null : () => _loadReview(forceRefresh: true),
+            onPressed: _refreshSelected,
             icon: const Icon(Icons.refresh),
           ),
         ],
       ),
-      body: _buildBody(),
+      body: Row(
+        children: [
+          _buildDateRail(),
+          Expanded(
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                _onRightScroll();
+                return false;
+              },
+              child: _buildWaterfall(),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildBody() {
-    if (_loading && _result == null) {
-      return const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(color: Color(0xFF9CB86A)),
-            SizedBox(height: 16),
-            Text('AI 正在生成今日复盘…', style: TextStyle(color: Colors.black54)),
-          ],
-        ),
-      );
-    }
-
-    final result = _result;
-    if (result == null) {
-      return _buildError('加载失败', '请稍后重试');
-    }
-
-    if (!result.isSuccess) {
-      return _buildError('无法展示复盘', result.errorMessage);
-    }
-
+  Widget _buildWaterfall() {
     return ListView(
+      controller: _rightController,
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
       children: [
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF9CB86A).withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Text(
-                      'AI 生成',
-                      style: TextStyle(
-                        color: Color(0xFF6B8E3A),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  if (result.fromCache) ...[
-                    const SizedBox(width: 8),
-                    Text(
-                      '来自缓存',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[500]),
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 16),
-              Text(
-                result.body!,
-                style: const TextStyle(
-                  fontSize: 16,
-                  height: 1.75,
-                  color: Colors.black87,
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (_loading)
+        for (var i = 0; i < _entries.length; i++) ...[
+          _buildCard(i),
+          const SizedBox(height: 12),
+        ],
+        if (_loadingMore)
           const Padding(
-            padding: EdgeInsets.only(top: 24),
+            padding: EdgeInsets.symmetric(vertical: 12),
             child: Center(
               child: SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Color(0xFF9CB86A),
-                ),
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
               ),
             ),
           ),
@@ -215,40 +411,141 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
     );
   }
 
-  Widget _buildError(String title, String message) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.cloud_off_outlined, size: 48, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
+  Widget _buildCard(int index) {
+    final entry = _entries[index];
+    final result = entry.result;
+    final selected = _sameDate(entry.date, _selectedDate);
+    final title = '${entry.date.month}月${entry.date.day}日 · 今日复盘';
+
+    return Container(
+      key: _cardKeys[index],
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: selected
+            ? Border.all(color: const Color(0xFF9CB86A), width: 1.2)
+            : null,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+          ),
+          const SizedBox(height: 10),
+          if (entry.loading)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
               ),
+            )
+          else if (result == null)
+            _buildCardAction(
+              label: '生成当日复盘',
+              onTap: () => _loadEntry(index),
+            )
+          else if (!result.isSuccess)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  result.errorMessage,
+                  style: TextStyle(color: Colors.grey[700], height: 1.5),
+                ),
+                const SizedBox(height: 10),
+                _buildCardAction(
+                  label: '重试生成',
+                  onTap: () => _loadEntry(index, forceRefresh: true),
+                ),
+              ],
+            )
+          else
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF9CB86A).withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Text(
+                        'AI 生成',
+                        style: TextStyle(
+                          color: Color(0xFF6B8E3A),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (result.fromCache) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        '缓存',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  result.body!,
+                  style: const TextStyle(
+                    fontSize: 15.5,
+                    height: 1.7,
+                    color: Colors.black87,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey[600], height: 1.5),
-            ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: _loading ? null : () => _loadReview(forceRefresh: true),
-              icon: const Icon(Icons.refresh),
-              label: const Text('重新生成'),
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF9CB86A),
-              ),
-            ),
-          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCardAction({
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: FilledButton.icon(
+        onPressed: onTap,
+        icon: const Icon(Icons.auto_awesome, size: 18),
+        label: Text(label),
+        style: FilledButton.styleFrom(
+          backgroundColor: const Color(0xFF9CB86A),
         ),
       ),
     );
   }
+}
+
+class _ReviewEntry {
+  final DateTime date;
+  DailyReviewAiResult? result;
+  bool loading;
+
+  _ReviewEntry({required this.date})
+      : result = null,
+        loading = false;
 }
