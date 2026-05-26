@@ -6,6 +6,7 @@ import '../models/daily_review_reminder.dart';
 import '../providers/time_provider.dart';
 import '../services/data_backup_service.dart';
 import '../screens/daily_review_screen.dart';
+import '../screens/word_cloud_screen.dart';
 import '../services/daily_review_notification_service.dart';
 import '../services/google_calendar_service.dart';
 
@@ -138,6 +139,15 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               onTap: () async {
                 Navigator.pop(context);
                 await _handleImport(context, provider);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.bubble_chart_outlined),
+              title: const Text('事件词云'),
+              subtitle: const Text('按时长与出现次数查看事件热度'),
+              onTap: () {
+                Navigator.pop(context);
+                WordCloudScreen.open(context);
               },
             ),
             const Divider(height: 1),
