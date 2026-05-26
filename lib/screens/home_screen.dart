@@ -8,6 +8,7 @@ import 'package:reorderables/reorderables.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/template_bar.dart';
 import '../models/schedule_template.dart';
+import 'global_search_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -355,6 +356,7 @@ class _HomeScreenState extends State<HomeScreen> {
             provider: provider,
             onTemplateTap: (template) => _onTemplateTap(template, provider),
             onManageTap: () => _showTemplateManageSheet(provider),
+            onCopyYesterdayTap: () => _onCopyYesterday(provider),
           ),
           Expanded(
             child: ReorderableListView.builder(
@@ -577,12 +579,7 @@ class _HomeScreenState extends State<HomeScreen> {
       for (int i = s; i <= e; i++) {
         rangeIndices.add(i);
       }
-      // 创建虚拟类别用于子事件
-      Category subCategory = Category(
-        name: subCat,
-        color: cat.color,
-      );
-      provider.assignCategoryToSlots(rangeIndices, subCategory);
+      provider.assignCategoryToSlots(rangeIndices, cat, subLabel: subCat);
       setState(() {
         _dragStartIndex = null;
         _dragEndIndex = null;
@@ -825,6 +822,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 onPressed: () {
                   if (catName.isNotEmpty) {
                     Category newCat = Category(
+                      id: isEdit ? provider.categories[index].id : null,
                       name: catName,
                       color: selectedColor,
                       subCategories: tempSubCategories,
@@ -932,6 +930,18 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () => provider.nextDay()),
         const Spacer(),
         IconButton(
+          icon: const Icon(Icons.search),
+          tooltip: '搜索记录',
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const GlobalSearchScreen(),
+              ),
+            );
+          },
+        ),
+        IconButton(
             icon: const Icon(Icons.undo), onPressed: () => provider.undo()),
         IconButton(
             icon: const Icon(Icons.delete_sweep),
@@ -993,6 +1003,58 @@ class _HomeScreenState extends State<HomeScreen> {
     } else {
       provider.applyTemplate(template.id, ApplyTemplateMode.fillEmptyOnly);
     }
+  }
+
+  void _onCopyYesterday(TimeProvider provider) {
+    if (!provider.hasYesterdayToCopy) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('昨天没有可复制的记录'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    if (provider.hasCopyYesterdayConflict()) {
+      _showCopyYesterdayDialog(provider);
+    } else {
+      provider.copyFromYesterday();
+    }
+  }
+
+  void _showCopyYesterdayDialog(TimeProvider provider) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('复制昨天安排'),
+        content: const Text('当天部分时段已有不同记录，请选择复制方式：'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              provider.copyFromYesterday(
+                  mode: ApplyTemplateMode.fillEmptyOnly);
+              Navigator.pop(context);
+            },
+            child: const Text('仅填充空白'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF9CB86A),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              provider.copyFromYesterday(mode: ApplyTemplateMode.replaceAll);
+              Navigator.pop(context);
+            },
+            child: const Text('覆盖全天'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showApplyTemplateDialog(
