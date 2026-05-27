@@ -16,6 +16,7 @@ class DiaryScreen extends StatefulWidget {
 
 class _DiaryScreenState extends State<DiaryScreen> {
   final TextEditingController _bodyController = TextEditingController();
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   DiaryKind _kind = DiaryKind.g;
   DateTime _selectedDate = DateTime.now();
@@ -25,6 +26,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
   bool _processing = false;
   bool _suppressBodyListener = false;
   Timer? _saveDebounce;
+  bool _remoteTreeLoading = false;
+  String? _remoteTreeError;
+  List<String> _remoteDiaryPaths = const [];
+  final Set<String> _expandedRemoteFolders = {};
 
   @override
   void initState() {
@@ -80,6 +85,57 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return '${_kind.prefix}$dayText.md';
   }
 
+  String _dateTextForFile(DateTime date) {
+    return DateFormat('yyyy年M月d日').format(date);
+  }
+
+  String _kindLetter(DiaryKind kind) {
+    return kind == DiaryKind.g ? 'G' : 'J';
+  }
+
+  String _fileNameFromPath(String path) {
+    final segments = path.split('/');
+    return segments.isEmpty ? path : segments.last;
+  }
+
+  bool _matchesKindAndDate(String path, DiaryKind kind, DateTime date) {
+    final fileName = _fileNameFromPath(path);
+    if (!fileName.toLowerCase().endsWith('.md')) return false;
+    if (!fileName.startsWith(_kindLetter(kind))) return false;
+    return fileName.contains(_dateTextForFile(date));
+  }
+
+  Future<List<String>?> _fetchRemoteDiaryPathsSilently() async {
+    final token = (_token ?? '').trim();
+    if (token.isEmpty) return null;
+    final listResult = await DiaryGitHubService.listDiaryPaths(token: token);
+    if (!listResult.success) return null;
+    return listResult.paths;
+  }
+
+  Future<String?> _findRemotePathForCurrentContext() async {
+    List<String> paths = _remoteDiaryPaths;
+    if (paths.isEmpty) {
+      final fetched = await _fetchRemoteDiaryPathsSilently();
+      if (fetched != null) {
+        paths = fetched;
+        _remoteDiaryPaths = fetched;
+      }
+    }
+    if (paths.isEmpty) return null;
+
+    final matched =
+        paths.where((p) => _matchesKindAndDate(p, _kind, _selectedDate)).toList();
+    if (matched.isEmpty) return null;
+    matched.sort((a, b) {
+      final aDepth = a.split('/').length;
+      final bDepth = b.split('/').length;
+      if (aDepth != bDepth) return aDepth.compareTo(bDepth);
+      return a.compareTo(b);
+    });
+    return matched.first;
+  }
+
   Future<void> _loadDraftForCurrentContext() async {
     final body = await DiaryLocalStore.loadDraftBody(_kind, _selectedDate);
     final startedAt =
@@ -88,6 +144,31 @@ class _DiaryScreenState extends State<DiaryScreen> {
     _bodyController.text = body ?? '';
     _suppressBodyListener = false;
     _startedAt = startedAt;
+  }
+
+  Future<void> _loadContextWithRemoteFallback() async {
+    final token = (_token ?? '').trim();
+    if (token.isNotEmpty) {
+      final remotePath = await _findRemotePathForCurrentContext();
+      if (remotePath != null) {
+        final result =
+            await DiaryGitHubService.pullDiary(token: token, path: remotePath);
+        if (result.success) {
+          final raw = result.content!;
+          final body = _extractBodyFromMarkdown(raw);
+          final startedAt = _parseStartedAtFromMarkdown(raw);
+          _suppressBodyListener = true;
+          _bodyController.text = body;
+          _suppressBodyListener = false;
+          _startedAt = startedAt ?? DateTime.now();
+          await _saveDraftNow();
+          return;
+        }
+      }
+    }
+
+    // 远程不存在或拉取失败时，回退本地草稿。
+    await _loadDraftForCurrentContext();
   }
 
   Future<void> _saveDraftNow() async {
@@ -120,20 +201,22 @@ class _DiaryScreenState extends State<DiaryScreen> {
     );
     if (picked == null) return;
     await _saveDraftNow();
+    setState(() => _processing = true);
     _selectedDate = DateTime(picked.year, picked.month, picked.day);
-    await _loadDraftForCurrentContext();
+    await _loadContextWithRemoteFallback();
     if (!mounted) return;
-    setState(() {});
+    setState(() => _processing = false);
   }
 
   Future<void> _changeKind(DiaryKind kind) async {
     if (_kind == kind) return;
     await _saveDraftNow();
+    setState(() => _processing = true);
     _kind = kind;
     await DiaryLocalStore.savePreferredKind(kind);
-    await _loadDraftForCurrentContext();
+    await _loadContextWithRemoteFallback();
     if (!mounted) return;
-    setState(() {});
+    setState(() => _processing = false);
   }
 
   DateTime? _parseStartedAtFromMarkdown(String markdown) {
@@ -204,81 +287,171 @@ class _DiaryScreenState extends State<DiaryScreen> {
     _showMessage('已载入：$path');
   }
 
-  Future<void> _browseRemoteDiaries() async {
-    final ok = await _ensureToken();
-    if (!ok) return;
-
-    setState(() => _processing = true);
+  Future<void> _loadRemoteTree() async {
+    if ((_token ?? '').trim().isEmpty) {
+      setState(() {
+        _remoteTreeError = '未配置 GitHub Token';
+        _remoteTreeLoading = false;
+      });
+      return;
+    }
+    setState(() {
+      _remoteTreeLoading = true;
+      _remoteTreeError = null;
+    });
     final listResult = await DiaryGitHubService.listDiaryPaths(token: _token!);
     if (!mounted) return;
+    setState(() {
+      _remoteTreeLoading = false;
+      if (listResult.success) {
+        _remoteDiaryPaths = listResult.paths;
+        _remoteTreeError = null;
+      } else {
+        _remoteTreeError = listResult.error ?? '读取远程列表失败';
+      }
+    });
+  }
+
+  Future<void> _openRemoteTreeDrawer() async {
+    if (_processing) return;
+    _scaffoldKey.currentState?.openDrawer();
+    if (_remoteTreeLoading) return;
+    if (_remoteDiaryPaths.isNotEmpty && _remoteTreeError == null) return;
+    await _loadRemoteTree();
+  }
+
+  Future<bool> _ensureToken() async {
+    final token = (_token ?? '').trim();
+    if (token.isNotEmpty) return true;
+    _showMessage('未配置 GitHub Token，请在代码中设置 hardcodedToken');
+    return false;
+  }
+
+  Future<void> _openPathFromTree(String path) async {
+    Navigator.of(context).pop();
+    setState(() => _processing = true);
+    final pull = await DiaryGitHubService.pullDiary(
+      token: _token!,
+      path: path,
+    );
+    if (!mounted) return;
     setState(() => _processing = false);
-
-    if (!listResult.success) {
-      _showMessage(listResult.error ?? '读取远程列表失败');
+    if (!pull.success) {
+      _showMessage(pull.error ?? '读取远程文件失败');
       return;
     }
-    if (listResult.paths.isEmpty) {
-      _showMessage('远程仓库未找到 G/J 日记文件');
-      return;
-    }
+    await _showRemoteDiaryViewer(path, pull.content!);
+  }
 
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) {
-        return DraggableScrollableSheet(
-          expand: false,
-          initialChildSize: 0.85,
-          minChildSize: 0.4,
-          maxChildSize: 0.95,
-          builder: (_, controller) {
-            return Column(
-              children: [
-                const SizedBox(height: 12),
-                const Text(
-                  '远程日记',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: ListView.separated(
-                    controller: controller,
-                    itemCount: listResult.paths.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (_, index) {
-                      final path = listResult.paths[index];
-                      final name = path.split('/').last;
-                      return ListTile(
-                        dense: true,
-                        leading: const Icon(Icons.description_outlined),
-                        title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                        subtitle: Text(path,
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
-                        onTap: () async {
-                          Navigator.pop(ctx);
-                          if (!mounted) return;
-                          setState(() => _processing = true);
-                          final pull = await DiaryGitHubService.pullDiary(
-                            token: _token!,
-                            path: path,
-                          );
-                          if (!mounted) return;
-                          setState(() => _processing = false);
-                          if (!pull.success) {
-                            _showMessage(pull.error ?? '读取远程文件失败');
-                            return;
-                          }
-                          await _showRemoteDiaryViewer(path, pull.content!);
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ],
-            );
-          },
+  List<_RemoteFileNode> _buildRemoteTree(List<String> paths) {
+    final root = <String, _RemoteFileNode>{};
+    for (final path in paths) {
+      final segments = path.split('/').where((e) => e.isNotEmpty).toList();
+      if (segments.isEmpty) continue;
+      Map<String, _RemoteFileNode> current = root;
+      var currentPath = '';
+      for (int i = 0; i < segments.length; i++) {
+        final name = segments[i];
+        currentPath = currentPath.isEmpty ? name : '$currentPath/$name';
+        final isFile = i == segments.length - 1;
+        final node = current.putIfAbsent(
+          name,
+          () => _RemoteFileNode(
+            name: name,
+            path: currentPath,
+            isFile: isFile,
+          ),
         );
+        node.isFile = node.isFile && isFile;
+        current = node.children;
+      }
+    }
+    final list = root.values.toList();
+    list.sort(_sortRemoteNodes);
+    for (final node in list) {
+      _sortChildren(node);
+    }
+    return list;
+  }
+
+  void _sortChildren(_RemoteFileNode node) {
+    final children = node.children.values.toList();
+    children.sort(_sortRemoteNodes);
+    node.sortedChildren = children;
+    for (final child in children) {
+      _sortChildren(child);
+    }
+  }
+
+  int _sortRemoteNodes(_RemoteFileNode a, _RemoteFileNode b) {
+    if (a.isFile == b.isFile) {
+      return a.name.compareTo(b.name);
+    }
+    return a.isFile ? 1 : -1;
+  }
+
+  Widget _buildRemoteNodeWidget(_RemoteFileNode node) {
+    if (node.isFile) {
+      return ListTile(
+        dense: true,
+        leading: const Icon(Icons.description_outlined, size: 18),
+        title: Text(node.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(node.path, maxLines: 1, overflow: TextOverflow.ellipsis),
+        onTap: () => _openPathFromTree(node.path),
+      );
+    }
+    final expanded = _expandedRemoteFolders.contains(node.path);
+    return ExpansionTile(
+      key: ValueKey(node.path),
+      initiallyExpanded: expanded,
+      leading: const Icon(Icons.folder_outlined, size: 18),
+      title: Text(node.name),
+      childrenPadding: const EdgeInsets.only(left: 12),
+      onExpansionChanged: (value) {
+        setState(() {
+          if (value) {
+            _expandedRemoteFolders.add(node.path);
+          } else {
+            _expandedRemoteFolders.remove(node.path);
+          }
+        });
       },
+      children: [
+        for (final child in node.sortedChildren) _buildRemoteNodeWidget(child),
+      ],
+    );
+  }
+
+  Widget _buildRemoteTreeContent() {
+    if (_remoteTreeLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_remoteTreeError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_remoteTreeError!, textAlign: TextAlign.center),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: _loadRemoteTree,
+                child: const Text('重试'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (_remoteDiaryPaths.isEmpty) {
+      return const Center(child: Text('远程仓库未找到 G/J 日记文件'));
+    }
+    final roots = _buildRemoteTree(_remoteDiaryPaths);
+    return ListView(
+      children: [
+        for (final node in roots) _buildRemoteNodeWidget(node),
+      ],
     );
   }
 
@@ -318,57 +491,12 @@ class _DiaryScreenState extends State<DiaryScreen> {
     );
   }
 
-  Future<bool> _ensureToken() async {
-    if ((_token ?? '').trim().isNotEmpty) return true;
-
-    final controller = TextEditingController(text: _token ?? '');
-    final token = await showDialog<String>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('设置 GitHub Token'),
-          content: TextField(
-            controller: controller,
-            autocorrect: false,
-            enableSuggestions: false,
-            decoration: const InputDecoration(
-              hintText: '粘贴 Personal Access Token',
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-              child: const Text('保存'),
-            ),
-          ],
-        );
-      },
-    );
-    controller.dispose();
-
-    if (token == null || token.isEmpty) return false;
-    _token = token;
-    await DiaryLocalStore.saveToken(token);
-    return true;
-  }
-
-  void _showMessage(String text) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(text)),
-    );
-  }
-
   Future<void> _pullDiary() async {
     final ok = await _ensureToken();
     if (!ok) return;
 
     setState(() => _processing = true);
-    final path = _buildFileName();
+    final path = await _findRemotePathForCurrentContext() ?? _buildFileName();
     final result = await DiaryGitHubService.pullDiary(
       token: _token!,
       path: path,
@@ -404,7 +532,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
     await _saveDraftNow();
 
     setState(() => _processing = true);
-    final fileName = _buildFileName();
+    final remotePath = await _findRemotePathForCurrentContext();
+    final fileName = remotePath ?? _buildFileName();
     final markdown = _buildMarkdownContent();
     final result = await DiaryGitHubService.pushDiary(
       token: _token!,
@@ -422,39 +551,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
     _showMessage(result.error ?? '同步失败');
   }
 
-  Future<void> _editToken() async {
-    final controller = TextEditingController(text: _token ?? '');
-    final token = await showDialog<String>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('修改 GitHub Token'),
-          content: TextField(
-            controller: controller,
-            autocorrect: false,
-            enableSuggestions: false,
-            decoration: const InputDecoration(
-              hintText: '粘贴新的 Personal Access Token',
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-              child: const Text('保存'),
-            ),
-          ],
-        );
-      },
+  void _showMessage(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text)),
     );
-    controller.dispose();
-    if (token == null || token.isEmpty) return;
-    _token = token;
-    await DiaryLocalStore.saveToken(token);
-    _showMessage('Token 已更新');
   }
 
   @override
@@ -468,17 +569,36 @@ class _DiaryScreenState extends State<DiaryScreen> {
     }
 
     final startedAt = _startedAt;
-    final hasToken = (_token ?? '').trim().isNotEmpty;
 
     return Scaffold(
+      key: _scaffoldKey,
+      drawer: Drawer(
+        child: SafeArea(
+          child: Column(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.account_tree_outlined),
+                title: const Text('远程日记文件树'),
+                trailing: IconButton(
+                  tooltip: '刷新',
+                  onPressed: _remoteTreeLoading ? null : _loadRemoteTree,
+                  icon: const Icon(Icons.refresh),
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(child: _buildRemoteTreeContent()),
+            ],
+          ),
+        ),
+      ),
       appBar: AppBar(
         title: const Text('日记'),
+        leading: IconButton(
+          tooltip: '浏览远程日记',
+          onPressed: _openRemoteTreeDrawer,
+          icon: const Icon(Icons.menu),
+        ),
         actions: [
-          IconButton(
-            tooltip: '浏览远程日记',
-            onPressed: _processing ? null : _browseRemoteDiaries,
-            icon: const Icon(Icons.folder_open),
-          ),
           IconButton(
             tooltip: '拉取日记',
             onPressed: _processing ? null : _pullDiary,
@@ -488,11 +608,6 @@ class _DiaryScreenState extends State<DiaryScreen> {
             tooltip: '同步日记',
             onPressed: _processing ? null : _pushDiary,
             icon: const Icon(Icons.sync),
-          ),
-          IconButton(
-            tooltip: hasToken ? '修改 Token' : '设置 Token',
-            onPressed: _processing ? null : _editToken,
-            icon: Icon(hasToken ? Icons.vpn_key : Icons.key_outlined),
           ),
         ],
       ),
@@ -560,4 +675,19 @@ class _DiaryScreenState extends State<DiaryScreen> {
       ),
     );
   }
+}
+
+class _RemoteFileNode {
+  final String name;
+  final String path;
+  bool isFile;
+  final Map<String, _RemoteFileNode> children;
+  List<_RemoteFileNode> sortedChildren;
+
+  _RemoteFileNode({
+    required this.name,
+    required this.path,
+    required this.isFile,
+  })  : children = <String, _RemoteFileNode>{},
+        sortedChildren = const [];
 }
