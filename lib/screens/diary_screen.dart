@@ -326,7 +326,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
   Future<bool> _ensureToken() async {
     final token = (_token ?? '').trim();
     if (token.isNotEmpty) return true;
-    _showMessage('未配置 GitHub Token，请在代码中设置 hardcodedToken');
+    _showMessage('未配置 GitHub Token，请配置安全存储或 --dart-define=DIARY_GITHUB_PAT');
     return false;
   }
 

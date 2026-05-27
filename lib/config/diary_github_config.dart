@@ -1,7 +1,6 @@
 class DiaryGitHubConfig {
-  // 直接把 GitHub PAT 写在这里（仅建议自用）。
-  // 例如: 'github_pat_xxx'
-  static const String hardcodedToken = '';
+  // 通过 --dart-define=DIARY_GITHUB_PAT=github_pat_xxx 注入，避免明文入库。
+  static const String envToken = String.fromEnvironment('DIARY_GITHUB_PAT');
 
-  static bool get hasHardcodedToken => hardcodedToken.trim().isNotEmpty;
+  static bool get hasEnvToken => envToken.trim().isNotEmpty;
 }
