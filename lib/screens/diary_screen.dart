@@ -243,16 +243,15 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return markdown.substring(match.end);
   }
 
-  String _extractTitleFromMarkdown(String markdown) {
-    final match = RegExp(r'^---\n([\s\S]*?)\n---\n?', multiLine: false)
-        .firstMatch(markdown);
-    if (match == null) return '';
-    final frontMatter = match.group(1) ?? '';
-    return RegExp(r'^title:\s*(.+)$', multiLine: true)
-            .firstMatch(frontMatter)
-            ?.group(1)
-            ?.trim() ??
-        '';
+  DateTime? _parseDateFromPath(String path) {
+    final fileName = _fileNameFromPath(path);
+    final match = RegExp(r'(\d{4})年(\d{1,2})月(\d{1,2})日').firstMatch(fileName);
+    if (match == null) return null;
+    final year = int.tryParse(match.group(1) ?? '');
+    final month = int.tryParse(match.group(2) ?? '');
+    final day = int.tryParse(match.group(3) ?? '');
+    if (year == null || month == null || day == null) return null;
+    return DateTime(year, month, day);
   }
 
   Future<void> _loadRemoteFileToEditor(String path) async {
@@ -276,6 +275,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
         _kind = newKind;
         await DiaryLocalStore.savePreferredKind(newKind);
       }
+    }
+    final parsedDate = _parseDateFromPath(path);
+    if (parsedDate != null) {
+      _selectedDate = DateTime(parsedDate.year, parsedDate.month, parsedDate.day);
     }
 
     _suppressBodyListener = true;
@@ -329,18 +332,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   Future<void> _openPathFromTree(String path) async {
     Navigator.of(context).pop();
+    await _saveDraftNow();
     setState(() => _processing = true);
-    final pull = await DiaryGitHubService.pullDiary(
-      token: _token!,
-      path: path,
-    );
+    await _loadRemoteFileToEditor(path);
     if (!mounted) return;
     setState(() => _processing = false);
-    if (!pull.success) {
-      _showMessage(pull.error ?? '读取远程文件失败');
-      return;
-    }
-    await _showRemoteDiaryViewer(path, pull.content!);
   }
 
   List<_RemoteFileNode> _buildRemoteTree(List<String> paths) {
@@ -452,42 +448,6 @@ class _DiaryScreenState extends State<DiaryScreen> {
       children: [
         for (final node in roots) _buildRemoteNodeWidget(node),
       ],
-    );
-  }
-
-  Future<void> _showRemoteDiaryViewer(String path, String markdown) async {
-    final title = _extractTitleFromMarkdown(markdown);
-    final body = _extractBodyFromMarkdown(markdown);
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: Text(
-            title.isEmpty ? path.split('/').last : title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: SingleChildScrollView(
-              child: SelectableText(body.isEmpty ? '(空内容)' : body),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('关闭'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                Navigator.pop(ctx);
-                await _loadRemoteFileToEditor(path);
-              },
-              child: const Text('载入到编辑器'),
-            ),
-          ],
-        );
-      },
     );
   }
 
