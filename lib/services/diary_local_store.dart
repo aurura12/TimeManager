@@ -25,8 +25,8 @@ class DiaryLocalStore {
   }
 
   static Future<String?> loadToken() async {
-    if (DiaryGitHubConfig.hasHardcodedToken) {
-      return DiaryGitHubConfig.hardcodedToken.trim();
+    if (DiaryGitHubConfig.hasEnvToken) {
+      return DiaryGitHubConfig.envToken.trim();
     }
 
     // 优先读安全存储；若存在旧版本 SharedPreferences 数据则自动迁移。
@@ -46,7 +46,7 @@ class DiaryLocalStore {
   }
 
   static Future<void> saveToken(String token) async {
-    if (DiaryGitHubConfig.hasHardcodedToken) {
+    if (DiaryGitHubConfig.hasEnvToken) {
       return;
     }
     await _secureStorage.write(key: _tokenKey, value: token);

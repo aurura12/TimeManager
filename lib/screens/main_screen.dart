@@ -5,6 +5,7 @@ import '../providers/time_provider.dart';
 import 'diary_screen.dart';
 import 'home_screen.dart';
 import 'target_screen.dart';
+import 'travel_screen.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -39,6 +40,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   static final List<Widget> _widgetOptions = <Widget>[
     const HomeScreen(),
     const DiaryScreen(),
+    const TravelScreen(),
     const TargetScreen(),
     const ProfileScreen(),
   ];
@@ -52,29 +54,19 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Center(
-        child: _widgetOptions.elementAt(_selectedIndex),
-      ),
+      body: Center(child: _widgetOptions.elementAt(_selectedIndex)),
       bottomNavigationBar: BottomNavigationBar(
         type: BottomNavigationBarType.fixed,
         showUnselectedLabels: true,
         items: const <BottomNavigationBarItem>[
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: '记录',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: '记录'),
           BottomNavigationBarItem(
             icon: Icon(Icons.menu_book_outlined),
             label: '日记',
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.flag),
-            label: '目标',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person),
-            label: '我的',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.card_travel), label: '出行'),
+          BottomNavigationBarItem(icon: Icon(Icons.flag), label: '目标'),
+          BottomNavigationBarItem(icon: Icon(Icons.person), label: '我的'),
         ],
         currentIndex: _selectedIndex,
         selectedItemColor: Colors.amber[800],
