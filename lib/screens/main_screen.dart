@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:time_manager/screens/profile_screen.dart';
 import '../providers/time_provider.dart';
+import 'diary_screen.dart';
 import 'home_screen.dart';
 import 'target_screen.dart';
 
@@ -37,6 +38,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   static final List<Widget> _widgetOptions = <Widget>[
     const HomeScreen(),
+    const DiaryScreen(),
     const TargetScreen(),
     const ProfileScreen(),
   ];
@@ -54,10 +56,16 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         child: _widgetOptions.elementAt(_selectedIndex),
       ),
       bottomNavigationBar: BottomNavigationBar(
+        type: BottomNavigationBarType.fixed,
+        showUnselectedLabels: true,
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(
             icon: Icon(Icons.home),
             label: '记录',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.menu_book_outlined),
+            label: '日记',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.flag),
@@ -70,6 +78,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         ],
         currentIndex: _selectedIndex,
         selectedItemColor: Colors.amber[800],
+        unselectedItemColor: Colors.grey[600],
         onTap: _onItemTapped,
       ),
     );
