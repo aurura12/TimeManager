@@ -20,6 +20,7 @@ class CalendarSyncStatusBadge extends StatelessWidget {
       builder: (context, snapshot) {
         final syncing = snapshot.data == 'SYNCING';
         final pendingCount = provider.pendingSyncDates.length;
+        final hasPending = pendingCount > 0;
 
         late final String label;
         late final Color color;
@@ -56,6 +57,8 @@ class CalendarSyncStatusBadge extends StatelessWidget {
               onTap: () {
                 if (!loggedIn) {
                   onNotLoggedIn?.call();
+                } else if (hasPending) {
+                  provider.synchronizeAllPendingCalendars();
                 } else {
                   provider.synchronizeCalendar();
                 }
