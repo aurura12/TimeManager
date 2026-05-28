@@ -30,6 +30,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
   String? _remoteTreeError;
   List<String> _remoteDiaryPaths = const [];
   final Set<String> _expandedRemoteFolders = {};
+  final Map<String, String> _contextRemotePathOverrides = {};
+  bool _lastContextPathAmbiguous = false;
 
   @override
   void initState() {
@@ -89,6 +91,13 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return DateFormat('yyyy年M月d日').format(date);
   }
 
+  String _contextKey(DiaryKind kind, DateTime date) {
+    final d = DateTime(date.year, date.month, date.day);
+    final month = d.month.toString().padLeft(2, '0');
+    final day = d.day.toString().padLeft(2, '0');
+    return '${kind.code}_${d.year}$month$day';
+  }
+
   String _kindLetter(DiaryKind kind) {
     return kind == DiaryKind.g ? 'G' : 'J';
   }
@@ -113,9 +122,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return listResult.paths;
   }
 
-  Future<String?> _findRemotePathForCurrentContext() async {
+  Future<String?> _findRemotePathForCurrentContext({bool refresh = true}) async {
     List<String> paths = _remoteDiaryPaths;
-    if (paths.isEmpty) {
+    if (refresh || paths.isEmpty) {
       final fetched = await _fetchRemoteDiaryPathsSilently();
       if (fetched != null) {
         paths = fetched;
@@ -127,12 +136,16 @@ class _DiaryScreenState extends State<DiaryScreen> {
     final matched =
         paths.where((p) => _matchesKindAndDate(p, _kind, _selectedDate)).toList();
     if (matched.isEmpty) return null;
-    matched.sort((a, b) {
-      final aDepth = a.split('/').length;
-      final bDepth = b.split('/').length;
-      if (aDepth != bDepth) return aDepth.compareTo(bDepth);
-      return a.compareTo(b);
-    });
+    final pinned = _contextRemotePathOverrides[_contextKey(_kind, _selectedDate)];
+    if (pinned != null && matched.contains(pinned)) {
+      _lastContextPathAmbiguous = false;
+      return pinned;
+    }
+    if (matched.length > 1) {
+      _lastContextPathAmbiguous = true;
+      return null;
+    }
+    _lastContextPathAmbiguous = false;
     return matched.first;
   }
 
@@ -149,7 +162,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
   Future<void> _loadContextWithRemoteFallback() async {
     final token = (_token ?? '').trim();
     if (token.isNotEmpty) {
-      final remotePath = await _findRemotePathForCurrentContext();
+      final remotePath = await _findRemotePathForCurrentContext(refresh: true);
       if (remotePath != null) {
         final result =
             await DiaryGitHubService.pullDiary(token: token, path: remotePath);
@@ -280,6 +293,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (parsedDate != null) {
       _selectedDate = DateTime(parsedDate.year, parsedDate.month, parsedDate.day);
     }
+    _contextRemotePathOverrides[_contextKey(_kind, _selectedDate)] = path;
 
     _suppressBodyListener = true;
     _bodyController.text = body;
@@ -456,10 +470,16 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (!ok) return;
 
     setState(() => _processing = true);
-    final path = await _findRemotePathForCurrentContext() ?? _buildFileName();
+    final path = await _findRemotePathForCurrentContext(refresh: true);
+    if (path == null && _lastContextPathAmbiguous) {
+      setState(() => _processing = false);
+      _showMessage('该日期命中多个远程文件，请从左侧文件树点开目标文件');
+      return;
+    }
+    final targetPath = path ?? _buildFileName();
     final result = await DiaryGitHubService.pullDiary(
       token: _token!,
-      path: path,
+      path: targetPath,
     );
     if (!mounted) return;
     if (result.success) {
@@ -492,7 +512,12 @@ class _DiaryScreenState extends State<DiaryScreen> {
     await _saveDraftNow();
 
     setState(() => _processing = true);
-    final remotePath = await _findRemotePathForCurrentContext();
+    final remotePath = await _findRemotePathForCurrentContext(refresh: true);
+    if (remotePath == null && _lastContextPathAmbiguous) {
+      setState(() => _processing = false);
+      _showMessage('该日期命中多个远程文件，请先从左侧文件树点开后再同步');
+      return;
+    }
     final fileName = remotePath ?? _buildFileName();
     final markdown = _buildMarkdownContent();
     final result = await DiaryGitHubService.pushDiary(
