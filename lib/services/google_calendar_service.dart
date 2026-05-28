@@ -2,6 +2,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/calendar/v3.dart' as calendar;
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import 'package:logger/logger.dart';
+import '../config/google_sign_in_config.dart';
 import '../models/time_slot.dart';
 import '../models/calendar_block.dart';
 
@@ -12,29 +13,51 @@ class GoogleCalendarService {
   static final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
   static GoogleSignInAccount? _currentUser;
   static bool _initialized = false;
+  static String? _lastLoginError;
+
+  static bool get isConfigured => GoogleSignInConfig.serverClientId.trim().isNotEmpty;
+  static String? get lastLoginError => _lastLoginError;
 
   static Future<void> _ensureInitialized() async {
     if (_initialized) return;
-    await _googleSignIn.initialize();
-    _googleSignIn.authenticationEvents.listen((event) {
-      if (event is GoogleSignInAuthenticationEventSignIn) {
-        _currentUser = event.user;
-      } else if (event is GoogleSignInAuthenticationEventSignOut) {
-        _currentUser = null;
-      }
-    });
+    final serverClientId = GoogleSignInConfig.serverClientId.trim();
+    if (serverClientId.isEmpty) {
+      throw StateError(
+        '未配置 Google Web 客户端 ID，请复制 lib/config/google_sign_in_config.example.dart '
+        '为 google_sign_in_config.dart 并填写 serverClientId',
+      );
+    }
+    await _googleSignIn.initialize(serverClientId: serverClientId);
+    _googleSignIn.authenticationEvents.listen(
+      (event) {
+        if (event is GoogleSignInAuthenticationEventSignIn) {
+          _currentUser = event.user;
+        } else if (event is GoogleSignInAuthenticationEventSignOut) {
+          _currentUser = null;
+        }
+      },
+      onError: (error, stack) {
+        _logger.e('Google 登录状态流错误: $error', stackTrace: stack);
+      },
+    );
     _initialized = true;
   }
 
   // 申请日历事件读写权限
   static Future<GoogleSignInAccount?> login() async {
-    await _ensureInitialized();
+    _lastLoginError = null;
     try {
+      await _ensureInitialized();
       final account = await _googleSignIn.authenticate(scopeHint: _scopes);
       _currentUser = account;
       await account.authorizationClient.authorizeScopes(_scopes);
       return account;
+    } on GoogleSignInException catch (e) {
+      _lastLoginError = e.description ?? e.toString();
+      _logger.e("Google 登录失败: $e");
+      return null;
     } catch (e) {
+      _lastLoginError = e.toString();
       _logger.e("Google 登录失败: $e");
       return null;
     }
