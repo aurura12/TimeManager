@@ -48,6 +48,7 @@ class _TravelScreenState extends State<TravelScreen> {
     }
     if (!mounted) return;
     setState(() => _loading = false);
+    await _pullFromGitHub(silent: true);
   }
 
   String _selectedDateText() => DateFormat('yyyy-MM-dd').format(_selectedDate);
@@ -103,6 +104,52 @@ class _TravelScreenState extends State<TravelScreen> {
       _calendarMonth = DateTime(normalizedDate.year, normalizedDate.month);
     });
     await _saveDraft();
+  }
+
+  Future<void> _confirmDeleteRecord(DateTime date) async {
+    if (_processing) return;
+    final normalizedDate = _normalizedDate(date);
+    final record = _recordForDate(normalizedDate);
+    if (record == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('删除出行记录'),
+          content: Text('确认删除 ${record.dateKey} 的记录吗？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) return;
+
+    setState(() {
+      _document = TravelRecordsDocument(
+        records: _document.records
+            .where((e) => e.dateKey != record.dateKey)
+            .toList(),
+      );
+      if (_selectedDateText() == record.dateKey) {
+        if (_document.records.isNotEmpty) {
+          _selectedDate = _document.records.first.date;
+        } else {
+          _selectedDate = _normalizedDate(DateTime.now());
+        }
+        _calendarMonth = DateTime(_selectedDate.year, _selectedDate.month);
+      }
+    });
+
+    await _saveDraft();
+    await _pushToGitHub();
   }
 
   Future<void> _showAddRecordDialog() async {
@@ -174,7 +221,7 @@ class _TravelScreenState extends State<TravelScreen> {
         location: locationController.text,
         event: eventController.text,
       );
-      _showMessage('已保存到本地');
+      await _pushToGitHub();
     }
     locationController.dispose();
     eventController.dispose();
@@ -237,7 +284,7 @@ class _TravelScreenState extends State<TravelScreen> {
                 ),
                 FilledButton(
                   onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('保存并同步'),
+                  child: const Text('保存'),
                 ),
               ],
             );
@@ -265,7 +312,14 @@ class _TravelScreenState extends State<TravelScreen> {
     return false;
   }
 
-  Future<void> _pullFromGitHub() async {
+  Future<void> _pullFromGitHub({bool silent = false}) async {
+    final token = (_token ?? '').trim();
+    if (token.isEmpty) {
+      if (!silent) {
+        _showMessage('未配置 GitHub Token，请先配置日记模块 token');
+      }
+      return;
+    }
     final ok = await _ensureToken();
     if (!ok) return;
     setState(() => _processing = true);
@@ -279,19 +333,27 @@ class _TravelScreenState extends State<TravelScreen> {
         final doc = TravelRecordsDocument.fromMarkdown(result.content!);
         _document = doc;
         await _saveDraft();
-        _showMessage('拉取成功（已覆盖本地）');
+        if (!silent) {
+          _showMessage('拉取成功（已覆盖本地）');
+        }
       } catch (e) {
-        _showMessage('解析远端记录失败: $e');
+        if (!silent) {
+          _showMessage('解析远端记录失败: $e');
+        }
       }
       setState(() => _processing = false);
       return;
     }
     setState(() => _processing = false);
     if (result.notFound) {
-      _showMessage('远端暂无出行记录文件');
+      if (!silent) {
+        _showMessage('远端暂无出行记录文件');
+      }
       return;
     }
-    _showMessage(result.error ?? '拉取失败');
+    if (!silent) {
+      _showMessage(result.error ?? '拉取失败');
+    }
   }
 
   Future<void> _pushToGitHub() async {
@@ -403,6 +465,7 @@ class _TravelScreenState extends State<TravelScreen> {
                     });
                   },
                   onDoubleTap: () => _showEditRecordDialog(record.date),
+                  onLongPress: () => _confirmDeleteRecord(record.date),
                   child: Padding(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
@@ -670,12 +733,6 @@ class _TravelScreenState extends State<TravelScreen> {
           }),
         ),
         const SizedBox(height: 8),
-        Text(
-          hasRecord ? '该日期已有记录，可直接修改' : '该日期暂无记录，可新增',
-          style: TextStyle(
-            color: hasRecord ? Colors.green[700] : Colors.black54,
-          ),
-        ),
         const SizedBox(height: 10),
         Container(
           padding: const EdgeInsets.all(12),
@@ -719,11 +776,6 @@ class _TravelScreenState extends State<TravelScreen> {
             tooltip: '拉取出行记录',
             onPressed: _processing ? null : _pullFromGitHub,
             icon: const Icon(Icons.download_outlined),
-          ),
-          IconButton(
-            tooltip: '同步出行记录',
-            onPressed: _processing ? null : _pushToGitHub,
-            icon: const Icon(Icons.sync),
           ),
           IconButton(
             tooltip: '新增记录',
