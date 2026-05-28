@@ -416,10 +416,32 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                 padding: const EdgeInsets.symmetric(vertical: 12),
               ),
               onPressed: () async {
-                await GoogleCalendarService.login();
+                if (!GoogleCalendarService.isConfigured) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        '请先在 lib/config/google_sign_in_config.dart 填写 Web 客户端 ID',
+                      ),
+                    ),
+                  );
+                  return;
+                }
+                final account = await GoogleCalendarService.login();
+                if (!context.mounted) return;
+                if (account == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        GoogleCalendarService.lastLoginError ?? 'Google 登录失败',
+                      ),
+                    ),
+                  );
+                  return;
+                }
                 provider.synchronizeCalendar();
                 widget.onChanged();
-                if (context.mounted) Navigator.pop(context);
+                Navigator.pop(context);
               },
             ),
           ),

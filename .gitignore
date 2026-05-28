@@ -165,3 +165,4 @@ app.*.symbols
 .gclient_previous_sync_commits
 lib/config/diary_github_config.dart
 lib/config/siliconflow_config.dart
+lib/config/google_sign_in_config.dart
