@@ -67,14 +67,22 @@ class TimeProvider with ChangeNotifier {
       StreamController<String>.broadcast();
   Stream<String> get syncStatusStream => _syncStatusController.stream;
 
+  StreamSubscription<void>? _googleAuthSubscription;
+
   @override
   void dispose() {
     _debounceTimer?.cancel();
+    _googleAuthSubscription?.cancel();
     _syncStatusController.close();
     super.dispose();
   }
 
   TimeProvider() {
+    _googleAuthSubscription =
+        GoogleCalendarService.authStateChanges.listen((_) {
+      notifyListeners();
+      unawaited(pullGoogleCalendarForCurrentDate());
+    });
     _init();
   }
 
@@ -83,8 +91,15 @@ class TimeProvider with ChangeNotifier {
     await _loadData();
     notifyListeners();
     await _refreshHomeWidget();
-    // 后台恢复谷歌登录，供后续日历同步使用
-    GoogleCalendarService.restoreSignIn();
+    unawaited(_restoreGoogleInBackground());
+  }
+
+  Future<void> _restoreGoogleInBackground() async {
+    await GoogleCalendarService.restoreSignIn(background: true);
+    if (GoogleCalendarService.isSignedIn) {
+      notifyListeners();
+      await pullGoogleCalendarForCurrentDate();
+    }
   }
 
   DateTime get currentDate => _currentDate;
@@ -210,7 +225,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   /// 是否已登录可同步的 Google 日历账号
-  bool get canSyncToCalendar => GoogleCalendarService.currentUser != null;
+  bool get canSyncToCalendar => GoogleCalendarService.isSignedIn;
 
   /// 走防抖自动同步（待同步标记由调用方在 _saveData 前写入）
   void _scheduleCalendarSync() {
@@ -247,9 +262,7 @@ class TimeProvider with ChangeNotifier {
     Future<void> executeSync() async {
       if (_isSyncing) return;
 
-      final googleUser = GoogleCalendarService.currentUser;
-
-      if (googleUser == null) {
+      if (!GoogleCalendarService.isSignedIn) {
         if (!delay) _syncStatusController.add("未登录 Google 账号，无法同步");
         return;
       }
@@ -318,8 +331,7 @@ class TimeProvider with ChangeNotifier {
       return;
     }
 
-    final googleUser = GoogleCalendarService.currentUser;
-    if (googleUser == null) {
+    if (!GoogleCalendarService.isSignedIn) {
       _syncStatusController.add("未登录 Google 账号，无法同步");
       return;
     }
@@ -524,7 +536,7 @@ class TimeProvider with ChangeNotifier {
   /// 从 Google 拉取外部会议并合并到指定日期；未登录 Google 时返回 false
   Future<bool> pullGoogleCalendarForDate(DateTime date,
       {bool notify = true}) async {
-    if (GoogleCalendarService.currentUser == null) return false;
+    if (!GoogleCalendarService.isSignedIn) return false;
 
     final blocks = await GoogleCalendarService.fetchExternalEvents(date);
     if (blocks == null) return false;

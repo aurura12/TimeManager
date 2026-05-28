@@ -1,102 +1,257 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/calendar/v3.dart' as calendar;
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import 'package:logger/logger.dart';
 import '../config/google_sign_in_config.dart';
+import '../models/google_calendar_user.dart';
 import '../models/time_slot.dart';
 import '../models/calendar_block.dart';
+import 'google_session_store.dart';
 
 class GoogleCalendarService {
   static const String _appSignature = "乖乖🥰晶晶";
   static final _logger = Logger();
   static const List<String> _scopes = [calendar.CalendarApi.calendarEventsScope];
   static final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
+
   static GoogleSignInAccount? _currentUser;
+  static GoogleCalendarUser? _cachedUser;
   static bool _initialized = false;
+  static Future<void>? _bootstrapFuture;
+  static Completer<GoogleSignInAccount?>? _restoreCompleter;
   static String? _lastLoginError;
+
+  static final StreamController<void> _authStateController =
+      StreamController<void>.broadcast();
 
   static bool get isConfigured => GoogleSignInConfig.serverClientId.trim().isNotEmpty;
   static String? get lastLoginError => _lastLoginError;
+  static Stream<void> get authStateChanges => _authStateController.stream;
 
-  static Future<void> _ensureInitialized() async {
-    if (_initialized) return;
-    final serverClientId = GoogleSignInConfig.serverClientId.trim();
-    if (serverClientId.isEmpty) {
-      throw StateError(
-        '未配置 Google Web 客户端 ID，请复制 lib/config/google_sign_in_config.example.dart '
-        '为 google_sign_in_config.dart 并填写 serverClientId',
-      );
+  /// 是否已有可用 Google 会话（含本地档案 + 静默 token 恢复）
+  static bool get isSignedIn => _currentUser != null || _cachedUser != null;
+
+  /// 供 UI 展示；优先使用内存中的 [GoogleSignInAccount]
+  static GoogleCalendarUser? get sessionUser => _currentUser != null
+      ? GoogleCalendarUser.fromAccount(_currentUser!)
+      : _cachedUser;
+
+  @Deprecated('请使用 isSignedIn / sessionUser')
+  static GoogleSignInAccount? get currentUser => _currentUser;
+
+  static void _notifyAuthStateChanged() {
+    if (!_authStateController.isClosed) {
+      _authStateController.add(null);
     }
+  }
+
+  static void _log(String message) {
+    _logger.i(message);
+    debugPrint('[GoogleCalendar] $message');
+  }
+
+  /// 应用启动时调用一次：初始化 SDK 并监听登录状态流（7.x 官方推荐）
+  static Future<void> bootstrap() {
+    _bootstrapFuture ??= _doBootstrap();
+    return _bootstrapFuture!;
+  }
+
+  static Future<void> _doBootstrap() async {
+    if (_initialized) return;
+    if (!isConfigured) {
+      _log('未配置 serverClientId，跳过 Google 初始化');
+      return;
+    }
+
+    final serverClientId = GoogleSignInConfig.serverClientId.trim();
     await _googleSignIn.initialize(serverClientId: serverClientId);
     _googleSignIn.authenticationEvents.listen(
-      (event) {
-        if (event is GoogleSignInAuthenticationEventSignIn) {
-          _currentUser = event.user;
-        } else if (event is GoogleSignInAuthenticationEventSignOut) {
-          _currentUser = null;
-        }
-      },
+      _handleAuthenticationEvent,
       onError: (error, stack) {
         _logger.e('Google 登录状态流错误: $error', stackTrace: stack);
+        _restoreCompleter?.complete(_currentUser);
       },
     );
     _initialized = true;
+    _log('Google Sign-In 已初始化');
   }
 
-  // 申请日历事件读写权限
+  static Future<void> _ensureCalendarScopes(GoogleSignInAccount account) async {
+    try {
+      await account.authorizationClient.authorizationForScopes(_scopes) ??
+          await account.authorizationClient.authorizeScopes(_scopes);
+    } catch (e) {
+      _logger.w('恢复日历授权失败: $e');
+    }
+  }
+
+  static Future<void> _applySignedInUser(GoogleSignInAccount account) async {
+    _currentUser = account;
+    _cachedUser = GoogleCalendarUser.fromAccount(account);
+    await GoogleSessionStore.save(account);
+    await _ensureCalendarScopes(account);
+    _notifyAuthStateChanged();
+  }
+
+  static Future<void> _clearLocalSession() async {
+    _currentUser = null;
+    _cachedUser = null;
+    await GoogleSessionStore.clear();
+  }
+
+  static GoogleSignInAuthorizationClient _authorizationClient() {
+    return _currentUser?.authorizationClient ?? _googleSignIn.authorizationClient;
+  }
+
+  /// 轻量登录失败时：用本地档案 + authorizationForScopes 尝试恢复 token
+  static Future<bool> _tryRestoreFromStoredSession() async {
+    final profile = await GoogleSessionStore.load();
+    if (profile == null) {
+      _log('无本地登录档案');
+      return false;
+    }
+
+    _log('尝试用本地档案恢复 token: ${profile.email}');
+    try {
+      final authorization = await _googleSignIn.authorizationClient
+          .authorizationForScopes(_scopes);
+      if (authorization == null) {
+        _log('authorizationForScopes 返回 null，本地档案已失效');
+        await GoogleSessionStore.clear();
+        return false;
+      }
+      _cachedUser = profile;
+      _log('本地档案 + token 恢复成功');
+      _notifyAuthStateChanged();
+      return true;
+    } catch (e) {
+      _log('token 恢复失败: $e');
+      await GoogleSessionStore.clear();
+      return false;
+    }
+  }
+
+  static Future<void> _handleAuthenticationEvent(
+    GoogleSignInAuthenticationEvent event,
+  ) async {
+    if (event is GoogleSignInAuthenticationEventSignIn) {
+      await _applySignedInUser(event.user);
+      _log('authenticationEvents: 已登录 ${event.user.email}');
+      if (_restoreCompleter != null && !_restoreCompleter!.isCompleted) {
+        _restoreCompleter!.complete(event.user);
+      }
+    } else if (event is GoogleSignInAuthenticationEventSignOut) {
+      await _clearLocalSession();
+      _notifyAuthStateChanged();
+      _log('authenticationEvents: 已登出');
+      if (_restoreCompleter != null && !_restoreCompleter!.isCompleted) {
+        _restoreCompleter!.complete(null);
+      }
+    }
+  }
+
   static Future<GoogleSignInAccount?> login() async {
     _lastLoginError = null;
     try {
-      await _ensureInitialized();
+      await bootstrap();
       final account = await _googleSignIn.authenticate(scopeHint: _scopes);
-      _currentUser = account;
-      await account.authorizationClient.authorizeScopes(_scopes);
+      await _applySignedInUser(account);
+      _log('手动登录成功: ${account.email}');
       return account;
     } on GoogleSignInException catch (e) {
       _lastLoginError = e.description ?? e.toString();
-      _logger.e("Google 登录失败: $e");
+      _logger.e('Google 登录失败: $e');
       return null;
     } catch (e) {
       _lastLoginError = e.toString();
-      _logger.e("Google 登录失败: $e");
+      _logger.e('Google 登录失败: $e');
       return null;
     }
   }
 
   static Future<void> logout() async {
-    await _ensureInitialized();
+    await bootstrap();
     await _googleSignIn.signOut();
-    _currentUser = null;
+    await _clearLocalSession();
+    _notifyAuthStateChanged();
+    _log('已退出 Google 登录');
   }
 
-  // 尝试静默登录（恢复登录状态）
-  static Future<void> restoreSignIn() async {
-    await _ensureInitialized();
+  /// 静默恢复会话。
+  /// [background] 为 true 时不阻塞首屏：优先本地档案，轻量登录放后台。
+  static Future<GoogleSignInAccount?> restoreSignIn({
+    bool background = false,
+  }) async {
+    if (!isConfigured) return null;
+    await bootstrap();
+    if (_currentUser != null) {
+      _log('已有会话: ${_currentUser!.email}');
+      return _currentUser;
+    }
+    if (_cachedUser != null) return _currentUser;
+
+    if (await _tryRestoreFromStoredSession()) {
+      return _currentUser;
+    }
+
+    if (background) {
+      unawaited(_attemptLightweightRestore());
+      return _currentUser;
+    }
+
+    await _attemptLightweightRestore();
+    if (!isSignedIn) {
+      await _tryRestoreFromStoredSession();
+    }
+    return _currentUser;
+  }
+
+  static Future<void> _attemptLightweightRestore() async {
+    if (!isConfigured || isSignedIn) return;
+
+    _restoreCompleter = Completer<GoogleSignInAccount?>();
     try {
+      _log('开始 attemptLightweightAuthentication…');
       final attempt = _googleSignIn.attemptLightweightAuthentication();
       if (attempt != null) {
-        _currentUser = await attempt;
+        final account = await attempt;
+        if (account != null) {
+          await _applySignedInUser(account);
+          _log('轻量登录 Future 成功: ${account.email}');
+          return;
+        }
+        _log('轻量登录 Future 返回 null，等待 authenticationEvents…');
       }
+
+      await _restoreCompleter!.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          _log('轻量登录等待超时');
+          return _currentUser;
+        },
+      );
     } catch (e) {
-      _logger.e("恢复登录失败: $e");
+      _logger.e('轻量登录失败: $e');
+      _log('轻量登录异常: $e');
+    } finally {
+      _restoreCompleter = null;
     }
   }
 
-  // 获取用户信息
-  static GoogleSignInAccount? get currentUser => _currentUser;
-
-  // 修正：明确返回类型为 calendar.CalendarApi，不再使用 var
   static Future<calendar.CalendarApi?> getCalendarApi() async {
-    await _ensureInitialized();
-    var account = _currentUser;
-    account ??= await login();
-    if (account == null) return null;
+    await bootstrap();
+    if (!isSignedIn) {
+      await restoreSignIn();
+    }
+    if (!isSignedIn) return null;
 
-    final authorization =
-        await account.authorizationClient.authorizationForScopes(_scopes) ??
-            await account.authorizationClient.authorizeScopes(_scopes);
-    final httpClient = authorization.authClient(scopes: _scopes);
-    return calendar.CalendarApi(httpClient);
+    final client = _authorizationClient();
+    final authorization = await client.authorizationForScopes(_scopes) ??
+        await client.authorizeScopes(_scopes);
+    return calendar.CalendarApi(authorization.authClient(scopes: _scopes));
   }
 
   /// 拉取当天非本 App 创建的 Google 日历事件
@@ -183,15 +338,12 @@ class GoogleCalendarService {
   static Future<bool> syncSlotsToGoogle(
       List<TimeSlot> slots, DateTime date) async {
     final api = await getCalendarApi();
-    // 如果未登录，直接返回不报错，方便自动同步调用
     if (api == null) return false;
 
     try {
-      // 1. 清理当天的旧数据（防止重复和处理撤销/删除的情况）
       final startOfDay = DateTime(date.year, date.month, date.day);
       final endOfDay = startOfDay.add(const Duration(days: 1));
 
-      // --- 步骤 1: 获取日历上已有的本应用事件 ---
       var existingEventsResponse = await api.events.list(
         'primary',
         timeMin: startOfDay.toUtc(),
@@ -204,7 +356,6 @@ class GoogleCalendarService {
           [];
       List<calendar.Event> localEvents = _convertToMergedEvents(slots, date);
 
-      // A. 找出需要删除的：远程有，但本地没有完全匹配的（时间+内容）
       for (var re in remoteEvents) {
         bool stillExists = localEvents.any((le) =>
             le.summary == re.summary &&
@@ -213,11 +364,9 @@ class GoogleCalendarService {
 
         if (!stillExists) {
           await api.events.delete('primary', re.id!);
-          // _logger.i("删除过时事件: ${re.summary}");
         }
       }
 
-      // B. 找出需要新增的：本地有，但远程没有完全匹配的
       for (var le in localEvents) {
         bool alreadyUploaded = remoteEvents.any((re) =>
             re.summary == le.summary &&
@@ -226,7 +375,6 @@ class GoogleCalendarService {
 
         if (!alreadyUploaded) {
           await api.events.insert(le, 'primary');
-          // _logger.i("新增事件: ${le.summary}");
         }
       }
       return true;

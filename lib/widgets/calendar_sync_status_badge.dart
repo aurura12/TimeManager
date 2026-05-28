@@ -12,7 +12,7 @@ class CalendarSyncStatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<TimeProvider>();
-    final loggedIn = GoogleCalendarService.currentUser != null;
+    final loggedIn = GoogleCalendarService.isSignedIn;
 
     return StreamBuilder<String>(
       stream: provider.syncStatusStream,
