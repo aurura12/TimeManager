@@ -8,31 +8,71 @@ import '../models/calendar_block.dart';
 class GoogleCalendarService {
   static const String _appSignature = "乖乖🥰晶晶";
   static final _logger = Logger();
+  static const List<String> _scopes = [calendar.CalendarApi.calendarEventsScope];
+  static final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
+  static GoogleSignInAccount? _currentUser;
+  static bool _initialized = false;
+
+  static Future<void> _ensureInitialized() async {
+    if (_initialized) return;
+    await _googleSignIn.initialize();
+    _googleSignIn.authenticationEvents.listen((event) {
+      if (event is GoogleSignInAuthenticationEventSignIn) {
+        _currentUser = event.user;
+      } else if (event is GoogleSignInAuthenticationEventSignOut) {
+        _currentUser = null;
+      }
+    });
+    _initialized = true;
+  }
 
   // 申请日历事件读写权限
-  static final GoogleSignIn _googleSignIn = GoogleSignIn(
-    scopes: [calendar.CalendarApi.calendarEventsScope],
-  );
+  static Future<GoogleSignInAccount?> login() async {
+    await _ensureInitialized();
+    try {
+      final account = await _googleSignIn.authenticate(scopeHint: _scopes);
+      _currentUser = account;
+      await account.authorizationClient.authorizeScopes(_scopes);
+      return account;
+    } catch (e) {
+      _logger.e("Google 登录失败: $e");
+      return null;
+    }
+  }
 
-  static Future<GoogleSignInAccount?> login() => _googleSignIn.signIn();
-  static Future<void> logout() => _googleSignIn.signOut();
+  static Future<void> logout() async {
+    await _ensureInitialized();
+    await _googleSignIn.signOut();
+    _currentUser = null;
+  }
 
   // 尝试静默登录（恢复登录状态）
   static Future<void> restoreSignIn() async {
+    await _ensureInitialized();
     try {
-      await _googleSignIn.signInSilently();
+      final attempt = _googleSignIn.attemptLightweightAuthentication();
+      if (attempt != null) {
+        _currentUser = await attempt;
+      }
     } catch (e) {
       _logger.e("恢复登录失败: $e");
     }
   }
 
   // 获取用户信息
-  static GoogleSignInAccount? get currentUser => _googleSignIn.currentUser;
+  static GoogleSignInAccount? get currentUser => _currentUser;
 
   // 修正：明确返回类型为 calendar.CalendarApi，不再使用 var
   static Future<calendar.CalendarApi?> getCalendarApi() async {
-    final httpClient = await _googleSignIn.authenticatedClient();
-    if (httpClient == null) return null;
+    await _ensureInitialized();
+    var account = _currentUser;
+    account ??= await login();
+    if (account == null) return null;
+
+    final authorization =
+        await account.authorizationClient.authorizationForScopes(_scopes) ??
+            await account.authorizationClient.authorizeScopes(_scopes);
+    final httpClient = authorization.authClient(scopes: _scopes);
     return calendar.CalendarApi(httpClient);
   }
 
