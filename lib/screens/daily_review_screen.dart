@@ -282,12 +282,13 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
 
   Widget _buildDateRail() {
     final today = _normalizeDate(DateTime.now());
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       width: 90,
-      decoration: const BoxDecoration(
-        color: Colors.white,
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLowest,
         border: Border(
-          right: BorderSide(color: Color(0x11000000)),
+          right: BorderSide(color: colorScheme.outlineVariant),
         ),
       ),
       child: ListView.builder(
@@ -302,7 +303,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             child: Material(
               color: selected
-                  ? const Color(0xFF9CB86A).withValues(alpha: 0.18)
+                  ? colorScheme.primaryContainer
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(12),
               child: InkWell(
@@ -318,8 +319,8 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                         fontWeight:
                             selected ? FontWeight.w700 : FontWeight.w500,
                         color: selected
-                            ? const Color(0xFF6B8E3A)
-                            : Colors.grey[800],
+                            ? colorScheme.onPrimaryContainer
+                            : colorScheme.onSurface,
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -328,8 +329,8 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                       style: TextStyle(
                         fontSize: 11,
                         color: selected
-                            ? const Color(0xFF6B8E3A)
-                            : Colors.grey[500],
+                            ? colorScheme.onPrimaryContainer
+                            : colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -344,19 +345,20 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FA),
+      backgroundColor: colorScheme.surface,
       appBar: AppBar(
-        title: const Text(
+        title: Text(
           '每日复盘',
           style: TextStyle(
-            color: Colors.black87,
+            color: colorScheme.onSurface,
             fontWeight: FontWeight.bold,
           ),
         ),
         backgroundColor: Colors.transparent,
         elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.black87),
+        iconTheme: IconThemeData(color: colorScheme.onSurface),
         actions: [
           IconButton(
             tooltip: '选择日期',
@@ -416,19 +418,22 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
     final result = entry.result;
     final selected = _sameDate(entry.date, _selectedDate);
     final title = '${entry.date.month}月${entry.date.day}日 · 今日复盘';
+    final colorScheme = Theme.of(context).colorScheme;
+    final brightness = Theme.of(context).brightness;
 
     return Container(
       key: _cardKeys[index],
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: colorScheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(16),
         border: selected
-            ? Border.all(color: const Color(0xFF9CB86A), width: 1.2)
+            ? Border.all(color: colorScheme.primary, width: 1.2)
             : null,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
+            color: Colors.black
+                .withValues(alpha: brightness == Brightness.dark ? 0.16 : 0.04),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -464,7 +469,10 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
               children: [
                 Text(
                   result.errorMessage,
-                  style: TextStyle(color: Colors.grey[700], height: 1.5),
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    height: 1.5,
+                  ),
                 ),
                 const SizedBox(height: 10),
                 _buildCardAction(
@@ -485,13 +493,13 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                         vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF9CB86A).withValues(alpha: 0.15),
+                        color: colorScheme.primaryContainer,
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      child: const Text(
+                      child: Text(
                         'AI 生成',
                         style: TextStyle(
-                          color: Color(0xFF6B8E3A),
+                          color: colorScheme.onPrimaryContainer,
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
                         ),
@@ -501,7 +509,10 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                       const SizedBox(width: 8),
                       Text(
                         '缓存',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ],
@@ -512,7 +523,6 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                   style: const TextStyle(
                     fontSize: 15.5,
                     height: 1.7,
-                    color: Colors.black87,
                   ),
                 ),
               ],
@@ -533,7 +543,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
         icon: const Icon(Icons.auto_awesome, size: 18),
         label: Text(label),
         style: FilledButton.styleFrom(
-          backgroundColor: const Color(0xFF9CB86A),
+          backgroundColor: Theme.of(context).colorScheme.primary,
         ),
       ),
     );

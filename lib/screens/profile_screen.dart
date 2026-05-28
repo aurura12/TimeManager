@@ -29,14 +29,19 @@ class _ProfileScreenState extends State<ProfileScreen>
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<TimeProvider>(context);
+    final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FA),
+      backgroundColor: colorScheme.surface,
       drawer: ProfileSettingsDrawer(onChanged: () => setState(() {})),
       appBar: AppBar(
-        title: const Text("个人中心",
-            style:
-                TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
+        title: Text(
+          "个人中心",
+          style: TextStyle(
+            color: colorScheme.onSurface,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
@@ -65,9 +70,9 @@ class _ProfileScreenState extends State<ProfileScreen>
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
               CupertinoSegmentedControl<int>(
                 groupValue: _groupValue,
-                borderColor: const Color(0xFF9CB86A),
-                selectedColor: const Color(0xFF9CB86A),
-                pressedColor: const Color(0xFF9CB86A).withValues(alpha: 0.2),
+                borderColor: colorScheme.primary,
+                selectedColor: colorScheme.primary,
+                pressedColor: colorScheme.primary.withValues(alpha: 0.2),
                 children: const {
                   0: Padding(
                     padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -95,20 +100,31 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   // 核心：双曲线折线图组件
   Widget _buildTrendChart(TimeProvider provider) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       height: 220,
       padding: const EdgeInsets.fromLTRB(10, 20, 20, 10),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: colorScheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(25),
         boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 10)
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.16 : 0.02),
+            blurRadius: 10,
+          )
         ],
       ),
       child: Column(
         children: [
-          const Text("最近一月趋势",
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+          Text(
+            "最近一月趋势",
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+              color: colorScheme.onSurface,
+            ),
+          ),
           const SizedBox(height: 15),
           Expanded(
             child: LineChart(
@@ -135,8 +151,10 @@ class _ProfileScreenState extends State<ProfileScreen>
                         return Padding(
                           padding: const EdgeInsets.only(top: 8.0),
                           child: Text('${date.day}日',
-                              style: const TextStyle(
-                                  fontSize: 10, color: Colors.grey)),
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: colorScheme.onSurfaceVariant,
+                              )),
                         );
                       },
                     ),
@@ -186,6 +204,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   Widget _buildLegend(Color color, String text) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Row(
       children: [
         Container(
@@ -193,19 +212,24 @@ class _ProfileScreenState extends State<ProfileScreen>
             height: 10,
             decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
         const SizedBox(width: 4),
-        Text(text, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+        Text(
+          text,
+          style: TextStyle(fontSize: 10, color: colorScheme.onSurfaceVariant),
+        ),
       ],
     );
   }
 
   // 自定义 TabBar 样式
   Widget _buildCustomTabBar() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       height: 45,
       // 如果 TabBar 放在过窄的容器里，可以尝试稍微调大外层宽度或减小 padding
       padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
-        color: Colors.grey[200],
+        color: colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(15),
       ),
       child: TabBar(
@@ -220,17 +244,17 @@ class _ProfileScreenState extends State<ProfileScreen>
         dividerColor: Colors.transparent,
 
         indicator: BoxDecoration(
-          color: Colors.white,
+          color: colorScheme.surfaceContainerLowest,
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
+              color: Colors.black.withValues(alpha: isDark ? 0.16 : 0.05),
               blurRadius: 5,
             )
           ],
         ),
         labelColor: const Color(0xFF9CB86A),
-        unselectedLabelColor: Colors.grey[600],
+        unselectedLabelColor: colorScheme.onSurfaceVariant,
         labelStyle: const TextStyle(
           fontWeight: FontWeight.bold,
           fontSize: 13,
@@ -267,18 +291,20 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   Widget _statCard(String label, String value, Color color) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Expanded(
       child: Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: colorScheme.surfaceContainerLowest,
           borderRadius: BorderRadius.circular(25),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(value,
-                style: const TextStyle(
+                style: TextStyle(
+                    color: colorScheme.onSurface,
                     fontSize: 28,
                     fontWeight: FontWeight.bold,
                     letterSpacing: -1)),
@@ -293,7 +319,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                 const SizedBox(width: 6),
                 Text(label,
                     style: TextStyle(
-                        color: Colors.grey[500],
+                        color: colorScheme.onSurfaceVariant,
                         fontSize: 12,
                         fontWeight: FontWeight.w500)),
               ],
@@ -306,6 +332,7 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   // 详细列表
   Widget _buildDetailList(TimeProvider provider, int tabIndex) {
+    final colorScheme = Theme.of(context).colorScheme;
     final rawStats = _getDataByTab(provider, tabIndex);
     // 将 Map 转换为 List 并按时长(value)降序排序
     final stats = rawStats.entries.toList()
@@ -315,12 +342,13 @@ class _ProfileScreenState extends State<ProfileScreen>
 
     if (stats.isEmpty) {
       return Center(
-          child: Text("本时段暂无记录", style: TextStyle(color: Colors.grey[400])));
+          child: Text("本时段暂无记录",
+              style: TextStyle(color: colorScheme.onSurfaceVariant)));
     }
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: colorScheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(25),
       ),
       child: ListView.separated(
@@ -328,7 +356,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         physics: const NeverScrollableScrollPhysics(),
         itemCount: stats.length,
         separatorBuilder: (context, index) =>
-            Divider(height: 1, color: Colors.grey[50]),
+            Divider(height: 1, color: colorScheme.outlineVariant),
         itemBuilder: (context, index) {
           final entry = stats[index];
           String key = entry.key;
@@ -359,15 +387,19 @@ class _ProfileScreenState extends State<ProfileScreen>
                     shape: BoxShape.circle),
               ),
               title: Text(key,
-                  style: const TextStyle(
+                  style: TextStyle(
+                      color: colorScheme.onSurface,
                       fontWeight: FontWeight.bold, fontSize: 15)),
               subtitle: Text("占比 ${percent.toStringAsFixed(1)}%",
-                  style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 12,
+                  )),
               trailing: Text("${val.toStringAsFixed(2)} h",
-                  style: const TextStyle(
+                  style: TextStyle(
+                      color: colorScheme.onSurface,
                       fontWeight: FontWeight.w900,
-                      fontSize: 16,
-                      color: Color(0xFF2D3436))),
+                      fontSize: 16)),
             ),
           );
         },
@@ -377,6 +409,7 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   // 饼状图统计
   Widget _buildPieChart(TimeProvider provider, int tabIndex) {
+    final colorScheme = Theme.of(context).colorScheme;
     final rawStats = _getDataByTab(provider, tabIndex);
     final stats = rawStats.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
@@ -385,13 +418,14 @@ class _ProfileScreenState extends State<ProfileScreen>
 
     if (stats.isEmpty) {
       return Center(
-          child: Text("本时段暂无记录", style: TextStyle(color: Colors.grey[400])));
+          child: Text("本时段暂无记录",
+              style: TextStyle(color: colorScheme.onSurfaceVariant)));
     }
 
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: colorScheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(25),
       ),
       child: Column(
@@ -439,7 +473,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                     titleStyle: TextStyle(
                         fontSize: fontSize,
                         fontWeight: FontWeight.bold,
-                        color: isTouched ? Colors.black87 : Colors.white),
+                        color: isTouched ? colorScheme.onSurface : Colors.white),
                   );
                 }),
               ),
@@ -465,7 +499,10 @@ class _ProfileScreenState extends State<ProfileScreen>
                   ),
                   const SizedBox(width: 4),
                   Text(entry.key,
-                      style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colorScheme.onSurfaceVariant,
+                      )),
                 ],
               );
             }),

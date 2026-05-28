@@ -403,6 +403,7 @@ class _TravelScreenState extends State<TravelScreen> {
   }
 
   Widget _buildTableView() {
+    final colorScheme = Theme.of(context).colorScheme;
     final rows = _document.records;
     if (rows.isEmpty) {
       return const Center(child: Text('暂无出行记录，先新增一条吧'));
@@ -412,7 +413,7 @@ class _TravelScreenState extends State<TravelScreen> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
           decoration: BoxDecoration(
-            color: Colors.grey[200],
+            color: colorScheme.surfaceContainerHigh,
             borderRadius: BorderRadius.circular(8),
           ),
           child: const Row(
@@ -451,9 +452,12 @@ class _TravelScreenState extends State<TravelScreen> {
               final selected = record.dateKey == _selectedDateText();
               return Container(
                 decoration: BoxDecoration(
-                  color: selected ? Colors.amber.withOpacity(0.15) : null,
+                  color: selected ? colorScheme.primaryContainer : null,
                   border: Border(
-                    bottom: BorderSide(color: Colors.grey[200]!, width: 0.5),
+                    bottom: BorderSide(
+                      color: colorScheme.outlineVariant,
+                      width: 0.5,
+                    ),
                   ),
                 ),
                 child: InkWell(
@@ -494,7 +498,7 @@ class _TravelScreenState extends State<TravelScreen> {
                             record.event,
                             style: TextStyle(
                               fontSize: 13,
-                              color: Colors.grey[700],
+                              color: colorScheme.onSurfaceVariant,
                             ),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
@@ -606,6 +610,7 @@ class _TravelScreenState extends State<TravelScreen> {
   }
 
   Widget _buildCalendarView() {
+    final colorScheme = Theme.of(context).colorScheme;
     final selectedRecord = _recordForDate(_selectedDate);
     final hasRecord = selectedRecord != null;
     final year = _calendarMonth.year;
@@ -662,7 +667,7 @@ class _TravelScreenState extends State<TravelScreen> {
                       d,
                       style: TextStyle(
                         fontSize: 12,
-                        color: Colors.grey[600],
+                        color: colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ),
@@ -698,9 +703,9 @@ class _TravelScreenState extends State<TravelScreen> {
               child: Container(
                 margin: const EdgeInsets.all(2),
                 decoration: BoxDecoration(
-                  color: isSelected ? Colors.amber[100] : null,
+                  color: isSelected ? colorScheme.primaryContainer : null,
                   border: isToday
-                      ? Border.all(color: Colors.blue, width: 1.5)
+                      ? Border.all(color: colorScheme.primary, width: 1.5)
                       : null,
                   borderRadius: BorderRadius.circular(6),
                 ),
@@ -713,7 +718,8 @@ class _TravelScreenState extends State<TravelScreen> {
                         fontSize: 14,
                         fontWeight:
                             isSelected ? FontWeight.bold : FontWeight.normal,
-                        color: isSelected ? Colors.amber[900] : null,
+                        color:
+                            isSelected ? colorScheme.onPrimaryContainer : null,
                       ),
                     ),
                     if (hasEvent)
@@ -737,7 +743,7 @@ class _TravelScreenState extends State<TravelScreen> {
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Colors.grey[100],
+            color: colorScheme.surfaceContainerHigh,
             borderRadius: BorderRadius.circular(10),
           ),
           child: hasRecord
@@ -756,7 +762,7 @@ class _TravelScreenState extends State<TravelScreen> {
                 )
               : Text(
                   '日期：${DateFormat('yyyy-MM-dd').format(_selectedDate)}\n当天暂无记录',
-                  style: TextStyle(color: Colors.grey[700]),
+                  style: TextStyle(color: colorScheme.onSurfaceVariant),
                 ),
         ),
       ],

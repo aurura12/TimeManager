@@ -11,18 +11,22 @@ class TargetScreen extends StatelessWidget {
   const TargetScreen({super.key});
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: isDark ? colorScheme.surface : Colors.white,
       appBar: AppBar(
-        title: const Text('我的计划',
-            style: TextStyle(color: Colors.white, fontSize: 18)),
+        title: const Text('我的计划', style: TextStyle(fontSize: 18)),
         centerTitle: true,
-        backgroundColor: const Color(0xFF96B462), // 图片中的草绿色
+        backgroundColor:
+            isDark ? colorScheme.surface : const Color(0xFF96B462),
+        foregroundColor: isDark ? colorScheme.onSurface : Colors.white,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         // 如果是在底部导航栏的主页，通常不需要 leading 返回键，如有需要可自行开启
         actions: [
           IconButton(
-            icon: const Icon(Icons.add, color: Colors.white),
+            icon: const Icon(Icons.add),
             onPressed: () {
               // 点击跳转到添加目标页面
               Navigator.push(
@@ -37,8 +41,11 @@ class TargetScreen extends StatelessWidget {
       body: Consumer<TimeProvider>(
         builder: (context, timeProvider, child) {
           if (timeProvider.targets.isEmpty) {
-            return const Center(
-              child: Text("暂无计划，点击右上角添加", style: TextStyle(color: Colors.grey)),
+            return Center(
+              child: Text(
+                "暂无计划，点击右上角添加",
+                style: TextStyle(color: colorScheme.onSurfaceVariant),
+              ),
             );
           }
 
@@ -51,6 +58,18 @@ class TargetScreen extends StatelessWidget {
               // 动态计算进度 (目前主要实现时长类型的计算)
               String progressText = "";
               String title = "";
+              final cardColor = isDark
+                  ? Color.lerp(
+                      target.color,
+                      colorScheme.surfaceContainerHigh,
+                      0.45,
+                    )!
+                  : target.color;
+              final onCardColor =
+                  ThemeData.estimateBrightnessForColor(cardColor) ==
+                          Brightness.dark
+                      ? Colors.white
+                      : Colors.black;
 
               // 使用 Provider 计算当前周期的进度
               double currentValue =
@@ -90,8 +109,7 @@ class TargetScreen extends StatelessWidget {
                   final d2 = DateTime(now.year, now.month, now.day);
                   final days = d2.difference(d1).inDays + 1;
                   topRightWidget = Text("第$days天",
-                      style:
-                          const TextStyle(color: Colors.white, fontSize: 15));
+                      style: TextStyle(color: onCardColor, fontSize: 15));
                 } catch (_) {}
               } else {
                 DateTime? endTime;
@@ -123,7 +141,7 @@ class TargetScreen extends StatelessWidget {
 
                   topRightWidget = _CountdownText(
                     endTime: endTime,
-                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                    style: TextStyle(color: onCardColor, fontSize: 15),
                   );
                 }
               }
@@ -151,9 +169,11 @@ class TargetScreen extends StatelessWidget {
                                   ),
                                 );
                               },
-                              child: const Center(
-                                child:
-                                    Icon(Icons.edit, color: Color(0xFF96B462)),
+                              child: Center(
+                                child: Icon(
+                                  Icons.edit,
+                                  color: colorScheme.primary,
+                                ),
                               ),
                             ),
                           ),
@@ -174,6 +194,7 @@ class TargetScreen extends StatelessWidget {
                   ],
                 ),
                 child: _buildTargetCard(
+                  context: context,
                   key: ValueKey("card_${target.name}"), // 这里用不同的 key 区分
                   subtitle: target.period,
                   title: title,
@@ -200,6 +221,7 @@ class TargetScreen extends StatelessWidget {
 
   // 自定义目标卡片构建方法
   Widget _buildTargetCard({
+    required BuildContext context,
     required Key key,
     String? subtitle,
     required String title,
@@ -208,6 +230,15 @@ class TargetScreen extends StatelessWidget {
     required Color color,
     VoidCallback? onTap,
   }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardColor =
+        isDark ? Color.lerp(color, colorScheme.surfaceContainerHigh, 0.45)! : color;
+    final onCardColor =
+        ThemeData.estimateBrightnessForColor(cardColor) == Brightness.dark
+            ? Colors.white
+            : Colors.black;
+
     return GestureDetector(
       key: key,
       onTap: onTap,
@@ -215,11 +246,14 @@ class TargetScreen extends StatelessWidget {
         margin: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
         padding: const EdgeInsets.all(20.0),
         decoration: BoxDecoration(
-          color: color,
+          color: cardColor,
           borderRadius: BorderRadius.circular(12.0),
+          border: isDark
+              ? Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.35))
+              : null,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
+              color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.05),
               blurRadius: 4,
               offset: const Offset(0, 2),
             ),
@@ -234,7 +268,10 @@ class TargetScreen extends StatelessWidget {
                 if (subtitle != null)
                   Text(
                     subtitle,
-                    style: const TextStyle(color: Colors.white70, fontSize: 13),
+                    style: TextStyle(
+                      color: onCardColor.withValues(alpha: 0.75),
+                      fontSize: 13,
+                    ),
                   ),
                 if (topRightWidget != null) topRightWidget,
               ],
@@ -242,8 +279,8 @@ class TargetScreen extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               title,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: onCardColor,
                 fontSize: 19,
                 fontWeight: FontWeight.w500,
               ),
@@ -253,7 +290,10 @@ class TargetScreen extends StatelessWidget {
               alignment: Alignment.bottomRight,
               child: Text(
                 progressText,
-                style: const TextStyle(color: Colors.white, fontSize: 15),
+                style: TextStyle(
+                  color: onCardColor.withValues(alpha: 0.92),
+                  fontSize: 15,
+                ),
               ),
             ),
           ],
