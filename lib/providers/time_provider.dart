@@ -303,6 +303,87 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
+  /// 手动同步所有待同步日期（用于个人中心“待同步”按钮）
+  Future<void> synchronizeAllPendingCalendars() async {
+    if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
+
+    // 可能与自动同步并发：等待当前同步完成，避免手动点击被无声忽略
+    var waitedMs = 0;
+    while (_isSyncing && waitedMs < 10000) {
+      await Future.delayed(const Duration(milliseconds: 200));
+      waitedMs += 200;
+    }
+    if (_isSyncing) {
+      _syncStatusController.add("同步进行中，请稍后重试");
+      return;
+    }
+
+    final googleUser = GoogleCalendarService.currentUser;
+    if (googleUser == null) {
+      _syncStatusController.add("未登录 Google 账号，无法同步");
+      return;
+    }
+
+    final pendingKeys = _pendingSyncDates.toList();
+    if (pendingKeys.isEmpty) {
+      await synchronizeCalendar();
+      return;
+    }
+
+    _isSyncing = true;
+    try {
+      _syncStatusController.add("SYNCING");
+
+      var allSuccess = true;
+      for (final rawKey in pendingKeys) {
+        final dateKey = rawKey.trim();
+        final parts = dateKey.split('-');
+        if (parts.length != 3) continue;
+
+        final year = int.tryParse(parts[0]);
+        final month = int.tryParse(parts[1]);
+        final day = int.tryParse(parts[2]);
+        if (year == null || month == null || day == null) {
+          // 异常 key 直接清掉，避免状态永远卡在“待同步”
+          _pendingSyncDates.remove(rawKey);
+          allSuccess = false;
+          continue;
+        }
+
+        final date = DateTime(year, month, day);
+        final slotsForDay = _dailySlots[dateKey] ?? _generateInitialSlots();
+        final pullOk = await pullGoogleCalendarForDate(date, notify: false);
+        final pushed =
+            await GoogleCalendarService.syncSlotsToGoogle(slotsForDay, date);
+
+        if (pushed) {
+          _pendingSyncDates.remove(dateKey);
+        } else {
+          allSuccess = false;
+        }
+
+        if (!pullOk) {
+          allSuccess = false;
+        }
+      }
+
+      await _saveData();
+      notifyListeners();
+      if (_pendingSyncDates.isEmpty && allSuccess) {
+        _syncStatusController.add("同步成功");
+      } else {
+        _syncStatusController.add("部分同步失败（剩余${_pendingSyncDates.length}天）");
+      }
+    } finally {
+      _isSyncing = false;
+      Future.delayed(const Duration(seconds: 3), () {
+        if (!_syncStatusController.isClosed) {
+          _syncStatusController.add("IDLE");
+        }
+      });
+    }
+  }
+
   // 移除指定时间块的事件
   void removeEventFromSlot(int index) {
     if (index >= 0 && index < slots.length) {
