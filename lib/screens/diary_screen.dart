@@ -29,9 +29,13 @@ class _DiaryScreenState extends State<DiaryScreen> {
   bool _remoteTreeLoading = false;
   String? _remoteTreeError;
   List<String> _remoteDiaryPaths = const [];
+  DateTime? _remoteDiaryPathsFetchedAt;
   final Set<String> _expandedRemoteFolders = {};
   final Map<String, String> _contextRemotePathOverrides = {};
   bool _lastContextPathAmbiguous = false;
+  int _contextRequestId = 0;
+  bool _dirtySinceContextLoaded = false;
+  static const Duration _remotePathsTtl = Duration(minutes: 3);
 
   @override
   void initState() {
@@ -54,8 +58,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
     _token = token;
     _kind = kind;
     await _loadDraftForCurrentContext();
+    _dirtySinceContextLoaded = false;
     if (!mounted) return;
     setState(() => _loading = false);
+    _refreshCurrentContextFromRemote(_contextRequestId, forcePathRefresh: false);
   }
 
   String _selectedDateText() {
@@ -114,21 +120,34 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return fileName.contains(_dateTextForFile(date));
   }
 
-  Future<List<String>?> _fetchRemoteDiaryPathsSilently() async {
+  bool _isRemotePathsCacheFresh() {
+    if (_remoteDiaryPathsFetchedAt == null || _remoteDiaryPaths.isEmpty) {
+      return false;
+    }
+    return DateTime.now().difference(_remoteDiaryPathsFetchedAt!) < _remotePathsTtl;
+  }
+
+  Future<List<String>?> _fetchRemoteDiaryPathsSilently({
+    bool forceRefresh = false,
+  }) async {
     final token = (_token ?? '').trim();
     if (token.isEmpty) return null;
+    if (!forceRefresh && _isRemotePathsCacheFresh()) {
+      return _remoteDiaryPaths;
+    }
     final listResult = await DiaryGitHubService.listDiaryPaths(token: token);
     if (!listResult.success) return null;
+    _remoteDiaryPaths = listResult.paths;
+    _remoteDiaryPathsFetchedAt = DateTime.now();
     return listResult.paths;
   }
 
   Future<String?> _findRemotePathForCurrentContext({bool refresh = true}) async {
     List<String> paths = _remoteDiaryPaths;
     if (refresh || paths.isEmpty) {
-      final fetched = await _fetchRemoteDiaryPathsSilently();
+      final fetched = await _fetchRemoteDiaryPathsSilently(forceRefresh: refresh);
       if (fetched != null) {
         paths = fetched;
-        _remoteDiaryPaths = fetched;
       }
     }
     if (paths.isEmpty) return null;
@@ -159,31 +178,6 @@ class _DiaryScreenState extends State<DiaryScreen> {
     _startedAt = startedAt;
   }
 
-  Future<void> _loadContextWithRemoteFallback() async {
-    final token = (_token ?? '').trim();
-    if (token.isNotEmpty) {
-      final remotePath = await _findRemotePathForCurrentContext(refresh: true);
-      if (remotePath != null) {
-        final result =
-            await DiaryGitHubService.pullDiary(token: token, path: remotePath);
-        if (result.success) {
-          final raw = result.content!;
-          final body = _extractBodyFromMarkdown(raw);
-          final startedAt = _parseStartedAtFromMarkdown(raw);
-          _suppressBodyListener = true;
-          _bodyController.text = body;
-          _suppressBodyListener = false;
-          _startedAt = startedAt ?? DateTime.now();
-          await _saveDraftNow();
-          return;
-        }
-      }
-    }
-
-    // 远程不存在或拉取失败时，回退本地草稿。
-    await _loadDraftForCurrentContext();
-  }
-
   Future<void> _saveDraftNow() async {
     await DiaryLocalStore.saveDraftBody(
       _kind,
@@ -198,11 +192,72 @@ class _DiaryScreenState extends State<DiaryScreen> {
   void _onBodyChanged() {
     if (_suppressBodyListener) return;
     _startedAt ??= DateTime.now();
+    _dirtySinceContextLoaded = true;
     _saveDebounce?.cancel();
     _saveDebounce = Timer(const Duration(milliseconds: 350), () {
       _saveDraftNow();
       if (mounted) setState(() {});
     });
+  }
+
+  Future<void> _switchContext({
+    DiaryKind? kind,
+    DateTime? date,
+  }) async {
+    await _saveDraftNow();
+    _contextRequestId++;
+    final requestId = _contextRequestId;
+
+    if (kind != null) {
+      _kind = kind;
+      await DiaryLocalStore.savePreferredKind(kind);
+    }
+    if (date != null) {
+      _selectedDate = DateTime(date.year, date.month, date.day);
+    }
+
+    await _loadDraftForCurrentContext();
+    _dirtySinceContextLoaded = false;
+    if (!mounted || requestId != _contextRequestId) return;
+    setState(() {});
+
+    _refreshCurrentContextFromRemote(requestId, forcePathRefresh: false);
+  }
+
+  Future<void> _refreshCurrentContextFromRemote(
+    int requestId, {
+    required bool forcePathRefresh,
+  }) async {
+    final token = (_token ?? '').trim();
+    if (token.isEmpty) return;
+    if (!mounted || requestId != _contextRequestId) return;
+
+    var remotePath =
+        await _findRemotePathForCurrentContext(refresh: forcePathRefresh);
+    if (!mounted || requestId != _contextRequestId) return;
+    if (remotePath == null && !forcePathRefresh) {
+      // 缓存没命中时再强制刷新一次远程列表。
+      remotePath = await _findRemotePathForCurrentContext(refresh: true);
+      if (!mounted || requestId != _contextRequestId) return;
+    }
+    if (remotePath == null) return;
+
+    final result = await DiaryGitHubService.pullDiary(token: token, path: remotePath);
+    if (!mounted || requestId != _contextRequestId) return;
+    if (!result.success) return;
+    if (_dirtySinceContextLoaded) return;
+
+    final raw = result.content!;
+    final body = _extractBodyFromMarkdown(raw);
+    final startedAt = _parseStartedAtFromMarkdown(raw);
+    _suppressBodyListener = true;
+    _bodyController.text = body;
+    _suppressBodyListener = false;
+    _startedAt = startedAt ?? DateTime.now();
+    _contextRemotePathOverrides[_contextKey(_kind, _selectedDate)] = remotePath;
+    await _saveDraftNow();
+    if (!mounted || requestId != _contextRequestId) return;
+    setState(() {});
   }
 
   Future<void> _pickDate() async {
@@ -213,23 +268,12 @@ class _DiaryScreenState extends State<DiaryScreen> {
       lastDate: DateTime(2100),
     );
     if (picked == null) return;
-    await _saveDraftNow();
-    setState(() => _processing = true);
-    _selectedDate = DateTime(picked.year, picked.month, picked.day);
-    await _loadContextWithRemoteFallback();
-    if (!mounted) return;
-    setState(() => _processing = false);
+    await _switchContext(date: DateTime(picked.year, picked.month, picked.day));
   }
 
   Future<void> _changeKind(DiaryKind kind) async {
     if (_kind == kind) return;
-    await _saveDraftNow();
-    setState(() => _processing = true);
-    _kind = kind;
-    await DiaryLocalStore.savePreferredKind(kind);
-    await _loadContextWithRemoteFallback();
-    if (!mounted) return;
-    setState(() => _processing = false);
+    await _switchContext(kind: kind);
   }
 
   DateTime? _parseStartedAtFromMarkdown(String markdown) {
@@ -294,6 +338,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
       _selectedDate = DateTime(parsedDate.year, parsedDate.month, parsedDate.day);
     }
     _contextRemotePathOverrides[_contextKey(_kind, _selectedDate)] = path;
+    _contextRequestId++;
+    _dirtySinceContextLoaded = false;
 
     _suppressBodyListener = true;
     _bodyController.text = body;
@@ -322,6 +368,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       _remoteTreeLoading = false;
       if (listResult.success) {
         _remoteDiaryPaths = listResult.paths;
+        _remoteDiaryPathsFetchedAt = DateTime.now();
         _remoteTreeError = null;
       } else {
         _remoteTreeError = listResult.error ?? '读取远程列表失败';
