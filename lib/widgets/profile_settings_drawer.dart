@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_sign_in/google_sign_in.dart';
+import '../models/google_calendar_user.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../models/daily_review_reminder.dart';
@@ -103,8 +103,8 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
 
   @override
   Widget build(BuildContext context) {
-    final googleUser = GoogleCalendarService.currentUser;
-    final provider = context.read<TimeProvider>();
+    final provider = context.watch<TimeProvider>();
+    final googleUser = GoogleCalendarService.sessionUser;
     final themeModeProvider = context.watch<ThemeModeProvider>();
     final colorScheme = Theme.of(context).colorScheme;
 
@@ -273,7 +273,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
 
   Widget _buildLoginSection(
     BuildContext context,
-    GoogleSignInAccount? googleUser,
+    GoogleCalendarUser? googleUser,
     TimeProvider provider,
   ) {
     if (googleUser != null) {
