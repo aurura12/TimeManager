@@ -601,6 +601,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     }
 
     final startedAt = _startedAt;
+    final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
       key: _scaffoldKey,
@@ -673,18 +674,21 @@ class _DiaryScreenState extends State<DiaryScreen> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.grey[100],
+                color: colorScheme.surfaceContainerHigh,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: startedAt == null
-                  ? const Text(
+                  ? Text(
                       '开始输入正文后，会自动生成 title 与 date。',
-                      style: TextStyle(color: Colors.black54),
+                      style: TextStyle(color: colorScheme.onSurfaceVariant),
                     )
                   : Text(
                       'title: ${_frontMatterTitle(startedAt)}\n'
                       'date: ${_frontMatterDate(startedAt)}',
-                      style: const TextStyle(height: 1.5),
+                      style: TextStyle(
+                        height: 1.5,
+                        color: colorScheme.onSurface,
+                      ),
                     ),
             ),
             const SizedBox(height: 12),

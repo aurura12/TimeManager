@@ -3,6 +3,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../models/daily_review_reminder.dart';
+import '../providers/theme_mode_provider.dart';
 import '../providers/time_provider.dart';
 import '../services/data_backup_service.dart';
 import '../screens/daily_review_screen.dart';
@@ -64,10 +65,11 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       context: context,
       initialTime: TimeOfDay(hour: _reminder.hour, minute: _reminder.minute),
       builder: (context, child) {
+        final baseTheme = Theme.of(context);
         return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: Color(0xFF9CB86A),
+          data: baseTheme.copyWith(
+            colorScheme: baseTheme.colorScheme.copyWith(
+              primary: baseTheme.colorScheme.primary,
             ),
           ),
           child: child!,
@@ -103,12 +105,14 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
   Widget build(BuildContext context) {
     final googleUser = GoogleCalendarService.currentUser;
     final provider = context.read<TimeProvider>();
+    final themeModeProvider = context.watch<ThemeModeProvider>();
+    final colorScheme = Theme.of(context).colorScheme;
 
     return Drawer(
-      backgroundColor: const Color(0xFFF8F9FA),
+      backgroundColor: colorScheme.surface,
       child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: ListView(
+          padding: EdgeInsets.zero,
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
@@ -117,12 +121,41 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: Colors.grey[600],
+                  color: colorScheme.onSurfaceVariant,
                 ),
               ),
             ),
             _buildLoginSection(context, googleUser, provider),
             const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.palette_outlined),
+              title: const Text('外观模式'),
+              subtitle: Text(_themeModeLabel(themeModeProvider.themeMode)),
+              trailing: DropdownButtonHideUnderline(
+                child: DropdownButton<ThemeMode>(
+                  value: themeModeProvider.themeMode,
+                  onChanged: (mode) {
+                    if (mode != null) {
+                      themeModeProvider.setThemeMode(mode);
+                    }
+                  },
+                  items: const [
+                    DropdownMenuItem(
+                      value: ThemeMode.system,
+                      child: Text('跟随系统'),
+                    ),
+                    DropdownMenuItem(
+                      value: ThemeMode.light,
+                      child: Text('浅色'),
+                    ),
+                    DropdownMenuItem(
+                      value: ThemeMode.dark,
+                      child: Text('深色'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
             ListTile(
               leading: const Icon(Icons.upload_file_outlined),
               title: const Text('导出备份'),
@@ -162,7 +195,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: Colors.grey[600],
+                  color: colorScheme.onSurfaceVariant,
                 ),
               ),
             ),
@@ -187,7 +220,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                       : '已关闭',
                 ),
                 value: _reminder.enabled,
-                activeThumbColor: const Color(0xFF9CB86A),
+                activeThumbColor: colorScheme.primary,
                 onChanged: _setReminderEnabled,
               ),
               ListTile(
@@ -207,7 +240,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                 },
               ),
             ],
-            const Spacer(),
+            const SizedBox(height: 12),
             _buildVersionFooter(),
           ],
         ),
@@ -228,7 +261,10 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           child: Text(
             'v$version',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey[400], fontSize: 12),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.outline,
+              fontSize: 12,
+            ),
           ),
         );
       },
@@ -251,13 +287,16 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                 CircleAvatar(
                   radius: 28,
                   backgroundColor:
-                      const Color(0xFF9CB86A).withValues(alpha: 0.1),
+                      Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
                   backgroundImage: googleUser.photoUrl != null
                       ? NetworkImage(googleUser.photoUrl!)
                       : null,
                   child: googleUser.photoUrl == null
-                      ? const Icon(Icons.person,
-                          size: 28, color: Color(0xFF9CB86A))
+                      ? Icon(
+                          Icons.person,
+                          size: 28,
+                          color: Theme.of(context).colorScheme.primary,
+                        )
                       : null,
                 ),
                 const SizedBox(width: 12),
@@ -275,7 +314,10 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                       const SizedBox(height: 2),
                       Text(
                         googleUser.email,
-                        style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 4),
@@ -284,8 +326,8 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                           Container(
                             width: 6,
                             height: 6,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFF9CB86A),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.primary,
                               shape: BoxShape.circle,
                             ),
                           ),
@@ -293,7 +335,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                           Text(
                             'Google 日历已连接',
                             style: TextStyle(
-                              color: Colors.grey[600],
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
                               fontSize: 11,
                             ),
                           ),
@@ -331,8 +373,12 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
             children: [
               CircleAvatar(
                 radius: 28,
-                backgroundColor: Colors.grey[200],
-                child: Icon(Icons.person_outline, color: Colors.grey[500]),
+                backgroundColor:
+                    Theme.of(context).colorScheme.surfaceContainerHighest,
+                child: Icon(
+                  Icons.person_outline,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -349,7 +395,10 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                     const SizedBox(height: 2),
                     Text(
                       '连接 Google 日历以同步时间记录',
-                      style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 12,
+                      ),
                     ),
                   ],
                 ),
@@ -363,7 +412,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               icon: const Icon(Icons.g_mobiledata, size: 24),
               label: const Text('连接 Google 日历'),
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF9CB86A),
+                backgroundColor: Theme.of(context).colorScheme.primary,
                 padding: const EdgeInsets.symmetric(vertical: 12),
               ),
               onPressed: () async {
@@ -377,6 +426,17 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
         ],
       ),
     );
+  }
+
+  String _themeModeLabel(ThemeMode mode) {
+    switch (mode) {
+      case ThemeMode.system:
+        return '当前：跟随系统';
+      case ThemeMode.light:
+        return '当前：浅色';
+      case ThemeMode.dark:
+        return '当前：深色';
+    }
   }
 
   Future<void> _handleExport(

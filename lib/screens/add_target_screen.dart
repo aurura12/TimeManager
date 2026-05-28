@@ -205,12 +205,17 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     Color activeColor = _themeColors[_selectedColorIndex];
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
+      backgroundColor: colorScheme.surface,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF96B462),
+        backgroundColor:
+            isDark ? colorScheme.surface : const Color(0xFF96B462),
+        foregroundColor: isDark ? colorScheme.onSurface : Colors.white,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         leadingWidth: 80,
         leading: TextButton(
@@ -243,11 +248,12 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
             }
             Navigator.pop(context);
           },
-          child: const Text("确定",
-              style: TextStyle(color: Colors.white, fontSize: 16)),
+          style: TextButton.styleFrom(
+            foregroundColor: isDark ? colorScheme.onSurface : Colors.white,
+          ),
+          child: const Text("确定", style: TextStyle(fontSize: 16)),
         ),
-        title: Text(widget.target != null ? "编辑计划" : "制定计划",
-            style: const TextStyle(color: Colors.white)),
+        title: Text(widget.target != null ? "编辑计划" : "制定计划"),
         centerTitle: true,
         actions: [
           PopupMenuButton<TargetType>(
@@ -262,8 +268,13 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
             child: Row(
               children: [
                 Text(_getTypeName(_selectedType),
-                    style: const TextStyle(color: Colors.white)),
-                const Icon(Icons.arrow_drop_down, color: Colors.white),
+                    style: TextStyle(
+                      color: isDark ? colorScheme.onSurface : Colors.white,
+                    )),
+                Icon(
+                  Icons.arrow_drop_down,
+                  color: isDark ? colorScheme.onSurface : Colors.white,
+                ),
                 const SizedBox(width: 10),
               ],
             ),
@@ -286,10 +297,15 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
             _buildPreviewCard(activeColor),
             // 2. 颜色选择器
             _buildColorPicker(),
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text("点击下方按钮制定计划",
-                  style: TextStyle(color: Colors.grey, fontSize: 12)),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                "点击下方按钮制定计划",
+                style: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 12,
+                ),
+              ),
             ),
             // 3. 周期选择
             if (_selectedType != TargetType.timePoint) ...[
@@ -307,22 +323,32 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
   }
 
   Widget _buildPreviewCard(Color activeColor) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardColor = isDark
+        ? Color.lerp(activeColor, colorScheme.surfaceContainerHigh, 0.45)!
+        : activeColor;
+    final onCardColor = ThemeData.estimateBrightnessForColor(cardColor) ==
+            Brightness.dark
+        ? Colors.white
+        : Colors.black;
+
     return Container(
       margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(20),
       width: double.infinity,
       decoration: BoxDecoration(
-          color: activeColor, borderRadius: BorderRadius.circular(12)),
+          color: cardColor, borderRadius: BorderRadius.circular(12)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (_selectedType != TargetType.timePoint)
             Text(_selectedPeriod,
-                style: const TextStyle(color: Colors.white70)),
+                style: TextStyle(color: onCardColor.withValues(alpha: 0.75))),
           const SizedBox(height: 8),
           Text(_getPreviewText(),
-              style: const TextStyle(
-                  color: Colors.white,
+              style: TextStyle(
+                  color: onCardColor,
                   fontSize: 18,
                   fontWeight: FontWeight.bold)),
         ],
@@ -365,7 +391,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
             const SizedBox(height: 10),
             // 现在这个 Text 会受到上面 crossAxisAlignment.start 的影响而居左
             const Text("有效时间区间:",
-                style: TextStyle(fontSize: 16, color: Colors.black87)),
+                style: TextStyle(fontSize: 16)),
             const SizedBox(height: 10),
             Row(
               // 同时也确保这个 Row 内部的按钮也是从左开始
@@ -396,7 +422,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
           SizedBox(
               width: 80,
               child:
-                  Text(label, style: const TextStyle(color: Colors.black54))),
+                  Text(label, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))),
           _buildSmallBtn(value, onTap),
         ],
       ),
@@ -404,14 +430,22 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
   }
 
   Widget _buildSmallBtn(String text, VoidCallback onTap) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         decoration: BoxDecoration(
-            color: const Color(0xFF96B462),
+            color:
+                isDark ? colorScheme.primaryContainer : const Color(0xFF96B462),
             borderRadius: BorderRadius.circular(6)),
-        child: Text(text, style: const TextStyle(color: Colors.white)),
+        child: Text(
+          text,
+          style: TextStyle(
+            color: isDark ? colorScheme.onPrimaryContainer : Colors.white,
+          ),
+        ),
       ),
     );
   }
@@ -442,7 +476,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: padding, vertical: 8),
       child: Text(title,
-          style: const TextStyle(fontSize: 16, color: Colors.black87)),
+          style: const TextStyle(fontSize: 16)),
     );
   }
 

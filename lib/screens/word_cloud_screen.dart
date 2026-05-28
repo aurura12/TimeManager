@@ -23,6 +23,7 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<TimeProvider>();
+    final colorScheme = Theme.of(context).colorScheme;
     final now = DateTime.now();
     final start = DateTime(2020, 1, 1);
     final durationStats = provider.getStatistics(start, now);
@@ -30,20 +31,23 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
     final words = _buildWordCloudItems(durationStats, occurrenceStats);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FA),
+      backgroundColor: colorScheme.surface,
       appBar: AppBar(
-        title: const Text(
+        title: Text(
           '事件词云',
-          style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
+          style: TextStyle(
+            color: colorScheme.onSurface,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         backgroundColor: Colors.transparent,
         elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.black87),
+        iconTheme: IconThemeData(color: colorScheme.onSurface),
       ),
       body: words.isEmpty
           ? Center(
               child: Text('暂无可用于生成词云的数据',
-                  style: TextStyle(color: Colors.grey[500])),
+                  style: TextStyle(color: colorScheme.onSurfaceVariant)),
             )
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
@@ -52,7 +56,7 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: colorScheme.surfaceContainerLowest,
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Column(
@@ -60,7 +64,10 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
                     children: [
                       Text(
                         '词云权重 = 70%时长 + 30%出现次数（按所有历史记录统计）',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
                       ),
                       const SizedBox(height: 10),
                       Wrap(
@@ -73,8 +80,7 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
                             onSelected: (_) {
                               setState(() => _shape = shape);
                             },
-                            selectedColor:
-                                const Color(0xFF9CB86A).withValues(alpha: 0.22),
+                            selectedColor: colorScheme.primaryContainer,
                           );
                         }).toList(),
                       ),
@@ -91,11 +97,12 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
   }
 
   Widget _buildWordCloudCard(List<_WordCloudItem> words) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       height: 430,
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: colorScheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(20),
       ),
       child: LayoutBuilder(
@@ -311,10 +318,11 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
   }
 
   Widget _buildTopList(List<_WordCloudItem> words) {
+    final colorScheme = Theme.of(context).colorScheme;
     final top = words.take(12).toList();
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: colorScheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(20),
       ),
       child: ListView.separated(
@@ -322,20 +330,21 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         separatorBuilder: (_, __) =>
-            Divider(height: 1, color: Colors.grey[100]),
+            Divider(height: 1, color: colorScheme.outlineVariant),
         itemBuilder: (context, index) {
           final item = top[index];
           return ListTile(
             dense: true,
             leading: CircleAvatar(
               radius: 12,
-              backgroundColor: const Color(0xFF9CB86A).withValues(alpha: 0.18),
+              backgroundColor: colorScheme.primaryContainer,
               child: Text(
                 '${index + 1}',
-                style: const TextStyle(
-                    fontSize: 11,
-                    color: Color(0xFF6B8E3A),
-                    fontWeight: FontWeight.w700),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: colorScheme.onPrimaryContainer,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
             title: Text(
@@ -344,7 +353,10 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
             ),
             subtitle: Text(
               '时长 ${item.hours.toStringAsFixed(2)}h · 出现 ${item.occurrences}次',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              style: TextStyle(
+                fontSize: 12,
+                color: colorScheme.onSurfaceVariant,
+              ),
             ),
           );
         },

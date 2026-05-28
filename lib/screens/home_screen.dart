@@ -118,10 +118,14 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final timeProvider = Provider.of<TimeProvider>(context);
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: const Color(0xFF9CB86A),
+        backgroundColor: isDark ? colorScheme.surface : const Color(0xFF9CB86A),
+        foregroundColor: isDark ? colorScheme.onSurface : Colors.white,
+        surfaceTintColor: Colors.transparent,
         title: _buildAppBarTitle(timeProvider, timeProvider.currentDate),
       ),
       body: Stack(
@@ -240,6 +244,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildGridRow(int h, TimeProvider provider) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final highlightColor = colorScheme.primary.withValues(alpha: 0.28);
+    final emptyCellColor = isDark
+        ? colorScheme.surfaceContainerHigh
+        : const Color.fromARGB(255, 188, 186, 186);
+
     return Container(
       height: 45,
       padding: const EdgeInsets.symmetric(vertical: 1),
@@ -278,7 +289,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   decoration: BoxDecoration(
                     color: highlighted
-                        ? Colors.blue.withValues(alpha: 0.3)
+                        ? highlightColor
                         : slot.color!,
                     borderRadius: _computeSegmentBorderRadius(
                         provider, h, m, span, highlighted),
@@ -302,8 +313,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   margin: const EdgeInsets.all(1),
                   decoration: BoxDecoration(
                     color: highlighted
-                        ? Colors.blue.withValues(alpha: 0.3)
-                        : const Color.fromARGB(255, 188, 186, 186), // 深灰色
+                        ? highlightColor
+                        : emptyCellColor,
                     borderRadius: BorderRadius.circular(4),
                   ),
                   // 关键改动：去掉 SizedBox.shrink()，或者使用 BoxConstraints.expand()
@@ -347,9 +358,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildCategorySidebar(TimeProvider provider) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Container(
       width: 100,
-      color: Colors.grey[100],
+      color: isDark ? colorScheme.surfaceContainerLow : Colors.grey[100],
       child: Column(
         children: [
           TemplateBar(
@@ -374,10 +388,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       _showCategoryDialog(context, provider), // 调用通用对话框（添加模式）
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 8),
-                    backgroundColor: Colors.white,
-                    foregroundColor: Colors.grey[700],
+                    backgroundColor: isDark
+                        ? colorScheme.surfaceContainerHighest
+                        : Colors.white,
+                    foregroundColor:
+                        isDark ? colorScheme.onSurface : Colors.grey[700],
                     elevation: 0,
-                    side: BorderSide(color: Colors.grey[300]!),
+                    side: BorderSide(color: colorScheme.outlineVariant),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8)),
                   ),
@@ -931,6 +948,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildAppBarTitle(TimeProvider provider, DateTime date) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Row(
       children: [
         _appBarIconButton(
@@ -942,9 +961,10 @@ class _HomeScreenState extends State<HomeScreen> {
           onTap: () => _showDatePicker(),
           child: Text(
             "${date.month}月${date.day}日",
-            style: const TextStyle(
+            style: TextStyle(
               decoration: TextDecoration.underline,
-              decorationColor: Colors.white70,
+              decorationColor:
+                  isDark ? colorScheme.onSurfaceVariant : Colors.white70,
             ),
           ),
         ),
