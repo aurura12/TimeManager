@@ -43,15 +43,16 @@ class TimeProvider with ChangeNotifier {
   bool get hasPendingSyncForCurrentDate =>
       _pendingSyncDates.contains(_getDateKey(_currentDate));
 
-  // 分类展开状态持久化
-  Map<int, bool> _categoryExpandStates = {};
+  // 分类展开状态持久化（以 Category ID 为 key，避免拖动排序时错位）
+  Map<String, bool> _categoryExpandStates = {};
 
-  bool getCategoryExpandState(int index) {
-    return _categoryExpandStates[index] ?? true; // 默认展开
+  bool getCategoryExpandState(String categoryId) {
+    return _categoryExpandStates[categoryId] ?? true; // 默认展开
   }
 
-  void setCategoryExpandState(int index, bool isExpanded) {
-    _categoryExpandStates[index] = isExpanded;
+  void setCategoryExpandState(String categoryId, bool isExpanded) {
+    _categoryExpandStates[categoryId] = isExpanded;
+    notifyListeners();
     _saveData(); // 自动保存
   }
 
@@ -1006,11 +1007,8 @@ class TimeProvider with ChangeNotifier {
     await prefs.setStringList(
         'pending_sync_dates', _pendingSyncDates.toList());
 
-    // 7. 分类展开状态
-    final expandJson = _categoryExpandStates.map(
-      (key, value) => MapEntry(key.toString(), value),
-    );
-    await prefs.setString('category_expand_states', json.encode(expandJson));
+    // 7. 分类展开状态（key 已是 String）
+    await prefs.setString('category_expand_states', json.encode(_categoryExpandStates));
 
     await _refreshHomeWidget();
   }
@@ -1283,13 +1281,13 @@ class TimeProvider with ChangeNotifier {
       ..clear()
       ..addAll(prefs.getStringList('pending_sync_dates') ?? []);
 
-    // 7. 分类展开状态
+    // 7. 分类展开状态（key 为 Category ID）
     final expandStr = prefs.getString('category_expand_states');
     if (expandStr != null) {
       try {
         final expandJson = json.decode(expandStr) as Map<String, dynamic>;
         _categoryExpandStates = expandJson.map(
-          (key, value) => MapEntry(int.parse(key), value as bool),
+          (key, value) => MapEntry(key, value as bool),
         );
       } catch (e) {
         debugPrint("加载分类展开状态出错: $e");
