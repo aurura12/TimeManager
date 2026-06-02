@@ -26,8 +26,6 @@ class _HomeScreenState extends State<HomeScreen> {
   int? _dragStartIndex;
   int? _dragEndIndex;
 
-  // 管理分类的展开状态
-  final Map<int, bool> _expandedCategories = {};
   bool _isDatePickerVisible = false;
 
   @override
@@ -439,7 +437,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildCategoryItem(int catIndex, Category cat, TimeProvider provider) {
-    bool isExpanded = _expandedCategories[catIndex] ?? true;
+    bool isExpanded = provider.getCategoryExpandState(catIndex);
     bool isTemporary = cat.name == '临时';
 
     return Column(
@@ -462,9 +460,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (!isTemporary)
                   GestureDetector(
                     onTap: () {
-                      setState(() {
-                        _expandedCategories[catIndex] = !isExpanded;
-                      });
+                      provider.setCategoryExpandState(catIndex, !isExpanded);
                     },
                     child: Icon(
                       isExpanded ? Icons.expand_less : Icons.expand_more,
