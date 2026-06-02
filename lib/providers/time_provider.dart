@@ -43,6 +43,18 @@ class TimeProvider with ChangeNotifier {
   bool get hasPendingSyncForCurrentDate =>
       _pendingSyncDates.contains(_getDateKey(_currentDate));
 
+  // 分类展开状态持久化
+  Map<int, bool> _categoryExpandStates = {};
+
+  bool getCategoryExpandState(int index) {
+    return _categoryExpandStates[index] ?? true; // 默认展开
+  }
+
+  void setCategoryExpandState(int index, bool isExpanded) {
+    _categoryExpandStates[index] = isExpanded;
+    _saveData(); // 自动保存
+  }
+
   // 存储模型对象 Map
   final Map<String, List<TimeSlot>> _dailySlots = {};
 
@@ -994,6 +1006,12 @@ class TimeProvider with ChangeNotifier {
     await prefs.setStringList(
         'pending_sync_dates', _pendingSyncDates.toList());
 
+    // 7. 分类展开状态
+    final expandJson = _categoryExpandStates.map(
+      (key, value) => MapEntry(key.toString(), value),
+    );
+    await prefs.setString('category_expand_states', json.encode(expandJson));
+
     await _refreshHomeWidget();
   }
 
@@ -1264,6 +1282,19 @@ class TimeProvider with ChangeNotifier {
     _pendingSyncDates
       ..clear()
       ..addAll(prefs.getStringList('pending_sync_dates') ?? []);
+
+    // 7. 分类展开状态
+    final expandStr = prefs.getString('category_expand_states');
+    if (expandStr != null) {
+      try {
+        final expandJson = json.decode(expandStr) as Map<String, dynamic>;
+        _categoryExpandStates = expandJson.map(
+          (key, value) => MapEntry(int.parse(key), value as bool),
+        );
+      } catch (e) {
+        debugPrint("加载分类展开状态出错: $e");
+      }
+    }
 
     _migrateToCategoryIds();
   }
