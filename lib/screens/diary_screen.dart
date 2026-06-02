@@ -85,6 +85,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         'date: ${_frontMatterDate(started)}\n'
         'tags:\n'
         '---\n'
+        '\n'
         '$body';
   }
 
