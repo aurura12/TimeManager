@@ -1,11 +1,11 @@
 name: time_manager
-description: "A new Flutter project."
-publish_to: "none"
-version: 1.33.0+1
+description: 'A new Flutter project.'
+publish_to: 'none'
+version: 1.35.0+1
 
 # 添加下面这段环境配置
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
   flutter:
@@ -42,7 +42,7 @@ flutter:
   uses-material-design: true
 
 flutter_launcher_icons:
-  android: "launcher_icon"
+  android: 'launcher_icon'
   ios: false
-  image_path: "assets/images/app_icon.png" # 你设计好的图标路径
+  image_path: 'assets/images/app_icon.png' # 你设计好的图标路径
   min_sdk_android: 21

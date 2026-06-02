@@ -437,52 +437,53 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildCategoryItem(int catIndex, Category cat, TimeProvider provider) {
-    bool isExpanded = provider.getCategoryExpandState(catIndex);
+    bool isExpanded = provider.getCategoryExpandState(cat.id);
     bool isTemporary = cat.name == '临时';
 
     return Column(
       children: [
-        // 事件项
-        InkWell(
-          onTap: () => isTemporary
-              ? _showTemporaryEventDialog(provider)
-              : _assignCategory(cat, provider),
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-            decoration: BoxDecoration(
-              color: cat.color,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Row(
-              children: [
-                // 展开按钮
-                if (!isTemporary)
-                  GestureDetector(
-                    onTap: () {
-                      provider.setCategoryExpandState(catIndex, !isExpanded);
-                    },
-                    child: Icon(
-                      isExpanded ? Icons.expand_less : Icons.expand_more,
-                      color: Colors.white,
-                      size: 16,
+        // 事件项 - 使用 Row 将展开按钮和事件分开
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: Row(
+            children: [
+              // 展开按钮 - 使用 Listener 处理原始点击，避免与 Slidable/Reorderable 手势冲突
+              // 通过记录 down 位置过滤拖动操作，只有 down/up 位置接近才视为点击
+              if (!isTemporary)
+                _ExpandButton(
+                  isExpanded: isExpanded,
+                  onTap: () {
+                    final currentExpanded = provider.getCategoryExpandState(cat.id);
+                    provider.setCategoryExpandState(cat.id, !currentExpanded);
+                  },
+                ),
+              // 事件主体 - 可点击分配分类
+              Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => isTemporary
+                      ? _showTemporaryEventDialog(provider)
+                      : _assignCategory(cat, provider),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: cat.color,
+                      borderRadius: BorderRadius.circular(6),
                     ),
-                  ),
-                // 事件名称
-                Expanded(
-                  child: Text(
-                    cat.name,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
+                    child: Text(
+                      cat.name,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
         // 展开后显示子事件
@@ -1363,6 +1364,46 @@ class _HomeScreenState extends State<HomeScreen> {
             child: const Text("删除"),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 展开/折叠按钮，通过记录按下位置过滤拖动手势
+class _ExpandButton extends StatefulWidget {
+  final bool isExpanded;
+  final VoidCallback onTap;
+
+  const _ExpandButton({required this.isExpanded, required this.onTap});
+
+  @override
+  State<_ExpandButton> createState() => _ExpandButtonState();
+}
+
+class _ExpandButtonState extends State<_ExpandButton> {
+  Offset? _downPosition;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: (event) => _downPosition = event.position,
+      onPointerUp: (event) {
+        if (_downPosition != null) {
+          final distance = (event.position - _downPosition!).distance;
+          if (distance < 10.0) {
+            widget.onTap();
+          }
+        }
+        _downPosition = null;
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+        child: Icon(
+          widget.isExpanded ? Icons.expand_less : Icons.expand_more,
+          color: Colors.white,
+          size: 16,
+        ),
       ),
     );
   }
