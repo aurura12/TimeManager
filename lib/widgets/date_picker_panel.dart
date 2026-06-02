@@ -41,10 +41,6 @@ class _StripItem {
 
 class _DatePickerPanelState extends State<DatePickerPanel> {
   static const _weekdays = ['一', '二', '三', '四', '五', '六', '日'];
-  static const _selectedDayColor = Colors.white;
-  static const _todayColor = Color(0xFF8AAF6A);
-  static const _textColor = Colors.black87;
-  static const _textColorSecondary = Colors.black54;
   static const _monthItemWidth = 52.0;
   static const _yearItemWidth = 52.0;
 
@@ -143,6 +139,32 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
     _scrollToMonth(monthGlobalIndex);
   }
 
+  void _previousMonth() {
+    final newIndex = _monthIndexFromDate(_displayedMonth) - 1;
+    if (newIndex >= 0) {
+      _selectMonth(newIndex);
+    }
+  }
+
+  void _nextMonth() {
+    final newIndex = _monthIndexFromDate(_displayedMonth) + 1;
+    if (newIndex < DatePickerPanel.totalMonths) {
+      _selectMonth(newIndex);
+    }
+  }
+
+  void _goToToday() {
+    final today = DateTime.now();
+    final todayMonth = DateTime(today.year, today.month);
+    final newIndex = _monthIndexFromDate(todayMonth);
+    _selectMonth(newIndex);
+  }
+
+  bool get _isCurrentMonth {
+    final now = DateTime.now();
+    return _displayedMonth.year == now.year && _displayedMonth.month == now.month;
+  }
+
   @override
   Widget build(BuildContext context) {
     final year = _displayedMonth.year;
@@ -155,8 +177,21 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
       widget.initialDate.day,
     );
 
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final panelBg = isDark ? const Color(0xFF2D3A2E) : DatePickerPanel.themeGreen;
+    final selectedDayColor = isDark ? const Color(0xFF6B7B6C) : Colors.white;
+    final todayColor = isDark ? const Color(0xFF6B8F5A) : const Color(0xFF8AAF6A);
+    final textColor = isDark ? Colors.white70 : Colors.black87;
+    final textColorSecondary = isDark ? Colors.white54 : Colors.black54;
+    final monthActiveBg = isDark
+        ? Colors.white.withValues(alpha: 0.12)
+        : Colors.black.withValues(alpha: 0.12);
+    final monthBorderColor = isDark
+        ? Colors.white.withValues(alpha: 0.25)
+        : Colors.black.withValues(alpha: 0.25);
+
     return Material(
-      color: DatePickerPanel.themeGreen,
+      color: panelBg,
       elevation: 8,
       borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
       child: Padding(
@@ -172,8 +207,8 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
                         child: Text(
                           d,
                           textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: _textColorSecondary,
+                          style: TextStyle(
+                            color: textColorSecondary,
                             fontSize: 13,
                           ),
                         ),
@@ -181,54 +216,64 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
                   .toList(),
             ),
             const SizedBox(height: 8),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 7,
-                childAspectRatio: 1,
-              ),
-              itemCount: leadingEmpty + daysInMonth,
-              itemBuilder: (context, index) {
-                if (index < leadingEmpty) return const SizedBox();
-                final day = index - leadingEmpty + 1;
-                final date = DateTime(year, month, day);
-                final isCurrent = _isSameDay(date, currentDate);
-                final isToday = _isSameDay(date, _today);
-
-                Color? bgColor;
-                Color textColor = _textColor;
-                if (isCurrent) {
-                  bgColor = _selectedDayColor;
-                } else if (isToday) {
-                  bgColor = _todayColor;
+            GestureDetector(
+              onHorizontalDragEnd: (details) {
+                if (details.primaryVelocity == null) return;
+                if (details.primaryVelocity! < -50) {
+                  _nextMonth();
+                } else if (details.primaryVelocity! > 50) {
+                  _previousMonth();
                 }
+              },
+              child: GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 7,
+                  childAspectRatio: 1,
+                ),
+                itemCount: leadingEmpty + daysInMonth,
+                itemBuilder: (context, index) {
+                  if (index < leadingEmpty) return const SizedBox();
+                  final day = index - leadingEmpty + 1;
+                  final date = DateTime(year, month, day);
+                  final isCurrent = _isSameDay(date, currentDate);
+                  final isToday = _isSameDay(date, _today);
 
-                return GestureDetector(
-                  onTap: () => _selectDay(day),
-                  behavior: HitTestBehavior.opaque,
-                  child: Center(
-                    child: Container(
-                      width: 36,
-                      height: 36,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: bgColor,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Text(
-                        '$day',
-                        style: TextStyle(
-                          color: textColor,
-                          fontSize: 15,
-                          fontWeight:
-                              isCurrent ? FontWeight.w600 : FontWeight.normal,
+                  Color? bgColor;
+                  Color cellTextColor = textColor;
+                  if (isCurrent) {
+                    bgColor = selectedDayColor;
+                  } else if (isToday) {
+                    bgColor = todayColor;
+                  }
+
+                  return GestureDetector(
+                    onTap: () => _selectDay(day),
+                    behavior: HitTestBehavior.opaque,
+                    child: Center(
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: bgColor,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          '$day',
+                          style: TextStyle(
+                            color: cellTextColor,
+                            fontSize: 15,
+                            fontWeight:
+                                isCurrent ? FontWeight.w600 : FontWeight.normal,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
             const SizedBox(height: 16),
             SizedBox(
@@ -248,8 +293,8 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
                         child: Center(
                           child: Text(
                             '${item.year}',
-                            style: const TextStyle(
-                              color: _textColor,
+                            style: TextStyle(
+                              color: textColor,
                               fontSize: 14,
                               fontWeight: FontWeight.w600,
                             ),
@@ -269,20 +314,20 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         decoration: BoxDecoration(
                           color: isActive
-                              ? Colors.black.withValues(alpha: 0.12)
+                              ? monthActiveBg
                               : Colors.transparent,
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(
                             color: isActive
                                 ? Colors.transparent
-                                : Colors.black.withValues(alpha: 0.25),
+                                : monthBorderColor,
                           ),
                         ),
                         alignment: Alignment.center,
                         child: Text(
                           '${item.month}月',
                           style: TextStyle(
-                            color: _textColor,
+                            color: textColor,
                             fontSize: 14,
                             fontWeight:
                                 isActive ? FontWeight.w600 : FontWeight.normal,
@@ -294,6 +339,31 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
                 },
               ),
             ),
+            if (!_isCurrentMonth) ...[
+              const SizedBox(height: 8),
+              Center(
+                child: TextButton.icon(
+                  onPressed: _goToToday,
+                  icon: Icon(Icons.today, size: 16, color: textColor),
+                  label: Text(
+                    '返回今天',
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 13,
+                    ),
+                  ),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    backgroundColor: isDark
+                        ? Colors.white.withValues(alpha: 0.1)
+                        : Colors.black.withValues(alpha: 0.05),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
