@@ -522,12 +522,6 @@ class _HomeScreenState extends State<HomeScreen> {
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          GestureDetector(
-                            onTap: () => _removeSubCategory(
-                                catIndex, subIndex, provider),
-                            child: const Icon(Icons.close,
-                                color: Colors.white, size: 12),
-                          ),
                         ],
                       ),
                     ),
@@ -535,7 +529,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 }),
                 GestureDetector(
                   onTap: () => _showCategoryDialog(context, provider,
-                      index: catIndex, existingCat: cat), // 统一调用
+                      index: catIndex, existingCat: cat),
                   child: Container(
                     margin: const EdgeInsets.symmetric(vertical: 2),
                     padding:
@@ -549,7 +543,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(Icons.edit,
-                            color: Colors.white, size: 14), // 修改图标为编辑
+                            color: Colors.white, size: 14),
                         SizedBox(width: 4),
                         Text('编辑',
                             style:
@@ -599,15 +593,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _dragEndIndex = null;
       });
     }
-  }
-
-  void _removeSubCategory(int catIndex, int subIndex, TimeProvider provider) {
-    List<String> newSubs =
-        List.from(provider.categories[catIndex].subCategories);
-    newSubs.removeAt(subIndex);
-    Category newCat =
-        provider.categories[catIndex].copyWith(subCategories: newSubs);
-    provider.updateCategory(catIndex, newCat);
   }
 
   void _showTemporaryEventDialog(TimeProvider provider) {
@@ -661,6 +646,8 @@ class _HomeScreenState extends State<HomeScreen> {
     Color selectedColor = isEdit ? existingCat.color : Colors.blue;
     List<String> tempSubCategories =
         isEdit ? List.from(existingCat.subCategories) : [];
+    List<String> tempHiddenSubCategories =
+        isEdit ? List.from(existingCat.hiddenSubCategories) : [];
 
     final nameController = TextEditingController(text: catName);
     final subCatController = TextEditingController();
@@ -744,45 +731,138 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 15),
 
                     // 4. 子事件区域
-                    Text('编辑子事件 (点击删除，长按拖动排序)',
+                    Text('编辑子事件 (点击删除，拖动到下方隐藏)',
                         style:
                             TextStyle(color: Colors.grey[600], fontSize: 11)),
                     const SizedBox(height: 10),
 
-                    // 横向可排序标签组
-                    ReorderableWrap(
+                    // 子事件列表
+                    Wrap(
                       spacing: 8.0,
                       runSpacing: 8.0,
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      onReorder: (oldIndex, newIndex) {
-                        setDialogState(() {
-                          final String item =
-                              tempSubCategories.removeAt(oldIndex);
-                          tempSubCategories.insert(newIndex, item);
-                        });
-                      },
                       children: tempSubCategories.asMap().entries.map((entry) {
-                        return GestureDetector(
-                          key: ValueKey('sub_chip_${entry.value}_${entry.key}'),
-                          onTap: () => setDialogState(
-                              () => tempSubCategories.removeAt(entry.key)),
+                        int subIndex = entry.key;
+                        String subCat = entry.value;
+                        return Draggable<String>(
+                          data: subCat,
+                          onDragStarted: () {},
+                          feedback: Material(
+                            elevation: 4.0,
+                            child: Chip(
+                              visualDensity: VisualDensity.compact,
+                              backgroundColor: selectedColor,
+                              label: Text(subCat,
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 12)),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8)),
+                            ),
+                          ),
+                          childWhenDragging: Opacity(
+                            opacity: 0.4,
+                            child: Chip(
+                              visualDensity: VisualDensity.compact,
+                              backgroundColor:
+                                  selectedColor.withValues(alpha: 0.8),
+                              label: Text(subCat,
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 12)),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8)),
+                            ),
+                          ),
                           child: Chip(
                             visualDensity: VisualDensity.compact,
                             backgroundColor:
                                 selectedColor.withValues(alpha: 0.8),
-                            label: Text(entry.value,
+                            label: Text(subCat,
                                 style: const TextStyle(
                                     color: Colors.white, fontSize: 12)),
                             deleteIcon: const Icon(Icons.close,
                                 size: 14, color: Colors.white70),
-                            onDeleted: () => setDialogState(
-                                () => tempSubCategories.removeAt(entry.key)),
+                            onDeleted: () {
+                              showDialog(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('确认删除'),
+                                  content: Text('确定要删除子事件"$subCat"吗？'),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context),
+                                      child: const Text('取消'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () {
+                                        setDialogState(() =>
+                                            tempSubCategories.removeAt(subIndex));
+                                        Navigator.pop(context);
+                                      },
+                                      style: TextButton.styleFrom(
+                                          foregroundColor: Colors.red),
+                                      child: const Text('删除'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(8)),
                             side: BorderSide.none,
                           ),
                         );
                       }).toList(),
+                    ),
+
+                    // 隐藏区域
+                    const SizedBox(height: 10),
+                    DragTarget<String>(
+                      onWillAcceptWithDetails: (details) {
+                        return tempSubCategories.contains(details.data);
+                      },
+                      onAcceptWithDetails: (details) {
+                        setDialogState(() {
+                          tempSubCategories.remove(details.data);
+                          tempHiddenSubCategories.add(details.data);
+                        });
+                      },
+                      builder: (context, candidateData, rejectedData) {
+                        final isHovering = candidateData.isNotEmpty;
+                        return Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: isHovering
+                                ? Colors.orange.withValues(alpha: 0.3)
+                                : Colors.grey.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: isHovering ? Colors.orange : Colors.grey,
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.visibility_off,
+                                  color: isHovering
+                                      ? Colors.orange
+                                      : Colors.grey,
+                                  size: 16),
+                              const SizedBox(width: 8),
+                              Text(
+                                isHovering ? '释放以隐藏' : '拖动子事件到此处隐藏',
+                                style: TextStyle(
+                                  color: isHovering
+                                      ? Colors.orange
+                                      : Colors.grey,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
                     ),
 
                     // 5. 添加子事件输入
@@ -818,6 +898,45 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ],
                     ),
+
+                    // 6. 隐藏的子事件区域
+                    if (tempHiddenSubCategories.isNotEmpty) ...[
+                      const SizedBox(height: 15),
+                      const Divider(height: 1, thickness: 1),
+                      const SizedBox(height: 10),
+                      Text('已隐藏的子事件 (点击恢复)',
+                          style:
+                              TextStyle(color: Colors.grey[600], fontSize: 11)),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8.0,
+                        runSpacing: 8.0,
+                        children: tempHiddenSubCategories
+                            .asMap()
+                            .entries
+                            .map((entry) {
+                          int hiddenIndex = entry.key;
+                          String hiddenSubCat = entry.value;
+                          return ActionChip(
+                            avatar: const Icon(Icons.restore,
+                                size: 14, color: Colors.grey),
+                            label: Text(hiddenSubCat,
+                                style: const TextStyle(
+                                    color: Colors.grey, fontSize: 12)),
+                            backgroundColor: Colors.grey.withValues(alpha: 0.2),
+                            onPressed: () {
+                              setDialogState(() {
+                                tempHiddenSubCategories.removeAt(hiddenIndex);
+                                tempSubCategories.add(hiddenSubCat);
+                              });
+                            },
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8)),
+                            side: BorderSide(color: Colors.grey.withValues(alpha: 0.4)),
+                          );
+                        }).toList(),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -840,6 +959,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       name: catName,
                       color: selectedColor,
                       subCategories: tempSubCategories,
+                      hiddenSubCategories: tempHiddenSubCategories,
                     );
                     isEdit
                         ? provider.updateCategory(index, newCat)
