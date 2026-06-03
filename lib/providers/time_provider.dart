@@ -833,6 +833,32 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  void hideSubCategory(int catIndex, String subCategory) {
+    if (catIndex < 0 || catIndex >= _categories.length) return;
+    final cat = _categories[catIndex];
+    final newSubs = List<String>.from(cat.subCategories)..remove(subCategory);
+    final newHidden = List<String>.from(cat.hiddenSubCategories)..add(subCategory);
+    _categories[catIndex] = cat.copyWith(
+      subCategories: newSubs,
+      hiddenSubCategories: newHidden,
+    );
+    _saveData();
+    notifyListeners();
+  }
+
+  void restoreSubCategory(int catIndex, String subCategory) {
+    if (catIndex < 0 || catIndex >= _categories.length) return;
+    final cat = _categories[catIndex];
+    final newHidden = List<String>.from(cat.hiddenSubCategories)..remove(subCategory);
+    final newSubs = List<String>.from(cat.subCategories)..add(subCategory);
+    _categories[catIndex] = cat.copyWith(
+      subCategories: newSubs,
+      hiddenSubCategories: newHidden,
+    );
+    _saveData();
+    notifyListeners();
+  }
+
   /// 时间块是否计入目标进度（categoryId + label 双重匹配，兼容旧数据）
   bool slotMatchesTarget(TimeSlot slot, Target target) {
     if (!slot.recorded || slot.label == null) return false;
@@ -970,6 +996,7 @@ class TimeProvider with ChangeNotifier {
         'name': c.name,
         'color': c.color.toARGB32(),
         'subCategories': c.subCategories,
+        'hiddenSubCategories': c.hiddenSubCategories,
       });
     }).toList();
     await prefs.setStringList('categories', catList);
@@ -1122,6 +1149,7 @@ class TimeProvider with ChangeNotifier {
             name: map['name'] as String,
             color: Color(map['color'] as int),
             subCategories: List<String>.from(map['subCategories'] ?? []),
+            hiddenSubCategories: List<String>.from(map['hiddenSubCategories'] ?? []),
           );
         })
         .toList();
@@ -1219,6 +1247,7 @@ class TimeProvider with ChangeNotifier {
           name: map['name'],
           color: Color(map['color']),
           subCategories: List<String>.from(map['subCategories'] ?? []),
+          hiddenSubCategories: List<String>.from(map['hiddenSubCategories'] ?? []),
         );
       }).toList();
       _ensureTempCategory();
