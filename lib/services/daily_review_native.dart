@@ -31,9 +31,35 @@ class DailyReviewNative {
     }
   }
 
+  static Future<bool> showDiaryNotification({
+    required String title,
+    required String body,
+  }) async {
+    try {
+      final result = await _channel.invokeMethod<bool>(
+        'showDiaryNotification',
+        {
+          'title': title,
+          'body': body,
+        },
+      );
+      return result ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<String?> consumeLaunchReviewDate() async {
     try {
       return await _channel.invokeMethod<String>('consumeLaunchReviewDate');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<String?> consumeLaunchDiaryReminder() async {
+    try {
+      return await _channel.invokeMethod<String>('consumeLaunchDiaryReminder');
     } catch (_) {
       return null;
     }
