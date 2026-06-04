@@ -24,8 +24,11 @@ object AlarmPluginRegistrar {
             val engine = engineField.get(executor) as? FlutterEngine ?: return
 
             engine.plugins.add(DailyReviewNativePlugin())
+            engine.plugins.add(
+                com.dexterous.flutterlocalnotifications.FlutterLocalNotificationsPlugin()
+            )
             registered = true
-            Log.i(TAG, "DailyReviewNativePlugin registered on alarm engine")
+            Log.i(TAG, "DailyReviewNativePlugin and FlutterLocalNotificationsPlugin registered on alarm engine")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register alarm background plugins", e)
         }

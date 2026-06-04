@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
     <application
         android:label="时间块"
         android:name="${applicationName}"
@@ -62,6 +63,21 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".DiaryTapReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.time_manager.DIARY_TAP" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".ReviewTapReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.time_manager.REVIEW_TAP" />
             </intent-filter>
         </receiver>
     </application>

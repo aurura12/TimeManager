@@ -39,6 +39,20 @@ class DailyReviewNativePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 )
                 result.success(shown)
             }
+            "showDiaryNotification" -> {
+                val title = call.argument<String>("title")
+                val body = call.argument<String>("body")
+                if (title.isNullOrBlank() || body.isNullOrBlank()) {
+                    result.error("invalid_args", "title/body required", null)
+                    return
+                }
+                val shown = DailyReviewNotificationHelper.showDiary(
+                    appContext,
+                    title,
+                    body,
+                )
+                result.success(shown)
+            }
             "registerAlarmPlugins" -> {
                 AlarmPluginRegistrar.registerIfNeeded()
                 result.success(true)
@@ -46,6 +60,10 @@ class DailyReviewNativePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "consumeLaunchReviewDate" -> {
                 val date = MainActivity.consumePendingReviewDate()
                 result.success(date)
+            }
+            "consumeLaunchDiaryReminder" -> {
+                val value = MainActivity.consumePendingDiaryReminder()
+                result.success(value)
             }
             else -> result.notImplemented()
         }

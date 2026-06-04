@@ -8,22 +8,21 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
-import '../models/daily_review_reminder.dart';
-import '../screens/daily_review_screen.dart';
-import 'daily_review_alarm.dart';
+import '../models/diary_reminder.dart';
+import '../screens/diary_screen.dart';
+import 'diary_alarm.dart';
 import 'daily_review_native.dart';
-import 'daily_review_summary.dart';
 
-typedef DailyReviewTapHandler = void Function(DateTime date);
+typedef DiaryTapHandler = void Function();
 
-class DailyReviewNotificationService {
-  static const _prefEnabled = 'daily_review_enabled';
-  static const _prefHour = 'daily_review_hour';
-  static const _prefMinute = 'daily_review_minute';
-  static const _notificationId = 1001;
-  static const _alarmId = 1001;
-  static const _channelId = 'daily_review_v2';
-  static const _channelName = '每日复盘';
+class DiaryNotificationService {
+  static const _prefEnabled = 'diary_reminder_enabled';
+  static const _prefHour = 'diary_reminder_hour';
+  static const _prefMinute = 'diary_reminder_minute';
+  static const _notificationId = 1002;
+  static const _alarmId = 1002;
+  static const _channelId = 'diary_reminder';
+  static const _channelName = '写日记提醒';
 
   static final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
@@ -31,7 +30,7 @@ class DailyReviewNotificationService {
   static bool _initialized = false;
   static Future<void>? _ongoingSchedule;
   static GlobalKey<NavigatorState>? _navigatorKey;
-  static DailyReviewTapHandler? _onTap;
+  static DiaryTapHandler? _onTap;
 
   static AndroidFlutterLocalNotificationsPlugin? get _androidPlugin =>
       _plugin.resolvePlatformSpecificImplementation<
@@ -41,7 +40,7 @@ class DailyReviewNotificationService {
 
   static Future<void> initialize({
     GlobalKey<NavigatorState>? navigatorKey,
-    DailyReviewTapHandler? onTap,
+    DiaryTapHandler? onTap,
   }) async {
     _navigatorKey = navigatorKey;
     _onTap = onTap;
@@ -59,16 +58,8 @@ class DailyReviewNotificationService {
     try {
       await syncReminderIfEnabled();
     } catch (e, st) {
-      debugPrint('恢复每日提醒失败（不影响 App 启动）: $e\n$st');
+      debugPrint('恢复写日记提醒失败（不影响 App 启动）: $e\n$st');
     }
-  }
-
-  /// App 从后台恢复时调用：确保闹钟仍在系统中注册（防止被电池优化杀掉）
-  static Future<void> ensureAlarmRegistered() async {
-    if (!_isAndroid || !_initialized) return;
-    final settings = await loadSettings();
-    if (!settings.enabled) return;
-    await schedule(settings);
   }
 
   static Future<void> _initTimezoneAndPlugin() async {
@@ -92,7 +83,7 @@ class DailyReviewNotificationService {
     const androidChannel = AndroidNotificationChannel(
       _channelId,
       _channelName,
-      description: '每日复盘提醒',
+      description: '写日记提醒',
       importance: Importance.high,
     );
 
@@ -100,64 +91,54 @@ class DailyReviewNotificationService {
   }
 
   static void _onNotificationResponse(NotificationResponse response) {
-    final date = DailyReviewSummaryBuilder.dateFromPayload(response.payload);
-    if (date != null) {
-      _openReviewPage(date);
+    if (response.payload == 'diary_reminder') {
+      _openDiaryPage();
     }
   }
 
-  /// App 冷启动时：通知点击 或 原生 Intent 带入的日期
   static Future<void> handleColdStartNavigation() async {
     if (!_isAndroid || !_initialized) return;
 
     final launchDetails = await _plugin.getNotificationAppLaunchDetails();
     if (launchDetails?.didNotificationLaunchApp ?? false) {
       final payload = launchDetails!.notificationResponse?.payload;
-      final date = DailyReviewSummaryBuilder.dateFromPayload(payload);
-      if (date != null) {
-        _openReviewPage(date);
+      if (payload == 'diary_reminder') {
+        _openDiaryPage();
         return;
       }
     }
 
-    final nativeDateKey = await DailyReviewNative.consumeLaunchReviewDate();
-    if (nativeDateKey != null) {
-      final parts = nativeDateKey.split('-');
-      if (parts.length == 3) {
-        final year = int.tryParse(parts[0]);
-        final month = int.tryParse(parts[1]);
-        final day = int.tryParse(parts[2]);
-        if (year != null && month != null && day != null) {
-          _openReviewPage(DateTime(year, month, day));
-        }
-      }
+    final nativeDateKey = await DailyReviewNative.consumeLaunchDiaryReminder();
+    if (nativeDateKey == 'diary_reminder') {
+      _openDiaryPage();
     }
   }
 
-  static void _openReviewPage(DateTime date) {
-    final normalized = DateTime(date.year, date.month, date.day);
+  static void _openDiaryPage() {
     final handler = _onTap;
     if (handler != null) {
-      handler(normalized);
+      handler();
       return;
     }
 
     final navigator = _navigatorKey?.currentState;
     if (navigator != null) {
-      DailyReviewScreen.open(navigator.context, date: normalized);
+      Navigator.of(navigator.context).push(
+        MaterialPageRoute(builder: (_) => const DiaryScreen()),
+      );
     }
   }
 
-  static Future<DailyReviewReminder> loadSettings() async {
+  static Future<DiaryReminder> loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    return DailyReviewReminder(
+    return DiaryReminder(
       enabled: prefs.getBool(_prefEnabled) ?? false,
-      hour: prefs.getInt(_prefHour) ?? 22,
+      hour: prefs.getInt(_prefHour) ?? 21,
       minute: prefs.getInt(_prefMinute) ?? 0,
     );
   }
 
-  static Future<void> saveSettings(DailyReviewReminder settings) async {
+  static Future<void> saveSettings(DiaryReminder settings) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_prefEnabled, settings.enabled);
     await prefs.setInt(_prefHour, settings.hour);
@@ -198,12 +179,7 @@ class DailyReviewNotificationService {
       _initialized = true;
     }
 
-    final today = DateTime.now();
-    return _showReminderNotification(
-      date: DateTime(today.year, today.month, today.day),
-      aiReady: true,
-      isTest: true,
-    );
+    return _showReminderNotification(isTest: true);
   }
 
   static Future<void> syncReminderIfEnabled() async {
@@ -212,7 +188,14 @@ class DailyReviewNotificationService {
     await schedule(settings);
   }
 
-  static Future<void> schedule(DailyReviewReminder settings) async {
+  static Future<void> ensureAlarmRegistered() async {
+    if (!_isAndroid || !_initialized) return;
+    final settings = await loadSettings();
+    if (!settings.enabled) return;
+    await schedule(settings);
+  }
+
+  static Future<void> schedule(DiaryReminder settings) async {
     final previous = _ongoingSchedule;
     final job = _registerNextReminder(settings);
     _ongoingSchedule = job;
@@ -224,7 +207,7 @@ class DailyReviewNotificationService {
     }
   }
 
-  static Future<void> _registerNextReminder(DailyReviewReminder settings) async {
+  static Future<void> _registerNextReminder(DiaryReminder settings) async {
     try {
       if (_isAndroid) {
         await AndroidAlarmManager.cancel(_alarmId);
@@ -252,12 +235,10 @@ class DailyReviewNotificationService {
         next.minute,
       );
 
-      // 当精确闹钟权限可用时，使用 alarmClock 模式（最可靠）
-      // 当权限不可用时，降级到 exact + allowWhileIdle（仍尽量准时）
       final scheduled = await AndroidAlarmManager.oneShotAt(
         fireAt,
         _alarmId,
-        dailyReviewAlarmCallback,
+        diaryAlarmCallback,
         allowWhileIdle: true,
         wakeup: true,
         exact: useExact,
@@ -266,17 +247,16 @@ class DailyReviewNotificationService {
       );
 
       debugPrint(
-        '每日提醒已注册: $fireAt, exact=$useExact, ok=$scheduled',
+        '写日记提醒已注册: $fireAt, exact=$useExact, ok=$scheduled',
       );
     } catch (e, st) {
-      debugPrint('注册每日提醒失败: $e\n$st');
+      debugPrint('注册写日记提醒失败: $e\n$st');
     }
   }
 
-  /// 到点：生成 AI 复盘并发送简短提醒通知
   static Future<void> onReminderFired() async {
     try {
-      debugPrint('每日提醒到点触发');
+      debugPrint('写日记提醒到点触发');
       await DailyReviewNative.registerAlarmPlugins();
 
       if (!_initialized) {
@@ -287,61 +267,45 @@ class DailyReviewNotificationService {
       final settings = await loadSettings();
       if (!settings.enabled) return;
 
-      final now = tz.TZDateTime.now(tz.local);
-      final date = DateTime(now.year, now.month, now.day);
-
-      final result = await DailyReviewSummaryBuilder.fetchAiForDate(date);
-      debugPrint('AI 复盘生成: success=${result.isSuccess}');
-
-      await _showReminderNotification(
-        date: date,
-        aiReady: result.isSuccess,
-      );
-
+      await _showReminderNotification();
       await _registerNextReminder(settings);
     } catch (e, st) {
-      debugPrint('每日提醒触发失败: $e\n$st');
+      debugPrint('写日记提醒触发失败: $e\n$st');
     }
   }
 
-  static Future<bool> _showReminderNotification({
-    required DateTime date,
-    required bool aiReady,
-    bool isTest = false,
-  }) async {
-    final payload = DailyReviewSummaryBuilder.payloadForDate(date);
-    final title = isTest ? '测试 · 今日复盘' : '今日复盘';
-    final body = aiReady ? 'AI 总结已就绪，点击查看' : '生成失败，点击查看并重试';
+  static Future<bool> _showReminderNotification({bool isTest = false}) async {
+    final title = isTest ? '测试 · 写日记提醒' : '写日记提醒';
+    final body = '该写日记了 — 记录今天的点滴吧';
 
-    // 优先用 FlutterLocalNotificationsPlugin
+    // 优先用 FlutterLocalNotificationsPlugin（走主引擎已注册的插件通道）
     try {
       await _plugin.show(
         id: _notificationId,
         title: title,
         body: body,
-        payload: payload,
+        payload: 'diary_reminder',
         notificationDetails: NotificationDetails(
           android: AndroidNotificationDetails(
             _channelId,
             _channelName,
-            channelDescription: '每日复盘提醒',
+            channelDescription: '写日记提醒',
             importance: Importance.high,
             priority: Priority.high,
             category: AndroidNotificationCategory.alarm,
           ),
         ),
       );
-      debugPrint('每日复盘通知已通过 FlutterLocalNotificationsPlugin 发送');
+      debugPrint('写日记通知已通过 FlutterLocalNotificationsPlugin 发送');
       return true;
     } catch (e, st) {
-      debugPrint('Flutter 通知展示失败: $e\n$st');
+      debugPrint('Flutter 写日记通知展示失败: $e\n$st');
     }
 
     // 降级走原生通道
-    var shown = await DailyReviewNative.showNotification(
+    var shown = await DailyReviewNative.showDiaryNotification(
       title: title,
       body: body,
-      dateKey: DailyReviewSummaryBuilder.dateKey(date),
     );
     if (shown) return true;
 

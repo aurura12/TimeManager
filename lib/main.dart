@@ -8,6 +8,7 @@ import 'package:time_manager/theme/app_theme.dart';
 import 'providers/time_provider.dart';
 import 'package:time_manager/screens/main_screen.dart';
 import 'services/daily_review_notification_service.dart';
+import 'services/diary_notification_service.dart';
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
@@ -21,6 +22,13 @@ void main() async {
     );
   } catch (e, st) {
     debugPrint('每日提醒初始化失败（不影响 App 启动）: $e\n$st');
+  }
+  try {
+    await DiaryNotificationService.initialize(
+      navigatorKey: rootNavigatorKey,
+    );
+  } catch (e, st) {
+    debugPrint('写日记提醒初始化失败（不影响 App 启动）: $e\n$st');
   }
   runApp(
     MultiProvider(
@@ -46,6 +54,7 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       DailyReviewNotificationService.handleColdStartNavigation();
+      DiaryNotificationService.handleColdStartNavigation();
     });
   }
 
