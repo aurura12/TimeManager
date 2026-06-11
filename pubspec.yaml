@@ -1,7 +1,7 @@
 name: time_manager
 description: 'A new Flutter project.'
 publish_to: 'none'
-version: 1.37.0+1
+version: 1.38.0+1
 
 # 添加下面这段环境配置
 environment:
@@ -29,7 +29,6 @@ dependencies:
   flutter_local_notifications: ^21.0.0
   timezone: ^0.11.0
   flutter_timezone: ^5.0.2
-  android_alarm_manager_plus: ^5.0.0
   flutter_secure_storage: ^10.3.1
 
 dev_dependencies:

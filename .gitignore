@@ -166,3 +166,4 @@ app.*.symbols
 lib/config/diary_github_config.dart
 lib/config/siliconflow_config.dart
 lib/config/google_sign_in_config.dart
+lib/config/serverchan_config.dart

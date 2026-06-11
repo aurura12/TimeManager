@@ -2,15 +2,10 @@ import 'package:flutter/material.dart';
 import '../models/google_calendar_user.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
-import '../models/daily_review_reminder.dart';
-import '../models/diary_reminder.dart';
 import '../providers/theme_mode_provider.dart';
 import '../providers/time_provider.dart';
 import '../services/data_backup_service.dart';
-import '../screens/daily_review_screen.dart';
 import '../screens/word_cloud_screen.dart';
-import '../services/daily_review_notification_service.dart';
-import '../services/diary_notification_service.dart';
 import '../services/google_calendar_service.dart';
 
 class ProfileSettingsDrawer extends StatefulWidget {
@@ -23,174 +18,6 @@ class ProfileSettingsDrawer extends StatefulWidget {
 }
 
 class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
-  DailyReviewReminder _reminder = const DailyReviewReminder();
-  bool _reminderLoaded = false;
-  DiaryReminder _diaryReminder = const DiaryReminder();
-  bool _diaryReminderLoaded = false;
-  bool _exactAlarmGranted = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadReminder();
-    _loadDiaryReminder();
-    _checkExactAlarmPermission();
-  }
-
-  Future<void> _checkExactAlarmPermission() async {
-    final granted = await DailyReviewNotificationService.hasExactAlarmPermission();
-    if (mounted) {
-      setState(() {
-        _exactAlarmGranted = granted;
-      });
-    }
-  }
-
-  Future<void> _loadReminder() async {
-    final settings = await DailyReviewNotificationService.loadSettings();
-    if (mounted) {
-      setState(() {
-        _reminder = settings;
-        _reminderLoaded = true;
-      });
-    }
-  }
-
-  Future<void> _loadDiaryReminder() async {
-    final settings = await DiaryNotificationService.loadSettings();
-    if (mounted) {
-      setState(() {
-        _diaryReminder = settings;
-        _diaryReminderLoaded = true;
-      });
-    }
-  }
-
-  Future<void> _setReminderEnabled(bool enabled) async {
-    if (enabled) {
-      final granted = await DailyReviewNotificationService.requestPermission();
-      if (!granted && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('需要通知权限和「闹钟和提醒」权限才能准时推送'),
-          ),
-        );
-        return;
-      }
-    }
-
-    final updated = _reminder.copyWith(enabled: enabled);
-    await DailyReviewNotificationService.saveSettings(updated);
-    _checkExactAlarmPermission();
-    if (mounted) {
-      setState(() => _reminder = updated);
-    }
-  }
-
-  Future<void> _pickReminderTime() async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay(hour: _reminder.hour, minute: _reminder.minute),
-      builder: (context, child) {
-        final baseTheme = Theme.of(context);
-        return Theme(
-          data: baseTheme.copyWith(
-            colorScheme: baseTheme.colorScheme.copyWith(
-              primary: baseTheme.colorScheme.primary,
-            ),
-          ),
-          child: child!,
-        );
-      },
-    );
-    if (picked == null) return;
-
-    var updated = _reminder.copyWith(
-      hour: picked.hour,
-      minute: picked.minute,
-    );
-    if (!updated.enabled) {
-      final granted = await DailyReviewNotificationService.requestPermission();
-      if (!granted && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('需要通知权限和「闹钟和提醒」权限才能准时推送'),
-          ),
-        );
-        return;
-      }
-      updated = updated.copyWith(enabled: true);
-    }
-
-    await DailyReviewNotificationService.saveSettings(updated);
-    if (mounted) {
-      setState(() => _reminder = updated);
-    }
-  }
-
-  Future<void> _setDiaryReminderEnabled(bool enabled) async {
-    if (enabled) {
-      final granted = await DiaryNotificationService.requestPermission();
-      if (!granted && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('需要通知权限和「闹钟和提醒」权限才能准时推送'),
-          ),
-        );
-        return;
-      }
-    }
-
-    final updated = _diaryReminder.copyWith(enabled: enabled);
-    await DiaryNotificationService.saveSettings(updated);
-    _checkExactAlarmPermission();
-    if (mounted) {
-      setState(() => _diaryReminder = updated);
-    }
-  }
-
-  Future<void> _pickDiaryReminderTime() async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime:
-          TimeOfDay(hour: _diaryReminder.hour, minute: _diaryReminder.minute),
-      builder: (context, child) {
-        final baseTheme = Theme.of(context);
-        return Theme(
-          data: baseTheme.copyWith(
-            colorScheme: baseTheme.colorScheme.copyWith(
-              primary: baseTheme.colorScheme.primary,
-            ),
-          ),
-          child: child!,
-        );
-      },
-    );
-    if (picked == null) return;
-
-    var updated = _diaryReminder.copyWith(
-      hour: picked.hour,
-      minute: picked.minute,
-    );
-    if (!updated.enabled) {
-      final granted = await DiaryNotificationService.requestPermission();
-      if (!granted && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('需要通知权限和「闹钟和提醒」权限才能准时推送'),
-          ),
-        );
-        return;
-      }
-      updated = updated.copyWith(enabled: true);
-    }
-
-    await DiaryNotificationService.saveSettings(updated);
-    if (mounted) {
-      setState(() => _diaryReminder = updated);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<TimeProvider>();
@@ -201,200 +28,88 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     return Drawer(
       backgroundColor: colorScheme.surface,
       child: SafeArea(
-        child: ListView(
-          padding: EdgeInsets.zero,
+        child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-              child: Text(
-                '账户与数据',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-            _buildLoginSection(context, googleUser, provider),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.palette_outlined),
-              title: const Text('外观模式'),
-              subtitle: Text(_themeModeLabel(themeModeProvider.themeMode)),
-              trailing: DropdownButtonHideUnderline(
-                child: DropdownButton<ThemeMode>(
-                  value: themeModeProvider.themeMode,
-                  onChanged: (mode) {
-                    if (mode != null) {
-                      themeModeProvider.setThemeMode(mode);
-                    }
-                  },
-                  items: const [
-                    DropdownMenuItem(
-                      value: ThemeMode.system,
-                      child: Text('跟随系统'),
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+                    child: Text(
+                      '账户与数据',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
                     ),
-                    DropdownMenuItem(
-                      value: ThemeMode.light,
-                      child: Text('浅色'),
-                    ),
-                    DropdownMenuItem(
-                      value: ThemeMode.dark,
-                      child: Text('深色'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.upload_file_outlined),
-              title: const Text('导出备份'),
-              subtitle: const Text('保存 JSON 到本地'),
-              onTap: () async {
-                final rootContext =
-                    Navigator.of(context, rootNavigator: true).context;
-                Navigator.pop(context);
-                await _handleExport(rootContext, provider);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.download_outlined),
-              title: const Text('导入备份'),
-              subtitle: const Text('从 JSON 恢复数据'),
-              onTap: () async {
-                final rootContext =
-                    Navigator.of(context, rootNavigator: true).context;
-                Navigator.pop(context);
-                await _handleImport(rootContext, provider);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.bubble_chart_outlined),
-              title: const Text('事件词云'),
-              subtitle: const Text('按时长与出现次数查看事件热度'),
-              onTap: () {
-                Navigator.pop(context);
-                WordCloudScreen.open(context);
-              },
-            ),
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-              child: Text(
-                '提醒',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-            if (!_exactAlarmGranted &&
-                (_reminder.enabled || _diaryReminder.enabled))
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                child: Material(
-                  color: colorScheme.errorContainer,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.warning_amber_rounded,
-                          size: 18,
-                          color: colorScheme.onErrorContainer,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '未授予「闹钟和提醒」权限，提醒可能无法准时触发。请前往系统设置开启。',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: colorScheme.onErrorContainer,
-                            ),
+                  ),
+                  _buildLoginSection(context, googleUser, provider),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.palette_outlined),
+                    title: const Text('外观模式'),
+                    subtitle: Text(_themeModeLabel(themeModeProvider.themeMode)),
+                    trailing: DropdownButtonHideUnderline(
+                      child: DropdownButton<ThemeMode>(
+                        value: themeModeProvider.themeMode,
+                        onChanged: (mode) {
+                          if (mode != null) {
+                            themeModeProvider.setThemeMode(mode);
+                          }
+                        },
+                        items: const [
+                          DropdownMenuItem(
+                            value: ThemeMode.system,
+                            child: Text('跟随系统'),
                           ),
-                        ),
-                      ],
+                          DropdownMenuItem(
+                            value: ThemeMode.light,
+                            child: Text('浅色'),
+                          ),
+                          DropdownMenuItem(
+                            value: ThemeMode.dark,
+                            child: Text('深色'),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ),
-            if (!_reminderLoaded)
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ListTile(
+                    leading: const Icon(Icons.upload_file_outlined),
+                    title: const Text('导出备份'),
+                    subtitle: const Text('保存 JSON 到本地'),
+                    onTap: () async {
+                      final rootContext =
+                          Navigator.of(context, rootNavigator: true).context;
+                      Navigator.pop(context);
+                      await _handleExport(rootContext, provider);
+                    },
                   ),
-                ),
-              )
-            else ...[
-              SwitchListTile(
-                secondary: const Icon(Icons.notifications_outlined),
-                title: const Text('每日复盘'),
-                subtitle: Text(
-                  _reminder.enabled
-                      ? '每天 ${_reminder.timeLabel} 推送当日总结'
-                      : '已关闭',
-                ),
-                value: _reminder.enabled,
-                activeThumbColor: colorScheme.primary,
-                onChanged: _setReminderEnabled,
-              ),
-              ListTile(
-                leading: const Icon(Icons.schedule_outlined),
-                title: const Text('提醒时间'),
-                subtitle: Text(_reminder.timeLabel),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _pickReminderTime,
-              ),
-              ListTile(
-                leading: const Icon(Icons.auto_stories_outlined),
-                title: const Text('查看今日复盘'),
-                subtitle: const Text('打开 AI 生成的当日总结'),
-                onTap: () {
-                  Navigator.pop(context);
-                  DailyReviewScreen.open(context);
-                },
-              ),
-            ],
-            const Divider(height: 1),
-            if (!_diaryReminderLoaded)
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ListTile(
+                    leading: const Icon(Icons.download_outlined),
+                    title: const Text('导入备份'),
+                    subtitle: const Text('从 JSON 恢复数据'),
+                    onTap: () async {
+                      final rootContext =
+                          Navigator.of(context, rootNavigator: true).context;
+                      Navigator.pop(context);
+                      await _handleImport(rootContext, provider);
+                    },
                   ),
-                ),
-              )
-            else ...[
-              SwitchListTile(
-                secondary: const Icon(Icons.edit_note_outlined),
-                title: const Text('写日记提醒'),
-                subtitle: Text(
-                  _diaryReminder.enabled
-                      ? '每天 ${_diaryReminder.timeLabel} 提醒写日记'
-                      : '已关闭',
-                ),
-                value: _diaryReminder.enabled,
-                activeThumbColor: colorScheme.primary,
-                onChanged: _setDiaryReminderEnabled,
+                  ListTile(
+                    leading: const Icon(Icons.bubble_chart_outlined),
+                    title: const Text('事件词云'),
+                    subtitle: const Text('按时长与出现次数查看事件热度'),
+                    onTap: () {
+                      Navigator.pop(context);
+                      WordCloudScreen.open(context);
+                    },
+                  ),
+                ],
               ),
-              ListTile(
-                leading: const Icon(Icons.schedule_outlined),
-                title: const Text('提醒时间'),
-                subtitle: Text(_diaryReminder.timeLabel),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _pickDiaryReminderTime,
-              ),
-            ],
-            const SizedBox(height: 12),
+            ),
             _buildVersionFooter(),
           ],
         ),
