@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:time_manager/screens/profile_screen.dart';
 import '../providers/time_provider.dart';
-import '../services/daily_review_notification_service.dart';
-import '../services/diary_notification_service.dart';
 import 'diary_screen.dart';
 import 'home_screen.dart';
 import 'target_screen.dart';
@@ -36,10 +34,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       context.read<TimeProvider>().onAppBackgrounded();
-    }
-    if (state == AppLifecycleState.resumed) {
-      DailyReviewNotificationService.ensureAlarmRegistered();
-      DiaryNotificationService.ensureAlarmRegistered();
     }
   }
 
