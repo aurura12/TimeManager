@@ -43,11 +43,41 @@ class TargetStatsSection extends StatelessWidget {
     return daySlots.any((s) => provider.slotMatchesTarget(s, target));
   }
 
-  int _getTargetCountOnDate(Target target, DateTime date) {
+  /// 计算目标在某天的完成次数（频率目标按连续块计数，时长目标按小时计数）
+  double _getTargetCountOnDate(Target target, DateTime date) {
     final dateKey = "${date.year}-${date.month}-${date.day}";
     final daySlots = provider.getSlotsForDate(dateKey);
     if (daySlots == null) return 0;
-    return daySlots.where((s) => provider.slotMatchesTarget(s, target)).length;
+
+    if (target.type == TargetType.frequency) {
+      // 频率目标：计算连续块数
+      int blocks = 0;
+      bool inBlock = false;
+      for (var slot in daySlots) {
+        if (provider.slotMatchesTarget(slot, target)) {
+          if (!inBlock) {
+            blocks++;
+            inBlock = true;
+          }
+        } else {
+          inBlock = false;
+        }
+      }
+      return blocks.toDouble();
+    } else {
+      // 时长目标：计算小时数
+      int count = daySlots.where((s) => provider.slotMatchesTarget(s, target)).length;
+      return count * 10.0 / 60.0;
+    }
+  }
+
+  /// 计算目标在日期范围内的总完成次数
+  double _getTargetCompletionCountInRange(Target target, DateTime start, DateTime end) {
+    double total = 0;
+    for (var d = start; d.isBefore(end); d = d.add(const Duration(days: 1))) {
+      total += _getTargetCountOnDate(target, d);
+    }
+    return total;
   }
 
   Widget _buildGoalSection(ColorScheme colorScheme) {
@@ -68,12 +98,12 @@ class TargetStatsSection extends StatelessWidget {
     final endOfYear = DateTime(now.year + 1, 1, 1);
 
     final todayCount = _getTargetCountOnDate(target, today);
-    final weekCount = provider.getTargetCompletionCount(target, startOfWeek, endOfWeek);
-    final monthCount = provider.getTargetCompletionCount(target, startOfMonth, endOfMonth);
-    final quarterCount = provider.getTargetCompletionCount(target, startOfQuarter, endOfQuarter);
-    final yearCount = provider.getTargetCompletionCount(target, startOfYear, endOfYear);
+    final weekCount = _getTargetCompletionCountInRange(target, startOfWeek, endOfWeek);
+    final monthCount = _getTargetCompletionCountInRange(target, startOfMonth, endOfMonth);
+    final quarterCount = _getTargetCompletionCountInRange(target, startOfQuarter, endOfQuarter);
+    final yearCount = _getTargetCompletionCountInRange(target, startOfYear, endOfYear);
 
-    final dailyGoal = _getDailyGoal();
+    final dailyGoal = _getDailyGoal().toDouble();
     final weeklyGoal = dailyGoal * 7;
     final monthlyGoal = dailyGoal * 30;
     final quarterlyGoal = dailyGoal * 91;
@@ -105,8 +135,11 @@ class TargetStatsSection extends StatelessWidget {
     return 1;
   }
 
-  Widget _buildProgressRow(String label, int current, int goal, ColorScheme colorScheme) {
+  Widget _buildProgressRow(String label, double current, double goal, ColorScheme colorScheme) {
     final progress = goal > 0 ? (current / goal).clamp(0.0, 1.0) : 0.0;
+    final displayText = target.type == TargetType.duration
+        ? '${current.toStringAsFixed(1)}h'
+        : '${current.toInt()}';
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -139,7 +172,7 @@ class TargetStatsSection extends StatelessWidget {
                 Positioned.fill(
                   child: Center(
                     child: Text(
-                      '$current',
+                      displayText,
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
@@ -154,7 +187,11 @@ class TargetStatsSection extends StatelessWidget {
           const SizedBox(width: 8),
           SizedBox(
             width: 45,
-            child: Text('$goal', style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant), textAlign: TextAlign.right),
+            child: Text(
+              goal.toInt().toString(),
+              style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant),
+              textAlign: TextAlign.right,
+            ),
           ),
         ],
       ),
@@ -163,17 +200,17 @@ class TargetStatsSection extends StatelessWidget {
 
   Widget _buildPerformanceChart(ColorScheme colorScheme) {
     final now = DateTime.now();
-    final monthlyStats = <String, int>{};
+    final monthlyStats = <String, double>{};
 
     for (int i = 11; i >= 0; i--) {
       final month = DateTime(now.year, now.month - i, 1);
       final nextMonth = DateTime(now.year, now.month - i + 1, 1);
-      final count = provider.getTargetCompletionCount(target, month, nextMonth);
+      final count = _getTargetCompletionCountInRange(target, month, nextMonth);
       final key = "${month.year}-${month.month.toString().padLeft(2, '0')}";
       monthlyStats[key] = count;
     }
 
-    final monthlyGoal = _getDailyGoal() * 30;
+    final monthlyGoal = _getDailyGoal() * 30.0;
     final spots = <FlSpot>[];
     final labels = <String>[];
     var index = 0;
@@ -275,12 +312,12 @@ class TargetStatsSection extends StatelessWidget {
 
   Widget _buildHistoryChart(ColorScheme colorScheme) {
     final now = DateTime.now();
-    final monthlyStats = <String, int>{};
+    final monthlyStats = <String, double>{};
 
     for (int i = 11; i >= 0; i--) {
       final month = DateTime(now.year, now.month - i, 1);
       final nextMonth = DateTime(now.year, now.month - i + 1, 1);
-      final count = provider.getTargetCompletionCount(target, month, nextMonth);
+      final count = _getTargetCompletionCountInRange(target, month, nextMonth);
       final key = "${month.year}-${month.month.toString().padLeft(2, '0')}";
       monthlyStats[key] = count;
     }
@@ -288,14 +325,14 @@ class TargetStatsSection extends StatelessWidget {
     final bars = <BarChartGroupData>[];
     final labels = <String>[];
     var index = 0;
-    var maxValue = 0;
+    var maxValue = 0.0;
 
     monthlyStats.forEach((key, value) {
       bars.add(BarChartGroupData(
         x: index,
         barRods: [
           BarChartRodData(
-            toY: value.toDouble(),
+            toY: value,
             color: colorScheme.primary,
             width: 20,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
@@ -330,8 +367,11 @@ class TargetStatsSection extends StatelessWidget {
                   barTouchData: BarTouchData(
                     touchTooltipData: BarTouchTooltipData(
                       getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                        final displayValue = target.type == TargetType.duration
+                            ? '${rod.toY.toStringAsFixed(1)}h'
+                            : '${rod.toY.toInt()}';
                         return BarTooltipItem(
-                          '${rod.toY.toInt()}',
+                          displayValue,
                           TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                         );
                       },
