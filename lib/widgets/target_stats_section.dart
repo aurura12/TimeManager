@@ -388,24 +388,12 @@ class TargetStatsSection extends StatelessWidget {
 
   Widget _buildRealCalendar(DateTime startMonth, DateTime now, ColorScheme colorScheme) {
     final today = DateTime(now.year, now.month, now.day);
-    final weeks = ['一', '二', '三', '四', '五', '六', '日'];
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Column(
-            children: [
-              const SizedBox(height: 22),
-              ...weeks.map((w) => Container(
-                height: 18,
-                width: 20,
-                alignment: Alignment.center,
-                child: Text(w, style: TextStyle(fontSize: 10, color: colorScheme.onSurfaceVariant)),
-              )),
-            ],
-          ),
           ...List.generate(6, (index) {
             final month = DateTime(startMonth.year, startMonth.month + index, 1);
             return _buildMonthCalendar(month, today, colorScheme);
@@ -418,6 +406,7 @@ class TargetStatsSection extends StatelessWidget {
   Widget _buildMonthCalendar(DateTime month, DateTime today, ColorScheme colorScheme) {
     final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
     final firstDayWeekday = DateTime(month.year, month.month, 1).weekday;
+    final weeks = ['一', '二', '三', '四', '五', '六', '日'];
 
     return Container(
       width: 160,
@@ -429,6 +418,19 @@ class TargetStatsSection extends StatelessWidget {
             style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: 4),
+          // 星期标签行
+          Row(
+            children: weeks.map((w) => SizedBox(
+              width: 22,
+              child: Text(
+                w,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 9, color: colorScheme.onSurfaceVariant),
+              ),
+            )).toList(),
+          ),
+          const SizedBox(height: 2),
+          // 日期网格
           ...List.generate(6, (weekIndex) {
             return Row(
               children: List.generate(7, (dayIndex) {
@@ -645,73 +647,81 @@ class TargetStatsSection extends StatelessWidget {
           children: [
             Text('频率', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colorScheme.primary)),
             const SizedBox(height: 12),
-            // 可水平滚动的频率图
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 月份标签行
-                  Row(
-                    children: [
-                      const SizedBox(width: 40),
-                      ...monthLabels.map((label) => SizedBox(
-                        width: 30,
-                        child: Text(
-                          label,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 9, color: colorScheme.onSurfaceVariant),
+            // 固定周几 + 可滚动月份
+            Row(
+              children: [
+                // 固定的周几列
+                Column(
+                  children: [
+                    const SizedBox(height: 18),
+                    ...List.generate(7, (i) => Container(
+                      height: 24,
+                      width: 36,
+                      alignment: Alignment.centerRight,
+                      child: Text(dayNames[i + 1], style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
+                    )),
+                  ],
+                ),
+                // 可水平滚动的月份区域
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // 月份标签行
+                        Row(
+                          children: monthLabels.map((label) => SizedBox(
+                            width: 30,
+                            child: Text(
+                              label,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(fontSize: 9, color: colorScheme.onSurfaceVariant),
+                            ),
+                          )).toList(),
                         ),
-                      )),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  // 频率数据行
-                  ...weekdayStats.entries.map((entry) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 3),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 40,
-                            child: Text(dayNames[entry.key], style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
-                          ),
-                          ...List.generate(12, (monthIndex) {
-                            final month = DateTime(now.year, now.month - (11 - monthIndex), 1);
-                            final monthEnd = DateTime(now.year, now.month - (11 - monthIndex) + 1, 0);
-                            var monthWeekdayCount = 0;
+                        const SizedBox(height: 4),
+                        // 频率数据行
+                        ...weekdayStats.entries.map((entry) {
+                          return Row(
+                            children: List.generate(12, (monthIndex) {
+                              final month = DateTime(now.year, now.month - (11 - monthIndex), 1);
+                              final monthEnd = DateTime(now.year, now.month - (11 - monthIndex) + 1, 0);
+                              var monthWeekdayCount = 0;
 
-                            for (var d = month; !d.isAfter(monthEnd); d = d.add(const Duration(days: 1))) {
-                              if (d.weekday == entry.key && _isTargetCompletedOnDate(target, d)) {
-                                monthWeekdayCount++;
+                              for (var d = month; !d.isAfter(monthEnd); d = d.add(const Duration(days: 1))) {
+                                if (d.weekday == entry.key && _isTargetCompletedOnDate(target, d)) {
+                                  monthWeekdayCount++;
+                                }
                               }
-                            }
 
-                            final monthProgress = monthWeekdayCount > 0 ? (monthWeekdayCount / 5).clamp(0.0, 1.0) : 0.0;
-                            final size = 6.0 + (monthProgress * 14);
+                              final monthProgress = monthWeekdayCount > 0 ? (monthWeekdayCount / 5).clamp(0.0, 1.0) : 0.0;
+                              final size = 6.0 + (monthProgress * 14);
 
-                            return SizedBox(
-                              width: 30,
-                              child: Center(
-                                child: monthProgress > 0
-                                    ? Container(
-                                        width: size,
-                                        height: size,
-                                        decoration: BoxDecoration(
-                                          color: colorScheme.primary.withValues(alpha: 0.3 + monthProgress * 0.7),
-                                          shape: BoxShape.circle,
-                                        ),
-                                      )
-                                    : const SizedBox(width: 6, height: 6),
-                              ),
-                            );
-                          }),
-                        ],
-                      ),
-                    );
-                  }),
-                ],
-              ),
+                              return SizedBox(
+                                width: 30,
+                                height: 24,
+                                child: Center(
+                                  child: monthProgress > 0
+                                      ? Container(
+                                          width: size,
+                                          height: size,
+                                          decoration: BoxDecoration(
+                                            color: colorScheme.primary.withValues(alpha: 0.3 + monthProgress * 0.7),
+                                            shape: BoxShape.circle,
+                                          ),
+                                        )
+                                      : const SizedBox(width: 6, height: 6),
+                                ),
+                              );
+                            }),
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),

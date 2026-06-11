@@ -18,9 +18,11 @@ class TargetDetailScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: isDark ? colorScheme.surface : Colors.white,
       appBar: AppBar(
-        title: Text(target.name, style: const TextStyle(color: Colors.white)),
+        title: Text(target.name, style: TextStyle(color: isDark ? colorScheme.onSurface : Colors.white)),
         centerTitle: true,
-        backgroundColor: target.color,
+        backgroundColor: isDark ? colorScheme.surface : const Color(0xFF96B462),
+        foregroundColor: isDark ? colorScheme.onSurface : Colors.white,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.chevron_left, color: Colors.white, size: 30),
