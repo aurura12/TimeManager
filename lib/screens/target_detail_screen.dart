@@ -1,9 +1,9 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 import '../models/target.dart';
 import 'add_target_screen.dart';
+import '../widgets/target_stats_section.dart';
 
 class TargetDetailScreen extends StatelessWidget {
   final Target target;
@@ -12,11 +12,13 @@ class TargetDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
-      backgroundColor: Colors.white,
-      // 使用黑色状态栏文字
+      backgroundColor: isDark ? colorScheme.surface : Colors.white,
       appBar: AppBar(
-        title: Text(target.name, style: const TextStyle(color: Colors.white)),
+        title: Text(target.name, style: TextStyle(color: Colors.white)),
         centerTitle: true,
         backgroundColor: target.color,
         elevation: 0,
@@ -26,293 +28,178 @@ class TargetDetailScreen extends StatelessWidget {
         ),
         actions: [
           IconButton(
-              icon: const Icon(Icons.edit, color: Colors.white),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => AddTargetScreen(target: target),
-                  ),
-                );
-              }),
+            icon: const Icon(Icons.edit, color: Colors.white),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => AddTargetScreen(target: target),
+                ),
+              );
+            },
+          ),
           IconButton(
-              icon: const Icon(Icons.delete_outline, color: Colors.white),
-              onPressed: () {
-                showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text("确认删除"),
-                    content: Text("确定要删除目标“${target.name}”吗？"),
-                    actions: [
-                      TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text("取消")),
-                      TextButton(
-                          onPressed: () {
-                            Provider.of<TimeProvider>(context, listen: false)
-                                .deleteTarget(target);
-                            Navigator.pop(context); // 关闭弹窗
-                            Navigator.pop(context); // 关闭详情页
-                          },
-                          style:
-                              TextButton.styleFrom(foregroundColor: Colors.red),
-                          child: const Text("删除")),
-                    ],
-                  ),
-                );
-              }),
+            icon: const Icon(Icons.delete_outline, color: Colors.white),
+            onPressed: () {
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text("确认删除"),
+                  content: Text('确定要删除目标"${target.name}"吗？'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text("取消"),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        Provider.of<TimeProvider>(context, listen: false)
+                            .deleteTarget(target);
+                        Navigator.pop(context);
+                        Navigator.pop(context);
+                      },
+                      style: TextButton.styleFrom(foregroundColor: Colors.red),
+                      child: const Text("删除"),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
         ],
       ),
       body: Consumer<TimeProvider>(
         builder: (context, timeProvider, child) {
-          // --- 1. 计算卡片显示数据 (复用 TargetScreen 逻辑) ---
-          String progressText = "";
-          String title = "";
-          double currentValue = timeProvider.calculateTargetProgress(target);
+          final isCompleted = timeProvider.isTargetCompleted(target, DateTime.now());
+          final todayCount = timeProvider.getTargetTodayCount(target);
 
-          if (target.type == TargetType.duration) {
-            final double hours = currentValue;
-            final double percent = target.durationHours > 0
-                ? (hours / target.durationHours * 100).clamp(0.0, 100.0)
-                : 0.0;
-            progressText =
-                "已完成：${hours.toStringAsFixed(1)}小时(${percent.toStringAsFixed(1)}%)";
-            title =
-                "${target.name}${target.compareType}${target.durationHours}小时";
-          } else if (target.type == TargetType.frequency) {
-            final int count = currentValue.toInt();
-            progressText = "已完成 $count/${target.frequencyCount}";
-            title =
-                "${target.name}${target.compareType}${target.frequencyCount}次";
-          } else {
-            final days = timeProvider.getTargetPersistenceDays(target);
-            progressText = "坚持了$days天";
-            title = "${target.targetTime}${target.compareType}${target.name}";
-          }
+          return Column(
+            children: [
+              // 顶部完成状态卡片
+              _buildCompletionCard(
+                context: context,
+                target: target,
+                isCompleted: isCompleted,
+                todayCount: todayCount,
+                provider: timeProvider,
+                colorScheme: colorScheme,
+              ),
 
-          Widget? topRightWidget;
-          if (target.period.startsWith("每") &&
-              target.period.endsWith("天") &&
-              target.period != "每天") {
-            try {
-              final createTime =
-                  DateTime.fromMillisecondsSinceEpoch(int.parse(target.id));
-              final now = DateTime.now();
-              final d1 =
-                  DateTime(createTime.year, createTime.month, createTime.day);
-              final d2 = DateTime(now.year, now.month, now.day);
-              final days = d2.difference(d1).inDays + 1;
-              topRightWidget = Text("第$days天",
-                  style: const TextStyle(color: Colors.white, fontSize: 15));
-            } catch (_) {}
-          } else {
-            DateTime? endTime;
-            final nowUtc = DateTime.now().toUtc();
-            final nowBeijing = nowUtc.add(const Duration(hours: 8));
-            DateTime? targetBeijing;
-            if (target.period == "今天") {
-              targetBeijing = DateTime.utc(
-                  nowBeijing.year, nowBeijing.month, nowBeijing.day + 1);
-            } else if (target.period == "本周") {
-              targetBeijing = DateTime.utc(nowBeijing.year, nowBeijing.month,
-                  nowBeijing.day + (8 - nowBeijing.weekday));
-            } else if (target.period == "本月") {
-              targetBeijing =
-                  DateTime.utc(nowBeijing.year, nowBeijing.month + 1, 1);
-            } else if (target.period == "今年") {
-              targetBeijing = DateTime.utc(nowBeijing.year + 1, 1, 1);
-            }
-
-            if (targetBeijing != null) {
-              endTime = targetBeijing.subtract(const Duration(hours: 8));
-              topRightWidget = _CountdownText(
-                endTime: endTime,
-                style: const TextStyle(color: Colors.white, fontSize: 15),
-              );
-            }
-          }
-
-          // --- 2. 获取历史记录 (合并时间段) ---
-          final history = timeProvider.getTargetHistory(target);
-
-          return SingleChildScrollView(
-            child: Column(
-              children: [
-                // 1. 目标卡片 (复用样式)
-                _buildTargetCard(
-                  subtitle: target.period,
-                  title: title,
-                  progressText: progressText,
-                  topRightWidget: topRightWidget,
-                  color: target.color,
-                ),
-
-                // 2. 底部记录列表 (展示具体的片段)
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text("时间分布详情",
-                          style: TextStyle(
-                              fontSize: 18, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 16),
-                      if (history.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 20),
-                          child: Text("暂无记录",
-                              style: TextStyle(color: Colors.grey)),
-                        )
-                      else
-                        ...history.entries.map((entry) {
-                          return SizedBox(
-                            width: double.infinity, // 【关键】确保每一组记录的容器撑满宽度
-                            child: Column(
-                              crossAxisAlignment:
-                                  CrossAxisAlignment.start, // 强制左对齐
-                              children: [
-                                Text(entry.key,
-                                    style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold)),
-                                const SizedBox(height: 4),
-                                ...entry.value.map((range) => Padding(
-                                      padding:
-                                          const EdgeInsets.only(bottom: 4.0),
-                                      child: Text("$range ${target.name}",
-                                          textAlign:
-                                              TextAlign.left, // 【关键】强制文字对齐
-                                          style: const TextStyle(
-                                              fontSize: 15,
-                                              color: Colors.black87)),
-                                    )),
-                                const SizedBox(height: 16),
-                              ],
-                            ),
-                          );
-                        }),
-                    ],
+              // 统计内容
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: TargetStatsSection(
+                    target: target,
+                    provider: timeProvider,
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           );
         },
       ),
     );
   }
 
-  Widget _buildTargetCard({
-    String? subtitle,
-    required String title,
-    required String progressText,
-    Widget? topRightWidget,
-    required Color color,
+  Widget _buildCompletionCard({
+    required BuildContext context,
+    required Target target,
+    required bool isCompleted,
+    required int todayCount,
+    required TimeProvider provider,
+    required ColorScheme colorScheme,
   }) {
     return Container(
-      margin: const EdgeInsets.all(16.0),
-      padding: const EdgeInsets.all(20.0),
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(12.0),
+        color: target.color,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: Colors.black.withValues(alpha: 0.1),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              if (subtitle != null)
-                Text(
-                  subtitle,
-                  style: const TextStyle(color: Colors.white70, fontSize: 13),
-                ),
-              if (topRightWidget != null) topRightWidget,
-            ],
-          ),
-          const SizedBox(height: 4),
           Text(
-            title,
+            '今天${target.name.substring(0, target.name.length.clamp(0, 2))}了吗',
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 19,
+              fontSize: 18,
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: 24),
-          Align(
-            alignment: Alignment.bottomRight,
-            child: Text(
-              progressText,
-              style: const TextStyle(color: Colors.white, fontSize: 15),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildStatChip(
+                icon: Icons.check_circle_outline,
+                label: '$todayCount 次',
+                color: Colors.white,
+              ),
+              const SizedBox(width: 16),
+              _buildStatChip(
+                icon: Icons.calendar_today,
+                label: target.period,
+                color: Colors.white,
+              ),
+              const SizedBox(width: 16),
+              _buildStatChip(
+                icon: isCompleted ? Icons.notifications_active : Icons.notifications_off,
+                label: isCompleted ? '已完成' : '未完成',
+                color: Colors.white,
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () {
+                provider.toggleTargetCompletion(target, DateTime.now());
+              },
+              icon: Icon(
+                isCompleted ? Icons.check : Icons.add,
+                color: target.color,
+              ),
+              label: Text(
+                isCompleted ? '取消完成' : '标记完成',
+                style: TextStyle(color: target.color, fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
             ),
           ),
         ],
       ),
     );
   }
-}
 
-class _CountdownText extends StatefulWidget {
-  final DateTime endTime;
-  final TextStyle style;
-
-  const _CountdownText({required this.endTime, required this.style});
-
-  @override
-  State<_CountdownText> createState() => _CountdownTextState();
-}
-
-class _CountdownTextState extends State<_CountdownText> {
-  late Timer _timer;
-  Duration _remaining = Duration.zero;
-
-  @override
-  void initState() {
-    super.initState();
-    _updateTime();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _updateTime());
-  }
-
-  void _updateTime() {
-    final now = DateTime.now().toUtc();
-    final diff = widget.endTime.difference(now);
-    if (mounted) {
-      setState(() {
-        _remaining = diff.isNegative ? Duration.zero : diff;
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _timer.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final days = _remaining.inDays;
-    final hours = _remaining.inHours % 24;
-    final minutes = _remaining.inMinutes % 60;
-    final seconds = _remaining.inSeconds % 60;
-
-    String text;
-    if (days > 0) {
-      text =
-          "$days天 ${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}";
-    } else {
-      text =
-          "${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}";
-    }
-
-    return Text("剩余 $text", style: widget.style);
+  Widget _buildStatChip({
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: color.withValues(alpha: 0.9), size: 18),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(color: color.withValues(alpha: 0.9), fontSize: 14),
+        ),
+      ],
+    );
   }
 }
