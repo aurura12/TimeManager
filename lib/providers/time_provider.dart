@@ -130,6 +130,11 @@ class TimeProvider with ChangeNotifier {
     return _dailySlots.putIfAbsent(dateKey, () => _generateInitialSlots());
   }
 
+  /// 获取指定日期的时间块列表
+  List<TimeSlot>? getSlotsForDate(String dateKey) {
+    return _dailySlots[dateKey];
+  }
+
   // 生成一天 144 个初始槽位对象
   List<TimeSlot> _generateInitialSlots() {
     return List.generate(144, (index) {

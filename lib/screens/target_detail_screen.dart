@@ -18,7 +18,7 @@ class TargetDetailScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: isDark ? colorScheme.surface : Colors.white,
       appBar: AppBar(
-        title: Text(target.name, style: TextStyle(color: Colors.white)),
+        title: Text(target.name, style: const TextStyle(color: Colors.white)),
         centerTitle: true,
         backgroundColor: target.color,
         elevation: 0,
@@ -70,136 +70,15 @@ class TargetDetailScreen extends StatelessWidget {
       ),
       body: Consumer<TimeProvider>(
         builder: (context, timeProvider, child) {
-          final isCompleted = timeProvider.isTargetCompleted(target, DateTime.now());
-          final todayCount = timeProvider.getTargetTodayCount(target);
-
-          return Column(
-            children: [
-              // 顶部完成状态卡片
-              _buildCompletionCard(
-                context: context,
-                target: target,
-                isCompleted: isCompleted,
-                todayCount: todayCount,
-                provider: timeProvider,
-                colorScheme: colorScheme,
-              ),
-
-              // 统计内容
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: TargetStatsSection(
-                    target: target,
-                    provider: timeProvider,
-                  ),
-                ),
-              ),
-            ],
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: TargetStatsSection(
+              target: target,
+              provider: timeProvider,
+            ),
           );
         },
       ),
-    );
-  }
-
-  Widget _buildCompletionCard({
-    required BuildContext context,
-    required Target target,
-    required bool isCompleted,
-    required int todayCount,
-    required TimeProvider provider,
-    required ColorScheme colorScheme,
-  }) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: target.color,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.1),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Text(
-            '今天${target.name.substring(0, target.name.length.clamp(0, 2))}了吗',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _buildStatChip(
-                icon: Icons.check_circle_outline,
-                label: '$todayCount 次',
-                color: Colors.white,
-              ),
-              const SizedBox(width: 16),
-              _buildStatChip(
-                icon: Icons.calendar_today,
-                label: target.period,
-                color: Colors.white,
-              ),
-              const SizedBox(width: 16),
-              _buildStatChip(
-                icon: isCompleted ? Icons.notifications_active : Icons.notifications_off,
-                label: isCompleted ? '已完成' : '未完成',
-                color: Colors.white,
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: () {
-                provider.toggleTargetCompletion(target, DateTime.now());
-              },
-              icon: Icon(
-                isCompleted ? Icons.check : Icons.add,
-                color: target.color,
-              ),
-              label: Text(
-                isCompleted ? '取消完成' : '标记完成',
-                style: TextStyle(color: target.color, fontWeight: FontWeight.bold),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatChip({
-    required IconData icon,
-    required String label,
-    required Color color,
-  }) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, color: color.withValues(alpha: 0.9), size: 18),
-        const SizedBox(width: 4),
-        Text(
-          label,
-          style: TextStyle(color: color.withValues(alpha: 0.9), fontSize: 14),
-        ),
-      ],
     );
   }
 }
