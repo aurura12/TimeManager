@@ -5,6 +5,7 @@ import 'package:fl_chart/fl_chart.dart';
 import '../widgets/profile_settings_drawer.dart';
 import '../widgets/calendar_sync_status_badge.dart';
 import '../providers/time_provider.dart';
+import '../services/update_service.dart';
 import 'event_detail_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -93,6 +94,10 @@ class _ProfileScreenState extends State<ProfileScreen>
               ? _buildDetailList(provider, _tabController.index)
               : _buildPieChart(provider, _tabController.index),
           const SizedBox(height: 30),
+
+          // 检查更新
+          _buildUpdateSection(colorScheme),
+          const SizedBox(height: 20),
         ],
       ),
     );
@@ -552,5 +557,87 @@ class _ProfileScreenState extends State<ProfileScreen>
       spots.add(FlSpot(i + 1.0, dayStats.length.toDouble()));
     }
     return spots;
+  }
+
+  Widget _buildUpdateSection(ColorScheme colorScheme) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '应用',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ListTile(
+            leading: const Icon(Icons.system_update_outlined),
+            title: const Text('检查更新'),
+            subtitle: const Text('检查是否有新版本'),
+            trailing: const Icon(Icons.chevron_right),
+            contentPadding: EdgeInsets.zero,
+            onTap: () => _checkForUpdate(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _checkForUpdate(BuildContext context) async {
+    final updateInfo = await UpdateService.checkForUpdate();
+
+    if (!context.mounted) return;
+
+    if (updateInfo == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('当前已是最新版本')),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('发现新版本 v${updateInfo.version}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (updateInfo.releaseNotes.isNotEmpty) ...[
+              const Text('更新内容：',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(updateInfo.releaseNotes),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('稍后'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('更新'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      await UpdateService.downloadAndInstall(
+        updateInfo.downloadUrl,
+        updateInfo.version,
+        context,
+      );
+    }
   }
 }
