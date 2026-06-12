@@ -6,11 +6,12 @@ import '../services/google_calendar_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import '../models/target.dart';
-import '../models/target_completion.dart';
 import '../models/schedule_template.dart';
 import '../models/calendar_block.dart';
 import '../models/search_result.dart';
 import '../services/home_widget_service.dart';
+
+enum TimePointStatus { onTime, late, notDone }
 
 class BackupPreview {
   final String? exportedAt;
@@ -66,10 +67,6 @@ class TimeProvider with ChangeNotifier {
   // 目标列表移至 Provider 管理
   final List<Target> _targets = [];
   List<Target> get targets => _targets;
-
-  // 目标完成记录
-  final List<TargetCompletion> _completions = [];
-  List<TargetCompletion> get completions => List.unmodifiable(_completions);
 
   // 分类列表移至 Provider 管理
   List<Category> _categories = [];
@@ -1016,11 +1013,6 @@ class TimeProvider with ChangeNotifier {
         _targets.map((t) => json.encode(t.toJson())).toList();
     await prefs.setStringList('targets', targetList);
 
-    // 2.1 保存目标完成记录
-    List<String> completionList =
-        _completions.map((c) => json.encode(c.toJson())).toList();
-    await prefs.setStringList('target_completions', completionList);
-
     // 3. 保存时间块
     // 为了节省空间，只保存已记录(recorded=true)的块
     Map<String, dynamic> slotsJson = {};
@@ -1095,7 +1087,6 @@ class TimeProvider with ChangeNotifier {
               })
           .toList(),
       'targets': _targets.map((t) => t.toJson()).toList(),
-      'targetCompletions': _completions.map((c) => c.toJson()).toList(),
       'dailySlots': slotsJson,
       'scheduleTemplates': _templates.map((t) => t.toJson()).toList(),
       'ignoredCalendarImports': ignoredJson,
@@ -1176,13 +1167,6 @@ class TimeProvider with ChangeNotifier {
       ..addAll(
         ((data['targets'] as List?) ?? [])
             .map((e) => Target.fromJson(Map<String, dynamic>.from(e as Map))),
-      );
-
-    _completions
-      ..clear()
-      ..addAll(
-        ((data['targetCompletions'] as List?) ?? [])
-            .map((e) => TargetCompletion.fromJson(Map<String, dynamic>.from(e as Map))),
       );
 
     _dailySlots.clear();
@@ -1284,14 +1268,6 @@ class TimeProvider with ChangeNotifier {
       _targets.clear();
       _targets.addAll(
           targetList.map((str) => Target.fromJson(json.decode(str))).toList());
-    }
-
-    // 2.1 加载目标完成记录
-    List<String>? completionList = prefs.getStringList('target_completions');
-    if (completionList != null) {
-      _completions.clear();
-      _completions.addAll(
-          completionList.map((str) => TargetCompletion.fromJson(json.decode(str))).toList());
     }
 
     // 3. 加载时间块
@@ -1406,42 +1382,59 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  /// 获取时间点目标在指定日期的状态
+  TimePointStatus getTimePointStatus(Target target, DateTime date) {
+    final dateKey = "${date.year}-${date.month}-${date.day}";
+    final daySlots = _dailySlots[dateKey];
+    if (daySlots == null) return TimePointStatus.notDone;
+
+    // 1. 筛选匹配目标的记录
+    var slots = daySlots.where((s) => slotMatchesTarget(s, target)).toList();
+    if (slots.isEmpty) return TimePointStatus.notDone;
+
+    // 2. 有效时间区间过滤（如果设置了）
+    if (target.startTime.isNotEmpty && target.endTime.isNotEmpty) {
+      int startMins = _parseTime(target.startTime);
+      int endMins = _parseTime(target.endTime);
+      slots = slots.where((s) {
+        int t = s.hour * 60 + s.minute10 * 10;
+        return t >= startMins && t < endMins;
+      }).toList();
+    }
+
+    if (slots.isEmpty) return TimePointStatus.notDone;
+
+    // 3. 取最早记录和目标时间比较
+    int targetMins = _parseTime(target.targetTime);
+    int earliestMins = slots
+        .map((s) => s.hour * 60 + s.minute10 * 10)
+        .reduce((a, b) => a < b ? a : b);
+
+    bool isOnTime;
+    if (target.compareType.contains("前") || target.compareType.contains("少")) {
+      isOnTime = earliestMins <= targetMins;
+    } else {
+      isOnTime = earliestMins >= targetMins;
+    }
+
+    return isOnTime ? TimePointStatus.onTime : TimePointStatus.late;
+  }
+
   int getTargetPersistenceDays(Target target) {
     int count = 0;
-    _dailySlots.forEach((_, daySlots) {
-      // 1. 筛选出当天的相关事件
-      var slots = daySlots.where((s) => slotMatchesTarget(s, target));
-
-      if (slots.isNotEmpty) {
-        // 如果是时间点目标，需要进行额外的时间区间和比较逻辑判断
-        if (target.type == TargetType.timePoint) {
-          // 2. 有效时间区间过滤 (如果设置了)
-          if (target.startTime.isNotEmpty && target.endTime.isNotEmpty) {
-            int startMins = _parseTime(target.startTime);
-            int endMins = _parseTime(target.endTime);
-            slots = slots.where((s) {
-              int t = s.hour * 60 + s.minute10 * 10;
-              return t >= startMins && t < endMins;
-            });
-          }
-
-          if (slots.isNotEmpty) {
-            // 3. 比较目标时间
-            int targetMins = _parseTime(target.targetTime);
-            // 取最早的一次记录作为比较对象
-            int earliestMins = slots
-                .map((s) => s.hour * 60 + s.minute10 * 10)
-                .reduce((a, b) => a < b ? a : b);
-
-            if (target.compareType.contains("前") ||
-                target.compareType.contains("少")) {
-              if (earliestMins <= targetMins) count++;
-            } else {
-              if (earliestMins >= targetMins) count++;
-            }
-          }
-        } else {
-          // 非时间点目标，只要有记录就算坚持了一天 (保持原有逻辑)
+    _dailySlots.forEach((dateKey, daySlots) {
+      if (target.type == TargetType.timePoint) {
+        final dateParts = dateKey.split('-');
+        final date = DateTime(
+          int.parse(dateParts[0]),
+          int.parse(dateParts[1]),
+          int.parse(dateParts[2]),
+        );
+        if (getTimePointStatus(target, date) == TimePointStatus.onTime) {
+          count++;
+        }
+      } else {
+        if (daySlots.any((s) => slotMatchesTarget(s, target))) {
           count++;
         }
       }
@@ -1461,18 +1454,17 @@ class TimeProvider with ChangeNotifier {
 
     // 2. 按日期倒序排列 (最新的在前面)
     validDates.sort((a, b) {
-      List<String> partsA = a.split('-');
-      List<String> partsB = b.split('-');
-      DateTime dA = DateTime(
-          int.parse(partsA[0]), int.parse(partsA[1]), int.parse(partsA[2]));
-      DateTime dB = DateTime(
-          int.parse(partsB[0]), int.parse(partsB[1]), int.parse(partsB[2]));
+      DateTime? dA = _parseDateKey(a);
+      DateTime? dB = _parseDateKey(b);
+      if (dA == null || dB == null) return 0;
       return dB.compareTo(dA);
     });
 
     // 3. 生成时间段字符串
     for (String dateKey in validDates) {
-      List<TimeSlot> daySlots = _dailySlots[dateKey]!;
+      List<TimeSlot>? daySlots = _dailySlots[dateKey];
+      if (daySlots == null) continue;
+
       List<String> ranges = [];
       int? startIdx;
       int? endIdx;
@@ -1496,13 +1488,29 @@ class TimeProvider with ChangeNotifier {
       }
 
       if (ranges.isNotEmpty) {
-        List<String> parts = dateKey.split('-');
-        String formattedDate =
-            "${parts[0]}.${parts[1].padLeft(2, '0')}.${parts[2].padLeft(2, '0')}";
-        history[formattedDate] = ranges;
+        DateTime? date = _parseDateKey(dateKey);
+        if (date != null) {
+          String formattedDate =
+              "${date.year}.${date.month.toString().padLeft(2, '0')}.${date.day.toString().padLeft(2, '0')}";
+          history[formattedDate] = ranges;
+        }
       }
     }
     return history;
+  }
+
+  DateTime? _parseDateKey(String dateKey) {
+    try {
+      final parts = dateKey.split('-');
+      if (parts.length != 3) return null;
+      final year = int.tryParse(parts[0]);
+      final month = int.tryParse(parts[1]);
+      final day = int.tryParse(parts[2]);
+      if (year == null || month == null || day == null) return null;
+      return DateTime(year, month, day);
+    } catch (_) {
+      return null;
+    }
   }
 
   String _formatRange(int startIdx, int endIdx) {
@@ -1557,17 +1565,19 @@ class TimeProvider with ChangeNotifier {
       try {
         final match = RegExp(r'每(\d+)天').firstMatch(target.period);
         if (match != null) {
-          int periodDays = int.parse(match.group(1)!);
-          DateTime createTime =
-              DateTime.fromMillisecondsSinceEpoch(int.parse(target.id));
-          DateTime startOfCreate =
-              DateTime(createTime.year, createTime.month, createTime.day);
-          int daysSince = startDate.difference(startOfCreate).inDays;
-          if (daysSince >= 0) {
-            int cycleIndex = daysSince ~/ periodDays;
-            startDate =
-                startOfCreate.add(Duration(days: cycleIndex * periodDays));
-            endDate = startDate.add(Duration(days: periodDays));
+          final periodDays = int.tryParse(match.group(1) ?? '');
+          if (periodDays != null && periodDays > 0) {
+            DateTime createTime =
+                DateTime.fromMillisecondsSinceEpoch(int.parse(target.id));
+            DateTime startOfCreate =
+                DateTime(createTime.year, createTime.month, createTime.day);
+            int daysSince = startDate.difference(startOfCreate).inDays;
+            if (daysSince >= 0) {
+              int cycleIndex = daysSince ~/ periodDays;
+              startDate =
+                  startOfCreate.add(Duration(days: cycleIndex * periodDays));
+              endDate = startDate.add(Duration(days: periodDays));
+            }
           }
         }
       } catch (_) {}
@@ -1600,177 +1610,6 @@ class TimeProvider with ChangeNotifier {
       }
     }
     return totalValue;
-  }
-
-  // --- 目标完成记录方法 ---
-
-  /// 切换目标在指定日期的完成状态
-  void toggleTargetCompletion(Target target, DateTime date) {
-    final dateKey = _getDateKey(date);
-    final normalizedDate = DateTime(date.year, date.month, date.day);
-
-    final existingIndex = _completions.indexWhere(
-      (c) => c.targetId == target.id && c.dateKey == dateKey,
-    );
-
-    if (existingIndex != -1) {
-      _completions.removeAt(existingIndex);
-    } else {
-      _completions.add(TargetCompletion(
-        targetId: target.id,
-        date: normalizedDate,
-      ));
-    }
-
-    _saveData();
-    notifyListeners();
-  }
-
-  /// 检查目标在指定日期是否已完成
-  bool isTargetCompleted(Target target, DateTime date) {
-    final dateKey = _getDateKey(date);
-    return _completions.any(
-      (c) => c.targetId == target.id && c.dateKey == dateKey,
-    );
-  }
-
-  /// 获取目标在指定日期范围内的完成次数
-  int getTargetCompletionCount(Target target, DateTime start, DateTime end) {
-    return _completions.where((c) {
-      if (c.targetId != target.id) return false;
-      final d = c.date;
-      return !d.isBefore(start) && !d.isAfter(end);
-    }).length;
-  }
-
-  /// 获取目标的今日完成次数
-  int getTargetTodayCount(Target target) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final tomorrow = today.add(const Duration(days: 1));
-    return getTargetCompletionCount(target, today, tomorrow);
-  }
-
-  /// 获取目标的本周完成次数
-  int getTargetWeekCount(Target target) {
-    final now = DateTime.now();
-    final startOfWeek = now.subtract(Duration(days: now.weekday - 1));
-    final start = DateTime(startOfWeek.year, startOfWeek.month, startOfWeek.day);
-    final end = start.add(const Duration(days: 7));
-    return getTargetCompletionCount(target, start, end);
-  }
-
-  /// 获取目标的本月完成次数
-  int getTargetMonthCount(Target target) {
-    final now = DateTime.now();
-    final start = DateTime(now.year, now.month, 1);
-    final end = DateTime(now.year, now.month + 1, 1);
-    return getTargetCompletionCount(target, start, end);
-  }
-
-  /// 获取目标的本季度完成次数
-  int getTargetQuarterCount(Target target) {
-    final now = DateTime.now();
-    final quarter = (now.month - 1) ~/ 3;
-    final startMonth = quarter * 3 + 1;
-    final start = DateTime(now.year, startMonth, 1);
-    final end = DateTime(now.year, startMonth + 3, 1);
-    return getTargetCompletionCount(target, start, end);
-  }
-
-  /// 获取目标的本年完成次数
-  int getTargetYearCount(Target target) {
-    final now = DateTime.now();
-    final start = DateTime(now.year, 1, 1);
-    final end = DateTime(now.year + 1, 1, 1);
-    return getTargetCompletionCount(target, start, end);
-  }
-
-  /// 获取目标的所有完成日期集合
-  Set<DateTime> getTargetCompletionDates(Target target) {
-    return _completions
-        .where((c) => c.targetId == target.id)
-        .map((c) => DateTime(c.date.year, c.date.month, c.date.day))
-        .toSet();
-  }
-
-  /// 获取目标的月度统计（返回月份到次数的映射）
-  Map<String, int> getTargetMonthlyStats(Target target, {int months = 12}) {
-    final now = DateTime.now();
-    final stats = <String, int>{};
-
-    for (int i = 0; i < months; i++) {
-      final month = DateTime(now.year, now.month - i, 1);
-      final nextMonth = DateTime(now.year, now.month - i + 1, 1);
-      final count = getTargetCompletionCount(target, month, nextMonth);
-      final key = "${month.year}-${month.month.toString().padLeft(2, '0')}";
-      stats[key] = count;
-    }
-
-    return stats;
-  }
-
-  /// 获取目标的按星期统计（周一到周日的完成次数）
-  Map<int, int> getTargetWeekdayStats(Target target) {
-    final stats = <int, int>{1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0};
-
-    for (final c in _completions) {
-      if (c.targetId == target.id) {
-        final weekday = c.date.weekday;
-        stats[weekday] = (stats[weekday] ?? 0) + 1;
-      }
-    }
-
-    return stats;
-  }
-
-  /// 计算目标的最佳连续完成天数
-  List<TargetStreak> getTargetStreaks(Target target) {
-    final dates = getTargetCompletionDates(target).toList()
-      ..sort((a, b) => a.compareTo(b));
-
-    if (dates.isEmpty) return [];
-
-    final streaks = <TargetStreak>[];
-    var streakStart = dates[0];
-    var streakEnd = dates[0];
-    var streakDays = 1;
-
-    for (int i = 1; i < dates.length; i++) {
-      final diff = dates[i].difference(streakEnd).inDays;
-      if (diff == 1) {
-        streakEnd = dates[i];
-        streakDays++;
-      } else {
-        if (streakDays > 1) {
-          streaks.add(TargetStreak(
-            startDate: streakStart,
-            endDate: streakEnd,
-            days: streakDays,
-          ));
-        }
-        streakStart = dates[i];
-        streakEnd = dates[i];
-        streakDays = 1;
-      }
-    }
-
-    if (streakDays > 1) {
-      streaks.add(TargetStreak(
-        startDate: streakStart,
-        endDate: streakEnd,
-        days: streakDays,
-      ));
-    }
-
-    streaks.sort((a, b) => b.days.compareTo(a.days));
-    return streaks;
-  }
-
-  /// 获取目标的最佳连续完成天数
-  int getTargetBestStreak(Target target) {
-    final streaks = getTargetStreaks(target);
-    return streaks.isEmpty ? 0 : streaks.first.days;
   }
 
   /// 获取目标的每日目标次数

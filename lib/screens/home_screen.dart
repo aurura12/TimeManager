@@ -4,7 +4,6 @@ import '../providers/time_provider.dart';
 import '../models/category.dart';
 import 'dart:async';
 import 'package:flutter_slidable/flutter_slidable.dart';
-import 'package:reorderables/reorderables.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/template_bar.dart';
 import '../models/schedule_template.dart';
@@ -493,7 +492,6 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               children: [
                 ...cat.subCategories.asMap().entries.map((entry) {
-                  int subIndex = entry.key;
                   String subCat = entry.value;
                   return InkWell(
                     onTap: () => _assignSubCategory(cat, subCat, provider),
