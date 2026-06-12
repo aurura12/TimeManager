@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../providers/theme_mode_provider.dart';
 import '../providers/time_provider.dart';
 import '../services/data_backup_service.dart';
+import '../services/update_service.dart';
 import '../screens/word_cloud_screen.dart';
 import '../services/google_calendar_service.dart';
 
@@ -107,6 +108,16 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                       WordCloudScreen.open(context);
                     },
                   ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.system_update_outlined),
+                    title: const Text('检查更新'),
+                    subtitle: const Text('检查是否有新版本'),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _checkForUpdate(context);
+                    },
+                  ),
                 ],
               ),
             ),
@@ -138,6 +149,56 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
         );
       },
     );
+  }
+
+  Future<void> _checkForUpdate(BuildContext context) async {
+    final updateInfo = await UpdateService.checkForUpdate();
+
+    if (!context.mounted) return;
+
+    if (updateInfo == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('当前已是最新版本')),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('发现新版本 v${updateInfo.version}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (updateInfo.releaseNotes.isNotEmpty) ...[
+              const Text('更新内容：',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(updateInfo.releaseNotes),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('稍后'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('更新'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      await UpdateService.downloadAndInstall(
+        updateInfo.downloadUrl,
+        updateInfo.version,
+        context,
+      );
+    }
   }
 
   Widget _buildLoginSection(
