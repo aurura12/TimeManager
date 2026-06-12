@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -32,8 +33,7 @@ class UpdateService {
 
       if (response.statusCode != 200) return null;
 
-      final data = Map<String, dynamic>.from(
-          Map<String, dynamic>.from(response.body as dynamic) as dynamic);
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
       final tagName = data['tag_name'] as String? ?? '';
       final body = data['body'] as String? ?? '';
 
