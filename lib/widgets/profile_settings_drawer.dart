@@ -113,10 +113,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                     leading: const Icon(Icons.system_update_outlined),
                     title: const Text('检查更新'),
                     subtitle: const Text('检查是否有新版本'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      _checkForUpdate(context);
-                    },
+                    onTap: () => _checkForUpdate(context),
                   ),
                 ],
               ),
@@ -163,6 +160,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       return;
     }
 
+    // 显示更新内容弹窗
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -175,8 +173,14 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               const Text('更新内容：',
                   style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              Text(updateInfo.releaseNotes),
-            ],
+              Container(
+                constraints: const BoxConstraints(maxHeight: 200),
+                child: SingleChildScrollView(
+                  child: Text(updateInfo.releaseNotes),
+                ),
+              ),
+            ] else
+              const Text('暂无更新说明'),
           ],
         ),
         actions: [
@@ -186,7 +190,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('更新'),
+            child: const Text('下载更新'),
           ),
         ],
       ),
