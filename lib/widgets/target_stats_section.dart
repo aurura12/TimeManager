@@ -42,7 +42,14 @@ class TargetStatsSection extends StatelessWidget {
 
   bool _isTargetCompletedOnDate(Target target, DateTime date) {
     if (target.type == TargetType.timePoint) {
+      final dateKey = _dateKey(date);
+      // 检查缓存
+      final cached = provider.targetStatsCache.getCachedTimePointStatus(target.id, dateKey);
+      if (cached != null) {
+        return cached == TimePointStatus.onTime || cached == TimePointStatus.late;
+      }
       final status = provider.getTimePointStatus(target, date);
+      provider.targetStatsCache.cacheTimePointStatus(target.id, dateKey, status);
       return status == TimePointStatus.onTime || status == TimePointStatus.late;
     }
     final daySlots = provider.getSlotsForDate(_dateKey(date));
@@ -52,9 +59,19 @@ class TargetStatsSection extends StatelessWidget {
 
   /// 计算目标在某天的完成次数（频率目标按连续块计数，时长目标按小时计数）
   double _getTargetCountOnDate(Target target, DateTime date) {
-    final daySlots = provider.getSlotsForDate(_dateKey(date));
-    if (daySlots == null) return 0;
+    final dateKey = _dateKey(date);
 
+    // 检查缓存
+    final cached = provider.targetStatsCache.getCachedCount(target.id, dateKey);
+    if (cached != null) return cached;
+
+    final daySlots = provider.getSlotsForDate(dateKey);
+    if (daySlots == null) {
+      provider.targetStatsCache.cacheCount(target.id, dateKey, 0);
+      return 0;
+    }
+
+    double result;
     if (target.type == TargetType.frequency) {
       int blocks = 0;
       bool inBlock = false;
@@ -68,11 +85,14 @@ class TargetStatsSection extends StatelessWidget {
           inBlock = false;
         }
       }
-      return blocks.toDouble();
+      result = blocks.toDouble();
     } else {
       int count = daySlots.where((s) => provider.slotMatchesTarget(s, target)).length;
-      return count * 10.0 / 60.0;
+      result = count * 10.0 / 60.0;
     }
+
+    provider.targetStatsCache.cacheCount(target.id, dateKey, result);
+    return result;
   }
 
   /// 计算目标在日期范围内的总完成次数
@@ -91,7 +111,15 @@ class TargetStatsSection extends StatelessWidget {
     int onTime = 0;
     int total = 0;
     for (var d = start; d.isBefore(end); d = d.add(const Duration(days: 1))) {
-      final status = provider.getTimePointStatus(target, d);
+      final dateKey = _dateKey(d);
+      final cached = provider.targetStatsCache.getCachedTimePointStatus(target.id, dateKey);
+      TimePointStatus status;
+      if (cached != null) {
+        status = cached;
+      } else {
+        status = provider.getTimePointStatus(target, d);
+        provider.targetStatsCache.cacheTimePointStatus(target.id, dateKey, status);
+      }
       if (status == TimePointStatus.onTime || status == TimePointStatus.late) {
         total++;
         if (status == TimePointStatus.onTime) onTime++;

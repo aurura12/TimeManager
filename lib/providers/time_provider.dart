@@ -10,6 +10,7 @@ import '../models/schedule_template.dart';
 import '../models/calendar_block.dart';
 import '../models/search_result.dart';
 import '../services/home_widget_service.dart';
+import 'target_stats_cache.dart';
 
 enum TimePointStatus { onTime, late, notDone }
 
@@ -55,7 +56,7 @@ class TimeProvider with ChangeNotifier {
   void setCategoryExpandState(String categoryId, bool isExpanded) {
     _categoryExpandStates[categoryId] = isExpanded;
     notifyListeners();
-    _saveData(); // 自动保存
+    _saveData();
   }
 
   // 存储模型对象 Map
@@ -76,6 +77,19 @@ class TimeProvider with ChangeNotifier {
   List<ScheduleTemplate> get templates => List.unmodifiable(_templates);
   final int _startHour = 7; // 默认从 7 点开始
   int get startHour => _startHour;
+
+  // --- 增量保存脏标记 ---
+  bool _categoriesDirty = false;
+  bool _targetsDirty = false;
+  final Set<String> _slotsDirty = {};  // 变化的日期 key
+  bool _allSlotsDirty = false;  // 全量脏标记（用于 _propagateLabelRename 等场景）
+  bool _templatesDirty = false;
+  bool _calendarDirty = false;
+  bool _syncDirty = false;
+
+  // --- 目标统计缓存 ---
+  final TargetStatsCache _targetStatsCache = TargetStatsCache();
+  TargetStatsCache get targetStatsCache => _targetStatsCache;
 
   // 用于发送同步状态消息的 Stream
   final StreamController<String> _syncStatusController =
@@ -168,18 +182,20 @@ class TimeProvider with ChangeNotifier {
 
   void toggleSlot(int index) {
     List<TimeSlot> currentSlots = slots;
-    // 假设 TimeSlot 类有一个 recorded 属性，并且没有使用 final 修饰它
-    // 或者你需要创建一个新的对象（取决于你的模型定义）
     currentSlots[index].recorded = !currentSlots[index].recorded;
-    _saveData(); // 保存更改
+    final dateKey = _getDateKey(_currentDate);
+    _slotsDirty.add(dateKey);
+    _targetStatsCache.invalidateDate(dateKey);  // 失效该日期的缓存
+    _saveData();
     notifyListeners();
   }
 
   void clearAll() {
-    _saveSnapshot(); // 修改前保存快照
-
+    _saveSnapshot();
     String dateKey = _getDateKey(_currentDate);
     _dailySlots[dateKey] = _generateInitialSlots();
+    _slotsDirty.add(dateKey);
+    _targetStatsCache.invalidateDate(dateKey);  // 失效该日期的缓存
     _markPendingSync();
     _saveData();
     notifyListeners();
@@ -238,6 +254,8 @@ class TimeProvider with ChangeNotifier {
       slots[index].isFromCalendar = false;
       slots[index].calendarEventId = null;
     }
+    _slotsDirty.add(_getDateKey(_currentDate));  // 标记当前日期为脏
+    _targetStatsCache.invalidateDate(_getDateKey(_currentDate));  // 失效该日期的缓存
     _markPendingSync();
     _saveData();
     notifyListeners();
@@ -255,6 +273,7 @@ class TimeProvider with ChangeNotifier {
   /// 本地与云端日历不一致时标记（与是否已登录无关）
   void _markPendingSync() {
     if (_pendingSyncDates.add(_getDateKey(_currentDate))) {
+      _syncDirty = true;  // 标记待同步为脏
       notifyListeners();
     }
   }
@@ -426,6 +445,9 @@ class TimeProvider with ChangeNotifier {
           _dismissCalendarImportAt(index);
         } else {
           _clearSlot(index);
+          final dateKey = _getDateKey(_currentDate);
+          _slotsDirty.add(dateKey);
+          _targetStatsCache.invalidateDate(dateKey);  // 失效该日期的缓存
           _markPendingSync();
           _scheduleCalendarSync();
           _saveData();
@@ -497,6 +519,9 @@ class TimeProvider with ChangeNotifier {
           );
     }
 
+    _slotsDirty.add(dateKey);  // 标记当前日期为脏
+    _calendarDirty = true;  // 忽略列表也变了
+    _targetStatsCache.invalidateDate(dateKey);  // 失效该日期的缓存
     await _saveData();
     notifyListeners();
   }
@@ -562,6 +587,8 @@ class TimeProvider with ChangeNotifier {
     if (blocks == null) return false;
     final dateKey = _getDateKey(date);
     _mergeCalendarBlocks(dateKey, blocks, date);
+    _slotsDirty.add(dateKey);
+    _targetStatsCache.invalidateDate(dateKey);  // 失效该日期的缓存
     await _saveData();
     if (notify) notifyListeners();
     return true;
@@ -672,6 +699,7 @@ class TimeProvider with ChangeNotifier {
       slots: entries,
       createdAt: DateTime.now().millisecondsSinceEpoch,
     ));
+    _templatesDirty = true;  // 标记模板为脏
     _saveData();
     notifyListeners();
     return true;
@@ -794,12 +822,14 @@ class TimeProvider with ChangeNotifier {
     final index = _templates.indexWhere((t) => t.id == id);
     if (index == -1) return;
     _templates[index] = _templates[index].copyWith(name: trimmed);
+    _templatesDirty = true;  // 标记模板为脏
     _saveData();
     notifyListeners();
   }
 
   void deleteTemplate(String id) {
     _templates.removeWhere((t) => t.id == id);
+    _templatesDirty = true;  // 标记模板为脏
     _saveData();
     notifyListeners();
   }
@@ -808,6 +838,7 @@ class TimeProvider with ChangeNotifier {
 
   void addCategory(Category category) {
     _categories.add(category);
+    _categoriesDirty = true;  // 标记分类为脏
     _saveData();
     notifyListeners();
   }
@@ -836,6 +867,7 @@ class TimeProvider with ChangeNotifier {
     }
 
     _categories[index] = updated;
+    _categoriesDirty = true;  // 标记分类为脏
     _saveData();
     notifyListeners();
   }
@@ -849,6 +881,7 @@ class TimeProvider with ChangeNotifier {
       subCategories: newSubs,
       hiddenSubCategories: newHidden,
     );
+    _categoriesDirty = true;  // 标记分类为脏
     _saveData();
     notifyListeners();
   }
@@ -862,6 +895,7 @@ class TimeProvider with ChangeNotifier {
       subCategories: newSubs,
       hiddenSubCategories: newHidden,
     );
+    _categoriesDirty = true;  // 标记分类为脏
     _saveData();
     notifyListeners();
   }
@@ -932,6 +966,12 @@ class TimeProvider with ChangeNotifier {
         _templates[i] = template.copyWith(slots: newSlots);
       }
     }
+
+    // 重命名会影响所有日期的时间块、目标和模板
+    _allSlotsDirty = true;
+    _targetsDirty = true;
+    _templatesDirty = true;
+    _targetStatsCache.invalidate();  // 全量失效缓存
   }
 
   void _migrateToCategoryIds() {
@@ -974,6 +1014,9 @@ class TimeProvider with ChangeNotifier {
     }
 
     if (categoriesChanged || slotsChanged || targetsChanged) {
+      if (categoriesChanged) _categoriesDirty = true;
+      if (slotsChanged) _allSlotsDirty = true;
+      if (targetsChanged) _targetsDirty = true;
       _saveData();
     }
   }
@@ -995,53 +1038,97 @@ class TimeProvider with ChangeNotifier {
   Future<void> _saveDataImpl() async {
     final prefs = await SharedPreferences.getInstance();
 
-    // 1. 保存分类
-    // 将 Category 对象转换为 JSON 列表
-    List<String> catList = _categories.map((c) {
-      return json.encode({
-        'id': c.id,
-        'name': c.name,
-        'color': c.color.toARGB32(),
-        'subCategories': c.subCategories,
-        'hiddenSubCategories': c.hiddenSubCategories,
+    // 1. 保存分类（仅在变化时）
+    if (_categoriesDirty) {
+      List<String> catList = _categories.map((c) {
+        return json.encode({
+          'id': c.id,
+          'name': c.name,
+          'color': c.color.toARGB32(),
+          'subCategories': c.subCategories,
+          'hiddenSubCategories': c.hiddenSubCategories,
+        });
+      }).toList();
+      await prefs.setStringList('categories', catList);
+      _categoriesDirty = false;
+    }
+
+    // 2. 保存目标（仅在变化时）
+    if (_targetsDirty) {
+      List<String> targetList =
+          _targets.map((t) => json.encode(t.toJson())).toList();
+      await prefs.setStringList('targets', targetList);
+      _targetsDirty = false;
+    }
+
+    // 3. 保存时间块（仅保存变化的日期）
+    if (_allSlotsDirty) {
+      // 全量保存所有时间块
+      Map<String, dynamic> slotsJson = {};
+      _dailySlots.forEach((dateKey, daySlots) {
+        final recordedSlots = _serializeRecordedSlots(daySlots);
+        if (recordedSlots.isNotEmpty) {
+          slotsJson[dateKey] = recordedSlots;
+        }
       });
-    }).toList();
-    await prefs.setStringList('categories', catList);
-
-    // 2. 保存目标 (新增)
-    List<String> targetList =
-        _targets.map((t) => json.encode(t.toJson())).toList();
-    await prefs.setStringList('targets', targetList);
-
-    // 3. 保存时间块
-    // 为了节省空间，只保存已记录(recorded=true)的块
-    Map<String, dynamic> slotsJson = {};
-    _dailySlots.forEach((dateKey, daySlots) {
-      final recordedSlots = _serializeRecordedSlots(daySlots);
-      if (recordedSlots.isNotEmpty) {
-        slotsJson[dateKey] = recordedSlots;
+      await prefs.setString('daily_slots', json.encode(slotsJson));
+      _allSlotsDirty = false;
+      _slotsDirty.clear();
+    } else if (_slotsDirty.isNotEmpty) {
+      // 增量保存：只保存变化的日期
+      // 先加载现有数据
+      String? slotsStr = prefs.getString('daily_slots');
+      Map<String, dynamic> slotsJson = {};
+      if (slotsStr != null) {
+        try {
+          slotsJson = json.decode(slotsStr) as Map<String, dynamic>;
+        } catch (_) {}
       }
-    });
-    await prefs.setString('daily_slots', json.encode(slotsJson));
+      // 更新变化的日期
+      for (final dateKey in _slotsDirty) {
+        final daySlots = _dailySlots[dateKey];
+        if (daySlots != null) {
+          final recordedSlots = _serializeRecordedSlots(daySlots);
+          if (recordedSlots.isNotEmpty) {
+            slotsJson[dateKey] = recordedSlots;
+          } else {
+            slotsJson.remove(dateKey);
+          }
+        } else {
+          slotsJson.remove(dateKey);
+        }
+      }
+      await prefs.setString('daily_slots', json.encode(slotsJson));
+      _slotsDirty.clear();
+    }
 
-    // 4. 日程模板
-    await prefs.setString(
-      'schedule_templates',
-      json.encode(_templates.map((t) => t.toJson()).toList()),
-    );
+    // 4. 日程模板（仅在变化时）
+    if (_templatesDirty) {
+      await prefs.setString(
+        'schedule_templates',
+        json.encode(_templates.map((t) => t.toJson()).toList()),
+      );
+      _templatesDirty = false;
+    }
 
-    // 5. 已忽略的 Google 日历导入
-    final ignoredJson = <String, dynamic>{};
-    _ignoredCalendarImports.forEach((dateKey, ids) {
-      if (ids.isNotEmpty) ignoredJson[dateKey] = ids.toList();
-    });
-    await prefs.setString('ignored_calendar_imports', json.encode(ignoredJson));
+    // 5. 已忽略的 Google 日历导入（仅在变化时）
+    if (_calendarDirty) {
+      final ignoredJson = <String, dynamic>{};
+      _ignoredCalendarImports.forEach((dateKey, ids) {
+        if (ids.isNotEmpty) ignoredJson[dateKey] = ids.toList();
+      });
+      await prefs.setString('ignored_calendar_imports', json.encode(ignoredJson));
+      _calendarDirty = false;
+    }
 
-    // 6. 待同步日期
-    await prefs.setStringList(
-        'pending_sync_dates', _pendingSyncDates.toList());
+    // 6. 待同步日期（仅在变化时）
+    if (_syncDirty) {
+      await prefs.setStringList(
+          'pending_sync_dates', _pendingSyncDates.toList());
+      _syncDirty = false;
+    }
 
-    // 7. 分类展开状态（key 已是 String）
+    // 7. 分类展开状态（总是保存，因为体积小）
     await prefs.setString('category_expand_states', json.encode(_categoryExpandStates));
 
     await _refreshHomeWidget();
@@ -1126,6 +1213,13 @@ class TimeProvider with ChangeNotifier {
     final data = _parseBackupRoot(jsonStr);
     _applyBackupMap(data);
     _migrateToCategoryIds();
+    // 导入是全量操作，设置所有脏标记
+    _categoriesDirty = true;
+    _targetsDirty = true;
+    _allSlotsDirty = true;
+    _templatesDirty = true;
+    _calendarDirty = true;
+    _syncDirty = true;
     await _saveData();
     notifyListeners();
   }
@@ -1340,20 +1434,22 @@ class TimeProvider with ChangeNotifier {
     final Category item = categories.removeAt(oldIndex);
     categories.insert(newIndex, item);
 
-    // 通知 UI 更新并保存到本地存储
+    _categoriesDirty = true;  // 标记分类为脏
     notifyListeners();
-    _saveData(); // 假设你有这个持久化方法
+    _saveData();
   }
 
   void deleteCategory(int index) {
     categories.removeAt(index);
+    _categoriesDirty = true;  // 标记分类为脏
     notifyListeners();
-    _saveData(); // 确保保存更改
+    _saveData();
   }
 
   void addTarget(Target target) {
     _targets.add(target);
-    _saveData(); // 添加后保存
+    _targetsDirty = true;  // 标记目标为脏
+    _saveData();
     notifyListeners();
   }
 
@@ -1361,14 +1457,16 @@ class TimeProvider with ChangeNotifier {
     int index = _targets.indexWhere((t) => t.id == newTarget.id);
     if (index != -1) {
       _targets[index] = newTarget;
-      _saveData(); // 更新后保存
+      _targetsDirty = true;  // 标记目标为脏
+      _saveData();
       notifyListeners();
     }
   }
 
   void deleteTarget(Target target) {
     _targets.remove(target);
-    _saveData(); // 删除后保存
+    _targetsDirty = true;  // 标记目标为脏
+    _saveData();
     notifyListeners();
   }
 
@@ -1378,6 +1476,7 @@ class TimeProvider with ChangeNotifier {
     }
     final Target item = _targets.removeAt(oldIndex);
     _targets.insert(newIndex, item);
+    _targetsDirty = true;  // 标记目标为脏
     _saveData();
     notifyListeners();
   }
