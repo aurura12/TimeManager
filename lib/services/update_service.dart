@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../config/github_config.dart';
 
 class UpdateInfo {
   final String version;
@@ -19,40 +21,60 @@ class UpdateInfo {
 }
 
 class UpdateService {
-  // TODO: 替换为你的 GitHub 仓库
-  static const String _owner = 'aurura12';
-  static const String _repo = 'TimeManager';
+  static String get _owner => GithubConfig.owner;
+  static String get _repo => GithubConfig.repo;
+  static String get _token => GithubConfig.token;
 
   /// 检查是否有新版本
   static Future<UpdateInfo?> checkForUpdate() async {
     try {
+      debugPrint('检查更新: 请求 GitHub API...');
       final response = await http.get(
         Uri.parse('https://api.github.com/repos/$_owner/$_repo/releases/latest'),
-        headers: {'Accept': 'application/vnd.github.v3+json'},
+        headers: {
+          'Accept': 'application/vnd.github.v3+json',
+          'Authorization': 'Bearer $_token',
+        },
       );
 
-      if (response.statusCode != 200) return null;
+      debugPrint('检查更新: HTTP ${response.statusCode}');
+      if (response.statusCode != 200) {
+        debugPrint('检查更新失败: HTTP ${response.statusCode}');
+        return null;
+      }
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final tagName = data['tag_name'] as String? ?? '';
       final body = data['body'] as String? ?? '';
+      debugPrint('检查更新: 最新版本 tag=$tagName');
 
-      // 找到 APK 下载链接
       String? apkUrl;
       final assets = data['assets'] as List<dynamic>? ?? [];
+      debugPrint('检查更新: assets 数量=${assets.length}');
       for (final asset in assets) {
         final name = asset['name'] as String? ?? '';
+        debugPrint('检查更新: asset=$name');
         if (name.endsWith('.apk')) {
           apkUrl = asset['browser_download_url'] as String?;
           break;
         }
       }
 
-      if (apkUrl == null || tagName.isEmpty) return null;
+      if (apkUrl == null) {
+        debugPrint('检查更新: 未找到 APK 文件');
+        return null;
+      }
+      if (tagName.isEmpty) {
+        debugPrint('检查更新: tagName 为空');
+        return null;
+      }
 
-      // 比较版本号
       final currentVersion = await _getCurrentVersion();
-      if (_isNewerVersion(tagName, currentVersion)) {
+      debugPrint('检查更新: 当前版本=$currentVersion, 最新版本=$tagName');
+      final isNewer = _isNewerVersion(tagName, currentVersion);
+      debugPrint('检查更新: 是否有新版本=$isNewer');
+
+      if (isNewer) {
         return UpdateInfo(
           version: tagName,
           downloadUrl: apkUrl,
@@ -61,21 +83,19 @@ class UpdateService {
       }
 
       return null;
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('检查更新失败: $e');
+      debugPrint('堆栈: $st');
       return null;
     }
   }
 
-  /// 获取当前版本号
   static Future<String> _getCurrentVersion() async {
     final packageInfo = await PackageInfo.fromPlatform();
     return packageInfo.version;
   }
 
-  /// 比较版本号，返回 newVersion 是否比 currentVersion 更新
   static bool _isNewerVersion(String newVersion, String currentVersion) {
-    // 移除可能的 v 前缀
     final newV = newVersion.replaceFirst(RegExp(r'^v'), '');
     final currentV = currentVersion.replaceFirst(RegExp(r'^v'), '');
 
@@ -92,26 +112,46 @@ class UpdateService {
     return false;
   }
 
-  /// 下载并安装 APK
+  /// 格式化下载速度
+  static String _formatSpeed(int bytesPerSecond) {
+    if (bytesPerSecond < 1024) {
+      return '$bytesPerSecond B/s';
+    } else if (bytesPerSecond < 1024 * 1024) {
+      return '${(bytesPerSecond / 1024).toStringAsFixed(1)} KB/s';
+    } else {
+      return '${(bytesPerSecond / 1024 / 1024).toStringAsFixed(1)} MB/s';
+    }
+  }
+
+  /// 下载并安装 APK（带进度显示）
   static Future<void> downloadAndInstall(
     String downloadUrl,
     String version,
     BuildContext context,
   ) async {
+    final progressNotifier = ValueNotifier<double>(0);
+    final statusNotifier = ValueNotifier<String>('准备下载...');
+
     try {
       // 显示下载进度对话框
       if (context.mounted) {
         showDialog(
           context: context,
           barrierDismissible: false,
-          builder: (context) => const _DownloadingDialog(),
+          builder: (context) => _DownloadingDialog(
+            progressNotifier: progressNotifier,
+            statusNotifier: statusNotifier,
+          ),
         );
       }
 
-      // 下载 APK
-      final response = await http.get(Uri.parse(downloadUrl));
+      // 使用 Client 获取流式响应
+      final client = http.Client();
+      final request = http.Request('GET', Uri.parse(downloadUrl));
+      final response = await client.send(request);
 
       if (response.statusCode != 200) {
+        client.close();
         if (context.mounted) {
           Navigator.pop(context);
           ScaffoldMessenger.of(context).showSnackBar(
@@ -121,27 +161,82 @@ class UpdateService {
         return;
       }
 
-      // 保存到临时目录
+      // 获取文件总大小
+      final contentLength = response.contentLength ?? 0;
+      debugPrint('下载: 文件大小=${contentLength ~/ 1024}KB');
+
+      // 流式写入文件
       final tempDir = await getTemporaryDirectory();
       final apkFile = File('${tempDir.path}/time_manager_v$version.apk');
-      await apkFile.writeAsBytes(response.bodyBytes);
+      final sink = apkFile.openWrite();
+
+      int received = 0;
+      final startTime = DateTime.now();
+      int lastReceived = 0;
+      DateTime lastTime = startTime;
+
+      await for (final chunk in response.stream) {
+        sink.add(chunk);
+        received += chunk.length;
+
+        final now = DateTime.now();
+        final elapsed = now.difference(lastTime).inMilliseconds;
+
+        if (elapsed >= 500) {
+          // 每 500ms 更新一次速度
+          final speed = (received - lastReceived) * 1000 ~/ elapsed;
+          final speedStr = _formatSpeed(speed);
+
+          if (contentLength > 0) {
+            final progress = received / contentLength;
+            progressNotifier.value = progress;
+            statusNotifier.value = '下载中  $speedStr';
+          } else {
+            statusNotifier.value = '下载中 ${received ~/ 1024}KB  $speedStr';
+          }
+
+          lastReceived = received;
+          lastTime = now;
+        }
+      }
+      await sink.close();
+      client.close();
+
+      debugPrint('下载完成: ${apkFile.path}');
+
+      // 更新状态为安装中
+      statusNotifier.value = '正在启动安装...';
+      progressNotifier.value = 1.0;
+
+      // 等待一小段时间让用户看到"安装中"状态
+      await Future.delayed(const Duration(milliseconds: 500));
 
       // 关闭进度对话框
       if (context.mounted) Navigator.pop(context);
 
-      // 打开 APK 安装
-      final uri = Uri.file(apkFile.path);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('无法打开安装程序')),
-          );
+      // 使用 MethodChannel 调用原生代码打开 APK
+      final channel = MethodChannel('com.example.time_manager/install_apk');
+      try {
+        debugPrint('尝试通过 MethodChannel 安装 APK...');
+        await channel.invokeMethod('installApk', {'path': apkFile.path});
+        debugPrint('MethodChannel 安装成功');
+      } catch (e) {
+        debugPrint('MethodChannel 失败: $e，降级到 url_launcher');
+        final uri = Uri.file(apkFile.path);
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } else {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('无法打开安装程序')),
+            );
+          }
         }
       }
     } catch (e) {
       debugPrint('下载安装失败: $e');
+      progressNotifier.dispose();
+      statusNotifier.dispose();
       if (context.mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -153,17 +248,53 @@ class UpdateService {
 }
 
 class _DownloadingDialog extends StatelessWidget {
-  const _DownloadingDialog();
+  final ValueNotifier<double> progressNotifier;
+  final ValueNotifier<String> statusNotifier;
+
+  const _DownloadingDialog({
+    required this.progressNotifier,
+    required this.statusNotifier,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return const AlertDialog(
+    return AlertDialog(
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          CircularProgressIndicator(),
-          SizedBox(height: 16),
-          Text('正在下载更新...'),
+          ValueListenableBuilder<double>(
+            valueListenable: progressNotifier,
+            builder: (context, progress, child) {
+              return CircularProgressIndicator(
+                value: progress > 0 ? progress : null,
+                strokeWidth: 3,
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+          ValueListenableBuilder<String>(
+            valueListenable: statusNotifier,
+            builder: (context, status, child) {
+              return Text(
+                status,
+                style: const TextStyle(fontSize: 14),
+              );
+            },
+          ),
+          const SizedBox(height: 8),
+          ValueListenableBuilder<double>(
+            valueListenable: progressNotifier,
+            builder: (context, progress, child) {
+              if (progress <= 0) return const SizedBox.shrink();
+              return Text(
+                '${(progress * 100).toStringAsFixed(1)}%',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              );
+            },
+          ),
         ],
       ),
     );
