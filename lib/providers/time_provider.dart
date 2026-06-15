@@ -91,6 +91,14 @@ class TimeProvider with ChangeNotifier {
   final TargetStatsCache _targetStatsCache = TargetStatsCache();
   TargetStatsCache get targetStatsCache => _targetStatsCache;
 
+  // --- 标签到分类ID映射缓存 ---
+  Map<String, String>? _labelCategoryIdCache;
+
+  // --- 目标统计变化通知（仅在目标相关数据变化时通知） ---
+  final StreamController<void> _targetStatsChangedController =
+      StreamController<void>.broadcast();
+  Stream<void> get targetStatsChanged => _targetStatsChangedController.stream;
+
   // 用于发送同步状态消息的 Stream
   final StreamController<String> _syncStatusController =
       StreamController<String>.broadcast();
@@ -103,6 +111,7 @@ class TimeProvider with ChangeNotifier {
     _debounceTimer?.cancel();
     _googleAuthSubscription?.cancel();
     _syncStatusController.close();
+    _targetStatsChangedController.close();
     super.dispose();
   }
 
@@ -185,9 +194,10 @@ class TimeProvider with ChangeNotifier {
     currentSlots[index].recorded = !currentSlots[index].recorded;
     final dateKey = _getDateKey(_currentDate);
     _slotsDirty.add(dateKey);
-    _targetStatsCache.invalidateDate(dateKey);  // 失效该日期的缓存
+    _targetStatsCache.invalidateDate(dateKey);
     _saveData();
     notifyListeners();
+    _targetStatsChangedController.add(null);  // 通知目标统计变化
   }
 
   void clearAll() {
@@ -195,10 +205,11 @@ class TimeProvider with ChangeNotifier {
     String dateKey = _getDateKey(_currentDate);
     _dailySlots[dateKey] = _generateInitialSlots();
     _slotsDirty.add(dateKey);
-    _targetStatsCache.invalidateDate(dateKey);  // 失效该日期的缓存
+    _targetStatsCache.invalidateDate(dateKey);
     _markPendingSync();
     _saveData();
     notifyListeners();
+    _targetStatsChangedController.add(null);  // 通知目标统计变化
     _scheduleCalendarSync();
   }
 
@@ -254,11 +265,12 @@ class TimeProvider with ChangeNotifier {
       slots[index].isFromCalendar = false;
       slots[index].calendarEventId = null;
     }
-    _slotsDirty.add(_getDateKey(_currentDate));  // 标记当前日期为脏
-    _targetStatsCache.invalidateDate(_getDateKey(_currentDate));  // 失效该日期的缓存
+    _slotsDirty.add(_getDateKey(_currentDate));
+    _targetStatsCache.invalidateDate(_getDateKey(_currentDate));
     _markPendingSync();
     _saveData();
     notifyListeners();
+    _targetStatsChangedController.add(null);  // 通知目标统计变化
     _scheduleCalendarSync();
   }
 
@@ -447,11 +459,12 @@ class TimeProvider with ChangeNotifier {
           _clearSlot(index);
           final dateKey = _getDateKey(_currentDate);
           _slotsDirty.add(dateKey);
-          _targetStatsCache.invalidateDate(dateKey);  // 失效该日期的缓存
+          _targetStatsCache.invalidateDate(dateKey);
           _markPendingSync();
           _scheduleCalendarSync();
           _saveData();
           notifyListeners();
+          _targetStatsChangedController.add(null);  // 通知目标统计变化
         }
       }
     }
@@ -813,6 +826,7 @@ class TimeProvider with ChangeNotifier {
     _markPendingSync();
     _saveData();
     notifyListeners();
+    _targetStatsChangedController.add(null);  // 通知目标统计变化
     _scheduleCalendarSync();
   }
 
@@ -838,7 +852,8 @@ class TimeProvider with ChangeNotifier {
 
   void addCategory(Category category) {
     _categories.add(category);
-    _categoriesDirty = true;  // 标记分类为脏
+    _categoriesDirty = true;
+    _invalidateLabelCategoryIdCache();  // 清除缓存
     _saveData();
     notifyListeners();
   }
@@ -867,7 +882,8 @@ class TimeProvider with ChangeNotifier {
     }
 
     _categories[index] = updated;
-    _categoriesDirty = true;  // 标记分类为脏
+    _categoriesDirty = true;
+    _invalidateLabelCategoryIdCache();  // 清除缓存
     _saveData();
     notifyListeners();
   }
@@ -918,6 +934,8 @@ class TimeProvider with ChangeNotifier {
   }
 
   Map<String, String> _labelToCategoryIdMap() {
+    if (_labelCategoryIdCache != null) return _labelCategoryIdCache!;
+    
     final map = <String, String>{};
     for (final cat in _categories) {
       map[cat.name] = cat.id;
@@ -925,7 +943,12 @@ class TimeProvider with ChangeNotifier {
         map[sub] = cat.id;
       }
     }
+    _labelCategoryIdCache = map;
     return map;
+  }
+
+  void _invalidateLabelCategoryIdCache() {
+    _labelCategoryIdCache = null;
   }
 
   void _propagateLabelRename(
@@ -971,7 +994,9 @@ class TimeProvider with ChangeNotifier {
     _allSlotsDirty = true;
     _targetsDirty = true;
     _templatesDirty = true;
-    _targetStatsCache.invalidate();  // 全量失效缓存
+    _targetStatsCache.invalidate();
+    _invalidateLabelCategoryIdCache();
+    _targetStatsChangedController.add(null);  // 通知目标统计变化
   }
 
   void _migrateToCategoryIds() {
@@ -1441,33 +1466,37 @@ class TimeProvider with ChangeNotifier {
 
   void deleteCategory(int index) {
     categories.removeAt(index);
-    _categoriesDirty = true;  // 标记分类为脏
+    _categoriesDirty = true;
+    _invalidateLabelCategoryIdCache();  // 清除缓存
     notifyListeners();
     _saveData();
   }
 
   void addTarget(Target target) {
     _targets.add(target);
-    _targetsDirty = true;  // 标记目标为脏
+    _targetsDirty = true;
     _saveData();
     notifyListeners();
+    _targetStatsChangedController.add(null);  // 通知目标统计变化
   }
 
   void updateTarget(Target newTarget) {
     int index = _targets.indexWhere((t) => t.id == newTarget.id);
     if (index != -1) {
       _targets[index] = newTarget;
-      _targetsDirty = true;  // 标记目标为脏
+      _targetsDirty = true;
       _saveData();
       notifyListeners();
+      _targetStatsChangedController.add(null);  // 通知目标统计变化
     }
   }
 
   void deleteTarget(Target target) {
     _targets.remove(target);
-    _targetsDirty = true;  // 标记目标为脏
+    _targetsDirty = true;
     _saveData();
     notifyListeners();
+    _targetStatsChangedController.add(null);  // 通知目标统计变化
   }
 
   void reorderTargets(int oldIndex, int newIndex) {
