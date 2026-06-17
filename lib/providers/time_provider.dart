@@ -922,9 +922,24 @@ class TimeProvider with ChangeNotifier {
     if (target.categoryId.isNotEmpty &&
         slot.categoryId != null &&
         slot.categoryId!.isNotEmpty) {
-      return slot.categoryId == target.categoryId &&
-          slot.label == target.name;
+      // categoryId 必须匹配
+      if (slot.categoryId != target.categoryId) return false;
+      
+      // 查找目标对应的分类
+      final category = _categories.firstWhere(
+        (c) => c.id == target.categoryId,
+        orElse: () => Category(name: '', color: Colors.transparent),
+      );
+      
+      // 如果目标名称等于分类名称（父分类目标），匹配该分类下所有子分类
+      if (category.name == target.name) {
+        return true;
+      }
+      
+      // 否则匹配特定的子分类名称
+      return slot.label == target.name;
     }
+    // 兼容旧数据：仅匹配 label
     return slot.label == target.name;
   }
 
@@ -1450,6 +1465,52 @@ class TimeProvider with ChangeNotifier {
     }
 
     _migrateToCategoryIds();
+  }
+
+  /// 移动子分类到另一个分类
+  void moveSubCategory(
+      String fromCategoryId, String toCategoryId, String subName) {
+    // 1. 更新分类结构
+    final fromIndex = _categories.indexWhere((c) => c.id == fromCategoryId);
+    final toIndex = _categories.indexWhere((c) => c.id == toCategoryId);
+    if (fromIndex == -1 || toIndex == -1) return;
+
+    final fromCat = _categories[fromIndex];
+    final toCat = _categories[toIndex];
+
+    _categories[fromIndex] = fromCat.copyWith(
+      subCategories: fromCat.subCategories.where((s) => s != subName).toList(),
+    );
+    _categories[toIndex] = toCat.copyWith(
+      subCategories: [...toCat.subCategories, subName],
+    );
+
+    // 2. 更新所有相关时间块的 categoryId
+    _dailySlots.forEach((_, daySlots) {
+      for (final slot in daySlots) {
+        if (slot.categoryId == fromCategoryId && slot.label == subName) {
+          slot.categoryId = toCategoryId;
+        }
+      }
+    });
+
+    // 3. 更新目标的 categoryId（如果关联了这个子分类）
+    for (int i = 0; i < _targets.length; i++) {
+      final target = _targets[i];
+      if (target.categoryId == fromCategoryId && target.name == subName) {
+        _targets[i] = target.copyWith(categoryId: toCategoryId);
+      }
+    }
+
+    // 4. 通知 UI 刷新
+    _categoriesDirty = true;
+    _targetsDirty = true;
+    _allSlotsDirty = true;
+    _invalidateLabelCategoryIdCache();
+    _targetStatsCache.invalidate();
+    _targetStatsChangedController.add(null);
+    _saveData();
+    notifyListeners();
   }
 
   void reorderCategories(int oldIndex, int newIndex) {
