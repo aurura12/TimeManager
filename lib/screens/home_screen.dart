@@ -636,6 +636,129 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _showSubCategoryMenu({
+    required BuildContext context,
+    required String subCat,
+    required int subIndex,
+    required StateSetter setDialogState,
+    required List<String> tempSubCategories,
+    required String currentCategoryId,
+    required List<Category> allCategories,
+    required Function(String fromCategoryId, String toCategoryId, String name)
+        onMove,
+  }) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text('删除', style: TextStyle(color: Colors.red)),
+              onTap: () {
+                Navigator.pop(context);
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('确认删除'),
+                    content: Text('确定要删除子事件"$subCat"吗？'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('取消'),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          setDialogState(
+                              () => tempSubCategories.removeAt(subIndex));
+                          Navigator.pop(context);
+                        },
+                        style: TextButton.styleFrom(foregroundColor: Colors.red),
+                        child: const Text('删除'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.move_to_inbox),
+              title: const Text('移动到...'),
+              onTap: () {
+                Navigator.pop(context);
+                _showMoveSubCategoryDialog(
+                  context: context,
+                  subCat: subCat,
+                  currentCategoryId: currentCategoryId,
+                  allCategories: allCategories,
+                  onMove: onMove,
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showMoveSubCategoryDialog({
+    required BuildContext context,
+    required String subCat,
+    required String currentCategoryId,
+    required List<Category> allCategories,
+    required Function(String fromCategoryId, String toCategoryId, String name)
+        onMove,
+  }) {
+    String? selectedCategoryId;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('移动到...'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: allCategories
+                .where((c) => c.id != currentCategoryId)
+                .map((category) => RadioListTile<String>(
+                      title: Text(category.name),
+                      value: category.id,
+                      groupValue: selectedCategoryId,
+                      onChanged: (value) {
+                        setDialogState(() => selectedCategoryId = value);
+                      },
+                    ))
+                .toList(),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: selectedCategoryId == null
+                  ? null
+                  : () {
+                      final targetCat = allCategories.firstWhere(
+                          (c) => c.id == selectedCategoryId);
+                      onMove(currentCategoryId, selectedCategoryId!, subCat);
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('已将"$subCat"移动到${targetCat.name}'),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    },
+              child: const Text('移动'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showCategoryDialog(BuildContext context, TimeProvider provider,
       {int? index, Category? existingCat}) {
     bool isEdit = index != null && existingCat != null;
@@ -735,81 +858,32 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 10),
 
                     // 子事件列表
-                    Wrap(
-                      spacing: 8.0,
-                      runSpacing: 8.0,
-                      children: tempSubCategories.asMap().entries.map((entry) {
-                        int subIndex = entry.key;
-                        String subCat = entry.value;
-                        return Draggable<String>(
-                          data: subCat,
-                          onDragStarted: () {},
-                          feedback: Material(
-                            elevation: 4.0,
-                            child: Chip(
-                              visualDensity: VisualDensity.compact,
-                              backgroundColor: selectedColor,
-                              label: Text(subCat,
-                                  style: const TextStyle(
-                                      color: Colors.white, fontSize: 12)),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8)),
-                            ),
-                          ),
-                          childWhenDragging: Opacity(
-                            opacity: 0.4,
-                            child: Chip(
-                              visualDensity: VisualDensity.compact,
-                              backgroundColor:
-                                  selectedColor.withValues(alpha: 0.8),
-                              label: Text(subCat,
-                                  style: const TextStyle(
-                                      color: Colors.white, fontSize: 12)),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8)),
-                            ),
-                          ),
-                          child: Chip(
-                            visualDensity: VisualDensity.compact,
-                            backgroundColor:
-                                selectedColor.withValues(alpha: 0.8),
-                            label: Text(subCat,
-                                style: const TextStyle(
-                                    color: Colors.white, fontSize: 12)),
-                            deleteIcon: const Icon(Icons.close,
-                                size: 14, color: Colors.white70),
-                            onDeleted: () {
-                              showDialog(
-                                context: context,
-                                builder: (context) => AlertDialog(
-                                  title: const Text('确认删除'),
-                                  content: Text('确定要删除子事件"$subCat"吗？'),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(context),
-                                      child: const Text('取消'),
-                                    ),
-                                    TextButton(
-                                      onPressed: () {
-                                        setDialogState(() =>
-                                            tempSubCategories.removeAt(subIndex));
-                                        Navigator.pop(context);
-                                      },
-                                      style: TextButton.styleFrom(
-                                          foregroundColor: Colors.red),
-                                      child: const Text('删除'),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8)),
-                            side: BorderSide.none,
-                          ),
-                        );
-                      }).toList(),
-                    ),
+                    if (tempSubCategories.isNotEmpty)
+                      _ReorderableChipWrap(
+                        items: tempSubCategories,
+                        color: selectedColor,
+                        onReorder: (oldIndex, newIndex) {
+                          setDialogState(() {
+                            final item = tempSubCategories.removeAt(oldIndex);
+                            tempSubCategories.insert(newIndex, item);
+                          });
+                        },
+                        onTap: (subCat, subIndex) => _showSubCategoryMenu(
+                          context: context,
+                          subCat: subCat,
+                          subIndex: subIndex,
+                          setDialogState: setDialogState,
+                          tempSubCategories: tempSubCategories,
+                          currentCategoryId: isEdit
+                              ? provider.categories[index].id
+                              : '',
+                          allCategories: provider.categories,
+                          onMove: (fromCategoryId, toCategoryId, name) {
+                            provider.moveSubCategory(
+                                fromCategoryId, toCategoryId, name);
+                          },
+                        ),
+                      ),
 
                     // 隐藏区域
                     const SizedBox(height: 10),
@@ -1524,5 +1598,145 @@ class _ExpandButtonState extends State<_ExpandButton> {
         ),
       ),
     );
+  }
+}
+
+/// 可排序的 Chip Wrap 组件
+/// 支持自动换行 + 拖动排序动画
+class _ReorderableChipWrap extends StatefulWidget {
+  final List<String> items;
+  final Color color;
+  final Function(int oldIndex, int newIndex) onReorder;
+  final Function(String item, int index) onTap;
+
+  const _ReorderableChipWrap({
+    required this.items,
+    required this.color,
+    required this.onReorder,
+    required this.onTap,
+  });
+
+  @override
+  State<_ReorderableChipWrap> createState() => _ReorderableChipWrapState();
+}
+
+class _ReorderableChipWrapState extends State<_ReorderableChipWrap> {
+  int? _draggedIndex;
+  Offset _dragPosition = Offset.zero;
+  final GlobalKey _wrapKey = GlobalKey();
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onLongPressStart: _onLongPressStart,
+      onLongPressMoveUpdate: _onLongPressMoveUpdate,
+      onLongPressEnd: _onLongPressEnd,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Wrap(
+            key: _wrapKey,
+            spacing: 8.0,
+            runSpacing: 8.0,
+            children: widget.items.asMap().entries.map((entry) {
+              final index = entry.key;
+              final item = entry.value;
+              final isDragged = _draggedIndex == index;
+
+              return AnimatedOpacity(
+                duration: const Duration(milliseconds: 150),
+                opacity: isDragged ? 0.2 : 1.0,
+                child: GestureDetector(
+                  onTap: () => widget.onTap(item, index),
+                  child: Chip(
+                    visualDensity: VisualDensity.compact,
+                    backgroundColor: widget.color.withValues(alpha: 0.8),
+                    label: Text(item,
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 12)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                    side: BorderSide.none,
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          if (_draggedIndex != null)
+            Positioned(
+              left: _dragPosition.dx - 40,
+              top: _dragPosition.dy - 20,
+              child: Material(
+                elevation: 8.0,
+                child: Chip(
+                  visualDensity: VisualDensity.compact,
+                  backgroundColor: widget.color,
+                  label: Text(widget.items[_draggedIndex!],
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 12)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _onLongPressStart(LongPressStartDetails details) {
+    final index = _getItemIndexAtPosition(details.localPosition);
+    if (index != null) {
+      setState(() {
+        _draggedIndex = index;
+        _dragPosition = details.localPosition;
+      });
+    }
+  }
+
+  void _onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
+    if (_draggedIndex == null) return;
+
+    setState(() {
+      _dragPosition = details.localPosition;
+    });
+
+    final newIndex = _getItemIndexAtPosition(details.localPosition);
+    if (newIndex != null && newIndex != _draggedIndex) {
+      // 实时交换位置
+      setState(() {
+        final item = widget.items.removeAt(_draggedIndex!);
+        widget.items.insert(newIndex, item);
+        _draggedIndex = newIndex;
+      });
+      widget.onReorder(_draggedIndex!, newIndex);
+    }
+  }
+
+  void _onLongPressEnd(LongPressEndDetails details) {
+    setState(() {
+      _draggedIndex = null;
+    });
+  }
+
+  int? _getItemIndexAtPosition(Offset position) {
+    final wrap = _wrapKey.currentContext?.findRenderObject();
+    if (wrap == null) return null;
+
+    final box = wrap as RenderBox;
+    final wrapSize = box.size;
+
+    // 根据位置估算索引
+    const chipWidth = 88.0;
+    const chipHeight = 40.0;
+
+    final col = (position.dx / chipWidth).floor();
+    final row = (position.dy / chipHeight).floor();
+    final index = row * (wrapSize.width ~/ chipWidth) + col;
+
+    if (index >= 0 && index < widget.items.length) {
+      return index;
+    }
+    return null;
   }
 }
