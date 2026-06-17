@@ -19,6 +19,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   late TabController _tabController;
   int _groupValue = 0; // 0: 列表, 1: 饼图
   int _touchedIndex = -1;
+  bool _showParentOnly = false; // false: 全部事件, true: 只显示父事件
 
   @override
   void initState() {
@@ -68,22 +69,49 @@ class _ProfileScreenState extends State<ProfileScreen>
             children: [
               const Text("分类统计",
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-              CupertinoSegmentedControl<int>(
-                groupValue: _groupValue,
-                borderColor: colorScheme.primary,
-                selectedColor: colorScheme.primary,
-                pressedColor: colorScheme.primary.withValues(alpha: 0.2),
-                children: const {
-                  0: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    child: Icon(Icons.table_chart_outlined, size: 20),
+              Row(
+                children: [
+                  // 切换显示模式
+                  GestureDetector(
+                    onTap: () => setState(() => _showParentOnly = !_showParentOnly),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: _showParentOnly
+                            ? colorScheme.primary
+                            : colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Text(
+                        _showParentOnly ? '父事件' : '全部',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _showParentOnly
+                              ? Colors.white
+                              : colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
                   ),
-                  1: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    child: Icon(Icons.pie_chart_outline, size: 20),
+                  const SizedBox(width: 8),
+                  CupertinoSegmentedControl<int>(
+                    groupValue: _groupValue,
+                    borderColor: colorScheme.primary,
+                    selectedColor: colorScheme.primary,
+                    pressedColor: colorScheme.primary.withValues(alpha: 0.2),
+                    children: const {
+                      0: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        child: Icon(Icons.table_chart_outlined, size: 20),
+                      ),
+                      1: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        child: Icon(Icons.pie_chart_outline, size: 20),
+                      ),
+                    },
+                    onValueChanged: (value) => setState(() => _groupValue = value),
                   ),
-                },
-                onValueChanged: (value) => setState(() => _groupValue = value),
+                ],
               ),
             ],
           ),
@@ -524,6 +552,9 @@ class _ProfileScreenState extends State<ProfileScreen>
       start = DateTime(now.year, now.month - 1, now.day);
     } else {
       start = DateTime(2025);
+    }
+    if (_showParentOnly) {
+      return provider.getParentStatistics(start, now);
     }
     return provider.getStatistics(start, now);
   }

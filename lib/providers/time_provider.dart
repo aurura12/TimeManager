@@ -1859,6 +1859,35 @@ class TimeProvider with ChangeNotifier {
     return stats;
   }
 
+  /// 获取按父事件汇总的统计（每个父事件包含自己的时间 + 所有子事件的时间）
+  Map<String, double> getParentStatistics(DateTime start, DateTime end) {
+    // 先获取详细统计
+    final detailStats = getStatistics(start, end);
+    Map<String, double> parentStats = {};
+
+    // 建立子事件到父事件的映射
+    final Map<String, String> childToParent = {};
+    for (final cat in _categories) {
+      for (final sub in cat.subCategories) {
+        childToParent[sub] = cat.name;
+      }
+    }
+
+    // 汇总统计
+    detailStats.forEach((label, hours) {
+      final parentName = childToParent[label];
+      if (parentName != null) {
+        // 子事件：累加到父事件
+        parentStats[parentName] = (parentStats[parentName] ?? 0) + hours;
+      } else {
+        // 父事件或独立事件：直接添加
+        parentStats[label] = (parentStats[label] ?? 0) + hours;
+      }
+    });
+
+    return parentStats;
+  }
+
   /// 统计每个事件在日期范围内出现的连续块次数（用于词云权重）
   Map<String, int> getEventOccurrenceCounts(DateTime start, DateTime end) {
     final counts = <String, int>{};
