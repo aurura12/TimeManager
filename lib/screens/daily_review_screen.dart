@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/daily_review_summary.dart';
+import '../widgets/daily_review_chat_sheet.dart';
 
 class DailyReviewScreen extends StatefulWidget {
   final DateTime date;
@@ -181,27 +182,23 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
 
   Future<void> _loadEntry(
     int index, {
-    bool forceRefresh = false,
     bool cachedOnly = false,
   }) async {
     if (index < 0 || index >= _entries.length) return;
     final entry = _entries[index];
     if (entry.loading) return;
-    if (entry.result != null && !forceRefresh) return;
+    if (entry.result != null && entry.result!.isSuccess) return;
 
     setState(() {
       entry.loading = true;
     });
 
     DailyReviewAiResult? result;
-    if (!forceRefresh) {
+    if (!cachedOnly) {
       result = await DailyReviewSummaryBuilder.loadCachedAi(entry.date);
     }
     if (!cachedOnly && result == null) {
-      result = await DailyReviewSummaryBuilder.fetchAiForDate(
-        entry.date,
-        forceRefresh: forceRefresh,
-      );
+      result = await DailyReviewSummaryBuilder.fetchAiForDate(entry.date);
     }
 
     if (!mounted) return;
@@ -222,12 +219,6 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
     if (picked == null) return;
 
     await _jumpToDate(picked);
-  }
-
-  Future<void> _refreshSelected() async {
-    final index = _indexOfDate(_selectedDate);
-    if (index < 0) return;
-    await _loadEntry(index, forceRefresh: true);
   }
 
   void _onRightScroll() {
@@ -365,11 +356,6 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
             onPressed: _pickDate,
             icon: const Icon(Icons.calendar_month_outlined),
           ),
-          IconButton(
-            tooltip: '重新生成',
-            onPressed: _refreshSelected,
-            icon: const Icon(Icons.refresh),
-          ),
         ],
       ),
       body: Row(
@@ -476,8 +462,8 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                 ),
                 const SizedBox(height: 10),
                 _buildCardAction(
-                  label: '重试生成',
-                  onTap: () => _loadEntry(index, forceRefresh: true),
+                  label: '重试',
+                  onTap: () => _loadEntry(index),
                 ),
               ],
             )
@@ -525,10 +511,56 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                     height: 1.7,
                   ),
                 ),
+                const SizedBox(height: 14),
+                _buildChatSection(entry),
               ],
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildChatSection(_ReviewEntry entry) {
+    const chips = [
+      '今天时间花在哪了？',
+      '和昨天比怎么样？',
+      '有什么建议？',
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: chips
+              .map(
+                (text) => ActionChip(
+                  label: Text(text, style: const TextStyle(fontSize: 12)),
+                  onPressed: () => DailyReviewChatSheet.open(
+                    context,
+                    date: entry.date,
+                    reviewBody: entry.result?.body,
+                    initialQuestion: text,
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: () => DailyReviewChatSheet.open(
+              context,
+              date: entry.date,
+              reviewBody: entry.result?.body,
+            ),
+            icon: const Icon(Icons.chat_bubble_outline, size: 18),
+            label: const Text('继续问 AI'),
+          ),
+        ),
+      ],
     );
   }
 

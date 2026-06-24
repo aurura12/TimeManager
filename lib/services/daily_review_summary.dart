@@ -33,7 +33,7 @@ class DailyReviewAiResult {
       case DailyReviewAiError.networkFailed:
         return 'AI 生成失败，请检查网络后重试。';
       case DailyReviewAiError.timeout:
-        return 'AI 响应超时（可能网络较慢或后台受限），请打开 App 后点击重新生成。';
+        return 'AI 响应超时，请检查网络后重试。';
       case null:
         return '未知错误';
     }
@@ -88,11 +88,8 @@ class DailyReviewSummaryBuilder {
     );
   }
 
-  /// 仅 AI 生成复盘，无本地写死兜底
-  static Future<DailyReviewAiResult> fetchAiForDate(
-    DateTime date, {
-    bool forceRefresh = false,
-  }) async {
+  /// 仅 AI 生成复盘（有缓存则直接返回）
+  static Future<DailyReviewAiResult> fetchAiForDate(DateTime date) async {
     final prefs = await SharedPreferences.getInstance();
     final todayStats = await _loadDayStats(prefs, date);
     final yesterday = date.subtract(const Duration(days: 1));
@@ -108,27 +105,30 @@ class DailyReviewSummaryBuilder {
       );
     }
 
-    if (!forceRefresh) {
-      final cached = await _loadCachedAiBody(
-        prefs: prefs,
+    final cached = await _loadCachedAiBody(
+      prefs: prefs,
+      date: date,
+      dataHash: dataHash,
+    );
+    if (cached != null) {
+      return DailyReviewAiResult(
         date: date,
-        dataHash: dataHash,
+        title: title,
+        body: cached,
+        fromCache: true,
       );
-      if (cached != null) {
-        return DailyReviewAiResult(
-          date: date,
-          title: title,
-          body: cached,
-          fromCache: true,
-        );
-      }
     }
 
-    final prompt = _buildAiPrompt(
+    final timeline = await _loadDayTimeline(prefs, date);
+    final labelToCategory = await _loadLabelCategoryMap(prefs);
+    final highlights = _buildHighlights(timeline, todayStats);
+
+    final prompt = _buildReviewPrompt(
       date: date,
       todayStats: todayStats,
       yesterdayStats: yesterdayStats,
-      timeline: await _loadDayTimeline(prefs, date),
+      highlights: highlights,
+      labelToCategory: labelToCategory,
       unrecordedGaps: await _loadUnrecordedGaps(prefs, date),
     );
 
@@ -162,6 +162,95 @@ class DailyReviewSummaryBuilder {
   static String _titleForDate(DateTime date) =>
       '${date.month}月${date.day}日 · 今日复盘';
 
+  /// 供对话使用的当日记录摘要（不含复盘写作要求）
+  static Future<String> buildDayContext(DateTime date) async {
+    final prefs = await SharedPreferences.getInstance();
+    final todayStats = await _loadDayStats(prefs, date);
+    final yesterday = date.subtract(const Duration(days: 1));
+    final yesterdayStats = await _loadDayStats(prefs, yesterday);
+    final timeline = await _loadDayTimeline(prefs, date);
+    final labelToCategory = await _loadLabelCategoryMap(prefs);
+    final highlights = _buildHighlights(timeline, todayStats);
+    return _buildDayContextString(
+      date: date,
+      todayStats: todayStats,
+      yesterdayStats: yesterdayStats,
+      highlights: highlights,
+      labelToCategory: labelToCategory,
+      unrecordedGaps: await _loadUnrecordedGaps(prefs, date),
+    );
+  }
+
+  static String _buildDayContextString({
+    required DateTime date,
+    required _DayStats todayStats,
+    required _DayStats yesterdayStats,
+    required List<String> highlights,
+    required Map<String, String> labelToCategory,
+    required List<String> unrecordedGaps,
+  }) {
+    final weekday = _weekdayLabels[date.weekday - 1];
+    final buffer = StringBuffer();
+    final todayTotal = todayStats.totalMinutes;
+    final delta = todayTotal - yesterdayStats.totalMinutes;
+
+    buffer.writeln('日期：${date.month}月${date.day}日（$weekday）');
+
+    if (todayTotal == 0) {
+      buffer.writeln('当日无时间记录。');
+      return buffer.toString();
+    }
+
+    buffer.writeln('记录总时长 ${_formatDuration(todayTotal)}，较昨日 ${_formatDeltaMinutes(delta)}');
+    buffer.writeln(
+        '自主 ${_formatDuration(todayStats.userMinutes)}，日历/会议 ${_formatDuration(todayStats.calendarMinutes)}');
+
+    if (highlights.isNotEmpty) {
+      buffer.writeln('重点事项：');
+      for (final line in highlights) {
+        buffer.writeln(line);
+      }
+    }
+
+    final yesterdayTop = yesterdayStats.topLabels(limit: 2);
+    final todayTop = todayStats.topLabels(limit: 2);
+    if (yesterdayTop.isNotEmpty || todayTop.isNotEmpty) {
+      if (yesterdayTop.isNotEmpty) {
+        buffer.write('昨日侧重：');
+        buffer.writeln(
+          yesterdayTop
+              .map((e) => '${e.key}${_formatDuration(e.value, short: true)}')
+              .join('、'),
+        );
+      }
+      if (todayTop.isNotEmpty) {
+        buffer.write('今日侧重：');
+        buffer.writeln(
+          todayTop
+              .map((e) => '${e.key}${_formatDuration(e.value, short: true)}')
+              .join('、'),
+        );
+      }
+    }
+
+    if (unrecordedGaps.isNotEmpty) {
+      buffer.writeln('未记录时段：${unrecordedGaps.join('、')}');
+    }
+
+    if (labelToCategory.isNotEmpty) {
+      final used = todayStats.topLabels(limit: 3).map((e) => e.key).toSet();
+      final hints = used
+          .where((l) => labelToCategory.containsKey(l))
+          .map((l) => '$l→${labelToCategory[l]}')
+          .toList();
+      if (hints.isNotEmpty) {
+        buffer.writeln('分类归属：${hints.join('，')}');
+      }
+    }
+
+    return buffer.toString().trim();
+  }
+
   static Future<String?> _loadCachedAiBody({
     required SharedPreferences prefs,
     required DateTime date,
@@ -186,69 +275,85 @@ class DailyReviewSummaryBuilder {
 
   static const _weekdayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
-  static String _buildAiPrompt({
+  static String _buildReviewPrompt({
     required DateTime date,
     required _DayStats todayStats,
     required _DayStats yesterdayStats,
-    required List<_TimeBlock> timeline,
+    required List<String> highlights,
+    required Map<String, String> labelToCategory,
     required List<String> unrecordedGaps,
   }) {
-    final weekday = _weekdayLabels[date.weekday - 1];
-    final buffer = StringBuffer();
-    buffer.writeln('请根据下方【原始数据】，为用户写「${date.month}月${date.day}日（$weekday）」的每日复盘正文。');
-    buffer.writeln();
-    buffer.writeln('【原始数据】');
-    buffer.writeln(
-        '昨日记录总时长：${_formatDuration(yesterdayStats.totalMinutes)}');
-    buffer.writeln(
-        '今日记录总时长：${_formatDuration(todayStats.totalMinutes)}');
-    buffer.writeln(
-        '今日自主安排：${_formatDuration(todayStats.userMinutes)}，日历/会议：${_formatDuration(todayStats.calendarMinutes)}');
+    final context = _buildDayContextString(
+      date: date,
+      todayStats: todayStats,
+      yesterdayStats: yesterdayStats,
+      highlights: highlights,
+      labelToCategory: labelToCategory,
+      unrecordedGaps: unrecordedGaps,
+    );
+    if (todayStats.totalMinutes == 0) {
+      return '$context\n\n【要求】约 60 字：说明今天没记什么，建议补记。不要编造。';
+    }
+    return '$context\n\n【要求】120～180 字，2 段。概括今天在做什么，不要逐条念时间轴。';
+  }
 
-    if (yesterdayStats.labelMinutes.isNotEmpty) {
-      buffer.writeln();
-      buffer.writeln('昨日主要事项：');
-      for (final e in yesterdayStats.topLabels(limit: 5)) {
-        buffer.writeln('- ${e.key}：${_formatDuration(e.value)}');
-      }
+  /// 按时长取前 3 项，每项附 1～2 个主要时段
+  static List<String> _buildHighlights(
+    List<_TimeBlock> timeline,
+    _DayStats todayStats,
+  ) {
+    if (todayStats.labelMinutes.isEmpty) return const [];
+
+    final topLabels = todayStats.topLabels(limit: 3).map((e) => e.key).toList();
+    final byLabel = <String, List<_TimeBlock>>{};
+    for (final block in timeline) {
+      if (!topLabels.contains(block.label)) continue;
+      byLabel.putIfAbsent(block.label, () => []).add(block);
     }
 
-    if (todayStats.labelMinutes.isNotEmpty) {
-      buffer.writeln();
-      buffer.writeln('今日各事项时长（完整列表）：');
-      for (final e in todayStats.topLabels(limit: 20)) {
-        buffer.writeln('- ${e.key}：${_formatDuration(e.value)}');
-      }
+    final lines = <String>[];
+    for (final label in topLabels) {
+      final minutes = todayStats.labelMinutes[label] ?? 0;
+      final blocks = byLabel[label] ?? [];
+      blocks.sort((a, b) =>
+          (b.endIndex - b.startIndex).compareTo(a.endIndex - a.startIndex));
+      final ranges = blocks.take(2).map((b) => b.range).join('、');
+      final rangeText = ranges.isEmpty ? '' : '，时段 $ranges';
+      lines.add('- $label：${_formatDuration(minutes)}$rangeText');
     }
+    return lines;
+  }
 
-    buffer.writeln();
-    if (timeline.isEmpty) {
-      buffer.writeln('今日时间轴：无记录。');
-    } else {
-      buffer.writeln('今日时间轴（按发生顺序，须据此复述）：');
-      for (final block in timeline) {
-        final tag = block.fromCalendar ? '日历' : '自主';
-        final duration = _formatDuration((block.endIndex - block.startIndex) * 10);
-        buffer.writeln('- ${block.range} ${block.label}（$tag，$duration）');
-      }
+  static Future<Map<String, String>> _loadLabelCategoryMap(
+    SharedPreferences prefs,
+  ) async {
+    final catList = prefs.getStringList('categories');
+    if (catList == null || catList.isEmpty) return {};
+
+    final map = <String, String>{};
+    for (final str in catList) {
+      try {
+        final data = json.decode(str) as Map<String, dynamic>;
+        final name = data['name'] as String?;
+        if (name == null || name.isEmpty) continue;
+        map[name] = name;
+        final subs = data['subCategories'];
+        if (subs is List) {
+          for (final sub in subs) {
+            if (sub is String && sub.isNotEmpty) {
+              map[sub] = name;
+            }
+          }
+        }
+      } catch (_) {}
     }
+    return map;
+  }
 
-    buffer.writeln();
-    if (unrecordedGaps.isEmpty) {
-      buffer.writeln('较长空白时段：无明显空白（或记录较连续）。');
-    } else {
-      buffer.writeln('较长未记录时段（用户未标注在做什么）：');
-      for (final gap in unrecordedGaps) {
-        buffer.writeln('- $gap');
-      }
-    }
-
-    buffer.writeln();
-    buffer.writeln('【输出要求】');
-    buffer.writeln('请用 2～4 段自然段写出复盘。必须点名上述具体事项名称和时段，'
-        '不要泛泛总结。对比昨日时引用具体数字或事项名。');
-
-    return buffer.toString();
+  static String _formatDeltaMinutes(int delta) {
+    if (delta == 0) return '持平';
+    final sign = delta > 0 ? '+' : '';
+    return '$sign${_formatDuration(delta.abs())}';
   }
 
   static String _hashDayData(SharedPreferences prefs, DateTime date) {
@@ -476,7 +581,7 @@ class _DayStats {
 
   int get totalMinutes => userMinutes + calendarMinutes;
 
-  List<MapEntry<String, int>> topLabels({int limit = 2}) {
+  List<MapEntry<String, int>> topLabels({int limit = 20}) {
     final entries = labelMinutes.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     return entries.take(limit).toList();

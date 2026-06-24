@@ -43,6 +43,71 @@ class SiliconFlowAiService {
     return false;
   }
 
+  /// 多轮对话；messages 需含 system / user / assistant
+  static Future<String?> chat({
+    required List<Map<String, String>> messages,
+  }) async {
+    final apiKey = _apiKey;
+    if (apiKey == null) return null;
+
+    lastCallTimedOut = false;
+    Object? lastError;
+    for (var attempt = 1; attempt <= _maxAttempts; attempt++) {
+      try {
+        final response = await http
+            .post(
+              Uri.parse(SiliconFlowConfig.chatCompletionsUrl),
+              headers: {
+                'Content-Type': 'application/json',
+                'api-key': apiKey,
+              },
+              body: jsonEncode({
+                'model': SiliconFlowConfig.model,
+                'messages': messages,
+                'max_completion_tokens': 512,
+                'thinking': {'type': 'disabled'},
+              }),
+            )
+            .timeout(_requestTimeout);
+
+        if (response.statusCode != 200) {
+          debugPrint(
+            'MiMo Chat 错误(第$attempt次): ${response.statusCode} ${response.body}',
+          );
+          lastError = 'http_${response.statusCode}';
+          continue;
+        }
+
+        final decoded = json.decode(response.body) as Map<String, dynamic>;
+        final choices = decoded['choices'] as List<dynamic>?;
+        if (choices == null || choices.isEmpty) {
+          lastError = 'empty_choices';
+          continue;
+        }
+
+        final message = choices.first['message'] as Map<String, dynamic>?;
+        final content = _extractFinalAnswer(message);
+        if (content == null) {
+          lastError = 'empty_content';
+          continue;
+        }
+        return content;
+      } on TimeoutException catch (e) {
+        lastError = e;
+        debugPrint('MiMo Chat 超时(第$attempt次): $e');
+      } on SocketException catch (e) {
+        lastError = e;
+        debugPrint('MiMo Chat 网络错误(第$attempt次): $e');
+      } catch (e) {
+        lastError = e;
+        debugPrint('MiMo Chat 失败(第$attempt次): $e');
+      }
+    }
+
+    lastCallTimedOut = lastError is TimeoutException;
+    return null;
+  }
+
   /// 根据当日记录数据生成复盘文案；未配置 Key 或请求失败时返回 null
   static Future<String?> generateDailyReview({
     required String userPrompt,
@@ -67,18 +132,17 @@ class SiliconFlowAiService {
                   {
                     'role': 'system',
                     'content':
-                        '你是时间管理 App 的每日复盘助手。用户会提供某一天的时间记录原始数据（时间轴、各事项时长、空白时段、与昨日对比）。\n'
-                        '写作要求：\n'
-                        '1. 必须严格基于数据：逐项提到真实记录过的事项名称、时段和时长；禁止编造未出现的事项。\n'
-                        '2. 禁止空泛套话，如「充实的一天」「合理安排」「劳逸结合」等没有数据支撑的表述。\n'
-                        '3. 按时间顺序写：从早到晚点出关键时段发生了什么，至少覆盖数据里时长排名前 3 的事项。\n'
-                        '4. 用 1～2 句话对比昨日，须带上具体数字或事项名称的变化。\n'
-                        '5. 若存在较长未记录时段，简要指出；文末给 1 条针对当天数据的、可执行的改进建议。\n'
-                        '6. 亲切口语化中文，2～4 个自然段，每段 2～4 句；不要标题、不要编号列表、不要自称 AI、不要英文。',
+                        '你是时间管理 App 的每日复盘助手。根据用户数据写「短复盘」。\n'
+                        '核心：先读懂事项名称——用户实际在做什么（如「编程」是写代码、「练琴」是练乐器、「通勤」是路上），用自然语言说出含义，不要只复读标签。\n'
+                        '篇幅：全文 120～180 字，最多 2 个自然段，每段 2～3 句。\n'
+                        '写法：\n'
+                        '- 第 1 段：概括今天主要在忙什么、时间大致怎么分配；只点时长前 2 的事项，各带 1 个主要时段即可，禁止逐条念完整时间轴。\n'
+                        '- 第 2 段：一句与昨日的具体变化（用数据里的数字或事项名）；若有空白时段或明显偏科，给 1 句短建议。\n'
+                        '禁止：空话套话、编造未出现的事项、罗列全部时间段、超过 180 字、列表、自称 AI、英文。',
                   },
                   {'role': 'user', 'content': userPrompt},
                 ],
-                'max_completion_tokens': 1024,
+                'max_completion_tokens': 384,
                 'thinking': {'type': 'disabled'},
               }),
             )
@@ -150,12 +214,28 @@ class SiliconFlowAiService {
     text = text.trim();
     if (text.isEmpty) return null;
 
-    final extracted = _extractChineseSummary(text);
-    if (extracted != null) return extracted;
+    if (looksLikeThinkingProcess(text)) {
+      final extracted = _extractChineseSummary(text);
+      if (extracted != null) return extracted;
+      return null;
+    }
 
-    if (looksLikeThinkingProcess(text)) return null;
+    // 保留段落换行，只压缩行内多余空格
+    final lines = text.split('\n');
+    final normalized = lines
+        .map((line) => line.trim().replaceAll(RegExp(r'[ \t]+'), ' '))
+        .where((line) => line.isNotEmpty)
+        .join('\n')
+        .trim();
+    if (normalized.isEmpty) return null;
 
-    return text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final chineseCount =
+        RegExp(r'[\u4e00-\u9fff]').allMatches(normalized).length;
+    if (normalized.length >= 40 && chineseCount >= 20) {
+      return normalized;
+    }
+
+    return normalized.length >= 12 ? normalized : null;
   }
 
   /// 从混杂草稿中提取最后一段中文总结
