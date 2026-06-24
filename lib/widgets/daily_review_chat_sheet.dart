@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/daily_review_chat_message.dart';
 import '../services/daily_review_chat_service.dart';
 import '../services/daily_review_chat_store.dart';
+import '../services/daily_review_summary.dart';
 import '../services/siliconflow_ai_service.dart';
 
 class DailyReviewChatSheet extends StatefulWidget {
@@ -41,11 +42,14 @@ class DailyReviewChatSheet extends StatefulWidget {
 }
 
 class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
+  static const _contextSyncText = '时间记录已更新';
+
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final List<DailyReviewChatMessage> _messages = [];
   bool _loadingHistory = true;
   bool _sending = false;
+  String? _dataHash;
 
   @override
   void initState() {
@@ -61,7 +65,10 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
   }
 
   Future<void> _loadHistory() async {
-    var messages = await DailyReviewChatStore.load(widget.date);
+    final session = await DailyReviewChatStore.loadSession(widget.date);
+    var messages = List<DailyReviewChatMessage>.from(session.messages);
+    _dataHash = session.dataHash;
+
     if (messages.isEmpty) {
       final review = widget.reviewBody?.trim();
       if (review != null && review.isNotEmpty) {
@@ -73,7 +80,6 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
             fromReview: true,
           ),
         ];
-        await DailyReviewChatStore.save(widget.date, messages);
       }
     }
 
@@ -84,6 +90,8 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
         ..addAll(messages);
       _loadingHistory = false;
     });
+
+    await _syncContextIfNeeded();
     _scrollToBottom();
 
     final pending = widget.initialQuestion?.trim();
@@ -92,8 +100,33 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
     }
   }
 
+  Future<void> _syncContextIfNeeded() async {
+    final currentHash =
+        await DailyReviewSummaryBuilder.computeDayDataHash(widget.date);
+    if (_dataHash == currentHash) return;
+
+    final hasUserChat = _messages.any((m) => m.isUser);
+    if (hasUserChat && (_messages.isEmpty || !_messages.last.contextSync)) {
+      setState(() {
+        _messages.add(DailyReviewChatMessage(
+          role: 'assistant',
+          content: _contextSyncText,
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+          contextSync: true,
+        ));
+      });
+    }
+
+    _dataHash = currentHash;
+    await _persist();
+  }
+
   Future<void> _persist() async {
-    await DailyReviewChatStore.save(widget.date, List.of(_messages));
+    await DailyReviewChatStore.save(
+      widget.date,
+      List.of(_messages),
+      dataHash: _dataHash,
+    );
   }
 
   Future<void> _sendMessage([String? text]) async {
@@ -104,6 +137,8 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
       _showSnack('未配置 AI API Key');
       return;
     }
+
+    await _syncContextIfNeeded();
 
     setState(() {
       _sending = true;
@@ -188,8 +223,11 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
 
     await DailyReviewChatStore.clear(widget.date);
     final review = widget.reviewBody?.trim();
+    final hash =
+        await DailyReviewSummaryBuilder.computeDayDataHash(widget.date);
     setState(() {
       _messages.clear();
+      _dataHash = hash;
       if (review != null && review.isNotEmpty) {
         _messages.add(DailyReviewChatMessage(
           role: 'assistant',
@@ -309,10 +347,17 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
     ColorScheme colorScheme,
   ) {
     final isUser = message.isUser;
+    final isNotice = message.contextSync;
     final bg = isUser
         ? colorScheme.primary
-        : colorScheme.surfaceContainerHigh;
-    final fg = isUser ? colorScheme.onPrimary : colorScheme.onSurface;
+        : isNotice
+            ? colorScheme.tertiaryContainer
+            : colorScheme.surfaceContainerHigh;
+    final fg = isUser
+        ? colorScheme.onPrimary
+        : isNotice
+            ? colorScheme.onTertiaryContainer
+            : colorScheme.onSurface;
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -338,10 +383,22 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(
-                  '今日复盘',
+                  '今日复盘（打开对话时的摘要，若之后有补记请以最新回答为准）',
                   style: TextStyle(
                     fontSize: 11,
                     color: fg.withValues(alpha: 0.7),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            if (message.contextSync)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  '记录已同步',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: fg.withValues(alpha: 0.8),
                     fontWeight: FontWeight.w600,
                   ),
                 ),
