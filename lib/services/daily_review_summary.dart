@@ -129,6 +129,7 @@ class DailyReviewSummaryBuilder {
       todayStats: todayStats,
       yesterdayStats: yesterdayStats,
       timeline: await _loadDayTimeline(prefs, date),
+      unrecordedGaps: await _loadUnrecordedGaps(prefs, date),
     );
 
     final aiText = await SiliconFlowAiService.generateDailyReview(
@@ -183,26 +184,39 @@ class DailyReviewSummaryBuilder {
     return null;
   }
 
+  static const _weekdayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+
   static String _buildAiPrompt({
     required DateTime date,
     required _DayStats todayStats,
     required _DayStats yesterdayStats,
     required List<_TimeBlock> timeline,
+    required List<String> unrecordedGaps,
   }) {
+    final weekday = _weekdayLabels[date.weekday - 1];
     final buffer = StringBuffer();
-    buffer.writeln('请根据以下数据，总结用户「${date.month}月${date.day}日」这一天过得怎么样。');
+    buffer.writeln('请根据下方【原始数据】，为用户写「${date.month}月${date.day}日（$weekday）」的每日复盘正文。');
     buffer.writeln();
+    buffer.writeln('【原始数据】');
     buffer.writeln(
         '昨日记录总时长：${_formatDuration(yesterdayStats.totalMinutes)}');
     buffer.writeln(
         '今日记录总时长：${_formatDuration(todayStats.totalMinutes)}');
     buffer.writeln(
-        '今日自主安排：${_formatDuration(todayStats.userMinutes)}，会议/日历：${_formatDuration(todayStats.calendarMinutes)}');
+        '今日自主安排：${_formatDuration(todayStats.userMinutes)}，日历/会议：${_formatDuration(todayStats.calendarMinutes)}');
+
+    if (yesterdayStats.labelMinutes.isNotEmpty) {
+      buffer.writeln();
+      buffer.writeln('昨日主要事项：');
+      for (final e in yesterdayStats.topLabels(limit: 5)) {
+        buffer.writeln('- ${e.key}：${_formatDuration(e.value)}');
+      }
+    }
 
     if (todayStats.labelMinutes.isNotEmpty) {
       buffer.writeln();
-      buffer.writeln('今日分类统计（按时长）：');
-      for (final e in todayStats.topLabels(limit: 8)) {
+      buffer.writeln('今日各事项时长（完整列表）：');
+      for (final e in todayStats.topLabels(limit: 20)) {
         buffer.writeln('- ${e.key}：${_formatDuration(e.value)}');
       }
     }
@@ -211,12 +225,28 @@ class DailyReviewSummaryBuilder {
     if (timeline.isEmpty) {
       buffer.writeln('今日时间轴：无记录。');
     } else {
-      buffer.writeln('今日时间轴：');
+      buffer.writeln('今日时间轴（按发生顺序，须据此复述）：');
       for (final block in timeline) {
         final tag = block.fromCalendar ? '日历' : '自主';
-        buffer.writeln('- ${block.range} ${block.label}（$tag）');
+        final duration = _formatDuration((block.endIndex - block.startIndex) * 10);
+        buffer.writeln('- ${block.range} ${block.label}（$tag，$duration）');
       }
     }
+
+    buffer.writeln();
+    if (unrecordedGaps.isEmpty) {
+      buffer.writeln('较长空白时段：无明显空白（或记录较连续）。');
+    } else {
+      buffer.writeln('较长未记录时段（用户未标注在做什么）：');
+      for (final gap in unrecordedGaps) {
+        buffer.writeln('- $gap');
+      }
+    }
+
+    buffer.writeln();
+    buffer.writeln('【输出要求】');
+    buffer.writeln('请用 2～4 段自然段写出复盘。必须点名上述具体事项名称和时段，'
+        '不要泛泛总结。对比昨日时引用具体数字或事项名。');
 
     return buffer.toString();
   }
@@ -294,10 +324,71 @@ class DailyReviewSummaryBuilder {
                 label: b.label,
                 fromCalendar: b.fromCalendar,
                 range: _indexRangeToString(b.startIndex, b.endIndex),
+                startIndex: b.startIndex,
+                endIndex: b.endIndex,
               ))
           .toList();
     } catch (_) {
       return [];
+    }
+  }
+
+  static Future<List<String>> _loadUnrecordedGaps(
+    SharedPreferences prefs,
+    DateTime date, {
+    int minSlots = 3,
+    int maxGaps = 3,
+  }) async {
+    final key = dateKey(date);
+    final slotsStr = prefs.getString('daily_slots');
+    if (slotsStr == null) return const [];
+
+    try {
+      final root = json.decode(slotsStr) as Map<String, dynamic>;
+      final day = root[key];
+      if (day is! List) return const [];
+
+      final recorded = <int>{};
+      for (final item in day) {
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
+        final index = map['i'] as int?;
+        final label = map['l'] as String?;
+        if (index == null || label == null || label.isEmpty) continue;
+        recorded.add(index);
+      }
+      if (recorded.isEmpty) return const [];
+
+      const dayStart = 42; // 07:00
+      const dayEnd = 144; // 24:00
+      final gaps = <_IndexRange>[];
+      var gapStart = -1;
+
+      void closeGap(int end) {
+        if (gapStart < 0) return;
+        final length = end - gapStart;
+        if (length >= minSlots) {
+          gaps.add(_IndexRange(gapStart, end));
+        }
+        gapStart = -1;
+      }
+
+      for (var i = dayStart; i < dayEnd; i++) {
+        if (recorded.contains(i)) {
+          closeGap(i);
+        } else if (gapStart < 0) {
+          gapStart = i;
+        }
+      }
+      closeGap(dayEnd);
+
+      gaps.sort((a, b) => (b.end - b.start).compareTo(a.end - a.start));
+      return gaps
+          .take(maxGaps)
+          .map((g) => _indexRangeToString(g.start, g.end))
+          .toList();
+    } catch (_) {
+      return const [];
     }
   }
 
@@ -422,10 +513,21 @@ class _TimeBlock {
   final String label;
   final bool fromCalendar;
   final String range;
+  final int startIndex;
+  final int endIndex;
 
   _TimeBlock({
     required this.label,
     required this.fromCalendar,
     required this.range,
+    required this.startIndex,
+    required this.endIndex,
   });
+}
+
+class _IndexRange {
+  final int start;
+  final int end;
+
+  const _IndexRange(this.start, this.end);
 }

@@ -7,6 +7,7 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/template_bar.dart';
 import '../models/schedule_template.dart';
+import 'daily_review_screen.dart';
 import 'global_search_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -123,7 +124,10 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: isDark ? colorScheme.surface : const Color(0xFF9CB86A),
         foregroundColor: isDark ? colorScheme.onSurface : Colors.white,
         surfaceTintColor: Colors.transparent,
-        title: _buildAppBarTitle(timeProvider, timeProvider.currentDate),
+        titleSpacing: 8,
+        actionsPadding: const EdgeInsets.only(right: 15),
+        title: _buildAppBarDateNav(timeProvider),
+        actions: _buildAppBarActions(timeProvider),
       ),
       body: Stack(
         children: [
@@ -285,9 +289,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         _shouldBridgeRight(provider, index + span - 1) ? 0 : 1,
                   ),
                   decoration: BoxDecoration(
-                    color: highlighted
-                        ? highlightColor
-                        : slot.color!,
+                    color: highlighted ? highlightColor : slot.color!,
                     borderRadius: _computeSegmentBorderRadius(
                         provider, h, m, span, highlighted),
                   ),
@@ -309,9 +311,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Container(
                   margin: const EdgeInsets.all(1),
                   decoration: BoxDecoration(
-                    color: highlighted
-                        ? highlightColor
-                        : emptyCellColor,
+                    color: highlighted ? highlightColor : emptyCellColor,
                     borderRadius: BorderRadius.circular(4),
                   ),
                   // 关键改动：去掉 SizedBox.shrink()，或者使用 BoxConstraints.expand()
@@ -452,7 +452,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 _ExpandButton(
                   isExpanded: isExpanded,
                   onTap: () {
-                    final currentExpanded = provider.getCategoryExpandState(cat.id);
+                    final currentExpanded =
+                        provider.getCategoryExpandState(cat.id);
                     provider.setCategoryExpandState(cat.id, !currentExpanded);
                   },
                 ),
@@ -464,7 +465,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       ? _showTemporaryEventDialog(provider)
                       : _assignCategory(cat, provider),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
                     decoration: BoxDecoration(
                       color: cat.color,
                       borderRadius: BorderRadius.circular(6),
@@ -540,8 +542,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.edit,
-                            color: Colors.white, size: 14),
+                        Icon(Icons.edit, color: Colors.white, size: 14),
                         SizedBox(width: 4),
                         Text('编辑',
                             style:
@@ -674,7 +675,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               () => tempSubCategories.removeAt(subIndex));
                           Navigator.pop(context);
                         },
-                        style: TextButton.styleFrom(foregroundColor: Colors.red),
+                        style:
+                            TextButton.styleFrom(foregroundColor: Colors.red),
                         child: const Text('删除'),
                       ),
                     ],
@@ -740,8 +742,8 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: selectedCategoryId == null
                   ? null
                   : () {
-                      final targetCat = allCategories.firstWhere(
-                          (c) => c.id == selectedCategoryId);
+                      final targetCat = allCategories
+                          .firstWhere((c) => c.id == selectedCategoryId);
                       onMove(currentCategoryId, selectedCategoryId!, subCat);
                       Navigator.pop(context);
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -874,9 +876,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           subIndex: subIndex,
                           setDialogState: setDialogState,
                           tempSubCategories: tempSubCategories,
-                          currentCategoryId: isEdit
-                              ? provider.categories[index].id
-                              : '',
+                          currentCategoryId:
+                              isEdit ? provider.categories[index].id : '',
                           allCategories: provider.categories,
                           onMove: (fromCategoryId, toCategoryId, name) {
                             provider.moveSubCategory(
@@ -917,17 +918,15 @@ class _HomeScreenState extends State<HomeScreen> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(Icons.visibility_off,
-                                  color: isHovering
-                                      ? Colors.orange
-                                      : Colors.grey,
+                                  color:
+                                      isHovering ? Colors.orange : Colors.grey,
                                   size: 16),
                               const SizedBox(width: 8),
                               Text(
                                 isHovering ? '释放以隐藏' : '拖动子事件到此处隐藏',
                                 style: TextStyle(
-                                  color: isHovering
-                                      ? Colors.orange
-                                      : Colors.grey,
+                                  color:
+                                      isHovering ? Colors.orange : Colors.grey,
                                   fontSize: 12,
                                 ),
                               ),
@@ -1004,7 +1003,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             },
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(8)),
-                            side: BorderSide(color: Colors.grey.withValues(alpha: 0.4)),
+                            side: BorderSide(
+                                color: Colors.grey.withValues(alpha: 0.4)),
                           );
                         }).toList(),
                       ),
@@ -1136,10 +1136,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildAppBarTitle(TimeProvider provider, DateTime date) {
+  Widget _buildAppBarDateNav(TimeProvider provider) {
+    final date = provider.currentDate;
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         _appBarIconButton(
           icon: Icons.arrow_back_ios,
@@ -1162,77 +1164,64 @@ class _HomeScreenState extends State<HomeScreen> {
           compact: true,
           onPressed: () => provider.nextDay(),
         ),
-        const Expanded(child: SizedBox()),
-        _appBarIconButton(
-          icon: Icons.search,
-          tooltip: '搜索记录',
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const GlobalSearchScreen(),
-              ),
-            );
-          },
-        ),
-        _appBarIconButton(
-          icon: Icons.undo,
-          onPressed: () => provider.undo(),
-        ),
-        _appBarIconButton(
-          icon: Icons.delete_sweep,
-          onPressed: () => _showClearDialog(context, provider),
-        ),
-        _appBarIconButton(
-          tooltip: _syncButtonTooltip(provider),
-          icon: Icons.sync,
-          onPressed: () => provider.synchronizeCalendar(),
-          iconWidget: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              const Icon(Icons.sync, size: 23),
-              if (provider.hasPendingSyncForCurrentDate)
-                Positioned(
-                  right: -1,
-                  top: -1,
-                  child: Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: Colors.orange,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
       ],
     );
   }
 
-  void _showDatePicker() {
-    setState(() => _isDatePickerVisible = true);
+  List<Widget> _buildAppBarActions(TimeProvider provider) {
+    final date = provider.currentDate;
+    return [
+      _appBarIconButton(
+        icon: Icons.auto_awesome,
+        tooltip: '每日复盘',
+        onPressed: () => DailyReviewScreen.open(context, date: date),
+      ),
+      _appBarIconButton(
+        icon: Icons.search,
+        tooltip: '搜索记录',
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const GlobalSearchScreen(),
+            ),
+          );
+        },
+      ),
+      _appBarIconButton(
+        icon: Icons.undo,
+        tooltip: '撤销',
+        onPressed: () => provider.undo(),
+      ),
+      _appBarIconButton(
+        tooltip: _syncButtonTooltip(provider),
+        icon: Icons.sync,
+        onPressed: () => provider.synchronizeCalendar(),
+        iconWidget: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            const Icon(Icons.sync, size: 23),
+            if (provider.hasPendingSyncForCurrentDate)
+              Positioned(
+                right: -1,
+                top: -1,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: Colors.orange,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    ];
   }
 
-  void _showClearDialog(BuildContext context, TimeProvider provider) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("确认清空"),
-        content: const Text("确定清空今天所有记录吗？"),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text("取消")),
-          TextButton(
-              onPressed: () {
-                provider.clearAll();
-                Navigator.pop(context);
-              },
-              child: const Text("确定")),
-        ],
-      ),
-    );
+  void _showDatePicker() {
+    setState(() => _isDatePickerVisible = true);
   }
 
   void _onTemplateTap(ScheduleTemplate template, TimeProvider provider) {
@@ -1273,8 +1262,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           TextButton(
             onPressed: () {
-              provider.copyFromYesterday(
-                  mode: ApplyTemplateMode.fillEmptyOnly);
+              provider.copyFromYesterday(mode: ApplyTemplateMode.fillEmptyOnly);
               Navigator.pop(context);
             },
             child: const Text('仅填充空白'),
@@ -1385,8 +1373,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: ListView.separated(
                           shrinkWrap: true,
                           itemCount: templates.length,
-                          separatorBuilder: (_, __) =>
-                              const Divider(height: 1),
+                          separatorBuilder: (_, __) => const Divider(height: 1),
                           itemBuilder: (context, index) {
                             final t = templates[index];
                             return ListTile(
@@ -1451,8 +1438,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showSaveTemplateDialog(TimeProvider provider,
-      {VoidCallback? onSaved}) {
+  void _showSaveTemplateDialog(TimeProvider provider, {VoidCallback? onSaved}) {
     final nameController = TextEditingController();
 
     showDialog(
@@ -1652,8 +1638,8 @@ class _ReorderableChipWrapState extends State<_ReorderableChipWrap> {
                     visualDensity: VisualDensity.compact,
                     backgroundColor: widget.color.withValues(alpha: 0.8),
                     label: Text(item,
-                        style: const TextStyle(
-                            color: Colors.white, fontSize: 12)),
+                        style:
+                            const TextStyle(color: Colors.white, fontSize: 12)),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8)),
                     side: BorderSide.none,
