@@ -38,8 +38,7 @@ class SiliconFlowAiService {
       if (lower.contains(marker)) return true;
     }
 
-    final chineseCount =
-        RegExp(r'[\u4e00-\u9fff]').allMatches(text).length;
+    final chineseCount = RegExp(r'[\u4e00-\u9fff]').allMatches(text).length;
     if (text.length > 120 && chineseCount < 20) return true;
     return false;
   }
@@ -57,10 +56,10 @@ class SiliconFlowAiService {
       try {
         final response = await http
             .post(
-              Uri.parse(SiliconFlowConfig.baseUrl),
+              Uri.parse(SiliconFlowConfig.chatCompletionsUrl),
               headers: {
                 'Content-Type': 'application/json',
-                'Authorization': 'Bearer $apiKey',
+                'api-key': apiKey,
               },
               body: jsonEncode({
                 'model': SiliconFlowConfig.model,
@@ -68,20 +67,26 @@ class SiliconFlowAiService {
                   {
                     'role': 'system',
                     'content':
-                        '你是时间管理 App 的每日复盘助手。根据用户的时间记录数据，用亲切的中文总结这一天发生的所有事件，最后给出改进建议。只输出最终总结正文。禁止输出思考过程、英文分析、草稿、标题、列表，不要自称 AI。',
+                        '你是时间管理 App 的每日复盘助手。用户会提供某一天的时间记录原始数据（时间轴、各事项时长、空白时段、与昨日对比）。\n'
+                        '写作要求：\n'
+                        '1. 必须严格基于数据：逐项提到真实记录过的事项名称、时段和时长；禁止编造未出现的事项。\n'
+                        '2. 禁止空泛套话，如「充实的一天」「合理安排」「劳逸结合」等没有数据支撑的表述。\n'
+                        '3. 按时间顺序写：从早到晚点出关键时段发生了什么，至少覆盖数据里时长排名前 3 的事项。\n'
+                        '4. 用 1～2 句话对比昨日，须带上具体数字或事项名称的变化。\n'
+                        '5. 若存在较长未记录时段，简要指出；文末给 1 条针对当天数据的、可执行的改进建议。\n'
+                        '6. 亲切口语化中文，2～4 个自然段，每段 2～4 句；不要标题、不要编号列表、不要自称 AI、不要英文。',
                   },
                   {'role': 'user', 'content': userPrompt},
                 ],
-                'max_tokens': 512,
-                'temperature': 0.6,
-                'chat_template_kwargs': {'enable_thinking': false},
+                'max_completion_tokens': 1024,
+                'thinking': {'type': 'disabled'},
               }),
             )
             .timeout(_requestTimeout);
 
         if (response.statusCode != 200) {
           debugPrint(
-            '硅基流动 API 错误(第$attempt次): ${response.statusCode} ${response.body}',
+            'MiMo API 错误(第$attempt次): ${response.statusCode} ${response.body}',
           );
           lastError = 'http_${response.statusCode}';
           continue;
@@ -98,7 +103,7 @@ class SiliconFlowAiService {
         final content = _extractFinalAnswer(message);
         if (content == null) {
           debugPrint(
-            '硅基流动无有效正文(第$attempt次): ${response.body.substring(0, response.body.length.clamp(0, 500))}',
+            'MiMo API 无有效正文(第$attempt次): ${response.body.substring(0, response.body.length.clamp(0, 500))}',
           );
           lastError = 'empty_content';
           continue;
@@ -107,17 +112,17 @@ class SiliconFlowAiService {
         return content;
       } on TimeoutException catch (e) {
         lastError = e;
-        debugPrint('硅基流动请求超时(第$attempt次): $e');
+        debugPrint('MiMo 请求超时(第$attempt次): $e');
       } on SocketException catch (e) {
         lastError = e;
-        debugPrint('硅基流动网络错误(第$attempt次): $e');
+        debugPrint('MiMo 网络错误(第$attempt次): $e');
       } catch (e) {
         lastError = e;
-        debugPrint('硅基流动请求失败(第$attempt次): $e');
+        debugPrint('MiMo 请求失败(第$attempt次): $e');
       }
     }
 
-    debugPrint('硅基流动最终失败: $lastError');
+    debugPrint('MiMo 最终失败: $lastError');
     lastCallTimedOut = lastError is TimeoutException;
     return null;
   }
@@ -175,7 +180,7 @@ class SiliconFlowAiService {
     }
 
     final attemptMatches = RegExp(
-      r'Attempt\s*\d+\s*:\s*["“]?([\u4e00-\u9fff，。！？、；：""''（）\s\d\.h小时分钟]+)',
+      r'Attempt\s*\d+\s*:\s*["“]?([\u4e00-\u9fff，。！？、；：""' '（）\s\d\.h小时分钟]+)',
       caseSensitive: false,
     ).allMatches(text);
     if (attemptMatches.isNotEmpty) {
