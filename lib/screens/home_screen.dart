@@ -19,8 +19,9 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final GlobalKey _gridKey = GlobalKey();
-  // 使用初始化好的控制器，解决 late 初始化可能导致的 Bug
+  // 左侧时间轴滚动；右侧网格跟随同步，自身不可滚动
   final ScrollController _scrollController = ScrollController();
+  final ScrollController _gridScrollController = ScrollController();
   StreamSubscription? _syncSubscription;
 
   int? _dragStartIndex;
@@ -33,9 +34,13 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     // 初始滚动到配置的开始时间
     final timeProvider = Provider.of<TimeProvider>(context, listen: false);
+    _scrollController.addListener(_syncGridScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // 在第一帧构建完成后执行滚动
-      _scrollController.jumpTo(timeProvider.startHour * 45.0);
+      final offset = timeProvider.startHour * 45.0;
+      _scrollController.jumpTo(offset);
+      if (_gridScrollController.hasClients) {
+        _gridScrollController.jumpTo(offset);
+      }
     });
 
     // 监听同步状态并显示提示
@@ -53,8 +58,18 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _syncSubscription?.cancel();
+    _scrollController.removeListener(_syncGridScroll);
     _scrollController.dispose();
+    _gridScrollController.dispose();
     super.dispose();
+  }
+
+  void _syncGridScroll() {
+    if (!_gridScrollController.hasClients) return;
+    final target = _scrollController.offset;
+    if ((_gridScrollController.offset - target).abs() > 0.5) {
+      _gridScrollController.jumpTo(target);
+    }
   }
 
   // 精准计算索引：触点位置 + 滚动偏移
@@ -71,8 +86,7 @@ class _HomeScreenState extends State<HomeScreen> {
     int row = ((adjustedDy - topPadding) / 45).floor().clamp(0, 23);
 
     double gridWidth = box.size.width;
-    int col =
-        ((localOffset.dx - 55) / ((gridWidth - 55) / 6)).floor().clamp(0, 5);
+    int col = (localOffset.dx / (gridWidth / 6)).floor().clamp(0, 5);
 
     return row * 6 + col;
   }
@@ -137,13 +151,33 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Row(
                   children: [
                     Expanded(
-                      child: ListView.builder(
-                        key: _gridKey,
-                        controller: _scrollController,
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        itemCount: 24,
-                        itemBuilder: (context, h) =>
-                            _buildIntegratedRow(h, timeProvider),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(
+                            width: 55,
+                            child: ListView.builder(
+                              controller: _scrollController,
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 8),
+                              itemCount: 24,
+                              itemBuilder: (context, h) =>
+                                  _buildTimeLabelRow(h),
+                            ),
+                          ),
+                          Expanded(
+                            child: ListView.builder(
+                              key: _gridKey,
+                              controller: _gridScrollController,
+                              physics: const NeverScrollableScrollPhysics(),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 8),
+                              itemCount: 24,
+                              itemBuilder: (context, h) =>
+                                  _buildGridRow(h, timeProvider),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     _buildCategorySidebar(timeProvider),
@@ -197,54 +231,41 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildIntegratedRow(int h, TimeProvider provider) {
-    return Row(
-      children: [
-        // 左侧时间轴：保留默认行为，可以触发 ListView 滚动
-        Container(
-          width: 55,
-          height: 45,
-          alignment: Alignment.center,
-          child: Text(
-            "${h.toString().padLeft(2, '0')}:00", // 显示实际小时数
-            style: TextStyle(color: Colors.grey[600], fontSize: 12),
-          ),
-        ),
-        // 右侧网格
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                // 关键：点击事件
-                onTapDown: (d) =>
-                    _handleSelect(d.globalPosition, isClick: true),
-                // 双击删除单个时间块的事件
-                onDoubleTapDown: (d) {
-                  // 使用局部坐标计算，比全局计算更稳定
-                  double width = constraints.maxWidth;
-                  int col =
-                      (d.localPosition.dx / (width / 6)).floor().clamp(0, 5);
-                  int index = h * 6 + col;
-                  provider.removeEventFromSlot(index);
-                },
-                onDoubleTap: () {}, // 必须注册 onDoubleTap 以启用双击手势识别
-                // 关键：滑动开始时，传入 isStart: true 来重置索引
-                onPanStart: (d) =>
-                    _handleSelect(d.globalPosition, isStart: true),
-                onPanUpdate: (d) => _handleSelect(d.globalPosition),
-                child: Container(
-                  child: _buildGridRow(h, provider),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
+  Widget _buildTimeLabelRow(int h) {
+    return Container(
+      width: 55,
+      height: 45,
+      alignment: Alignment.center,
+      child: Text(
+        "${h.toString().padLeft(2, '0')}:00",
+        style: TextStyle(color: Colors.grey[600], fontSize: 12),
+      ),
     );
   }
 
   Widget _buildGridRow(int h, TimeProvider provider) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (d) => _handleSelect(d.globalPosition, isClick: true),
+          onDoubleTapDown: (d) {
+            double width = constraints.maxWidth;
+            int col = (d.localPosition.dx / (width / 6)).floor().clamp(0, 5);
+            int index = h * 6 + col;
+            provider.removeEventFromSlot(index);
+          },
+          onDoubleTap: () {},
+          onPanStart: (d) =>
+              _handleSelect(d.globalPosition, isStart: true),
+          onPanUpdate: (d) => _handleSelect(d.globalPosition),
+          child: _buildGridRowContent(h, provider),
+        );
+      },
+    );
+  }
+
+  Widget _buildGridRowContent(int h, TimeProvider provider) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final highlightColor = colorScheme.primary.withValues(alpha: 0.28);
