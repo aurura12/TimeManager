@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:time_manager/screens/profile_screen.dart';
 import '../providers/time_provider.dart';
+import 'check_in_screen.dart';
 import 'diary_screen.dart';
 import 'home_screen.dart';
 import 'target_screen.dart';
@@ -41,6 +42,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     const HomeScreen(),
     const DiaryScreen(),
     const TravelScreen(),
+    const CheckInScreen(),
     const TargetScreen(),
     const ProfileScreen(),
   ];
@@ -66,6 +68,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             label: '日记',
           ),
           BottomNavigationBarItem(icon: Icon(Icons.card_travel), label: '出行'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.check_circle_outline),
+            label: '打卡',
+          ),
           BottomNavigationBarItem(icon: Icon(Icons.flag), label: '目标'),
           BottomNavigationBarItem(icon: Icon(Icons.person), label: '我的'),
         ],

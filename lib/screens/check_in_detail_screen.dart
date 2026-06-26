@@ -1,0 +1,323 @@
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+
+import '../models/check_in_goal.dart';
+import '../models/check_in_record.dart';
+import '../services/check_in_sync_service.dart';
+import '../widgets/check_in_map_preview.dart';
+import '../widgets/check_in_photo_sheet.dart';
+import '../widgets/check_in_photo_thumb.dart';
+import 'add_check_in_goal_screen.dart';
+
+class CheckInDetailScreen extends StatefulWidget {
+  const CheckInDetailScreen({
+    super.key,
+    required this.goal,
+    required this.syncService,
+  });
+
+  final CheckInGoal goal;
+  final CheckInSyncService syncService;
+
+  @override
+  State<CheckInDetailScreen> createState() => _CheckInDetailScreenState();
+}
+
+class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
+  late CheckInGoal _goal;
+
+  @override
+  void initState() {
+    super.initState();
+    _goal = widget.goal;
+    _refreshGoalFromSync();
+  }
+
+  void _refreshGoalFromSync() {
+    final updated = widget.syncService.goalsWithRecords
+        .where((g) => g.id == _goal.id)
+        .firstOrNull;
+    if (updated != null) _goal = updated;
+  }
+
+  String? get _userId => widget.syncService.currentUser?.id;
+  bool get _isMine => _userId != null && _goal.isOwnedBy(_userId!);
+
+  Future<void> _checkIn() async {
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) =>
+          CheckInPhotoSheet(goal: _goal, syncService: widget.syncService),
+    );
+    if (ok == true && mounted) {
+      _refreshGoalFromSync();
+      setState(() {});
+    }
+  }
+
+  Future<void> _edit() async {
+    if (!_isMine) return;
+    final result = await Navigator.push<CheckInGoal>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AddCheckInGoalScreen(goal: _goal),
+      ),
+    );
+    if (result == null) return;
+    final saveResult = await widget.syncService.saveGoal(result);
+    if (!mounted) return;
+    _refreshGoalFromSync();
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(saveResult.success ? '已保存' : (saveResult.error ?? '保存失败')),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final onColor =
+        ThemeData.estimateBrightnessForColor(_goal.color) == Brightness.dark
+            ? Colors.white
+            : Colors.black87;
+    final sortedRecords = [..._goal.records]
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final statsUserId = _isMine ? _userId : _goal.ownerId;
+
+    return Scaffold(
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            expandedHeight: 180,
+            pinned: true,
+            backgroundColor: _goal.color,
+            foregroundColor: onColor,
+            flexibleSpace: FlexibleSpaceBar(
+              title: Text(_goal.name),
+              background: Container(
+                color: _goal.color,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const SizedBox(height: 40),
+                    Icon(_goal.icon, size: 48, color: onColor),
+                    const SizedBox(height: 8),
+                    Text(
+                      _isMine ? _goal.description : '${_goal.ownerLabel} 的目标',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: onColor.withValues(alpha: 0.8),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              if (_isMine)
+                IconButton(icon: const Icon(Icons.edit), onPressed: _edit),
+            ],
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _StatCard(
+                          icon: Icons.check_circle_outline,
+                          label: '本周期',
+                          value:
+                              '${_goal.currentPeriodCountFor(statsUserId)}/${_goal.targetCount}',
+                          color: _goal.color,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _StatCard(
+                          icon: Icons.local_fire_department,
+                          label: '连续天数',
+                          value: '${_goal.streakDaysFor(statsUserId ?? _goal.ownerId)}',
+                          color: const Color(0xFFF98E45),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _StatCard(
+                          icon: Icons.history,
+                          label: '累计',
+                          value: '${sortedRecords.length}',
+                          color: const Color(0xFF4DA8EE),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Text('打卡地图',
+                      style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                          color: colorScheme.onSurface)),
+                  const SizedBox(height: 8),
+                  CheckInMapPreview(records: _goal.records, height: 200),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('打卡记录',
+                          style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.onSurface)),
+                      Text('共 ${sortedRecords.length} 条',
+                          style: TextStyle(
+                              fontSize: 13,
+                              color: colorScheme.onSurfaceVariant)),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  if (sortedRecords.isEmpty)
+                    Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 32),
+                        child: Text('还没有打卡记录',
+                            style:
+                                TextStyle(color: colorScheme.onSurfaceVariant)),
+                      ),
+                    )
+                  else
+                    ...sortedRecords.map(
+                      (r) => _buildRecordTile(r, colorScheme),
+                    ),
+                  const SizedBox(height: 80),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+      floatingActionButton: _isMine &&
+              _userId != null &&
+              !_goal.isCompletedTodayBy(_userId!)
+          ? FloatingActionButton.extended(
+              onPressed: _checkIn,
+              backgroundColor: _goal.color,
+              foregroundColor: onColor,
+              icon: const Icon(Icons.camera_alt),
+              label: const Text('拍照打卡'),
+            )
+          : null,
+    );
+  }
+
+  Widget _buildRecordTile(CheckInRecord record, ColorScheme colorScheme) {
+    final dateStr = DateFormat('M月d日 HH:mm').format(record.timestamp);
+    final isMe = _userId != null && record.userId == _userId;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            CheckInPhotoThumb(
+              syncService: widget.syncService,
+              photoPath: record.photoPath,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(dateStr,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w600, fontSize: 14)),
+                      const SizedBox(width: 8),
+                      Icon(Icons.check_circle,
+                          size: 16, color: colorScheme.primary),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    isMe ? '我' : record.userLabel,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: colorScheme.primary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  if (record.locationName != null) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(Icons.location_on,
+                            size: 13, color: colorScheme.onSurfaceVariant),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(record.locationName!,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: colorScheme.onSurfaceVariant),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatCard extends StatelessWidget {
+  const _StatCard({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 22),
+          const SizedBox(height: 6),
+          Text(value,
+              style: TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.bold, color: color)),
+          Text(label,
+              style: TextStyle(fontSize: 11, color: color.withValues(alpha: 0.8))),
+        ],
+      ),
+    );
+  }
+}

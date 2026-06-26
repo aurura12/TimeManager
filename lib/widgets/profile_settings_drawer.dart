@@ -239,7 +239,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        googleUser.displayName ?? 'Google 用户',
+                        googleUser.label,
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
@@ -261,16 +261,22 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                             width: 6,
                             height: 6,
                             decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.primary,
+                              color: GoogleCalendarService.isSignedIn
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Theme.of(context).colorScheme.outline,
                               shape: BoxShape.circle,
                             ),
                           ),
-                          const SizedBox(width: 4),
+                          const SizedBox(width: 6),
                           Text(
-                            'Google 日历已连接',
+                            GoogleCalendarService.isSignedIn
+                                ? '日历已连接'
+                                : '已识别身份，日历未连接',
                             style: TextStyle(
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
                               fontSize: 11,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
                             ),
                           ),
                         ],
