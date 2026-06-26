@@ -77,6 +77,50 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     );
   }
 
+  Future<void> _confirmDelete() async {
+    if (!_isMine) return;
+    final recordCount = _goal.records.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除打卡目标'),
+        content: Text(
+          recordCount > 0
+              ? '确认删除「${_goal.name}」吗？\n'
+                  '该目标下的 $recordCount 条打卡记录也会一并删除。'
+              : '确认删除「${_goal.name}」吗？',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final result = await widget.syncService.deleteGoal(_goal);
+    if (!mounted) return;
+    if (result.success) {
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已删除「${_goal.name}」')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.error ?? '删除失败')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -118,8 +162,13 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
               ),
             ),
             actions: [
-              if (_isMine)
+              if (_isMine) ...[
                 IconButton(icon: const Icon(Icons.edit), onPressed: _edit),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: _confirmDelete,
+                ),
+              ],
             ],
           ),
           SliverToBoxAdapter(

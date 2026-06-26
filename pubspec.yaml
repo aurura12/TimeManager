@@ -1,7 +1,7 @@
 name: time_manager
 description: "A new Flutter project."
 publish_to: "none"
-version: 1.55.0+1
+version: 1.56.0+1
 
 # 添加下面这段环境配置
 environment:
@@ -28,6 +28,8 @@ dependencies:
   geolocator: ^13.0.2
   geocoding: ^3.0.0
   path: ^1.9.0
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
   home_widget: ^0.9.2
   file_picker: ^11.0.2
   package_info_plus: ^9.0.1
