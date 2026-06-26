@@ -1,17 +1,22 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import '../models/google_calendar_user.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
-/// 持久化 Google 登录档案，供冷启动时配合 authorizationForScopes 恢复会话
-class GoogleSessionStore {
+import '../models/google_calendar_user.dart';
+
+/// 持久保存「曾登录过的用户身份」，不因网络/token 失效而清除。
+/// 仅在用户主动退出 Google 登录时清除。
+class AppUserIdentityStore {
   static const _storage = FlutterSecureStorage();
-  static const _emailKey = 'google_session_email';
-  static const _idKey = 'google_session_id';
-  static const _nameKey = 'google_session_display_name';
-  static const _photoKey = 'google_session_photo_url';
+  static const _emailKey = 'app_user_identity_email';
+  static const _idKey = 'app_user_identity_id';
+  static const _nameKey = 'app_user_identity_display_name';
+  static const _photoKey = 'app_user_identity_photo_url';
 
   static Future<void> save(GoogleSignInAccount account) async {
-    final user = GoogleCalendarUser.fromAccount(account);
+    await saveUser(GoogleCalendarUser.fromAccount(account));
+  }
+
+  static Future<void> saveUser(GoogleCalendarUser user) async {
     await _storage.write(key: _emailKey, value: user.email);
     await _storage.write(key: _idKey, value: user.id);
     await _storage.write(
