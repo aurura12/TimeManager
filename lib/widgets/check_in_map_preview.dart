@@ -1,15 +1,19 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../models/check_in_record.dart';
+import '../models/known_google_users.dart';
 
-/// 地图预览（UI 原型，非真实地图 SDK）
+/// 打卡地图（OpenStreetMap 瓦片 + 标记点）
 class CheckInMapPreview extends StatelessWidget {
   const CheckInMapPreview({
     super.key,
     required this.records,
-    this.height = 180,
+    this.height = 200,
     this.onTap,
     this.showLegend = true,
   });
@@ -19,10 +23,13 @@ class CheckInMapPreview extends StatelessWidget {
   final VoidCallback? onTap;
   final bool showLegend;
 
+  static const _defaultCenter = LatLng(39.9042, 116.4074);
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final located = records.where((r) => r.hasLocation).toList();
+    final mapData = _aggregateMarkers(located);
 
     return GestureDetector(
       onTap: onTap,
@@ -32,18 +39,49 @@ class CheckInMapPreview extends StatelessWidget {
           height: height,
           width: double.infinity,
           child: Stack(
-            fit: StackFit.expand,
             children: [
-              CustomPaint(
-                painter: _MockMapPainter(
-                  records: located,
-                  pinColor: colorScheme.primary,
+              FlutterMap(
+                options: MapOptions(
+                  initialCenter: mapData.center,
+                  initialZoom: mapData.zoom,
+                  interactionOptions: InteractionOptions(
+                    flags: onTap != null
+                        ? InteractiveFlag.none
+                        : InteractiveFlag.all,
+                  ),
                 ),
+                children: [
+                  TileLayer(
+                    urlTemplate:
+                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'com.example.time_manager',
+                  ),
+                  if (mapData.markers.isNotEmpty)
+                    MarkerLayer(markers: mapData.markers),
+                ],
               ),
-              if (showLegend)
+              if (located.isEmpty)
+                Container(
+                  color: colorScheme.surface.withValues(alpha: 0.72),
+                  alignment: Alignment.center,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.map_outlined,
+                          size: 36,
+                          color: colorScheme.onSurfaceVariant),
+                      const SizedBox(height: 8),
+                      Text(
+                        '暂无带位置的打卡',
+                        style: TextStyle(color: colorScheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
+              if (showLegend && located.isNotEmpty)
                 Positioned(
-                  left: 12,
-                  bottom: 12,
+                  left: 10,
+                  bottom: 10,
                   child: Container(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -61,8 +99,8 @@ class CheckInMapPreview extends StatelessWidget {
                           '${located.length} 个打卡点',
                           style: TextStyle(
                             fontSize: 12,
-                            color: colorScheme.onSurface,
                             fontWeight: FontWeight.w500,
+                            color: colorScheme.onSurface,
                           ),
                         ),
                       ],
@@ -71,8 +109,8 @@ class CheckInMapPreview extends StatelessWidget {
                 ),
               if (onTap != null)
                 Positioned(
-                  right: 12,
-                  top: 12,
+                  right: 10,
+                  top: 10,
                   child: Container(
                     padding: const EdgeInsets.all(6),
                     decoration: BoxDecoration(
@@ -89,130 +127,150 @@ class CheckInMapPreview extends StatelessWidget {
       ),
     );
   }
-}
 
-class _MockMapPainter extends CustomPainter {
-  _MockMapPainter({required this.records, required this.pinColor});
-
-  final List<CheckInRecord> records;
-  final Color pinColor;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // 背景
-    final bgPaint = Paint()..color = const Color(0xFFE8F0E3);
-    canvas.drawRect(Offset.zero & size, bgPaint);
-
-    // 网格线
-    final gridPaint = Paint()
-      ..color = const Color(0xFFCDD8C5)
-      ..strokeWidth = 0.5;
-    const gridStep = 24.0;
-    for (var x = 0.0; x < size.width; x += gridStep) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
-    }
-    for (var y = 0.0; y < size.height; y += gridStep) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+  static _MapData _aggregateMarkers(List<CheckInRecord> located) {
+    if (located.isEmpty) {
+      return _MapData(center: _defaultCenter, zoom: 11, markers: const []);
     }
 
-    // 模拟道路
-    final roadPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.7)
-      ..strokeWidth = 6
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(
-      Offset(0, size.height * 0.4),
-      Offset(size.width, size.height * 0.55),
-      roadPaint,
-    );
-    canvas.drawLine(
-      Offset(size.width * 0.3, 0),
-      Offset(size.width * 0.5, size.height),
-      roadPaint,
-    );
-
-    if (records.isEmpty) return;
-
-    // 将经纬度映射到画布坐标
-    final lats = records.map((r) => r.latitude!).toList();
-    final lngs = records.map((r) => r.longitude!).toList();
+    final lats = located.map((r) => r.latitude!).toList();
+    final lngs = located.map((r) => r.longitude!).toList();
     final minLat = lats.reduce(math.min);
     final maxLat = lats.reduce(math.max);
     final minLng = lngs.reduce(math.min);
     final maxLng = lngs.reduce(math.max);
-    final latRange = (maxLat - minLat).clamp(0.001, double.infinity);
-    final lngRange = (maxLng - minLng).clamp(0.001, double.infinity);
 
-    // 统计同位置打卡次数
+    final center = LatLng(
+      (minLat + maxLat) / 2,
+      (minLng + maxLng) / 2,
+    );
+
+    final latSpan = (maxLat - minLat).abs();
+    final lngSpan = (maxLng - minLng).abs();
+    final span = math.max(latSpan, lngSpan);
+    final zoom = span < 0.002
+        ? 15.0
+        : span < 0.01
+            ? 13.0
+            : span < 0.05
+                ? 11.0
+                : 9.0;
+
     final counts = <String, int>{};
-    for (final r in records) {
-      final key = '${r.latitude!.toStringAsFixed(4)},${r.longitude!.toStringAsFixed(4)}';
+    for (final r in located) {
+      final key =
+          '${r.latitude!.toStringAsFixed(5)},${r.longitude!.toStringAsFixed(5)}';
       counts[key] = (counts[key] ?? 0) + 1;
     }
 
-    final drawn = <String>{};
-    for (final r in records) {
-      final key = '${r.latitude!.toStringAsFixed(4)},${r.longitude!.toStringAsFixed(4)}';
-      if (drawn.contains(key)) continue;
-      drawn.add(key);
-
-      final nx = (r.longitude! - minLng) / lngRange;
-      final ny = 1 - (r.latitude! - minLat) / latRange;
-      final x = 24 + nx * (size.width - 48);
-      final y = 24 + ny * (size.height - 48);
+    final markers = <Marker>[];
+    final seen = <String>{};
+    for (final r in located) {
+      final key =
+          '${r.latitude!.toStringAsFixed(5)},${r.longitude!.toStringAsFixed(5)}';
+      if (seen.contains(key)) continue;
+      seen.add(key);
       final count = counts[key] ?? 1;
+      final color = _colorForEmail(r.userEmail);
 
-      _drawPin(canvas, Offset(x, y), count);
+      markers.add(
+        Marker(
+          point: LatLng(r.latitude!, r.longitude!),
+          width: 44,
+          height: 44,
+          child: _MapPin(count: count, color: color),
+        ),
+      );
     }
+
+    return _MapData(center: center, zoom: zoom, markers: markers);
   }
 
-  void _drawPin(Canvas canvas, Offset center, int count) {
-    final radius = 14.0 + math.min(count - 1, 4) * 3.0;
+  static Color _colorForEmail(String email) {
+    final normalized = KnownGoogleUsers.normalizeEmail(email);
+    if (normalized == KnownGoogleUsers.guaiGuaiEmail) {
+      return const Color(0xFF4DA8EE);
+    }
+    if (normalized == KnownGoogleUsers.jingJingEmail) {
+      return const Color(0xFFF16B77);
+    }
+    return const Color(0xFF96B462);
+  }
+}
 
-    // 阴影
-    canvas.drawCircle(
-      center + const Offset(1, 2),
-      radius,
-      Paint()..color = Colors.black.withValues(alpha: 0.15),
-    );
+class _MapData {
+  const _MapData({
+    required this.center,
+    required this.zoom,
+    required this.markers,
+  });
 
-    // 外圈
-    canvas.drawCircle(
-      center,
-      radius,
-      Paint()..color = pinColor.withValues(alpha: 0.25),
-    );
+  final LatLng center;
+  final double zoom;
+  final List<Marker> markers;
+}
 
-    // 内圈
-    canvas.drawCircle(center, radius * 0.65, Paint()..color = pinColor);
+class _MapPin extends StatelessWidget {
+  const _MapPin({required this.count, required this.color});
 
-    // 数字
-    if (count > 1) {
-      final tp = TextPainter(
-        text: TextSpan(
-          text: '$count',
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
+  final int count;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            count > 1 ? '$count' : '',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      tp.paint(
-        canvas,
-        center - Offset(tp.width / 2, tp.height / 2),
-      );
-    } else {
-      canvas.drawCircle(
-        center,
-        3,
-        Paint()..color = Colors.white,
-      );
-    }
+        CustomPaint(
+          size: const Size(12, 8),
+          painter: _PinTailPainter(color: color),
+        ),
+      ],
+    );
+  }
+}
+
+class _PinTailPainter extends CustomPainter {
+  _PinTailPainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = ui.Path()
+      ..moveTo(size.width / 2, size.height)
+      ..lineTo(0, 0)
+      ..lineTo(size.width, 0)
+      ..close();
+    canvas.drawPath(path, Paint()..color = color);
   }
 
   @override
-  bool shouldRepaint(covariant _MockMapPainter oldDelegate) =>
-      oldDelegate.records != records || oldDelegate.pinColor != pinColor;
+  bool shouldRepaint(covariant _PinTailPainter oldDelegate) =>
+      oldDelegate.color != color;
 }

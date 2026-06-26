@@ -1,3 +1,5 @@
+import 'check_in_view_filter.dart';
+
 /// 本 App 仅有的两个 Google 账号及昵称
 class KnownGoogleUsers {
   KnownGoogleUsers._();
@@ -27,5 +29,25 @@ class KnownGoogleUsers {
         (googleDisplayName?.trim().isNotEmpty == true
             ? googleDisplayName!.trim()
             : email);
+  }
+
+  static const String guaiGuaiEmail = 'zjq031115a@gmail.com';
+  static const String jingJingEmail = '1746528702@qq.com';
+
+  static const List<String> knownEmails = [guaiGuaiEmail, jingJingEmail];
+
+  static bool matchesFilter({
+    required String email,
+    required CheckInViewFilter filter,
+  }) {
+    final normalized = normalizeEmail(email);
+    switch (filter) {
+      case CheckInViewFilter.all:
+        return true;
+      case CheckInViewFilter.guaiGuai:
+        return normalized == guaiGuaiEmail;
+      case CheckInViewFilter.jingJing:
+        return normalized == jingJingEmail;
+    }
   }
 }

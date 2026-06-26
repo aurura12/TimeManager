@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../models/check_in_goal.dart';
 import '../models/check_in_record.dart';
+import '../models/check_in_view_filter.dart';
+import '../models/known_google_users.dart';
 import '../services/check_in_sync_service.dart';
 import '../services/google_calendar_service.dart';
 import '../widgets/check_in_map_preview.dart';
@@ -9,8 +11,6 @@ import '../widgets/check_in_photo_sheet.dart';
 import 'add_check_in_goal_screen.dart';
 import 'check_in_detail_screen.dart';
 import 'check_in_map_screen.dart';
-
-enum CheckInViewFilter { all, mine, partner }
 
 class CheckInScreen extends StatefulWidget {
   const CheckInScreen({super.key});
@@ -41,29 +41,39 @@ class _CheckInScreenState extends State<CheckInScreen> {
   List<CheckInGoal> get _allGoals => _sync.goalsWithRecords;
 
   List<CheckInGoal> get _filteredGoals {
-    final userId = _currentUserId;
-    if (userId == null) return _allGoals;
     switch (_filter) {
       case CheckInViewFilter.all:
         return _allGoals;
-      case CheckInViewFilter.mine:
-        return _allGoals.where((g) => g.isOwnedBy(userId)).toList();
-      case CheckInViewFilter.partner:
-        return _allGoals.where((g) => !g.isOwnedBy(userId)).toList();
+      case CheckInViewFilter.guaiGuai:
+        return _allGoals
+            .where((g) => KnownGoogleUsers.matchesFilter(
+                  email: g.ownerEmail,
+                  filter: CheckInViewFilter.guaiGuai,
+                ))
+            .toList();
+      case CheckInViewFilter.jingJing:
+        return _allGoals
+            .where((g) => KnownGoogleUsers.matchesFilter(
+                  email: g.ownerEmail,
+                  filter: CheckInViewFilter.jingJing,
+                ))
+            .toList();
     }
   }
 
   List<CheckInRecord> get _filteredRecords {
-    final userId = _currentUserId;
     final records = _allGoals.expand((g) => g.records);
-    if (userId == null) return records.toList();
     switch (_filter) {
       case CheckInViewFilter.all:
         return records.toList();
-      case CheckInViewFilter.mine:
-        return records.where((r) => r.userId == userId).toList();
-      case CheckInViewFilter.partner:
-        return records.where((r) => r.userId != userId).toList();
+      case CheckInViewFilter.guaiGuai:
+      case CheckInViewFilter.jingJing:
+        return records
+            .where((r) => KnownGoogleUsers.matchesFilter(
+                  email: r.userEmail,
+                  filter: _filter,
+                ))
+            .toList();
     }
   }
 
@@ -191,9 +201,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
                   _buildOfflineBanner(colorScheme),
                 _buildFilterBar(colorScheme),
                 Expanded(
-                  child: _filteredGoals.isEmpty
-                      ? _buildEmptyState(colorScheme)
-                      : _buildBody(colorScheme, isDark),
+                  child: _buildBody(colorScheme, isDark),
                 ),
               ],
             ),
@@ -223,69 +231,19 @@ class _CheckInScreenState extends State<CheckInScreen> {
   }
 
   Widget _buildFilterBar(ColorScheme colorScheme) {
-    final partnerLabel = _partnerLabel();
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: SegmentedButton<CheckInViewFilter>(
-        segments: [
-          const ButtonSegment(value: CheckInViewFilter.all, label: Text('全部')),
-          ButtonSegment(
-            value: CheckInViewFilter.mine,
-            label: Text(_sync.currentUser?.label ?? '我的'),
-          ),
-          if (partnerLabel != null)
-            ButtonSegment(
-              value: CheckInViewFilter.partner,
-              label: Text(partnerLabel),
-            ),
-        ],
+        segments: CheckInViewFilter.values
+            .map(
+              (f) => ButtonSegment(
+                value: f,
+                label: Text(f.label),
+              ),
+            )
+            .toList(),
         selected: {_filter},
         onSelectionChanged: (s) => setState(() => _filter = s.first),
-      ),
-    );
-  }
-
-  String? _partnerLabel() {
-    final userId = _currentUserId;
-    if (userId == null) return null;
-    for (final g in _allGoals) {
-      if (!g.isOwnedBy(userId)) {
-        final name = g.ownerLabel;
-        if (name.isNotEmpty) return name.length > 4 ? '${name.substring(0, 4)}…' : name;
-      }
-    }
-    for (final r in _allGoals.expand((g) => g.records)) {
-      if (r.userId != userId) {
-        final name = r.userLabel;
-        if (name.isNotEmpty) return name.length > 4 ? '${name.substring(0, 4)}…' : name;
-      }
-    }
-    return '对方';
-  }
-
-  Widget _buildEmptyState(ColorScheme colorScheme) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.check_circle_outline,
-              size: 64,
-              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
-          const SizedBox(height: 16),
-          Text(
-            _filter == CheckInViewFilter.partner ? '对方还没有打卡目标' : '还没有打卡目标',
-            style: TextStyle(color: colorScheme.onSurfaceVariant),
-          ),
-          if (_filter != CheckInViewFilter.partner) ...[
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: _openAddGoal,
-              icon: const Icon(Icons.add),
-              label: const Text('创建打卡目标'),
-            ),
-          ],
-        ],
       ),
     );
   }
@@ -305,14 +263,14 @@ class _CheckInScreenState extends State<CheckInScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              _filter == CheckInViewFilter.partner ? '对方的目标' : '打卡目标',
+              '${_filter.label}的打卡目标',
               style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.bold,
                 color: colorScheme.onSurface,
               ),
             ),
-            if (userId != null && _filter != CheckInViewFilter.partner)
+            if (_filter != CheckInViewFilter.all && userId != null)
               Text(
                 '今日 $_todayMyCheckedCount/$_myGoalCount',
                 style: TextStyle(
@@ -323,10 +281,41 @@ class _CheckInScreenState extends State<CheckInScreen> {
           ],
         ),
         const SizedBox(height: 12),
-        ..._filteredGoals.map(
-          (goal) => _buildGoalCard(goal, colorScheme, isDark, userId),
-        ),
+        if (_filteredGoals.isEmpty)
+          _buildGoalsEmptyHint(colorScheme)
+        else
+          ..._filteredGoals.map(
+            (goal) => _buildGoalCard(goal, colorScheme, isDark, userId),
+          ),
       ],
+    );
+  }
+
+  Widget _buildGoalsEmptyHint(ColorScheme colorScheme) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(Icons.check_circle_outline,
+                size: 48,
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.45)),
+            const SizedBox(height: 12),
+            Text(
+              '${_filter.label}还没有打卡目标',
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
+            ),
+            if (_filter == CheckInViewFilter.all) ...[
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: _openAddGoal,
+                icon: const Icon(Icons.add),
+                label: const Text('创建打卡目标'),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 
@@ -428,7 +417,23 @@ class _CheckInScreenState extends State<CheckInScreen> {
           ],
         ),
         const SizedBox(height: 8),
-        CheckInMapPreview(records: records),
+        CheckInMapPreview(
+          records: records,
+          height: 220,
+          onTap: () async {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => CheckInMapScreen(
+                  goals: _allGoals,
+                  syncService: _sync,
+                  initialFilter: _filter,
+                ),
+              ),
+            );
+            if (mounted) setState(() {});
+          },
+        ),
       ],
     );
   }
@@ -449,7 +454,11 @@ class _CheckInScreenState extends State<CheckInScreen> {
     final mutedColor = onCardColor.withValues(alpha: 0.75);
     final isMine = userId != null && goal.isOwnedBy(userId);
     final checked = userId != null && goal.isCompletedTodayBy(userId);
-    final progressUserId = _filter == CheckInViewFilter.all ? null : userId;
+    final progressUserId = _filter == CheckInViewFilter.all
+        ? null
+        : _filter == CheckInViewFilter.guaiGuai
+            ? _userIdForFilter(CheckInViewFilter.guaiGuai)
+            : _userIdForFilter(CheckInViewFilter.jingJing);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -554,6 +563,25 @@ class _CheckInScreenState extends State<CheckInScreen> {
         ),
       ),
     );
+  }
+
+  String? _userIdForFilter(CheckInViewFilter filter) {
+    final email = filter == CheckInViewFilter.guaiGuai
+        ? KnownGoogleUsers.guaiGuaiEmail
+        : KnownGoogleUsers.jingJingEmail;
+    for (final g in _allGoals) {
+      if (KnownGoogleUsers.normalizeEmail(g.ownerEmail) ==
+          KnownGoogleUsers.normalizeEmail(email)) {
+        return g.ownerId;
+      }
+    }
+    for (final r in _allGoals.expand((g) => g.records)) {
+      if (KnownGoogleUsers.normalizeEmail(r.userEmail) ==
+          KnownGoogleUsers.normalizeEmail(email)) {
+        return r.userId;
+      }
+    }
+    return null;
   }
 
   Widget _badge(String text, Color color) {

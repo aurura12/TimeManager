@@ -3,9 +3,10 @@ import 'package:intl/intl.dart';
 
 import '../models/check_in_goal.dart';
 import '../models/check_in_record.dart';
+import '../models/check_in_view_filter.dart';
+import '../models/known_google_users.dart';
 import '../services/check_in_sync_service.dart';
 import '../widgets/check_in_map_preview.dart';
-import 'check_in_screen.dart';
 
 class CheckInMapScreen extends StatefulWidget {
   const CheckInMapScreen({
@@ -35,26 +36,17 @@ class _CheckInMapScreenState extends State<CheckInMapScreen> {
     }
   }
 
-  String? get _currentUserId => widget.syncService.currentUser?.id;
-
   List<CheckInRecord> get _filteredRecords {
     var records = widget.goals.expand((g) => g.records);
     if (_selectedGoalId != null) {
       records = records.where((r) => r.goalId == _selectedGoalId);
     }
-    final userId = _currentUserId;
-    if (userId != null) {
-      switch (_userFilter) {
-        case CheckInViewFilter.all:
-          break;
-        case CheckInViewFilter.mine:
-          records = records.where((r) => r.userId == userId);
-          break;
-        case CheckInViewFilter.partner:
-          records = records.where((r) => r.userId != userId);
-          break;
-      }
-    }
+    records = records.where(
+      (r) => KnownGoogleUsers.matchesFilter(
+        email: r.userEmail,
+        filter: _userFilter,
+      ),
+    );
     return records.toList()
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
   }
@@ -82,12 +74,13 @@ class _CheckInMapScreenState extends State<CheckInMapScreen> {
           SizedBox(
             height: MediaQuery.of(context).size.height * 0.42,
             child: Stack(
-              fit: StackFit.expand,
               children: [
-                CheckInMapPreview(
-                  records: records,
-                  height: double.infinity,
-                  showLegend: false,
+                Positioned.fill(
+                  child: CheckInMapPreview(
+                    records: records,
+                    height: MediaQuery.of(context).size.height * 0.42,
+                    showLegend: true,
+                  ),
                 ),
                 Positioned(
                   top: 12,
@@ -112,15 +105,21 @@ class _CheckInMapScreenState extends State<CheckInMapScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('打卡地点排行',
-                        style: TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold,
-                            color: colorScheme.onSurface)),
-                    Text('${records.length} 次',
-                        style: TextStyle(
-                            fontSize: 13,
-                            color: colorScheme.onSurfaceVariant)),
+                    Text(
+                      '打卡地点排行',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                    Text(
+                      '${records.length} 次打卡',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -128,8 +127,10 @@ class _CheckInMapScreenState extends State<CheckInMapScreen> {
                   Center(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 24),
-                      child: Text('暂无位置数据',
-                          style: TextStyle(color: colorScheme.onSurfaceVariant)),
+                      child: Text(
+                        '暂无位置数据',
+                        style: TextStyle(color: colorScheme.onSurfaceVariant),
+                      ),
                     ),
                   )
                 else
@@ -144,22 +145,23 @@ class _CheckInMapScreenState extends State<CheckInMapScreen> {
                     );
                   }),
                 const SizedBox(height: 16),
-                Text('最近打卡',
-                    style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                        color: colorScheme.onSurface)),
+                Text(
+                  '最近打卡',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.onSurface,
+                  ),
+                ),
                 const SizedBox(height: 12),
                 ...records.take(15).map((r) {
-                  final goal = widget.goals.firstWhere(
-                    (g) => g.id == r.goalId,
-                    orElse: () => widget.goals.first,
-                  );
+                  final goal = widget.goals.where((g) => g.id == r.goalId);
+                  final g = goal.isEmpty ? null : goal.first;
                   return _RecentCheckInTile(
                     record: r,
-                    goal: goal,
+                    goalName: g?.name ?? '未知目标',
+                    goalColor: g?.color ?? colorScheme.primary,
                     colorScheme: colorScheme,
-                    currentUserId: _currentUserId,
                   );
                 }),
               ],
@@ -174,31 +176,17 @@ class _CheckInMapScreenState extends State<CheckInMapScreen> {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
-        children: [
-          FilterChip(
-            label: const Text('全部'),
-            selected: _userFilter == CheckInViewFilter.all,
-            onSelected: (_) =>
-                setState(() => _userFilter = CheckInViewFilter.all),
-            backgroundColor: colorScheme.surface.withValues(alpha: 0.92),
-          ),
-          const SizedBox(width: 8),
-          FilterChip(
-            label: const Text('我的'),
-            selected: _userFilter == CheckInViewFilter.mine,
-            onSelected: (_) =>
-                setState(() => _userFilter = CheckInViewFilter.mine),
-            backgroundColor: colorScheme.surface.withValues(alpha: 0.92),
-          ),
-          const SizedBox(width: 8),
-          FilterChip(
-            label: const Text('对方'),
-            selected: _userFilter == CheckInViewFilter.partner,
-            onSelected: (_) =>
-                setState(() => _userFilter = CheckInViewFilter.partner),
-            backgroundColor: colorScheme.surface.withValues(alpha: 0.92),
-          ),
-        ],
+        children: CheckInViewFilter.values.map((filter) {
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilterChip(
+              label: Text(filter.label),
+              selected: _userFilter == filter,
+              onSelected: (_) => setState(() => _userFilter = filter),
+              backgroundColor: colorScheme.surface.withValues(alpha: 0.92),
+            ),
+          );
+        }).toList(),
       ),
     );
   }
@@ -264,8 +252,10 @@ class _LocationRankTile extends StatelessWidget {
       child: ListTile(
         leading: CircleAvatar(
           backgroundColor: rankColor.withValues(alpha: 0.15),
-          child: Text('$rank',
-              style: TextStyle(fontWeight: FontWeight.bold, color: rankColor)),
+          child: Text(
+            '$rank',
+            style: TextStyle(fontWeight: FontWeight.bold, color: rankColor),
+          ),
         ),
         title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
         trailing: Container(
@@ -274,11 +264,14 @@ class _LocationRankTile extends StatelessWidget {
             color: colorScheme.primary.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Text('$count 次',
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: colorScheme.primary)),
+          child: Text(
+            '$count 次',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: colorScheme.primary,
+            ),
+          ),
         ),
       ),
     );
@@ -288,19 +281,18 @@ class _LocationRankTile extends StatelessWidget {
 class _RecentCheckInTile extends StatelessWidget {
   const _RecentCheckInTile({
     required this.record,
-    required this.goal,
+    required this.goalName,
+    required this.goalColor,
     required this.colorScheme,
-    required this.currentUserId,
   });
 
   final CheckInRecord record;
-  final CheckInGoal goal;
+  final String goalName;
+  final Color goalColor;
   final ColorScheme colorScheme;
-  final String? currentUserId;
 
   @override
   Widget build(BuildContext context) {
-    final isMe = currentUserId != null && record.userId == currentUserId;
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
@@ -308,28 +300,38 @@ class _RecentCheckInTile extends StatelessWidget {
           Container(
             width: 8,
             height: 8,
-            decoration: BoxDecoration(color: goal.color, shape: BoxShape.circle),
+            decoration: BoxDecoration(color: goalColor, shape: BoxShape.circle),
           ),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('${goal.name} · ${isMe ? '我' : record.userLabel}',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w500, fontSize: 14)),
+                Text(
+                  '$goalName · ${record.userLabel}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w500,
+                    fontSize: 14,
+                  ),
+                ),
                 Text(
                   record.locationName ??
                       DateFormat('M月d日 HH:mm').format(record.timestamp),
                   style: TextStyle(
-                      fontSize: 12, color: colorScheme.onSurfaceVariant),
+                    fontSize: 12,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
           ),
-          Text(DateFormat('M/d').format(record.timestamp),
-              style: TextStyle(
-                  fontSize: 12, color: colorScheme.onSurfaceVariant)),
+          Text(
+            DateFormat('M/d').format(record.timestamp),
+            style: TextStyle(
+              fontSize: 12,
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
         ],
       ),
     );

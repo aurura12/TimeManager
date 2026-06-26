@@ -44,6 +44,15 @@ class CheckInDocument {
     return CheckInDocument(goals: goals, records: nextRecords);
   }
 
+  /// 删除目标；默认同时删除该目标下的所有打卡记录
+  CheckInDocument removeGoal(String goalId, {bool removeRecords = true}) {
+    final nextGoals = goals.where((g) => g.id != goalId).toList();
+    final nextRecords = removeRecords
+        ? records.where((r) => r.goalId != goalId).toList()
+        : records;
+    return CheckInDocument(goals: nextGoals, records: nextRecords);
+  }
+
   /// 合并本地与远端（按 id 去重，同 id 保留较新的记录）
   static CheckInDocument merge(CheckInDocument local, CheckInDocument remote) {
     final goalMap = <String, CheckInGoal>{};

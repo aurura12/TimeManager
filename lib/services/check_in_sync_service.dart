@@ -177,6 +177,53 @@ class CheckInSyncService {
     return pushToGitHub();
   }
 
+  Future<CheckInSyncResult> deleteGoal(CheckInGoal goal) async {
+    final user = _requireUser();
+    if (!hasIdentity || user == null) {
+      return CheckInSyncResult.fail('请先至少登录一次 Google 以识别身份');
+    }
+    if (!goal.isOwnedBy(user.id)) {
+      return CheckInSyncResult.fail('只能删除自己创建的目标');
+    }
+
+    _syncing = true;
+    _lastError = null;
+    try {
+      final token = await _requireToken();
+      if (token == null) {
+        return CheckInSyncResult.fail('未配置 GitHub Token');
+      }
+
+      final pull = await CheckInGitHubService.pullText(
+        token: token,
+        path: CheckInDocument.filePath,
+      );
+      if (pull.success && pull.content != null) {
+        final remote = CheckInDocument.fromMarkdown(pull.content!);
+        _document = CheckInDocument.merge(_document, remote);
+      }
+
+      _document = _document.removeGoal(goal.id);
+      await CheckInLocalStore.saveDraft(_document);
+
+      final push = await CheckInGitHubService.pushText(
+        token: token,
+        path: CheckInDocument.filePath,
+        content: _document.toMarkdown(),
+        commitMessage: 'check-in: delete goal ${goal.name}',
+      );
+      if (!push.success) {
+        return CheckInSyncResult.fail(push.error ?? '删除同步失败');
+      }
+
+      return CheckInSyncResult.ok(_document);
+    } catch (e) {
+      return CheckInSyncResult.fail('删除失败: $e');
+    } finally {
+      _syncing = false;
+    }
+  }
+
   Future<CheckInSyncResult> submitCheckIn({
     required CheckInGoal goal,
     required File photoFile,
