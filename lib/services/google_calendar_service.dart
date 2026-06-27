@@ -52,6 +52,9 @@ class GoogleCalendarService {
   /// 日历 API 是否可调用（需要有效 token）
   static bool get canUseCalendarApi => isSignedIn;
 
+  /// 身份已识别，但日历 token 不可用（需重新连接）
+  static bool get needsCalendarReconnect => hasKnownUser && !isSignedIn;
+
   @Deprecated('请使用 isSignedIn / sessionUser')
   static GoogleSignInAccount? get currentUser => _currentUser;
 
@@ -240,6 +243,18 @@ class GoogleCalendarService {
     await _clearAllIdentity();
     _notifyAuthStateChanged();
     _log('已退出 Google 登录');
+  }
+
+  /// 重新连接 Google 日历：先静默恢复，失败则弹出登录
+  static Future<bool> reconnectCalendar() async {
+    _lastLoginError = null;
+    if (!isConfigured) return false;
+
+    await restoreSignIn(background: false);
+    if (isSignedIn) return true;
+
+    final account = await login();
+    return account != null;
   }
 
   /// 静默恢复会话。

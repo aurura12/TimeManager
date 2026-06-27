@@ -25,7 +25,7 @@ class CheckInRecord {
   final double? latitude;
   final double? longitude;
   final String? locationName;
-  /// GitHub 仓库内路径，如 images/check_in/{userId}/{recordId}.jpg
+  /// GitHub 仓库内路径，如 images/乖乖/{recordId}.jpg
   final String? photoPath;
   final String? note;
 

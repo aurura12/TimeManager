@@ -137,6 +137,8 @@ class TimeProvider with ChangeNotifier {
     if (GoogleCalendarService.isSignedIn) {
       notifyListeners();
       await pullGoogleCalendarForCurrentDate();
+    } else if (GoogleCalendarService.needsCalendarReconnect) {
+      notifyListeners();
     }
   }
 
@@ -314,7 +316,12 @@ class TimeProvider with ChangeNotifier {
       if (_isSyncing) return;
 
       if (!GoogleCalendarService.isSignedIn) {
-        if (!delay) _syncStatusController.add("未登录 Google 账号，无法同步");
+        if (!delay) {
+          final msg = GoogleCalendarService.needsCalendarReconnect
+              ? '日历未连接，请在设置中重新连接'
+              : '未登录 Google 账号，无法同步';
+          _syncStatusController.add(msg);
+        }
         return;
       }
 
