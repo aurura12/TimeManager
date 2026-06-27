@@ -7,7 +7,7 @@ import '../models/check_in_goal.dart';
 import '../services/check_in_location_service.dart';
 import '../services/check_in_sync_service.dart';
 
-/// 拍照打卡底部弹窗
+/// 拍照 / 相册打卡底部弹窗
 class CheckInPhotoSheet extends StatefulWidget {
   const CheckInPhotoSheet({
     super.key,
@@ -64,18 +64,20 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
     });
   }
 
-  Future<void> _takePhoto() async {
+  Future<void> _pickImage(ImageSource source) async {
+    if (_uploading) return;
     setState(() => _error = null);
     try {
       final picked = await _picker.pickImage(
-        source: ImageSource.camera,
+        source: source,
         preferredCameraDevice: CameraDevice.rear,
         imageQuality: 95,
       );
       if (picked == null || !mounted) return;
       setState(() => _photoFile = File(picked.path));
     } catch (e) {
-      setState(() => _error = '无法打开相机: $e');
+      final action = source == ImageSource.camera ? '打开相机' : '打开相册';
+      setState(() => _error = '无法$action: $e');
     }
   }
 
@@ -179,7 +181,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                           ),
                         ),
                         Text(
-                          '拍照后压缩上传至 GitHub',
+                          '拍照或从相册选择，压缩后上传',
                           style: TextStyle(
                             fontSize: 12,
                             color: colorScheme.onSurfaceVariant,
@@ -213,12 +215,12 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.camera_alt_outlined,
+                              Icon(Icons.add_photo_alternate_outlined,
                                   size: 48,
                                   color: Colors.white.withValues(alpha: 0.5)),
                               const SizedBox(height: 8),
                               Text(
-                                '点击下方按钮拍照',
+                                '拍照或从相册选择',
                                 style: TextStyle(
                                   color: Colors.white.withValues(alpha: 0.6),
                                   fontSize: 13,
@@ -297,29 +299,55 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                 Text(_error!, style: TextStyle(color: colorScheme.error)),
               ],
               const SizedBox(height: 16),
-              Row(
-                children: [
-                  if (_photoFile != null && !_uploading)
+              if (_photoFile == null)
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _uploading
+                            ? null
+                            : () => _pickImage(ImageSource.gallery),
+                        icon: const Icon(Icons.photo_library_outlined),
+                        label: const Text('相册'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: _uploading
+                            ? null
+                            : () => _pickImage(ImageSource.camera),
+                        icon: const Icon(Icons.camera_alt),
+                        label: const Text('拍照'),
+                      ),
+                    ),
+                  ],
+                )
+              else
+                Row(
+                  children: [
                     TextButton.icon(
-                      onPressed: _takePhoto,
-                      icon: const Icon(Icons.refresh),
+                      onPressed: _uploading
+                          ? null
+                          : () => _pickImage(ImageSource.camera),
+                      icon: const Icon(Icons.camera_alt, size: 18),
                       label: const Text('重拍'),
                     ),
-                  const Spacer(),
-                  FilledButton.icon(
-                    onPressed: _photoFile == null
-                        ? _takePhoto
-                        : (_canSubmit ? _submit : null),
-                    icon: Icon(
-                        _photoFile == null ? Icons.camera_alt : Icons.cloud_upload),
-                    label: Text(
-                      _photoFile == null
-                          ? '拍照'
-                          : (_uploading ? '上传中...' : '确认打卡'),
+                    TextButton.icon(
+                      onPressed: _uploading
+                          ? null
+                          : () => _pickImage(ImageSource.gallery),
+                      icon: const Icon(Icons.photo_library_outlined, size: 18),
+                      label: const Text('换一张'),
                     ),
-                  ),
-                ],
-              ),
+                    const Spacer(),
+                    FilledButton.icon(
+                      onPressed: _canSubmit ? _submit : null,
+                      icon: const Icon(Icons.cloud_upload),
+                      label: Text(_uploading ? '上传中...' : '确认打卡'),
+                    ),
+                  ],
+                ),
             ],
           ),
         ),
