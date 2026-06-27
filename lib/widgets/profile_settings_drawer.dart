@@ -287,6 +287,17 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               ],
             ),
             const SizedBox(height: 8),
+            if (!GoogleCalendarService.isSignedIn) ...[
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  icon: const Icon(Icons.link, size: 18),
+                  label: const Text('重新连接 Google 日历'),
+                  onPressed: () => _connectGoogle(context, provider),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
@@ -355,39 +366,41 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                 backgroundColor: Theme.of(context).colorScheme.primary,
                 padding: const EdgeInsets.symmetric(vertical: 12),
               ),
-              onPressed: () async {
-                if (!GoogleCalendarService.isConfigured) {
-                  if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        '请先在 lib/config/google_sign_in_config.dart 填写 Web 客户端 ID',
-                      ),
-                    ),
-                  );
-                  return;
-                }
-                final account = await GoogleCalendarService.login();
-                if (!context.mounted) return;
-                if (account == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        GoogleCalendarService.lastLoginError ?? 'Google 登录失败',
-                      ),
-                    ),
-                  );
-                  return;
-                }
-                provider.synchronizeCalendar();
-                widget.onChanged();
-                Navigator.pop(context);
-              },
+              onPressed: () => _connectGoogle(context, provider),
             ),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _connectGoogle(BuildContext context, TimeProvider provider) async {
+    if (!GoogleCalendarService.isConfigured) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            '请先在 lib/config/google_sign_in_config.dart 填写 Web 客户端 ID',
+          ),
+        ),
+      );
+      return;
+    }
+    final ok = await GoogleCalendarService.reconnectCalendar();
+    if (!context.mounted) return;
+    if (ok) {
+      provider.synchronizeCalendar();
+      widget.onChanged();
+      Navigator.pop(context);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            GoogleCalendarService.lastLoginError ?? 'Google 登录失败',
+          ),
+        ),
+      );
+    }
   }
 
   String _themeModeLabel(ThemeMode mode) {

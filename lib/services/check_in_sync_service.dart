@@ -243,7 +243,7 @@ class CheckInSyncService {
     try {
       final recordId = DateTime.now().millisecondsSinceEpoch.toString();
       final photoPath = CheckInDocument.imagePathFor(
-        userId: user.id,
+        userEmail: user.email,
         recordId: recordId,
       );
 

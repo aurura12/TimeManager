@@ -4,11 +4,12 @@ import 'package:intl/intl.dart';
 
 import 'check_in_goal.dart';
 import 'check_in_record.dart';
+import 'known_google_users.dart';
 
 /// GitHub 上的打卡数据文档（`check_in_data.md`）
 class CheckInDocument {
   static const String filePath = 'check_in_data.md';
-  static const String imagesDir = 'images/check_in';
+  static const String imagesDir = 'images';
 
   final List<CheckInGoal> goals;
   final List<CheckInRecord> records;
@@ -129,12 +130,13 @@ class CheckInDocument {
     return CheckInDocument(goals: goals, records: records);
   }
 
+  /// 仓库内照片路径，如 images/乖乖/{recordId}.jpg
   static String imagePathFor({
-    required String userId,
+    required String userEmail,
     required String recordId,
   }) {
-    final safeUserId = userId.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
-    return '$imagesDir/$safeUserId/$recordId.jpg';
+    final folder = KnownGoogleUsers.photoFolderFor(userEmail);
+    return '$imagesDir/$folder/$recordId.jpg';
   }
 
   static String _extractBody(String markdown) {

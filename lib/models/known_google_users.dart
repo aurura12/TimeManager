@@ -50,4 +50,9 @@ class KnownGoogleUsers {
         return normalized == jingJingEmail;
     }
   }
+
+  /// GitHub 照片目录名（乖乖 / 晶晶）
+  static String photoFolderFor(String email) {
+    return nicknameFor(email) ?? 'other';
+  }
 }
