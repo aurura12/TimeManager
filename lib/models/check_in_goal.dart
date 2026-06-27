@@ -22,6 +22,32 @@ enum CheckInPeriod {
   }
 }
 
+/// 打卡目标可选图标（须为 const，release 构建才能 tree-shake 字体）
+class CheckInGoalIcons {
+  CheckInGoalIcons._();
+
+  static const List<IconData> options = [
+    Icons.directions_run,
+    Icons.fitness_center,
+    Icons.menu_book,
+    Icons.self_improvement,
+    Icons.pool,
+    Icons.pedal_bike,
+    Icons.nightlight,
+    Icons.restaurant,
+    Icons.work,
+    Icons.pets,
+  ];
+
+  static IconData fromCodePoint(int? code) {
+    if (code == null) return Icons.flag;
+    for (final icon in options) {
+      if (icon.codePoint == code) return icon;
+    }
+    return Icons.flag;
+  }
+}
+
 /// 打卡目标
 class CheckInGoal {
   const CheckInGoal({
@@ -188,7 +214,6 @@ class CheckInGoal {
   }
 
   factory CheckInGoal.fromJson(Map<String, dynamic> json) {
-    final iconCode = json['icon'] as int? ?? 0xe153;
     return CheckInGoal(
       id: json['id']?.toString() ?? '',
       ownerId: json['owner_id']?.toString() ?? '',
@@ -197,7 +222,7 @@ class CheckInGoal {
       name: json['name']?.toString() ?? '',
       description: json['description']?.toString() ?? '',
       color: Color(json['color'] as int? ?? 0xFF96B462),
-      icon: IconData(iconCode, fontFamily: 'MaterialIcons'),
+      icon: CheckInGoalIcons.fromCodePoint(json['icon'] as int?),
       period: CheckInPeriod.fromKey(json['period']?.toString()),
       targetCount: json['target_count'] as int? ?? 1,
       requireLocation: json['require_location'] as bool? ?? true,

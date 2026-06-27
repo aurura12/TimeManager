@@ -32,18 +32,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
     Color(0xFFE91E63),
   ];
 
-  static const _icons = [
-    Icons.directions_run,
-    Icons.fitness_center,
-    Icons.menu_book,
-    Icons.self_improvement,
-    Icons.pool,
-    Icons.pedal_bike,
-    Icons.nightlight,
-    Icons.restaurant,
-    Icons.work,
-    Icons.pets,
-  ];
+  static const _icons = CheckInGoalIcons.options;
 
   @override
   void initState() {

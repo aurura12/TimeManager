@@ -259,8 +259,8 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
               onPressed: _checkIn,
               backgroundColor: _goal.color,
               foregroundColor: onColor,
-              icon: const Icon(Icons.camera_alt),
-              label: const Text('拍照打卡'),
+              icon: const Icon(Icons.add_a_photo),
+              label: const Text('打卡'),
             )
           : null,
     );
