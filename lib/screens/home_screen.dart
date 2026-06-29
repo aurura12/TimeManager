@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 import '../models/category.dart';
+import '../models/time_slot.dart';
 import 'dart:async';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import '../widgets/date_picker_panel.dart';
@@ -129,7 +130,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final timeProvider = Provider.of<TimeProvider>(context);
+    final timeProvider = context.read<TimeProvider>();
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -166,21 +167,29 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                           Expanded(
-                            child: ListView.builder(
-                              key: _gridKey,
-                              controller: _gridScrollController,
-                              physics: const NeverScrollableScrollPhysics(),
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 8),
-                              itemCount: 24,
-                              itemBuilder: (context, h) =>
-                                  _buildGridRow(h, timeProvider),
+                            child: Selector<TimeProvider, ({List<TimeSlot> slots, List<Category> categories, int startHour})>(
+                              selector: (_, p) => (slots: p.slots, categories: p.categories, startHour: p.startHour),
+                              builder: (context, data, _) {
+                                return ListView.builder(
+                                  key: _gridKey,
+                                  controller: _gridScrollController,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 8),
+                                  itemCount: 24,
+                                  itemBuilder: (context, h) =>
+                                      _buildGridRow(h, timeProvider),
+                                );
+                              },
                             ),
                           ),
                         ],
                       ),
                     ),
-                    _buildCategorySidebar(timeProvider),
+                    Selector<TimeProvider, ({List<Category> categories, DateTime currentDate})>(
+                      selector: (_, p) => (categories: p.categories, currentDate: p.currentDate),
+                      builder: (context, data, _) => _buildCategorySidebar(timeProvider),
+                    ),
                   ],
                 ),
               ),

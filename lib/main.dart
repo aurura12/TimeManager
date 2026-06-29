@@ -10,15 +10,54 @@ final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (context) => TimeProvider()),
-        ChangeNotifierProvider(create: (context) => ThemeModeProvider()),
-      ],
-      child: const TimeManagerApp(),
-    ),
-  );
+
+  ErrorWidget.builder = (details) {
+    return MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                const SizedBox(height: 16),
+                const Text('应用遇到了问题', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text(details.exceptionAsString(), textAlign: TextAlign.center),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: () => main(),
+                  child: const Text('重启应用'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  };
+
+  try {
+    runApp(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider(create: (context) => TimeProvider()),
+          ChangeNotifierProvider(create: (context) => ThemeModeProvider()),
+        ],
+        child: const TimeManagerApp(),
+      ),
+    );
+  } catch (e) {
+    debugPrint('应用启动失败: $e');
+    runApp(MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: Text('启动失败: $e', style: const TextStyle(color: Colors.red)),
+        ),
+      ),
+    ));
+  }
 }
 
 class TimeManagerApp extends StatefulWidget {

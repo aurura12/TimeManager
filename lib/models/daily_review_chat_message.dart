@@ -28,9 +28,9 @@ class DailyReviewChatMessage {
 
   factory DailyReviewChatMessage.fromJson(Map<String, dynamic> json) {
     return DailyReviewChatMessage(
-      role: json['role'] as String,
-      content: json['content'] as String,
-      createdAt: json['createdAt'] as int,
+      role: json['role']?.toString() ?? 'user',
+      content: json['content']?.toString() ?? '',
+      createdAt: json['createdAt'] as int? ?? 0,
       fromReview: json['fromReview'] == true,
       contextSync: json['contextSync'] == true,
     );
