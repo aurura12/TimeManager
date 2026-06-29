@@ -1,35 +1,9 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
-const Duration _defaultTimeout = Duration(seconds: 10);
-const int _maxRetries = 1;
-
-bool _isRetryableError(Object e) {
-  return e is TimeoutException ||
-      e is SocketException ||
-      e is HttpException ||
-      e is IOException;
-}
-
-Future<http.Response> _requestWithRetry(
-  Future<http.Response> Function() request, {
-  int maxRetries = _maxRetries,
-  Duration timeout = _defaultTimeout,
-}) async {
-  for (int i = 0; i <= maxRetries; i++) {
-    try {
-      return await request().timeout(timeout);
-    } catch (e) {
-      if (i == maxRetries || !_isRetryableError(e)) rethrow;
-      await Future.delayed(const Duration(seconds: 1));
-    }
-  }
-  throw StateError('unreachable');
-}
+import 'github_contents_api.dart';
 
 class CheckInPullResult {
   final bool success;
@@ -135,60 +109,18 @@ class CheckInDeleteResult {
 
 /// 打卡 GitHub 同步（与日记/出行共用 love_diary 仓库）
 class CheckInGitHubService {
-  static const String _owner = 'aurura12';
-  static const String _repo = 'love_diary';
-  static const String _baseHost = 'api.github.com';
-
-  static Map<String, String> _headers(String token) {
-    return {
-      'Accept': 'application/vnd.github+json',
-      'Authorization': 'Bearer $token',
-      'X-GitHub-Api-Version': '2022-11-28',
-      'Content-Type': 'application/json',
-    };
-  }
-
-  static Uri _contentsUri(String path) {
-    return Uri.https(_baseHost, '/repos/$_owner/$_repo/contents/$path');
-  }
-
-  static String _normalizeBase64(String value) {
-    return value.replaceAll('\n', '');
-  }
-
-  static String _extractErrorMessage(http.Response response) {
-    try {
-      final map = json.decode(response.body) as Map<String, dynamic>;
-      final message = map['message']?.toString();
-      if (message != null && message.isNotEmpty) return message;
-    } catch (_) {}
-    return 'GitHub 请求失败（${response.statusCode}）';
-  }
+  static const _api = GitHubContentsApi(owner: 'aurura12', repo: 'love_diary');
 
   static Future<CheckInPullResult> pullText({
     required String token,
     required String path,
   }) async {
-    try {
-      final res = await _requestWithRetry(
-        () => http.get(_contentsUri(path), headers: _headers(token)),
-      );
-      if (res.statusCode == 404) return CheckInPullResult.notFound();
-      if (res.statusCode != 200) {
-        return CheckInPullResult.error(_extractErrorMessage(res));
-      }
-
-      final map = json.decode(res.body) as Map<String, dynamic>;
-      final rawContent = map['content']?.toString();
-      final sha = map['sha']?.toString();
-      if (rawContent == null || sha == null) {
-        return CheckInPullResult.error('远端文件内容无效');
-      }
-      final decoded = utf8.decode(base64Decode(_normalizeBase64(rawContent)));
-      return CheckInPullResult.success(decoded, sha);
-    } catch (e) {
-      return CheckInPullResult.error('拉取失败: $e');
+    final result = await _api.pullText(token: token, path: path);
+    if (result.success) {
+      return CheckInPullResult.success(result.content!, result.sha!);
     }
+    if (result.notFound) return CheckInPullResult.notFound();
+    return CheckInPullResult.error(result.error ?? '拉取失败');
   }
 
   static Future<CheckInBinaryPullResult> pullBinary({
@@ -196,12 +128,12 @@ class CheckInGitHubService {
     required String path,
   }) async {
     try {
-      final res = await _requestWithRetry(
-        () => http.get(_contentsUri(path), headers: _headers(token)),
+      final res = await requestWithRetry(
+        () => http.get(_api.contentsUri(path), headers: _api.headers(token)),
       );
       if (res.statusCode == 404) return CheckInBinaryPullResult.notFound();
       if (res.statusCode != 200) {
-        return CheckInBinaryPullResult.error(_extractErrorMessage(res));
+        return CheckInBinaryPullResult.error(GitHubContentsApi.extractErrorMessage(res));
       }
 
       final map = json.decode(res.body) as Map<String, dynamic>;
@@ -210,7 +142,7 @@ class CheckInGitHubService {
         return CheckInBinaryPullResult.error('远端图片内容无效');
       }
       return CheckInBinaryPullResult.success(
-        base64Decode(_normalizeBase64(rawContent)),
+        base64Decode(GitHubContentsApi.normalizeBase64(rawContent)),
       );
     } catch (e) {
       return CheckInBinaryPullResult.error('拉取图片失败: $e');
@@ -257,14 +189,14 @@ class CheckInGitHubService {
     try {
       String? sha;
       if (!skipGetSha) {
-        final head = await _requestWithRetry(
-          () => http.get(_contentsUri(path), headers: _headers(token)),
+        final head = await requestWithRetry(
+          () => http.get(_api.contentsUri(path), headers: _api.headers(token)),
         );
         if (head.statusCode == 200) {
           final map = json.decode(head.body) as Map<String, dynamic>;
           sha = map['sha']?.toString();
         } else if (head.statusCode != 404) {
-          return CheckInPushResult.error(_extractErrorMessage(head));
+          return CheckInPushResult.error(GitHubContentsApi.extractErrorMessage(head));
         }
       }
 
@@ -274,17 +206,17 @@ class CheckInGitHubService {
       };
       if (sha != null) payload['sha'] = sha;
 
-      final res = await _requestWithRetry(
+      final res = await requestWithRetry(
         () => http.put(
-          _contentsUri(path),
-          headers: _headers(token),
+          _api.contentsUri(path),
+          headers: _api.headers(token),
           body: json.encode(payload),
         ),
       );
       if (res.statusCode == 200 || res.statusCode == 201) {
         return CheckInPushResult.success(created: res.statusCode == 201);
       }
-      return CheckInPushResult.error(_extractErrorMessage(res));
+      return CheckInPushResult.error(GitHubContentsApi.extractErrorMessage(res));
     } catch (e) {
       return CheckInPushResult.error('推送失败: $e');
     }
@@ -295,14 +227,14 @@ class CheckInGitHubService {
     required String path,
   }) async {
     try {
-      final head = await _requestWithRetry(
-        () => http.get(_contentsUri(path), headers: _headers(token)),
+      final head = await requestWithRetry(
+        () => http.get(_api.contentsUri(path), headers: _api.headers(token)),
       );
       if (head.statusCode == 404) {
         return CheckInDeleteResult.success();
       }
       if (head.statusCode != 200) {
-        return CheckInDeleteResult.error(_extractErrorMessage(head));
+        return CheckInDeleteResult.error(GitHubContentsApi.extractErrorMessage(head));
       }
       final map = json.decode(head.body) as Map<String, dynamic>;
       final sha = map['sha']?.toString();
@@ -314,17 +246,17 @@ class CheckInGitHubService {
         'message': 'check-in: delete photo $path',
         'sha': sha,
       });
-      final res = await _requestWithRetry(
+      final res = await requestWithRetry(
         () => http.delete(
-          _contentsUri(path),
-          headers: _headers(token),
+          _api.contentsUri(path),
+          headers: _api.headers(token),
           body: payload,
         ),
       );
       if (res.statusCode == 200 || res.statusCode == 204) {
         return CheckInDeleteResult.success();
       }
-      return CheckInDeleteResult.error(_extractErrorMessage(res));
+      return CheckInDeleteResult.error(GitHubContentsApi.extractErrorMessage(res));
     } catch (e) {
       return CheckInDeleteResult.error('删除文件失败: $e');
     }
