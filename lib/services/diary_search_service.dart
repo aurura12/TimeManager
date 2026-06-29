@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -10,6 +11,8 @@ import 'diary_github_service.dart';
 class DiarySearchService {
   static final Map<String, String> _cache = {};
   static final Map<String, String> _cacheSha = {};
+  /// 预计算的小写内容缓存，搜索时避免重复 toLowerCase
+  static final Map<String, String> _lowerCache = {};
   static bool _loaded = false;
   static bool _loading = false;
   static DateTime? _lastLoadTime;
@@ -90,7 +93,6 @@ class DiarySearchService {
       if (toDownload.isEmpty) {
         progress.value = 1.0;
       } else {
-        // 分批并行下载，每批 10 个
         await _batchDownload(token, toDownload);
       }
 
@@ -102,6 +104,7 @@ class DiarySearchService {
       }
       _cache.removeWhere((key, _) => !remoteKeys.contains(key));
       _cacheSha.removeWhere((key, _) => !remoteKeys.contains(key));
+      _lowerCache.clear();
 
       _loaded = true;
       _lastLoadTime = DateTime.now();
@@ -112,37 +115,55 @@ class DiarySearchService {
     }
   }
 
-  /// 分批并行下载，每批 10 个
+  /// 并发下载，动态并发数（最多 30 个同时进行）
   static Future<void> _batchDownload(
     String token,
     List<MapEntry<String, String>> entries,
   ) async {
-    const batchSize = 10;
-    for (int i = 0; i < entries.length; i += batchSize) {
-      final end = (i + batchSize).clamp(0, entries.length);
-      final batch = entries.sublist(i, end);
+    const maxConcurrent = 30;
+    int inFlight = 0;
+    int nextIndex = 0;
+    final completer = Completer<void>();
 
-      await Future.wait(batch.map((entry) async {
-        final path = entry.key;
-        final sha = entry.value;
-        final pullResult = await DiaryGitHubService.pullDiary(
-          token: token,
-          path: path,
-        );
-        if (pullResult.success && pullResult.content != null) {
-          final key = _keyFromPath(path);
-          if (key != null) {
-            _cache[key] = pullResult.content!;
-            _cacheSha[key] = sha;
+    void startNext() {
+      while (inFlight < maxConcurrent && nextIndex < entries.length) {
+        final entry = entries[nextIndex++];
+        inFlight++;
+        _downloadOne(token, entry).whenComplete(() {
+          inFlight--;
+          _syncedCount++;
+          progress.value = _totalToSync > 0 ? _syncedCount / _totalToSync : 1.0;
+          if (_syncedCount >= _totalToSync) {
+            completer.complete();
+          } else {
+            startNext();
           }
-        }
-      }));
+        });
+      }
+    }
 
-      _syncedCount += batch.length;
-      progress.value = _totalToSync > 0 ? _syncedCount / _totalToSync : 1.0;
+    startNext();
+    await completer.future;
+  }
+
+  static Future<void> _downloadOne(
+    String token,
+    MapEntry<String, String> entry,
+  ) async {
+    final pullResult = await DiaryGitHubService.pullDiary(
+      token: token,
+      path: entry.key,
+    );
+    if (pullResult.success && pullResult.content != null) {
+      final key = _keyFromPath(entry.key);
+      if (key != null) {
+        _cache[key] = pullResult.content!;
+        _cacheSha[key] = entry.value;
+      }
     }
   }
 
+  /// 并行从磁盘加载所有缓存文件
   static Future<void> _loadFromDisk() async {
     try {
       final dir = await _getCacheDir();
@@ -155,58 +176,71 @@ class DiarySearchService {
       _lastLoadTime = DateTime.tryParse(lines[0]);
       _cache.clear();
       _cacheSha.clear();
+      _lowerCache.clear();
 
+      // 解析索引行，收集需要读取的文件
+      final entries = <(String key, String sha, String fileName)>[];
       for (int i = 1; i < lines.length; i++) {
         final line = lines[i];
         final parts = line.split(':');
         if (parts.length < 3) continue;
-
         final key = parts[0];
         final sha = parts[1];
         final fileName = parts.sublist(2).join(':');
-
-        final contentFile = File('$dir/$fileName');
-        if (await contentFile.exists()) {
-          _cache[key] = await contentFile.readAsString();
-          _cacheSha[key] = sha;
-        }
+        entries.add((key, sha, fileName));
       }
+
+      // 并行读取所有缓存文件
+      await Future.wait(entries.map((entry) async {
+        final contentFile = File('$dir/${entry.$3}');
+        if (await contentFile.exists()) {
+          final content = await contentFile.readAsString();
+          _cache[entry.$1] = content;
+          _cacheSha[entry.$1] = entry.$2;
+        }
+      }));
 
       _loaded = true;
     } catch (e) {
-      // 加载失败，忽略
+      debugPrint('日记索引: 从磁盘加载失败: $e');
     }
   }
 
+  /// 并行写入所有缓存文件
   static Future<void> _saveToDisk() async {
     try {
       final dir = await _getCacheDir();
 
       // 清理旧缓存
       final existingFiles = await Directory(dir).list().toList();
-      for (final file in existingFiles) {
-        if (file is File) await file.delete();
-      }
+      await Future.wait(existingFiles
+          .whereType<File>()
+          .map((f) => f.delete().catchError((_) => f)));
 
-      // 保存索引
+      // 并行写入所有缓存文件
       final indexLines = <String>[];
       indexLines.add(_lastLoadTime?.toIso8601String() ?? '');
 
-      int fileIndex = 0;
-      for (final entry in _cache.entries) {
-        final key = entry.key;
-        final sha = _cacheSha[key] ?? '';
-        final fileName = 'cache_$fileIndex.txt';
+      final entries = _cache.entries.toList();
+      final keys = entries.map((e) => e.key).toList();
+
+      await Future.wait(List.generate(entries.length, (i) {
+        final fileName = 'cache_$i.txt';
         final contentFile = File('$dir/$fileName');
-        await contentFile.writeAsString(entry.value);
-        indexLines.add('$key:$sha:$fileName');
-        fileIndex++;
+        return contentFile.writeAsString(entries[i].value);
+      }));
+
+      // 构建索引文件内容
+      for (int i = 0; i < entries.length; i++) {
+        final key = keys[i];
+        final sha = _cacheSha[key] ?? '';
+        indexLines.add('$key:$sha:cache_$i.txt');
       }
 
       final indexFile = File('$dir/index.txt');
       await indexFile.writeAsString(indexLines.join('\n'));
     } catch (e) {
-      // 保存失败，忽略
+      debugPrint('日记索引: 保存到磁盘失败: $e');
     }
   }
 
@@ -255,7 +289,6 @@ class DiarySearchService {
 
     for (final entry in _cache.entries) {
       final key = entry.key;
-      final content = entry.value;
 
       final parts = key.split('_');
       if (parts.length != 2) continue;
@@ -265,11 +298,15 @@ class DiarySearchService {
       final date = DateTime.tryParse(dateStr);
       if (date == null) continue;
 
-      final lowerContent = content.toLowerCase();
+      // 使用预计算的小写缓存
+      final lowerContent = _lowerCache.putIfAbsent(
+        key,
+        () => entry.value.toLowerCase(),
+      );
       final matchIndex = lowerContent.indexOf(lowerQuery);
       if (matchIndex == -1) continue;
 
-      final snippet = _extractSnippet(content, matchIndex, query.length);
+      final snippet = _extractSnippet(entry.value, matchIndex, query.length);
 
       results.add(DiarySearchResult(
         kind: kind,
@@ -299,18 +336,21 @@ class DiarySearchService {
   static void updateCache(String kind, DateTime date, String content) {
     final key = '${kind}_${DateFormat('yyyy-MM-dd').format(date)}';
     _cache[key] = content;
-    _cacheSha.remove(key); // 清除 sha，下次刷新时会重新同步
+    _cacheSha.remove(key);
+    _lowerCache.remove(key);
   }
 
   static void removeFromCache(String kind, DateTime date) {
     final key = '${kind}_${DateFormat('yyyy-MM-dd').format(date)}';
     _cache.remove(key);
     _cacheSha.remove(key);
+    _lowerCache.remove(key);
   }
 
   static void clearCache() {
     _cache.clear();
     _cacheSha.clear();
+    _lowerCache.clear();
     _loaded = false;
     _lastLoadTime = null;
   }
