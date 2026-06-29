@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -14,6 +15,11 @@ class DiarySearchService {
   static DateTime? _lastLoadTime;
   static const Duration _cacheExpiry = Duration(days: 365);
   static String? _cacheDir;
+
+  /// 索引进度（0.0 ~ 1.0），通过 addListener 监听变化
+  static final ValueNotifier<double> progress = ValueNotifier(0);
+  static int _totalToSync = 0;
+  static int _syncedCount = 0;
 
   static bool get isLoaded => _loaded;
   static bool get isLoading => _loading;
@@ -33,7 +39,10 @@ class DiarySearchService {
 
     if (_loaded && _lastLoadTime != null) {
       final elapsed = DateTime.now().difference(_lastLoadTime!);
-      if (elapsed < _cacheExpiry) return;
+      if (elapsed < _cacheExpiry) {
+        progress.value = 1.0;
+        return;
+      }
     }
 
     await _syncFromRemote(token);
@@ -47,6 +56,7 @@ class DiarySearchService {
   /// 从远程同步缓存（增量 + 并行下载）
   static Future<void> _syncFromRemote(String token) async {
     _loading = true;
+    progress.value = 0;
     try {
       final listResult =
           await DiaryGitHubService.listDiaryPathsWithSha(token: token);
@@ -69,8 +79,15 @@ class DiarySearchService {
         }
       }
 
-      // 分批并行下载，每批 10 个
-      await _batchDownload(token, toDownload);
+      // 如果没有需要下载的，进度直接完成
+      _totalToSync = toDownload.length;
+      _syncedCount = 0;
+      if (toDownload.isEmpty) {
+        progress.value = 1.0;
+      } else {
+        // 分批并行下载，每批 10 个
+        await _batchDownload(token, toDownload);
+      }
 
       // 移除远程已删除的条目
       final remoteKeys = <String>{};
@@ -83,6 +100,7 @@ class DiarySearchService {
 
       _loaded = true;
       _lastLoadTime = DateTime.now();
+      progress.value = 1.0;
       await _saveToDisk();
     } finally {
       _loading = false;
@@ -114,6 +132,9 @@ class DiarySearchService {
           }
         }
       }));
+
+      _syncedCount += batch.length;
+      progress.value = _totalToSync > 0 ? _syncedCount / _totalToSync : 1.0;
     }
   }
 
