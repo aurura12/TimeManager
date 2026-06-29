@@ -23,6 +23,7 @@ class DiarySearchService {
 
   static bool get isLoaded => _loaded;
   static bool get isLoading => _loading;
+  static bool get hasData => _cache.isNotEmpty;
 
   static Future<String> _getCacheDir() async {
     if (_cacheDir != null) return _cacheDir!;
@@ -37,7 +38,8 @@ class DiarySearchService {
 
     await _loadFromDisk();
 
-    if (_loaded && _lastLoadTime != null) {
+    // 磁盘缓存有效且未过期，直接使用
+    if (_loaded && _cache.isNotEmpty && _lastLoadTime != null) {
       final elapsed = DateTime.now().difference(_lastLoadTime!);
       if (elapsed < _cacheExpiry) {
         progress.value = 1.0;
@@ -60,7 +62,10 @@ class DiarySearchService {
     try {
       final listResult =
           await DiaryGitHubService.listDiaryPathsWithSha(token: token);
-      if (!listResult.success) return;
+      if (!listResult.success) {
+        debugPrint('日记索引: 获取远程文件列表失败: ${listResult.error}');
+        return;
+      }
 
       final pathShaMap = listResult.pathShaMap;
       final filtered = pathShaMap.entries.where((e) {

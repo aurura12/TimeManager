@@ -327,9 +327,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
       return;
     }
 
+    // 如果索引未加载且未在加载中，触发加载
     if (!DiarySearchService.isLoaded && !DiarySearchService.isLoading) {
-      _showMessage('日记索引正在加载中，请稍后再试');
-      return;
+      DiarySearchService.loadInBackground(token);
     }
 
     if (!mounted) return;

@@ -82,6 +82,53 @@ class _DiarySearchScreenState extends State<DiarySearchScreen> {
   }
 
   Widget _buildHint(bool isDark, ColorScheme colorScheme) {
+    // 索引正在构建中，显示进度
+    if (DiarySearchService.isLoading) {
+      return Center(
+        child: ValueListenableBuilder<double>(
+          valueListenable: DiarySearchService.progress,
+          builder: (context, value, _) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.hourglass_top,
+                  size: 48,
+                  color: isDark ? colorScheme.outlineVariant : Colors.grey[300],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '正在构建日记索引...',
+                  style: TextStyle(
+                    color: isDark ? colorScheme.onSurfaceVariant : Colors.grey[500],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: 200,
+                  child: LinearProgressIndicator(
+                    value: value > 0 ? value : null,
+                    minHeight: 4,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                if (value > 0) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    '${(value * 100).toInt()}%',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDark ? colorScheme.onSurfaceVariant : Colors.grey[500],
+                    ),
+                  ),
+                ],
+              ],
+            );
+          },
+        ),
+      );
+    }
+
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -93,7 +140,9 @@ class _DiarySearchScreenState extends State<DiarySearchScreen> {
           ),
           const SizedBox(height: 12),
           Text(
-            '输入关键词搜索日记',
+            DiarySearchService.hasData
+                ? '输入关键词搜索日记'
+                : '暂无索引数据，请同步日记后再试',
             style: TextStyle(
               color: isDark ? colorScheme.onSurfaceVariant : Colors.grey[500],
             ),
