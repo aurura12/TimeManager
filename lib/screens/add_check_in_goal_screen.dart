@@ -105,6 +105,12 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
       );
       return;
     }
+    if (_startDate != null && _endDate != null && _endDate!.isBefore(_startDate!)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('结束日期不能早于开始日期')),
+      );
+      return;
+    }
     final count = int.tryParse(_countController.text) ?? 1;
     final goal = CheckInGoal(
       id: widget.goal?.id ??
@@ -398,10 +404,16 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
       firstDate: DateTime.now().subtract(const Duration(days: 365)),
       lastDate: DateTime.now().add(const Duration(days: 365 * 3)),
     );
-    if (picked != null) {
+    if (picked != null && mounted) {
       if (isStart) {
         _onStartDateChanged(picked);
       } else {
+        if (_startDate != null && picked.isBefore(_startDate!)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('结束日期不能早于开始日期')),
+          );
+          return;
+        }
         setState(() {
           _endDate = picked;
           _selectedDurationDays = null;
