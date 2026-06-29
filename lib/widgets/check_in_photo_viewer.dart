@@ -12,15 +12,21 @@ class CheckInPhotoViewer extends StatelessWidget {
     super.key,
     required this.syncService,
     required this.record,
+    this.isMine = false,
+    this.onDelete,
   });
 
   final CheckInSyncService syncService;
   final CheckInRecord record;
+  final bool isMine;
+  final VoidCallback? onDelete;
 
   static Future<void> show(
     BuildContext context, {
     required CheckInSyncService syncService,
     required CheckInRecord record,
+    bool isMine = false,
+    VoidCallback? onDelete,
   }) {
     if (record.photoPath == null || record.photoPath!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -34,6 +40,8 @@ class CheckInPhotoViewer extends StatelessWidget {
       builder: (_) => CheckInPhotoViewer(
         syncService: syncService,
         record: record,
+        isMine: isMine,
+        onDelete: onDelete,
       ),
     );
   }
@@ -47,12 +55,22 @@ class CheckInPhotoViewer extends StatelessWidget {
       child: SafeArea(
         child: Column(
           children: [
-            Align(
-              alignment: Alignment.centerRight,
-              child: IconButton(
-                icon: const Icon(Icons.close, color: Colors.white),
-                onPressed: () => Navigator.pop(context),
-              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (isMine && onDelete != null)
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Colors.white),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      onDelete!.call();
+                    },
+                  ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
             ),
             Expanded(
               child: FutureBuilder<File?>(

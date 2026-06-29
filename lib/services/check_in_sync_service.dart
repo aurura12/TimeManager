@@ -224,6 +224,76 @@ class CheckInSyncService {
     }
   }
 
+  Future<CheckInSyncResult> deleteCheckInRecord(
+    CheckInGoal goal,
+    CheckInRecord record,
+  ) async {
+    final user = _requireUser();
+    if (!hasIdentity || user == null) {
+      return CheckInSyncResult.fail('请先至少登录一次 Google 以识别身份');
+    }
+    if (record.userId != user.id) {
+      return CheckInSyncResult.fail('只能删除自己的打卡记录');
+    }
+
+    _syncing = true;
+    _lastError = null;
+    try {
+      final token = await _requireToken();
+      if (token == null) {
+        return CheckInSyncResult.fail('未配置 GitHub Token');
+      }
+
+      // Step 1: Pull remote and merge to avoid overwriting others' data
+      final pull = await CheckInGitHubService.pullText(
+        token: token,
+        path: CheckInDocument.filePath,
+      );
+      if (pull.success && pull.content != null) {
+        final remote = CheckInDocument.fromMarkdown(pull.content!);
+        _document = CheckInDocument.merge(_document, remote);
+      }
+
+      // Step 2: Delete photo from GitHub if present
+      if (record.photoPath != null && record.photoPath!.isNotEmpty) {
+        await CheckInGitHubService.deleteFile(
+          token: token,
+          path: record.photoPath!,
+        );
+        // Also remove local cache (best-effort, ignore errors)
+        try {
+          final cached = await CheckInPhotoCache.getCachedFile(record.photoPath!);
+          if (cached != null && await cached.exists()) {
+            await cached.delete();
+          }
+        } catch (_) {}
+      }
+
+      // Step 3: Remove record from document
+      _document = _document.removeRecord(record.id);
+
+      // Step 4: Save locally
+      await CheckInLocalStore.saveDraft(_document);
+
+      // Step 5: Push updated document to GitHub
+      final push = await CheckInGitHubService.pushText(
+        token: token,
+        path: CheckInDocument.filePath,
+        content: _document.toMarkdown(),
+        commitMessage: 'check-in: delete record ${record.id}',
+      );
+      if (!push.success) {
+        return CheckInSyncResult.fail(push.error ?? '删除同步失败');
+      }
+
+      return CheckInSyncResult.ok(_document);
+    } catch (e) {
+      return CheckInSyncResult.fail('删除失败: $e');
+    } finally {
+      _syncing = false;
+    }
+  }
+
   Future<CheckInSyncResult> submitCheckIn({
     required CheckInGoal goal,
     required File photoFile,

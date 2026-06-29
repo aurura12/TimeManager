@@ -90,6 +90,21 @@ class CheckInBinaryPullResult {
   }
 }
 
+class CheckInDeleteResult {
+  final bool success;
+  final String? error;
+
+  const CheckInDeleteResult._({required this.success, this.error});
+
+  factory CheckInDeleteResult.success() {
+    return const CheckInDeleteResult._(success: true);
+  }
+
+  factory CheckInDeleteResult.error(String message) {
+    return CheckInDeleteResult._(success: false, error: message);
+  }
+}
+
 /// 打卡 GitHub 同步（与日记/出行共用 love_diary 仓库）
 class CheckInGitHubService {
   static const String _owner = 'aurura12';
@@ -231,6 +246,42 @@ class CheckInGitHubService {
       return CheckInPushResult.error(_extractErrorMessage(res));
     } catch (e) {
       return CheckInPushResult.error('推送失败: $e');
+    }
+  }
+
+  static Future<CheckInDeleteResult> deleteFile({
+    required String token,
+    required String path,
+  }) async {
+    try {
+      final head = await http.get(_contentsUri(path), headers: _headers(token));
+      if (head.statusCode == 404) {
+        return CheckInDeleteResult.success();
+      }
+      if (head.statusCode != 200) {
+        return CheckInDeleteResult.error(_extractErrorMessage(head));
+      }
+      final map = json.decode(head.body) as Map<String, dynamic>;
+      final sha = map['sha']?.toString();
+      if (sha == null) {
+        return CheckInDeleteResult.error('无法获取文件 sha');
+      }
+
+      final payload = json.encode({
+        'message': 'check-in: delete photo $path',
+        'sha': sha,
+      });
+      final res = await http.delete(
+        _contentsUri(path),
+        headers: _headers(token),
+        body: payload,
+      );
+      if (res.statusCode == 200 || res.statusCode == 204) {
+        return CheckInDeleteResult.success();
+      }
+      return CheckInDeleteResult.error(_extractErrorMessage(res));
+    } catch (e) {
+      return CheckInDeleteResult.error('删除文件失败: $e');
     }
   }
 }
