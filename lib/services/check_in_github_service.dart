@@ -1,7 +1,35 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
+
+const Duration _defaultTimeout = Duration(seconds: 10);
+const int _maxRetries = 1;
+
+bool _isRetryableError(Object e) {
+  return e is TimeoutException ||
+      e is SocketException ||
+      e is HttpException ||
+      e is IOException;
+}
+
+Future<http.Response> _requestWithRetry(
+  Future<http.Response> Function() request, {
+  int maxRetries = _maxRetries,
+  Duration timeout = _defaultTimeout,
+}) async {
+  for (int i = 0; i <= maxRetries; i++) {
+    try {
+      return await request().timeout(timeout);
+    } catch (e) {
+      if (i == maxRetries || !_isRetryableError(e)) rethrow;
+      await Future.delayed(const Duration(seconds: 1));
+    }
+  }
+  throw StateError('unreachable');
+}
 
 class CheckInPullResult {
   final bool success;
@@ -142,7 +170,9 @@ class CheckInGitHubService {
     required String path,
   }) async {
     try {
-      final res = await http.get(_contentsUri(path), headers: _headers(token));
+      final res = await _requestWithRetry(
+        () => http.get(_contentsUri(path), headers: _headers(token)),
+      );
       if (res.statusCode == 404) return CheckInPullResult.notFound();
       if (res.statusCode != 200) {
         return CheckInPullResult.error(_extractErrorMessage(res));
@@ -166,7 +196,9 @@ class CheckInGitHubService {
     required String path,
   }) async {
     try {
-      final res = await http.get(_contentsUri(path), headers: _headers(token));
+      final res = await _requestWithRetry(
+        () => http.get(_contentsUri(path), headers: _headers(token)),
+      );
       if (res.statusCode == 404) return CheckInBinaryPullResult.notFound();
       if (res.statusCode != 200) {
         return CheckInBinaryPullResult.error(_extractErrorMessage(res));
@@ -204,12 +236,14 @@ class CheckInGitHubService {
     required String path,
     required Uint8List bytes,
     required String commitMessage,
+    bool skipGetSha = false,
   }) async {
     return _pushBytes(
       token: token,
       path: path,
       bytes: bytes,
       commitMessage: commitMessage,
+      skipGetSha: skipGetSha,
     );
   }
 
@@ -218,15 +252,20 @@ class CheckInGitHubService {
     required String path,
     required List<int> bytes,
     required String commitMessage,
+    bool skipGetSha = false,
   }) async {
     try {
       String? sha;
-      final head = await http.get(_contentsUri(path), headers: _headers(token));
-      if (head.statusCode == 200) {
-        final map = json.decode(head.body) as Map<String, dynamic>;
-        sha = map['sha']?.toString();
-      } else if (head.statusCode != 404) {
-        return CheckInPushResult.error(_extractErrorMessage(head));
+      if (!skipGetSha) {
+        final head = await _requestWithRetry(
+          () => http.get(_contentsUri(path), headers: _headers(token)),
+        );
+        if (head.statusCode == 200) {
+          final map = json.decode(head.body) as Map<String, dynamic>;
+          sha = map['sha']?.toString();
+        } else if (head.statusCode != 404) {
+          return CheckInPushResult.error(_extractErrorMessage(head));
+        }
       }
 
       final payload = <String, dynamic>{
@@ -235,10 +274,12 @@ class CheckInGitHubService {
       };
       if (sha != null) payload['sha'] = sha;
 
-      final res = await http.put(
-        _contentsUri(path),
-        headers: _headers(token),
-        body: json.encode(payload),
+      final res = await _requestWithRetry(
+        () => http.put(
+          _contentsUri(path),
+          headers: _headers(token),
+          body: json.encode(payload),
+        ),
       );
       if (res.statusCode == 200 || res.statusCode == 201) {
         return CheckInPushResult.success(created: res.statusCode == 201);
@@ -254,7 +295,9 @@ class CheckInGitHubService {
     required String path,
   }) async {
     try {
-      final head = await http.get(_contentsUri(path), headers: _headers(token));
+      final head = await _requestWithRetry(
+        () => http.get(_contentsUri(path), headers: _headers(token)),
+      );
       if (head.statusCode == 404) {
         return CheckInDeleteResult.success();
       }
@@ -271,10 +314,12 @@ class CheckInGitHubService {
         'message': 'check-in: delete photo $path',
         'sha': sha,
       });
-      final res = await http.delete(
-        _contentsUri(path),
-        headers: _headers(token),
-        body: payload,
+      final res = await _requestWithRetry(
+        () => http.delete(
+          _contentsUri(path),
+          headers: _headers(token),
+          body: payload,
+        ),
       );
       if (res.statusCode == 200 || res.statusCode == 204) {
         return CheckInDeleteResult.success();

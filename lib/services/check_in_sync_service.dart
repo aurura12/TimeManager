@@ -322,11 +322,13 @@ class CheckInSyncService {
         return CheckInSyncResult.fail('照片压缩失败');
       }
 
+      // Photo is a new file, skip GET sha to save one HTTP request
       final imagePush = await CheckInGitHubService.pushBinary(
         token: token,
         path: photoPath,
         bytes: compressed,
         commitMessage: 'check-in: photo $recordId',
+        skipGetSha: true,
       );
       if (!imagePush.success) {
         return CheckInSyncResult.fail(imagePush.error ?? '照片上传失败');

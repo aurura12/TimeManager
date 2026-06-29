@@ -64,6 +64,10 @@ class CheckInGoal {
     this.records = const [],
     this.requireLocation = true,
     this.requirePhoto = true,
+    this.startDate,
+    this.endDate,
+    this.isArchived = false,
+    this.archivedAt,
   });
 
   final String id;
@@ -79,6 +83,10 @@ class CheckInGoal {
   final List<CheckInRecord> records;
   final bool requireLocation;
   final bool requirePhoto;
+  final DateTime? startDate;
+  final DateTime? endDate;
+  final bool isArchived;
+  final DateTime? archivedAt;
 
   String get ownerLabel => KnownGoogleUsers.displayLabel(
         email: ownerEmail,
@@ -86,6 +94,11 @@ class CheckInGoal {
       );
 
   bool isOwnedBy(String userId) => ownerId == userId;
+
+  bool get isActive =>
+      !isArchived && (endDate == null || endDate!.isAfter(DateTime.now()));
+
+  bool get isExpired => endDate != null && endDate!.isBefore(DateTime.now());
 
   int get totalCheckIns => records.length;
 
