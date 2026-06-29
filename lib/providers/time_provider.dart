@@ -91,6 +91,10 @@ class TimeProvider with ChangeNotifier {
   final TargetStatsCache _targetStatsCache = TargetStatsCache();
   TargetStatsCache get targetStatsCache => _targetStatsCache;
 
+  // --- 统计缓存 ---
+  String? _statsCacheKey;
+  Map<String, double>? _statsCache;
+
   // --- 标签到分类ID映射缓存 ---
   Map<String, String>? _labelCategoryIdCache;
   Map<String, Category>? _categoryIdMapCache;
@@ -1091,6 +1095,12 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> _saveDataImpl() async {
+    // Invalidate stats cache on any data change
+    if (_slotsDirty.isNotEmpty || _allSlotsDirty) {
+      _statsCache = null;
+      _statsCacheKey = null;
+    }
+
     final prefs = await SharedPreferences.getInstance();
 
     // 1. 保存分类（仅在变化时）
@@ -1875,6 +1885,11 @@ class TimeProvider with ChangeNotifier {
   }
 
   Map<String, double> getStatistics(DateTime start, DateTime end) {
+    final cacheKey = '${_getDateKey(start)}_${_getDateKey(end)}';
+    if (_statsCacheKey == cacheKey && _statsCache != null) {
+      return _statsCache!;
+    }
+
     Map<String, double> stats = {};
 
     // 遍历日期范围内的每一天
@@ -1891,6 +1906,9 @@ class TimeProvider with ChangeNotifier {
         }
       }
     }
+
+    _statsCacheKey = cacheKey;
+    _statsCache = stats;
     return stats;
   }
 
@@ -1971,7 +1989,17 @@ class TimeProvider with ChangeNotifier {
     } else if (tabIndex == 2) {
       start = DateTime(now.year, now.month - 1, now.day);
     } else {
-      start = DateTime(2025);
+      // 全部历史：从最早有数据的日期开始
+      if (_dailySlots.isEmpty) {
+        start = now;
+      } else {
+        final keys = _dailySlots.keys.toList()..sort();
+        final first = keys.first.split('-');
+        final y = int.tryParse(first[0]) ?? now.year;
+        final m = int.tryParse(first.length > 1 ? first[1] : '') ?? 1;
+        final d = int.tryParse(first.length > 2 ? first[2] : '') ?? 1;
+        start = DateTime(y, m, d);
+      }
     }
 
     // 遍历日期
