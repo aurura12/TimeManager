@@ -143,7 +143,11 @@ class _CheckInScreenState extends State<CheckInScreen> {
       _showMessage('请先登录 Google');
       return;
     }
-    final userId = _currentUserId!;
+    final userId = _currentUserId;
+    if (userId == null) {
+      _showMessage('无法获取用户信息，请重新登录');
+      return;
+    }
     if (!goal.isOwnedBy(userId)) {
       _showMessage('只能在自己的目标下打卡');
       return;
