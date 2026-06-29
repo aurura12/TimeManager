@@ -27,6 +27,7 @@ class CheckInDetailScreen extends StatefulWidget {
 
 class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
   late CheckInGoal _goal;
+  bool _processing = false;
 
   @override
   void initState() {
@@ -60,7 +61,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
   }
 
   Future<void> _edit() async {
-    if (!_isMine) return;
+    if (!_isMine || _processing) return;
     final result = await Navigator.push<CheckInGoal>(
       context,
       MaterialPageRoute(
@@ -68,8 +69,10 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
       ),
     );
     if (result == null) return;
+    setState(() => _processing = true);
     final saveResult = await widget.syncService.saveGoal(result);
     if (!mounted) return;
+    setState(() => _processing = false);
     _refreshGoalFromSync();
     setState(() {});
     ScaffoldMessenger.of(context).showSnackBar(
@@ -80,7 +83,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
   }
 
   Future<void> _confirmDelete() async {
-    if (!_isMine) return;
+    if (!_isMine || _processing) return;
     final recordCount = _goal.records.length;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -109,8 +112,10 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     );
     if (confirmed != true || !mounted) return;
 
+    setState(() => _processing = true);
     final result = await widget.syncService.deleteGoal(_goal);
     if (!mounted) return;
+    setState(() => _processing = false);
     if (result.success) {
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -125,7 +130,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
 
   Future<void> _confirmDeleteRecord(CheckInRecord record) async {
     final userId = _userId;
-    if (userId == null || record.userId != userId) return;
+    if (userId == null || record.userId != userId || _processing) return;
 
     final dateStr = DateFormat('M月d日 HH:mm').format(record.timestamp);
     final confirmed = await showDialog<bool>(
@@ -150,8 +155,10 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     );
     if (confirmed != true || !mounted) return;
 
+    setState(() => _processing = true);
     final result = await widget.syncService.deleteCheckInRecord(_goal, record);
     if (!mounted) return;
+    setState(() => _processing = false);
     if (result.success) {
       _refreshGoalFromSync();
       setState(() {});
@@ -166,7 +173,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
   }
 
   Future<void> _archive() async {
-    if (!_isMine) return;
+    if (!_isMine || _processing) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -186,12 +193,14 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     );
     if (confirmed != true || !mounted) return;
 
+    setState(() => _processing = true);
     final updated = _goal.copyWith(
       isArchived: true,
       archivedAt: DateTime.now(),
     );
     final result = await widget.syncService.saveGoal(updated);
     if (!mounted) return;
+    setState(() => _processing = false);
     if (result.success) {
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -245,7 +254,16 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
               ),
             ),
             actions: [
-              if (_isMine) ...[
+              if (_processing)
+                const Padding(
+                  padding: EdgeInsets.all(14),
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else if (_isMine) ...[
                 if (!_goal.isArchived)
                   IconButton(icon: const Icon(Icons.edit), onPressed: _edit),
                 IconButton(
