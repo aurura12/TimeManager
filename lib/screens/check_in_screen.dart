@@ -9,6 +9,7 @@ import '../services/google_calendar_service.dart';
 import '../widgets/check_in_map_preview.dart';
 import '../widgets/check_in_photo_sheet.dart';
 import 'add_check_in_goal_screen.dart';
+import 'check_in_archive_screen.dart';
 import 'check_in_detail_screen.dart';
 import 'check_in_map_screen.dart';
 
@@ -41,18 +42,19 @@ class _CheckInScreenState extends State<CheckInScreen> {
   List<CheckInGoal> get _allGoals => _sync.goalsWithRecords;
 
   List<CheckInGoal> get _filteredGoals {
+    final activeGoals = _allGoals.where((g) => g.isActive).toList();
     switch (_filter) {
       case CheckInViewFilter.all:
-        return _allGoals;
+        return activeGoals;
       case CheckInViewFilter.guaiGuai:
-        return _allGoals
+        return activeGoals
             .where((g) => KnownGoogleUsers.matchesFilter(
                   email: g.ownerEmail,
                   filter: CheckInViewFilter.guaiGuai,
                 ))
             .toList();
       case CheckInViewFilter.jingJing:
-        return _allGoals
+        return activeGoals
             .where((g) => KnownGoogleUsers.matchesFilter(
                   email: g.ownerEmail,
                   filter: CheckInViewFilter.jingJing,
@@ -60,6 +62,11 @@ class _CheckInScreenState extends State<CheckInScreen> {
             .toList();
     }
   }
+
+  List<CheckInGoal> get _archivedGoals =>
+      _allGoals.where((g) => g.isArchived).toList();
+
+  int get _archivedCount => _archivedGoals.length;
 
   List<CheckInRecord> get _filteredRecords {
     final records = _allGoals.expand((g) => g.records);
@@ -303,6 +310,10 @@ class _CheckInScreenState extends State<CheckInScreen> {
           ..._filteredGoals.map(
             (goal) => _buildGoalCard(goal, colorScheme, isDark, userId),
           ),
+        if (_archivedCount > 0) ...[
+          const SizedBox(height: 16),
+          _buildArchiveEntry(colorScheme),
+        ],
       ],
     );
   }
@@ -329,6 +340,60 @@ class _CheckInScreenState extends State<CheckInScreen> {
                 label: const Text('创建打卡目标'),
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildArchiveEntry(ColorScheme colorScheme) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () async {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => CheckInArchiveScreen(syncService: _sync),
+          ),
+        );
+        if (mounted) setState(() {});
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.archive, size: 20, color: colorScheme.onSurfaceVariant),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '已归档的目标',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: colorScheme.onSurface,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '$_archivedCount',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(Icons.chevron_right,
+                size: 20, color: colorScheme.onSurfaceVariant),
           ],
         ),
       ),

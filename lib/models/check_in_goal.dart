@@ -191,6 +191,10 @@ class CheckInGoal {
     List<CheckInRecord>? records,
     bool? requireLocation,
     bool? requirePhoto,
+    DateTime? startDate,
+    DateTime? endDate,
+    bool? isArchived,
+    DateTime? archivedAt,
   }) {
     return CheckInGoal(
       id: id ?? this.id,
@@ -206,6 +210,10 @@ class CheckInGoal {
       records: records ?? this.records,
       requireLocation: requireLocation ?? this.requireLocation,
       requirePhoto: requirePhoto ?? this.requirePhoto,
+      startDate: startDate ?? this.startDate,
+      endDate: endDate ?? this.endDate,
+      isArchived: isArchived ?? this.isArchived,
+      archivedAt: archivedAt ?? this.archivedAt,
     );
   }
 
@@ -223,6 +231,10 @@ class CheckInGoal {
       'target_count': targetCount,
       'require_location': requireLocation,
       'require_photo': requirePhoto,
+      if (startDate != null) 'start_date': startDate!.toIso8601String(),
+      if (endDate != null) 'end_date': endDate!.toIso8601String(),
+      'is_archived': isArchived,
+      if (archivedAt != null) 'archived_at': archivedAt!.toIso8601String(),
     };
   }
 
@@ -240,6 +252,16 @@ class CheckInGoal {
       targetCount: json['target_count'] as int? ?? 1,
       requireLocation: json['require_location'] as bool? ?? true,
       requirePhoto: json['require_photo'] as bool? ?? true,
+      startDate: json['start_date'] != null
+          ? DateTime.tryParse(json['start_date'].toString())
+          : null,
+      endDate: json['end_date'] != null
+          ? DateTime.tryParse(json['end_date'].toString())
+          : null,
+      isArchived: json['is_archived'] as bool? ?? false,
+      archivedAt: json['archived_at'] != null
+          ? DateTime.tryParse(json['archived_at'].toString())
+          : null,
     );
   }
 }
