@@ -36,6 +36,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
   int _contextRequestId = 0;
   bool _dirtySinceContextLoaded = false;
   static const Duration _remotePathsTtl = Duration(minutes: 3);
+  Set<String> _gDiaryDateKeys = {};
+  Set<String> _jDiaryDateKeys = {};
 
   @override
   void initState() {
@@ -128,6 +130,25 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return DateTime.now().difference(_remoteDiaryPathsFetchedAt!) < _remotePathsTtl;
   }
 
+  void _updateDiaryDateKeys() {
+    final gKeys = <String>{};
+    final jKeys = <String>{};
+    for (final path in _remoteDiaryPaths) {
+      final date = _parseDateFromPath(path);
+      if (date != null) {
+        final dateKey = DateFormat('yyyy-MM-dd').format(date);
+        final fileName = _fileNameFromPath(path);
+        if (fileName.startsWith('G')) {
+          gKeys.add(dateKey);
+        } else if (fileName.startsWith('J')) {
+          jKeys.add(dateKey);
+        }
+      }
+    }
+    _gDiaryDateKeys = gKeys;
+    _jDiaryDateKeys = jKeys;
+  }
+
   Future<List<String>?> _fetchRemoteDiaryPathsSilently({
     bool forceRefresh = false,
   }) async {
@@ -140,6 +161,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (!listResult.success) return null;
     _remoteDiaryPaths = listResult.paths;
     _remoteDiaryPathsFetchedAt = DateTime.now();
+    _updateDiaryDateKeys();
     return listResult.paths;
   }
 
@@ -261,15 +283,22 @@ class _DiaryScreenState extends State<DiaryScreen> {
     setState(() {});
   }
 
-  Future<void> _pickDate() async {
-    final picked = await showDatePicker(
+  void _onDateSelected(DateTime date) async {
+    Navigator.pop(context);
+    await _switchContext(date: DateTime(date.year, date.month, date.day));
+  }
+
+  void _showCalendarPicker() {
+    showModalBottomSheet(
       context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
+      isScrollControlled: true,
+      builder: (_) => _CalendarPickerSheet(
+        selectedDate: _selectedDate,
+        gDiaryDateKeys: _gDiaryDateKeys,
+        jDiaryDateKeys: _jDiaryDateKeys,
+        onDateSelected: _onDateSelected,
+      ),
     );
-    if (picked == null) return;
-    await _switchContext(date: DateTime(picked.year, picked.month, picked.day));
   }
 
   Future<void> _changeKind(DiaryKind kind) async {
@@ -371,6 +400,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         _remoteDiaryPaths = listResult.paths;
         _remoteDiaryPathsFetchedAt = DateTime.now();
         _remoteTreeError = null;
+        _updateDiaryDateKeys();
       } else {
         _remoteTreeError = listResult.error ?? '读取远程列表失败';
       }
@@ -665,7 +695,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                 ),
                 const Spacer(),
                 OutlinedButton.icon(
-                  onPressed: _processing ? null : _pickDate,
+                  onPressed: _processing ? null : _showCalendarPicker,
                   icon: const Icon(Icons.calendar_today_outlined, size: 16),
                   label: Text(_selectedDateText()),
                 ),
@@ -727,4 +757,224 @@ class _RemoteFileNode {
     required this.isFile,
   })  : children = <String, _RemoteFileNode>{},
         sortedChildren = const [];
+}
+
+class _CalendarPickerSheet extends StatefulWidget {
+  const _CalendarPickerSheet({
+    required this.selectedDate,
+    required this.gDiaryDateKeys,
+    required this.jDiaryDateKeys,
+    required this.onDateSelected,
+  });
+
+  final DateTime selectedDate;
+  final Set<String> gDiaryDateKeys;
+  final Set<String> jDiaryDateKeys;
+  final Function(DateTime) onDateSelected;
+
+  @override
+  State<_CalendarPickerSheet> createState() => _CalendarPickerSheetState();
+}
+
+class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
+  late DateTime _calendarMonth;
+
+  @override
+  void initState() {
+    super.initState();
+    _calendarMonth = DateTime(
+      widget.selectedDate.year,
+      widget.selectedDate.month,
+      1,
+    );
+  }
+
+  void _changeMonth(int delta) {
+    setState(() {
+      _calendarMonth = DateTime(
+        _calendarMonth.year,
+        _calendarMonth.month + delta,
+        1,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final year = _calendarMonth.year;
+    final month = _calendarMonth.month;
+    final firstDayOfMonth = DateTime(year, month, 1);
+    final daysInMonth = DateTime(year, month + 1, 0).day;
+    final startWeekday = firstDayOfMonth.weekday;
+    final today = DateTime.now();
+    final todayKey = DateFormat('yyyy-MM-dd').format(today);
+    final selectedKey = DateFormat('yyyy-MM-dd').format(widget.selectedDate);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              IconButton(
+                onPressed: () => _changeMonth(-1),
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Text(
+                '$year年$month月',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              IconButton(
+                onPressed: () => _changeMonth(1),
+                icon: const Icon(Icons.chevron_right),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: ['一', '二', '三', '四', '五', '六', '日']
+                .map(
+                  (d) => Expanded(
+                    child: Center(
+                      child: Text(
+                        d,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+          const SizedBox(height: 8),
+          GridView.count(
+            crossAxisCount: 7,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            childAspectRatio: 1.0,
+            children: List.generate(42, (index) {
+              final dayOffset = index - (startWeekday - 1);
+              if (dayOffset < 0 || dayOffset >= daysInMonth) {
+                return const SizedBox.shrink();
+              }
+              final day = dayOffset + 1;
+              final date = DateTime(year, month, day);
+              final dateKey = DateFormat('yyyy-MM-dd').format(date);
+              final isSelected = dateKey == selectedKey;
+              final isToday = dateKey == todayKey;
+              final hasGDiary = widget.gDiaryDateKeys.contains(dateKey);
+              final hasJDiary = widget.jDiaryDateKeys.contains(dateKey);
+              final hasDiary = hasGDiary || hasJDiary;
+
+              return GestureDetector(
+                onTap: () => widget.onDateSelected(date),
+                child: Container(
+                  margin: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: isSelected ? colorScheme.primaryContainer : null,
+                    border: isToday
+                        ? Border.all(color: colorScheme.primary, width: 1.5)
+                        : null,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        '$day',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight:
+                              isSelected ? FontWeight.bold : FontWeight.normal,
+                          color: isSelected
+                              ? colorScheme.onPrimaryContainer
+                              : null,
+                        ),
+                      ),
+                      if (hasDiary)
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            if (hasGDiary)
+                              Container(
+                                margin:
+                                    const EdgeInsets.only(top: 2, right: 1),
+                                width: 5,
+                                height: 5,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFF4DA8EE),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            if (hasJDiary)
+                              Container(
+                                margin:
+                                    const EdgeInsets.only(top: 2, left: 1),
+                                width: 5,
+                                height: 5,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFFF16B77),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF4DA8EE),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 4),
+              const Text('G', style: TextStyle(fontSize: 12)),
+              const SizedBox(width: 16),
+              Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFF16B77),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 4),
+              const Text('J', style: TextStyle(fontSize: 12)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
