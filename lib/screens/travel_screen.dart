@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 
 import '../models/travel_record.dart';
@@ -6,7 +7,7 @@ import '../services/diary_local_store.dart';
 import '../services/travel_github_service.dart';
 import '../services/travel_local_store.dart';
 
-enum _TravelViewMode { table, calendar }
+enum _TravelViewMode { table, calendar, stats }
 
 class TravelScreen extends StatefulWidget {
   const TravelScreen({super.key});
@@ -23,6 +24,7 @@ class _TravelScreenState extends State<TravelScreen> {
   String? _token;
   bool _loading = true;
   bool _processing = false;
+  int _touchedIndex = -1;
 
   @override
   void initState() {
@@ -389,14 +391,28 @@ class _TravelScreenState extends State<TravelScreen> {
         ChoiceChip(
           label: const Text('表格'),
           selected: _viewMode == _TravelViewMode.table,
-          onSelected: (_) => setState(() => _viewMode = _TravelViewMode.table),
+          onSelected: (_) => setState(() {
+            _viewMode = _TravelViewMode.table;
+            _touchedIndex = -1;
+          }),
         ),
         const SizedBox(width: 8),
         ChoiceChip(
           label: const Text('日历'),
           selected: _viewMode == _TravelViewMode.calendar,
-          onSelected: (_) =>
-              setState(() => _viewMode = _TravelViewMode.calendar),
+          onSelected: (_) => setState(() {
+            _viewMode = _TravelViewMode.calendar;
+            _touchedIndex = -1;
+          }),
+        ),
+        const SizedBox(width: 8),
+        ChoiceChip(
+          label: const Text('统计'),
+          selected: _viewMode == _TravelViewMode.stats,
+          onSelected: (_) => setState(() {
+            _viewMode = _TravelViewMode.stats;
+            _touchedIndex = -1;
+          }),
         ),
       ],
     );
@@ -769,6 +785,317 @@ class _TravelScreenState extends State<TravelScreen> {
     );
   }
 
+  Widget _buildStatsView() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final records = _document.records;
+
+    if (records.isEmpty) {
+      return const Center(child: Text('暂无出行记录，无法统计'));
+    }
+
+    // 按地点统计（空格分隔的多个地点分别计数）
+    final locationCounts = <String, int>{};
+    for (final r in records) {
+      for (final loc in r.location.split(RegExp(r'\s+'))) {
+        final trimmed = loc.trim();
+        if (trimmed.isNotEmpty) {
+          locationCounts[trimmed] = (locationCounts[trimmed] ?? 0) + 1;
+        }
+      }
+    }
+    final sortedLocations = locationCounts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    // 按月统计
+    final monthCounts = <String, int>{};
+    final monthLocations = <String, Set<String>>{};
+    for (final r in records) {
+      final key = DateFormat('yyyy-MM').format(r.date);
+      monthCounts[key] = (monthCounts[key] ?? 0) + 1;
+      for (final loc in r.location.split(RegExp(r'\s+'))) {
+        final trimmed = loc.trim();
+        if (trimmed.isNotEmpty) {
+          monthLocations.putIfAbsent(key, () => {}).add(trimmed);
+        }
+      }
+    }
+    final sortedMonths = monthCounts.entries.toList()
+      ..sort((a, b) => b.key.compareTo(a.key));
+
+    // 饼图数据：Top 7 + 其他
+    final topLocations = sortedLocations.take(7).toList();
+    final otherCount = sortedLocations.length > 7
+        ? sortedLocations.skip(7).fold(0, (sum, e) => sum + e.value)
+        : 0;
+    final pieData = [...topLocations];
+    if (otherCount > 0) {
+      pieData.add(MapEntry('其他', otherCount));
+    }
+    final total = records.length;
+
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 汇总信息
+          Row(
+            children: [
+              _buildStatCard(
+                colorScheme: colorScheme,
+                value: '$total',
+                label: '出行次数',
+                accentColor: colorScheme.primary,
+              ),
+              const SizedBox(width: 12),
+              _buildStatCard(
+                colorScheme: colorScheme,
+                value: '${locationCounts.length}',
+                label: '到访地点',
+                accentColor: Colors.blue,
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+
+          // 地点分布饼图
+          Text(
+            '地点分布',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerLowest,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              children: [
+                SizedBox(
+                  height: 220,
+                  child: PieChart(
+                    PieChartData(
+                      pieTouchData: PieTouchData(
+                        touchCallback:
+                            (FlTouchEvent event, pieTouchResponse) {
+                          setState(() {
+                            if (!event.isInterestedForInteractions ||
+                                pieTouchResponse == null ||
+                                pieTouchResponse.touchedSection == null) {
+                              if (event is FlTapUpEvent) {
+                                _touchedIndex = -1;
+                              }
+                              return;
+                            }
+                            _touchedIndex = pieTouchResponse
+                                .touchedSection!.touchedSectionIndex;
+                          });
+                        },
+                      ),
+                      sectionsSpace: 2,
+                      centerSpaceRadius: 36,
+                      sections:
+                          List.generate(pieData.length, (i) {
+                        final entry = pieData[i];
+                        final color =
+                            Colors.primaries[i % Colors.primaries.length];
+                        final percentage = entry.value / total * 100;
+                        final isTouched = i == _touchedIndex;
+                        return PieChartSectionData(
+                          color: color,
+                          value: entry.value.toDouble(),
+                          title: isTouched
+                              ? '${entry.key}\n${percentage.toStringAsFixed(1)}%'
+                              : (percentage < 5
+                                  ? ''
+                                  : '${percentage.toStringAsFixed(1)}%'),
+                          radius: isTouched ? 56.0 : 48.0,
+                          titlePositionPercentageOffset:
+                              isTouched ? 1.5 : 0.5,
+                          titleStyle: TextStyle(
+                            fontSize: isTouched ? 13.0 : 11.0,
+                            fontWeight: FontWeight.bold,
+                            color: isTouched
+                                ? colorScheme.onSurface
+                                : Colors.white,
+                          ),
+                        );
+                      }),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 14,
+                  runSpacing: 6,
+                  alignment: WrapAlignment.center,
+                  children: List.generate(pieData.length, (i) {
+                    final entry = pieData[i];
+                    final color =
+                        Colors.primaries[i % Colors.primaries.length];
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: color,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          entry.key,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    );
+                  }),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // 月度统计表格
+          Text(
+            '月度统计',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerLowest,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                // 表头
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  color: colorScheme.surfaceContainerHigh,
+                  child: const Row(
+                    children: [
+                      SizedBox(
+                        width: 80,
+                        child: Text('月份',
+                            style: TextStyle(
+                                fontWeight: FontWeight.w600, fontSize: 13)),
+                      ),
+                      SizedBox(
+                        width: 50,
+                        child: Text('次数',
+                            style: TextStyle(
+                                fontWeight: FontWeight.w600, fontSize: 13)),
+                      ),
+                      Expanded(
+                        child: Text('地点',
+                            style: TextStyle(
+                                fontWeight: FontWeight.w600, fontSize: 13)),
+                      ),
+                    ],
+                  ),
+                ),
+                ...sortedMonths.map((entry) {
+                  final locs = (monthLocations[entry.key]?.toList() ?? [])..sort();
+                  return Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(
+                          color: colorScheme.outlineVariant,
+                          width: 0.5,
+                        ),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 80,
+                          child: Text(entry.key,
+                              style: const TextStyle(fontSize: 13)),
+                        ),
+                        SizedBox(
+                          width: 50,
+                          child: Text('${entry.value}',
+                              style: const TextStyle(fontSize: 13)),
+                        ),
+                        Expanded(
+                          child: Text(
+                            locs.join('、'),
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatCard({
+    required ColorScheme colorScheme,
+    required String value,
+    required String label,
+    required Color accentColor,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerLowest,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          children: [
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                color: accentColor,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -800,7 +1127,9 @@ class _TravelScreenState extends State<TravelScreen> {
             Expanded(
               child: _viewMode == _TravelViewMode.table
                   ? _buildTableView()
-                  : _buildCalendarView(),
+                  : _viewMode == _TravelViewMode.calendar
+                      ? _buildCalendarView()
+                      : _buildStatsView(),
             ),
           ],
         ),
