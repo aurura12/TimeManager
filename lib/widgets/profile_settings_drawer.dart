@@ -149,16 +149,25 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
   }
 
   Future<void> _checkForUpdate(BuildContext context) async {
-    final updateInfo = await UpdateService.checkForUpdate();
+    final result = await UpdateService.checkForUpdate();
 
     if (!context.mounted) return;
 
-    if (updateInfo == null) {
+    if (result.hasError) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.error!)),
+      );
+      return;
+    }
+
+    if (!result.hasUpdate) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('当前已是最新版本')),
       );
       return;
     }
+
+    final updateInfo = result.info!;
 
     // 显示更新内容弹窗
     final confirmed = await showDialog<bool>(
