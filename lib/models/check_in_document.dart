@@ -45,6 +45,11 @@ class CheckInDocument {
     return CheckInDocument(goals: goals, records: nextRecords);
   }
 
+  CheckInDocument removeRecord(String recordId) {
+    final nextRecords = records.where((r) => r.id != recordId).toList();
+    return CheckInDocument(goals: goals, records: nextRecords);
+  }
+
   /// 删除目标；默认同时删除该目标下的所有打卡记录
   CheckInDocument removeGoal(String goalId, {bool removeRecords = true}) {
     final nextGoals = goals.where((g) => g.id != goalId).toList();

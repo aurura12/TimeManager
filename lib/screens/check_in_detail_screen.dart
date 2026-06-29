@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:intl/intl.dart';
 
 import '../models/check_in_goal.dart';
@@ -114,6 +115,48 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('已删除「${_goal.name}」')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.error ?? '删除失败')),
+      );
+    }
+  }
+
+  Future<void> _confirmDeleteRecord(CheckInRecord record) async {
+    final userId = _userId;
+    if (userId == null || record.userId != userId) return;
+
+    final dateStr = DateFormat('M月d日 HH:mm').format(record.timestamp);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除打卡记录'),
+        content: Text('确认删除 $dateStr 的打卡记录吗？\n此操作不可撤销。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final result = await widget.syncService.deleteCheckInRecord(_goal, record);
+    if (!mounted) return;
+    if (result.success) {
+      _refreshGoalFromSync();
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已删除打卡记录')),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -272,7 +315,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     final isMe = _userId != null && record.userId == _userId;
     final hasPhoto = record.photoPath != null && record.photoPath!.isNotEmpty;
 
-    return Card(
+    final tile = Card(
       margin: const EdgeInsets.only(bottom: 10),
       elevation: 0,
       color: colorScheme.surfaceContainerLow,
@@ -284,6 +327,8 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                   context,
                   syncService: widget.syncService,
                   record: record,
+                  isMine: isMe,
+                  onDelete: isMe ? () => _confirmDeleteRecord(record) : null,
                 )
             : null,
         child: Padding(
@@ -357,6 +402,27 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
           ),
         ),
       ),
+    );
+
+    if (!isMe) return tile;
+
+    return Slidable(
+      key: ValueKey(record.id),
+      endActionPane: ActionPane(
+        motion: const DrawerMotion(),
+        extentRatio: 0.25,
+        children: [
+          SlidableAction(
+            onPressed: (_) => _confirmDeleteRecord(record),
+            backgroundColor: const Color(0xFFFE4A49),
+            foregroundColor: Colors.white,
+            icon: Icons.delete,
+            label: '删除',
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ],
+      ),
+      child: tile,
     );
   }
 }
