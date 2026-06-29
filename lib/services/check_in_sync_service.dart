@@ -125,38 +125,40 @@ class CheckInSyncService {
     _syncing = true;
     _lastError = null;
     try {
-      final token = await _requireToken();
-      if (token == null) {
-        return CheckInSyncResult.fail('未配置 GitHub Token');
-      }
-
-      // 先拉远端合并，避免覆盖对方的打卡
-      final pull = await CheckInGitHubService.pullText(
-        token: token,
-        path: CheckInDocument.filePath,
-      );
-      if (pull.success && pull.content != null) {
-        final remote = CheckInDocument.fromMarkdown(pull.content!);
-        _document = CheckInDocument.merge(_document, remote);
-      }
-
-      final push = await CheckInGitHubService.pushText(
-        token: token,
-        path: CheckInDocument.filePath,
-        content: _document.toMarkdown(),
-        commitMessage: 'check-in: update data',
-      );
-      if (!push.success) {
-        return CheckInSyncResult.fail(push.error ?? '推送失败');
-      }
-
-      await CheckInLocalStore.saveDraft(_document);
-      return CheckInSyncResult.ok(_document);
-    } catch (e) {
-      return CheckInSyncResult.fail('推送失败: $e');
+      return await _pushToGitHubInternal();
     } finally {
       _syncing = false;
     }
+  }
+
+  Future<CheckInSyncResult> _pushToGitHubInternal() async {
+    final token = await _requireToken();
+    if (token == null) {
+      return CheckInSyncResult.fail('未配置 GitHub Token');
+    }
+
+    // 先拉远端合并，避免覆盖对方的打卡
+    final pull = await CheckInGitHubService.pullText(
+      token: token,
+      path: CheckInDocument.filePath,
+    );
+    if (pull.success && pull.content != null) {
+      final remote = CheckInDocument.fromMarkdown(pull.content!);
+      _document = CheckInDocument.merge(_document, remote);
+    }
+
+    final push = await CheckInGitHubService.pushText(
+      token: token,
+      path: CheckInDocument.filePath,
+      content: _document.toMarkdown(),
+      commitMessage: 'check-in: update data',
+    );
+    if (!push.success) {
+      return CheckInSyncResult.fail(push.error ?? '推送失败');
+    }
+
+    await CheckInLocalStore.saveDraft(_document);
+    return CheckInSyncResult.ok(_document);
   }
 
   Future<CheckInSyncResult> saveGoal(CheckInGoal goal) async {
@@ -352,7 +354,7 @@ class CheckInSyncService {
       _document = _document.upsertRecord(record);
       await CheckInLocalStore.saveDraft(_document);
 
-      final metaResult = await pushToGitHub();
+      final metaResult = await _pushToGitHubInternal();
       return metaResult;
     } catch (e) {
       return CheckInSyncResult.fail('打卡失败: $e');
