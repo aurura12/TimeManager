@@ -7,6 +7,7 @@ import '../services/check_in_sync_service.dart';
 import '../widgets/check_in_map_preview.dart';
 import '../widgets/check_in_photo_sheet.dart';
 import '../widgets/check_in_photo_thumb.dart';
+import '../widgets/check_in_photo_viewer.dart';
 import 'add_check_in_goal_screen.dart';
 
 class CheckInDetailScreen extends StatefulWidget {
@@ -269,66 +270,91 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
   Widget _buildRecordTile(CheckInRecord record, ColorScheme colorScheme) {
     final dateStr = DateFormat('M月d日 HH:mm').format(record.timestamp);
     final isMe = _userId != null && record.userId == _userId;
+    final hasPhoto = record.photoPath != null && record.photoPath!.isNotEmpty;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       elevation: 0,
       color: colorScheme.surfaceContainerLow,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            CheckInPhotoThumb(
-              syncService: widget.syncService,
-              photoPath: record.photoPath,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(dateStr,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w600, fontSize: 14)),
-                      const SizedBox(width: 8),
-                      Icon(Icons.check_circle,
-                          size: 16, color: colorScheme.primary),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    isMe ? '我' : record.userLabel,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: colorScheme.primary,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  if (record.locationName != null) ...[
-                    const SizedBox(height: 4),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: hasPhoto
+            ? () => CheckInPhotoViewer.show(
+                  context,
+                  syncService: widget.syncService,
+                  record: record,
+                )
+            : null,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              CheckInPhotoThumb(
+                syncService: widget.syncService,
+                photoPath: record.photoPath,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Row(
                       children: [
-                        Icon(Icons.location_on,
-                            size: 13, color: colorScheme.onSurfaceVariant),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(record.locationName!,
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  color: colorScheme.onSurfaceVariant),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis),
-                        ),
+                        Text(dateStr,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w600, fontSize: 14)),
+                        const SizedBox(width: 8),
+                        Icon(Icons.check_circle,
+                            size: 16, color: colorScheme.primary),
                       ],
                     ),
+                    const SizedBox(height: 2),
+                    Text(
+                      isMe ? '我' : record.userLabel,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colorScheme.primary,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    if (record.locationName != null) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(Icons.location_on,
+                              size: 13, color: colorScheme.onSurfaceVariant),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(record.locationName!,
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: colorScheme.onSurfaceVariant),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis),
+                          ),
+                        ],
+                      ),
+                    ],
+                    if (hasPhoto) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        '点击查看大图',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: colorScheme.onSurfaceVariant
+                              .withValues(alpha: 0.8),
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-          ],
+              if (hasPhoto)
+                Icon(Icons.chevron_right,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+            ],
+          ),
         ),
       ),
     );
