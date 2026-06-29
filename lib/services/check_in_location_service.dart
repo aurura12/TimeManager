@@ -43,7 +43,7 @@ class CheckInLocationService {
       final placemarks = await placemarkFromCoordinates(
         position.latitude,
         position.longitude,
-      );
+      ).timeout(const Duration(seconds: 3));
       if (placemarks.isNotEmpty) {
         final p = placemarks.first;
         locationName = [

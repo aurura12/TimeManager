@@ -12,7 +12,10 @@ class CheckInImageService {
 
   static Future<Uint8List?> compressFile(File file) async {
     if (kIsWeb) return file.readAsBytes();
+    return compute(_compressInIsolate, file.absolute.path);
+  }
 
+  static Future<Uint8List?> _compressInIsolate(String filePath) async {
     final tempDir = await getTemporaryDirectory();
     final targetPath = p.join(
       tempDir.path,
@@ -20,7 +23,7 @@ class CheckInImageService {
     );
 
     final result = await FlutterImageCompress.compressAndGetFile(
-      file.absolute.path,
+      filePath,
       targetPath,
       quality: quality,
       minWidth: maxWidth,
