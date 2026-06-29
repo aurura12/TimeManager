@@ -83,6 +83,30 @@ class DiaryListResult {
   }
 }
 
+class DiaryListWithShaResult {
+  final bool success;
+  final Map<String, String> pathShaMap;
+  final String? error;
+
+  const DiaryListWithShaResult._({
+    required this.success,
+    required this.pathShaMap,
+    this.error,
+  });
+
+  factory DiaryListWithShaResult.success(Map<String, String> pathShaMap) {
+    return DiaryListWithShaResult._(success: true, pathShaMap: pathShaMap);
+  }
+
+  factory DiaryListWithShaResult.error(String message) {
+    return DiaryListWithShaResult._(
+      success: false,
+      pathShaMap: const {},
+      error: message,
+    );
+  }
+}
+
 class DiaryGitHubService {
   static const String _owner = 'aurura12';
   static const String _repo = 'love_diary';
@@ -195,32 +219,45 @@ class DiaryGitHubService {
   static Future<DiaryListResult> listDiaryPaths({
     required String token,
   }) async {
+    final result = await listDiaryPathsWithSha(token: token);
+    if (!result.success) {
+      return DiaryListResult.error(result.error ?? '读取远端日记列表失败');
+    }
+    final paths = result.pathShaMap.keys.toList();
+    paths.sort((a, b) => b.compareTo(a));
+    return DiaryListResult.success(paths);
+  }
+
+  static Future<DiaryListWithShaResult> listDiaryPathsWithSha({
+    required String token,
+  }) async {
     try {
       final res = await http.get(_treeUri(), headers: _headers(token));
       if (res.statusCode != 200) {
-        return DiaryListResult.error(_extractErrorMessage(res));
+        return DiaryListWithShaResult.error(_extractErrorMessage(res));
       }
       final map = json.decode(res.body) as Map<String, dynamic>;
       final tree = map['tree'];
       if (tree is! List) {
-        return DiaryListResult.error('远端目录结构无效');
+        return DiaryListWithShaResult.error('远端目录结构无效');
       }
-      final paths = <String>[];
+      final pathShaMap = <String, String>{};
       for (final item in tree) {
         if (item is! Map) continue;
         final type = item['type']?.toString();
         final path = item['path']?.toString();
+        final sha = item['sha']?.toString();
         if (type == 'blob' &&
             path != null &&
             path.isNotEmpty &&
+            sha != null &&
             _looksLikeDiaryMd(path)) {
-          paths.add(path);
+          pathShaMap[path] = sha;
         }
       }
-      paths.sort((a, b) => b.compareTo(a));
-      return DiaryListResult.success(paths);
+      return DiaryListWithShaResult.success(pathShaMap);
     } catch (e) {
-      return DiaryListResult.error('读取远端日记列表失败: $e');
+      return DiaryListWithShaResult.error('读取远端日记列表失败: $e');
     }
   }
 }
