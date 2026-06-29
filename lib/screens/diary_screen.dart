@@ -4,8 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models/diary_kind.dart';
+import '../models/diary_search_result.dart';
 import '../services/diary_github_service.dart';
 import '../services/diary_local_store.dart';
+import '../services/diary_search_service.dart';
+import 'diary_search_screen.dart';
 
 class DiaryScreen extends StatefulWidget {
   const DiaryScreen({super.key});
@@ -64,6 +67,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (!mounted) return;
     setState(() => _loading = false);
     _refreshCurrentContextFromRemote(_contextRequestId, forcePathRefresh: false);
+
+    // 后台加载搜索缓存
+    if (token != null && token.isNotEmpty) {
+      DiarySearchService.loadInBackground(token);
+    }
   }
 
   String _selectedDateText() {
@@ -265,12 +273,18 @@ class _DiaryScreenState extends State<DiaryScreen> {
     }
     if (remotePath == null) return;
 
-    final result = await DiaryGitHubService.pullDiary(token: token, path: remotePath);
-    if (!mounted || requestId != _contextRequestId) return;
-    if (!result.success) return;
-    if (_dirtySinceContextLoaded) return;
+    // 优先从搜索缓存读取
+    String? raw = DiarySearchService.getCachedContentByPath(remotePath);
 
-    final raw = result.content!;
+    if (raw == null) {
+      final result = await DiaryGitHubService.pullDiary(token: token, path: remotePath);
+      if (!mounted || requestId != _contextRequestId) return;
+      if (!result.success) return;
+      if (_dirtySinceContextLoaded) return;
+      raw = result.content!;
+    }
+
+    if (_dirtySinceContextLoaded) return;
     final body = _extractBodyFromMarkdown(raw);
     final startedAt = _parseStartedAtFromMarkdown(raw);
     _suppressBodyListener = true;
@@ -304,6 +318,33 @@ class _DiaryScreenState extends State<DiaryScreen> {
   Future<void> _changeKind(DiaryKind kind) async {
     if (_kind == kind) return;
     await _switchContext(kind: kind);
+  }
+
+  Future<void> _openSearch() async {
+    final token = (_token ?? '').trim();
+    if (token.isEmpty) {
+      _showMessage('请先配置 GitHub Token');
+      return;
+    }
+
+    if (!DiarySearchService.isLoaded && !DiarySearchService.isLoading) {
+      _showMessage('日记索引正在加载中，请稍后再试');
+      return;
+    }
+
+    if (!mounted) return;
+
+    final result = await Navigator.push<DiarySearchResult>(
+      context,
+      MaterialPageRoute(builder: (_) => const DiarySearchScreen()),
+    );
+
+    if (result != null && mounted) {
+      await _switchContext(
+        kind: result.kind == 'g' ? DiaryKind.g : DiaryKind.j,
+        date: result.date,
+      );
+    }
   }
 
   DateTime? _parseStartedAtFromMarkdown(String markdown) {
@@ -342,14 +383,20 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   Future<void> _loadRemoteFileToEditor(String path) async {
-    final result = await DiaryGitHubService.pullDiary(token: _token!, path: path);
-    if (!mounted) return;
-    if (!result.success) {
-      _showMessage(result.error ?? '加载远程文件失败');
-      return;
+    // 优先从搜索缓存读取
+    String? raw = DiarySearchService.getCachedContentByPath(path);
+
+    if (raw == null) {
+      // 缓存未命中，从 GitHub 拉取
+      final result = await DiaryGitHubService.pullDiary(token: _token!, path: path);
+      if (!mounted) return;
+      if (!result.success) {
+        _showMessage(result.error ?? '加载远程文件失败');
+        return;
+      }
+      raw = result.content!;
     }
 
-    final raw = result.content!;
     final body = _extractBodyFromMarkdown(raw);
     final startedAt = _parseStartedAtFromMarkdown(raw);
 
@@ -608,6 +655,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
     setState(() => _processing = false);
 
     if (result.success) {
+      // 后台更新搜索缓存
+      DiarySearchService.loadInBackground(_token!);
       _showMessage(result.created ? '同步成功（已新建远端文件）' : '同步成功');
       return;
     }
@@ -663,6 +712,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
           icon: const Icon(Icons.menu),
         ),
         actions: [
+          IconButton(
+            tooltip: '搜索日记',
+            onPressed: _openSearch,
+            icon: const Icon(Icons.search),
+          ),
           IconButton(
             tooltip: '拉取日记',
             onPressed: _processing ? null : _pullDiary,
