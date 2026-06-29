@@ -729,11 +729,14 @@ class _DiaryScreenState extends State<DiaryScreen> {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+      body: Column(
+        children: [
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
             Row(
               children: [
                 ChoiceChip(
@@ -793,6 +796,42 @@ class _DiaryScreenState extends State<DiaryScreen> {
             ),
           ],
         ),
+      ),
+      ),
+          ValueListenableBuilder<double>(
+            valueListenable: DiarySearchService.progress,
+            builder: (context, value, child) {
+              if (value >= 1.0 || !DiarySearchService.isLoading) {
+                return const SizedBox.shrink();
+              }
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                color: colorScheme.surfaceContainerHigh,
+                child: Row(
+                  children: [
+                    Icon(Icons.search, size: 16, color: colorScheme.onSurfaceVariant),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: LinearProgressIndicator(
+                        value: value > 0 ? value : null,
+                        minHeight: 4,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      value > 0 ? '${(value * 100).toInt()}%' : '准备中...',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
       ),
     );
   }
