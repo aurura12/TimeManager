@@ -19,8 +19,8 @@ class TemplateSlot {
       };
 
   factory TemplateSlot.fromJson(Map<String, dynamic> json) => TemplateSlot(
-        index: json['i'] as int,
-        label: json['l'] as String,
+        index: json['i'] as int? ?? 0,
+        label: json['l']?.toString() ?? '',
         categoryId: json['cid'] as String?,
         colorArgb: json['c'] as int?,
       );
@@ -48,12 +48,12 @@ class ScheduleTemplate {
 
   factory ScheduleTemplate.fromJson(Map<String, dynamic> json) =>
       ScheduleTemplate(
-        id: json['id'] as String,
-        name: json['name'] as String,
-        slots: (json['slots'] as List<dynamic>)
-            .map((e) => TemplateSlot.fromJson(e as Map<String, dynamic>))
-            .toList(),
-        createdAt: json['createdAt'] as int,
+        id: json['id']?.toString() ?? '',
+        name: json['name']?.toString() ?? '',
+        slots: (json['slots'] as List<dynamic>?)
+            ?.map((e) => TemplateSlot.fromJson(e as Map<String, dynamic>))
+            .toList() ?? [],
+        createdAt: json['createdAt'] as int? ?? 0,
       );
 
   ScheduleTemplate copyWith({

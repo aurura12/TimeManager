@@ -363,9 +363,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (isHighlight) return BorderRadius.circular(4);
     int startIndex = h * 6 + startM;
     int endIndex = startIndex + span - 1;
-    bool leftRounded = (startIndex % 6 == 0) ||
+    bool leftRounded = startIndex % 6 == 0 ||
+        startIndex == 0 ||
         (p.slots[startIndex].label != p.slots[startIndex - 1].label);
-    bool rightRounded = (endIndex % 6 == 5) ||
+    bool rightRounded = endIndex % 6 == 5 ||
+        endIndex >= p.slots.length - 1 ||
         (p.slots[endIndex].label != p.slots[endIndex + 1].label);
     return BorderRadius.only(
       topLeft: leftRounded ? const Radius.circular(4) : Radius.zero,
@@ -655,7 +657,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         );
       },
-    );
+    ).whenComplete(() => nameController.dispose());
   }
 
   void _showSubCategoryMenu({
@@ -1066,10 +1068,12 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         },
       ),
-    );
+    ).whenComplete(() {
+      nameController.dispose();
+      subCatController.dispose();
+      hexController.dispose();
+    });
   }
-
-  // 生成渐变颜色调色盘
   Widget _buildColorPalette(
       Color currentColor, Function(Color) onColorChanged) {
     // 生成一个颜色矩阵：水平是色调，垂直是亮度
@@ -1167,7 +1171,13 @@ class _HomeScreenState extends State<HomeScreen> {
         _appBarIconButton(
           icon: Icons.arrow_back_ios,
           compact: true,
-          onPressed: () => provider.previousDay(),
+          onPressed: () {
+            setState(() {
+              _dragStartIndex = null;
+              _dragEndIndex = null;
+            });
+            provider.previousDay();
+          },
         ),
         GestureDetector(
           onTap: () => _showDatePicker(),
@@ -1183,7 +1193,13 @@ class _HomeScreenState extends State<HomeScreen> {
         _appBarIconButton(
           icon: Icons.arrow_forward_ios,
           compact: true,
-          onPressed: () => provider.nextDay(),
+          onPressed: () {
+            setState(() {
+              _dragStartIndex = null;
+              _dragEndIndex = null;
+            });
+            provider.nextDay();
+          },
         ),
       ],
     );
@@ -1502,7 +1518,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-    );
+    ).whenComplete(() => nameController.dispose());
   }
 
   void _showRenameTemplateDialog(
@@ -1539,7 +1555,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-    );
+    ).whenComplete(() => nameController.dispose());
   }
 
   void _showDeleteConfirmDialog(
@@ -1710,13 +1726,11 @@ class _ReorderableChipWrapState extends State<_ReorderableChipWrap> {
 
     final newIndex = _getItemIndexAtPosition(details.localPosition);
     if (newIndex != null && newIndex != _draggedIndex) {
-      // 实时交换位置
+      final oldIndex = _draggedIndex!;
+      widget.onReorder(oldIndex, newIndex);
       setState(() {
-        final item = widget.items.removeAt(_draggedIndex!);
-        widget.items.insert(newIndex, item);
         _draggedIndex = newIndex;
       });
-      widget.onReorder(_draggedIndex!, newIndex);
     }
   }
 
