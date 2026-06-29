@@ -80,19 +80,22 @@ class Target {
   }
 
   factory Target.fromJson(Map<String, dynamic> json) {
+    final typeIndex = json['type'] as int?;
     return Target(
-      id: json['id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
-      name: json['name'],
+      id: json['id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      name: json['name']?.toString() ?? '',
       categoryId: json['categoryId'] as String? ?? '',
-      type: TargetType.values[json['type']],
-      color: Color(json['color']),
-      period: json['period'],
-      compareType: json['compareType'] ?? "超过",
+      type: (typeIndex != null && typeIndex >= 0 && typeIndex < TargetType.values.length)
+          ? TargetType.values[typeIndex]
+          : TargetType.duration,
+      color: Color(json['color'] as int? ?? 0xFF9CB86A),
+      period: json['period']?.toString() ?? '每天',
+      compareType: json['compareType']?.toString() ?? "超过",
       durationHours: (json['durationHours'] as num?)?.toDouble() ?? 0.0,
-      frequencyCount: json['frequencyCount'] ?? 0,
-      targetTime: json['targetTime'] ?? "",
-      startTime: json['startTime'] ?? "",
-      endTime: json['endTime'] ?? "",
+      frequencyCount: json['frequencyCount'] as int? ?? 0,
+      targetTime: json['targetTime']?.toString() ?? "",
+      startTime: json['startTime']?.toString() ?? "",
+      endTime: json['endTime']?.toString() ?? "",
     );
   }
 }

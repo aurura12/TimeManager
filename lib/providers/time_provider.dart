@@ -192,6 +192,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void toggleSlot(int index) {
+    _saveSnapshot();
     List<TimeSlot> currentSlots = slots;
     currentSlots[index].recorded = !currentSlots[index].recorded;
     final dateKey = _getDateKey(_currentDate);
@@ -286,10 +287,8 @@ class TimeProvider with ChangeNotifier {
 
   /// 本地与云端日历不一致时标记（与是否已登录无关）
   void _markPendingSync() {
-    if (_pendingSyncDates.add(_getDateKey(_currentDate))) {
-      _syncDirty = true;  // 标记待同步为脏
-      notifyListeners();
-    }
+    _pendingSyncDates.add(_getDateKey(_currentDate));
+    _syncDirty = true;
   }
 
   void _clearPendingSyncForCurrentDate() {
@@ -1533,11 +1532,27 @@ class TimeProvider with ChangeNotifier {
   }
 
   void deleteCategory(int index) {
-    categories.removeAt(index);
+    final categoryId = _categories[index].id;
+    _categories.removeAt(index);
     _categoriesDirty = true;
-    _invalidateLabelCategoryIdCache();  // 清除缓存
+    _invalidateLabelCategoryIdCache();
+
+    // Clean up orphaned slot references
+    for (final entry in _dailySlots.entries) {
+      for (final slot in entry.value) {
+        if (slot.categoryId == categoryId) {
+          slot.categoryId = null;
+        }
+      }
+    }
+
+    // Remove targets referencing this category
+    _targets.removeWhere((t) => t.categoryId == categoryId);
+    _targetsDirty = true;
+
     notifyListeners();
     _saveData();
+    _targetStatsChangedController.add(null);
   }
 
   void addTarget(Target target) {
@@ -1621,11 +1636,12 @@ class TimeProvider with ChangeNotifier {
     _dailySlots.forEach((dateKey, daySlots) {
       if (target.type == TargetType.timePoint) {
         final dateParts = dateKey.split('-');
-        final date = DateTime(
-          int.parse(dateParts[0]),
-          int.parse(dateParts[1]),
-          int.parse(dateParts[2]),
-        );
+        if (dateParts.length < 3) return;
+        final y = int.tryParse(dateParts[0]);
+        final m = int.tryParse(dateParts[1]);
+        final d = int.tryParse(dateParts[2]);
+        if (y == null || m == null || d == null) return;
+        final date = DateTime(y, m, d);
         if (getTimePointStatus(target, date) == TimePointStatus.onTime) {
           count++;
         }
@@ -1763,16 +1779,19 @@ class TimeProvider with ChangeNotifier {
         if (match != null) {
           final periodDays = int.tryParse(match.group(1) ?? '');
           if (periodDays != null && periodDays > 0) {
-            DateTime createTime =
-                DateTime.fromMillisecondsSinceEpoch(int.parse(target.id));
-            DateTime startOfCreate =
-                DateTime(createTime.year, createTime.month, createTime.day);
-            int daysSince = startDate.difference(startOfCreate).inDays;
-            if (daysSince >= 0) {
-              int cycleIndex = daysSince ~/ periodDays;
-              startDate =
-                  startOfCreate.add(Duration(days: cycleIndex * periodDays));
-              endDate = startDate.add(Duration(days: periodDays));
+            final targetIdMs = int.tryParse(target.id);
+            if (targetIdMs != null) {
+              DateTime createTime =
+                  DateTime.fromMillisecondsSinceEpoch(targetIdMs);
+              DateTime startOfCreate =
+                  DateTime(createTime.year, createTime.month, createTime.day);
+              int daysSince = startDate.difference(startOfCreate).inDays;
+              if (daysSince >= 0) {
+                int cycleIndex = daysSince ~/ periodDays;
+                startDate =
+                    startOfCreate.add(Duration(days: cycleIndex * periodDays));
+                endDate = startDate.add(Duration(days: periodDays));
+              }
             }
           }
         }
