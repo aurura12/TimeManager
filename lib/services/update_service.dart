@@ -181,112 +181,118 @@ class UpdateService {
 
       // 使用 Client 获取流式响应（带连接超时）
       final client = http.Client();
-      final request = http.Request('GET', Uri.parse(downloadUrl));
-      final response = await client.send(request).timeout(
-        _downloadConnectTimeout,
-        onTimeout: () {
-          client.close();
-          throw TimeoutException('连接超时');
-        },
-      );
-
-      if (response.statusCode != 200) {
-        client.close();
-        if (context.mounted) {
-          Navigator.pop(context);
-          _showDownloadFailedDialog(context, downloadUrl);
-        }
-        return;
-      }
-
-      // 获取文件总大小
-      final contentLength = response.contentLength ?? 0;
-      debugPrint('下载: 文件大小=${contentLength ~/ 1024}KB');
-
-      // 流式写入文件
-      final tempDir = await getTemporaryDirectory();
-      final apkFile = File('${tempDir.path}/time_manager_v$version.apk');
-      final sink = apkFile.openWrite();
-
-      int received = 0;
-      final startTime = DateTime.now();
-      int lastReceived = 0;
-      DateTime lastTime = startTime;
-
-      await for (final chunk in response.stream) {
-        sink.add(chunk);
-        received += chunk.length;
-
-        final now = DateTime.now();
-        final elapsed = now.difference(lastTime).inMilliseconds;
-
-        if (elapsed >= 500) {
-          // 每 500ms 更新一次速度
-          final speed = (received - lastReceived) * 1000 ~/ elapsed;
-          final speedStr = _formatSpeed(speed);
-
-          if (contentLength > 0) {
-            final progress = received / contentLength;
-            progressNotifier.value = progress;
-            statusNotifier.value = '下载中  $speedStr';
-          } else {
-            statusNotifier.value = '下载中 ${received ~/ 1024}KB  $speedStr';
-          }
-
-          lastReceived = received;
-          lastTime = now;
-        }
-      }
-      await sink.close();
-      client.close();
-
-      debugPrint('下载完成: ${apkFile.path}');
-
-      // 更新状态为安装中
-      statusNotifier.value = '正在启动安装...';
-      progressNotifier.value = 1.0;
-
-      // 等待一小段时间让用户看到"安装中"状态
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // 关闭进度对话框
-      if (context.mounted) Navigator.pop(context);
-
-      // 使用 MethodChannel 调用原生代码打开 APK
-      final channel = MethodChannel('com.example.time_manager/install_apk');
+      IOSink? sink;
       try {
-        debugPrint('尝试通过 MethodChannel 安装 APK...');
-        await channel.invokeMethod('installApk', {'path': apkFile.path});
-        debugPrint('MethodChannel 安装成功');
-      } catch (e) {
-        debugPrint('MethodChannel 失败: $e，降级到 url_launcher');
-        final uri = Uri.file(apkFile.path);
-        if (await canLaunchUrl(uri)) {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-        } else {
+        final request = http.Request('GET', Uri.parse(downloadUrl));
+        final response = await client.send(request).timeout(
+          _downloadConnectTimeout,
+          onTimeout: () {
+            client.close();
+            throw TimeoutException('连接超时');
+          },
+        );
+
+        if (response.statusCode != 200) {
+          client.close();
           if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('无法打开安装程序')),
-            );
+            Navigator.pop(context);
+            _showDownloadFailedDialog(context, downloadUrl);
+          }
+          return;
+        }
+
+        // 获取文件总大小
+        final contentLength = response.contentLength ?? 0;
+        debugPrint('下载: 文件大小=${contentLength ~/ 1024}KB');
+
+        // 流式写入文件
+        final tempDir = await getTemporaryDirectory();
+        final apkFile = File('${tempDir.path}/time_manager_v$version.apk');
+        sink = apkFile.openWrite();
+
+        int received = 0;
+        final startTime = DateTime.now();
+        int lastReceived = 0;
+        DateTime lastTime = startTime;
+
+        await for (final chunk in response.stream) {
+          sink.add(chunk);
+          received += chunk.length;
+
+          final now = DateTime.now();
+          final elapsed = now.difference(lastTime).inMilliseconds;
+
+          if (elapsed >= 500) {
+            // 每 500ms 更新一次速度
+            final speed = (received - lastReceived) * 1000 ~/ elapsed;
+            final speedStr = _formatSpeed(speed);
+
+            if (contentLength > 0) {
+              final progress = received / contentLength;
+              progressNotifier.value = progress;
+              statusNotifier.value = '下载中  $speedStr';
+            } else {
+              statusNotifier.value = '下载中 ${received ~/ 1024}KB  $speedStr';
+            }
+
+            lastReceived = received;
+            lastTime = now;
           }
         }
+        await sink.close();
+        sink = null;
+        client.close();
+
+        debugPrint('下载完成: ${apkFile.path}');
+
+        // 更新状态为安装中
+        statusNotifier.value = '正在启动安装...';
+        progressNotifier.value = 1.0;
+
+        // 等待一小段时间让用户看到"安装中"状态
+        await Future.delayed(const Duration(milliseconds: 500));
+
+        // 关闭进度对话框
+        if (context.mounted) Navigator.pop(context);
+
+        // 使用 MethodChannel 调用原生代码打开 APK
+        final channel = MethodChannel('com.example.time_manager/install_apk');
+        try {
+          debugPrint('尝试通过 MethodChannel 安装 APK...');
+          await channel.invokeMethod('installApk', {'path': apkFile.path});
+          debugPrint('MethodChannel 安装成功');
+        } catch (e) {
+          debugPrint('MethodChannel 失败: $e，降级到 url_launcher');
+          final uri = Uri.file(apkFile.path);
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          } else {
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('无法打开安装程序')),
+              );
+            }
+          }
+        }
+      } finally {
+        await sink?.close();
+        client.close();
       }
     } on TimeoutException catch (e) {
       debugPrint('下载超时: $e');
-      progressNotifier.dispose();
-      statusNotifier.dispose();
       if (context.mounted) {
         Navigator.pop(context);
         _showDownloadFailedDialog(context, downloadUrl);
       }
     } catch (e) {
       debugPrint('下载安装失败: $e');
-      progressNotifier.dispose();
-      statusNotifier.dispose();
       if (context.mounted) {
         Navigator.pop(context);
         _showDownloadFailedDialog(context, downloadUrl);
       }
+    } finally {
+      progressNotifier.dispose();
+      statusNotifier.dispose();
     }
   }
 

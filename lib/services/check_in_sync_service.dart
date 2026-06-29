@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import '../models/check_in_document.dart';
@@ -39,6 +40,21 @@ class CheckInSyncService {
   bool _syncing = false;
   String? _lastError;
 
+  /// Serializes async operations to prevent concurrent mutation of _document.
+  Future<void>? _pendingOperation;
+
+  Future<T> _synchronized<T>(Future<T> Function() action) async {
+    final prev = _pendingOperation;
+    final completer = Completer<void>();
+    _pendingOperation = completer.future;
+    try {
+      if (prev != null) await prev;
+      return await action();
+    } finally {
+      completer.complete();
+    }
+  }
+
   CheckInDocument get document => _document;
   bool get loading => _loading;
   bool get syncing => _syncing;
@@ -58,77 +74,81 @@ class CheckInSyncService {
   Future<void> initialize({bool silent = false}) async {
     if (!silent) _loading = true;
     _lastError = null;
-
-    final local = await CheckInLocalStore.loadDraft();
-    if (local != null) _document = local;
-
-    final token = await DiaryLocalStore.loadToken();
-    if (token == null || token.isEmpty) {
-      if (!silent) _loading = false;
-      return;
-    }
-
-    final pull = await CheckInGitHubService.pullText(
-      token: token,
-      path: CheckInDocument.filePath,
-    );
-
-    if (pull.success && pull.content != null) {
-      try {
-        final remote = CheckInDocument.fromMarkdown(pull.content!);
-        _document = local == null
-            ? remote
-            : CheckInDocument.merge(local, remote);
-        await CheckInLocalStore.saveDraft(_document);
-      } catch (e) {
-        _lastError = '解析远端打卡数据失败: $e';
-      }
-    }
-
-    if (!silent) _loading = false;
-  }
-
-  Future<CheckInSyncResult> pullFromGitHub() async {
-    _syncing = true;
-    _lastError = null;
     try {
-      final token = await _requireToken();
-      if (token == null) {
-        return CheckInSyncResult.fail('未配置 GitHub Token');
+      final local = await CheckInLocalStore.loadDraft();
+      if (local != null) _document = local;
+
+      final token = await DiaryLocalStore.loadToken();
+      if (token == null || token.isEmpty) {
+        return;
       }
 
       final pull = await CheckInGitHubService.pullText(
         token: token,
         path: CheckInDocument.filePath,
       );
-      if (pull.notFound) {
-        _document = CheckInDocument.empty;
-        await CheckInLocalStore.saveDraft(_document);
-        return CheckInSyncResult.ok(_document);
-      }
-      if (!pull.success || pull.content == null) {
-        return CheckInSyncResult.fail(pull.error ?? '拉取失败');
-      }
 
-      final remote = CheckInDocument.fromMarkdown(pull.content!);
-      _document = CheckInDocument.merge(_document, remote);
-      await CheckInLocalStore.saveDraft(_document);
-      return CheckInSyncResult.ok(_document);
-    } catch (e) {
-      return CheckInSyncResult.fail('拉取失败: $e');
+      if (pull.success && pull.content != null) {
+        try {
+          final remote = CheckInDocument.fromMarkdown(pull.content!);
+          _document = local == null
+              ? remote
+              : CheckInDocument.merge(local, remote);
+          await CheckInLocalStore.saveDraft(_document);
+        } catch (e) {
+          _lastError = '解析远端打卡数据失败: $e';
+        }
+      }
     } finally {
-      _syncing = false;
+      if (!silent) _loading = false;
     }
   }
 
+  Future<CheckInSyncResult> pullFromGitHub() async {
+    return _synchronized(() async {
+      _syncing = true;
+      _lastError = null;
+      try {
+        final token = await _requireToken();
+        if (token == null) {
+          return CheckInSyncResult.fail('未配置 GitHub Token');
+        }
+
+        final pull = await CheckInGitHubService.pullText(
+          token: token,
+          path: CheckInDocument.filePath,
+        );
+        if (pull.notFound) {
+          _document = CheckInDocument.empty;
+          await CheckInLocalStore.saveDraft(_document);
+          return CheckInSyncResult.ok(_document);
+        }
+        if (!pull.success || pull.content == null) {
+          return CheckInSyncResult.fail(pull.error ?? '拉取失败');
+        }
+
+        final remote = CheckInDocument.fromMarkdown(pull.content!);
+        _document = CheckInDocument.merge(_document, remote);
+        await CheckInLocalStore.saveDraft(_document);
+        return CheckInSyncResult.ok(_document);
+      } catch (e) {
+        return CheckInSyncResult.fail('拉取失败: $e');
+      } finally {
+        _syncing = false;
+      }
+    });
+  }
+
   Future<CheckInSyncResult> pushToGitHub() async {
-    _syncing = true;
-    _lastError = null;
-    try {
-      return await _pushToGitHubInternal();
-    } finally {
-      _syncing = false;
-    }
+    return _synchronized(() async {
+      _syncing = true;
+      _lastError = null;
+      try {
+        return await _pushToGitHubInternal();
+      } finally {
+        _syncing = false;
+      }
+    });
   }
 
   Future<CheckInSyncResult> _pushToGitHubInternal() async {
@@ -188,42 +208,44 @@ class CheckInSyncService {
       return CheckInSyncResult.fail('只能删除自己创建的目标');
     }
 
-    _syncing = true;
-    _lastError = null;
-    try {
-      final token = await _requireToken();
-      if (token == null) {
-        return CheckInSyncResult.fail('未配置 GitHub Token');
+    return _synchronized(() async {
+      _syncing = true;
+      _lastError = null;
+      try {
+        final token = await _requireToken();
+        if (token == null) {
+          return CheckInSyncResult.fail('未配置 GitHub Token');
+        }
+
+        final pull = await CheckInGitHubService.pullText(
+          token: token,
+          path: CheckInDocument.filePath,
+        );
+        if (pull.success && pull.content != null) {
+          final remote = CheckInDocument.fromMarkdown(pull.content!);
+          _document = CheckInDocument.merge(_document, remote);
+        }
+
+        _document = _document.removeGoal(goal.id);
+        await CheckInLocalStore.saveDraft(_document);
+
+        final push = await CheckInGitHubService.pushText(
+          token: token,
+          path: CheckInDocument.filePath,
+          content: _document.toMarkdown(),
+          commitMessage: 'check-in: delete goal ${goal.name}',
+        );
+        if (!push.success) {
+          return CheckInSyncResult.fail(push.error ?? '删除同步失败');
+        }
+
+        return CheckInSyncResult.ok(_document);
+      } catch (e) {
+        return CheckInSyncResult.fail('删除失败: $e');
+      } finally {
+        _syncing = false;
       }
-
-      final pull = await CheckInGitHubService.pullText(
-        token: token,
-        path: CheckInDocument.filePath,
-      );
-      if (pull.success && pull.content != null) {
-        final remote = CheckInDocument.fromMarkdown(pull.content!);
-        _document = CheckInDocument.merge(_document, remote);
-      }
-
-      _document = _document.removeGoal(goal.id);
-      await CheckInLocalStore.saveDraft(_document);
-
-      final push = await CheckInGitHubService.pushText(
-        token: token,
-        path: CheckInDocument.filePath,
-        content: _document.toMarkdown(),
-        commitMessage: 'check-in: delete goal ${goal.name}',
-      );
-      if (!push.success) {
-        return CheckInSyncResult.fail(push.error ?? '删除同步失败');
-      }
-
-      return CheckInSyncResult.ok(_document);
-    } catch (e) {
-      return CheckInSyncResult.fail('删除失败: $e');
-    } finally {
-      _syncing = false;
-    }
+    });
   }
 
   Future<CheckInSyncResult> deleteCheckInRecord(
@@ -238,6 +260,7 @@ class CheckInSyncService {
       return CheckInSyncResult.fail('只能删除自己的打卡记录');
     }
 
+    return _synchronized(() async {
     _syncing = true;
     _lastError = null;
     try {
@@ -294,6 +317,7 @@ class CheckInSyncService {
     } finally {
       _syncing = false;
     }
+    });
   }
 
   Future<CheckInSyncResult> submitCheckIn({
@@ -311,6 +335,7 @@ class CheckInSyncService {
       return CheckInSyncResult.fail('未配置 GitHub Token，无法上传照片');
     }
 
+    return _synchronized(() async {
     _syncing = true;
     try {
       final recordId = DateTime.now().millisecondsSinceEpoch.toString();
@@ -361,6 +386,7 @@ class CheckInSyncService {
     } finally {
       _syncing = false;
     }
+    });
   }
 
   Future<File?> loadPhoto(String photoPath) async {

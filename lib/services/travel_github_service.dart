@@ -1,6 +1,4 @@
-import 'dart:convert';
-
-import 'package:http/http.dart' as http;
+import 'github_contents_api.dart';
 
 class TravelPullResult {
   final bool success;
@@ -56,60 +54,18 @@ class TravelPushResult {
 }
 
 class TravelGitHubService {
-  static const String _owner = 'aurura12';
-  static const String _repo = 'love_diary';
-  static const String _baseHost = 'api.github.com';
-
-  static Map<String, String> _headers(String token) {
-    return {
-      'Accept': 'application/vnd.github+json',
-      'Authorization': 'Bearer $token',
-      'X-GitHub-Api-Version': '2022-11-28',
-      'Content-Type': 'application/json',
-    };
-  }
-
-  static Uri _contentsUri(String path) {
-    return Uri.https(_baseHost, '/repos/$_owner/$_repo/contents/$path');
-  }
-
-  static String _normalizeBase64(String value) {
-    return value.replaceAll('\n', '');
-  }
-
-  static String _extractErrorMessage(http.Response response) {
-    try {
-      final map = json.decode(response.body) as Map<String, dynamic>;
-      final message = map['message']?.toString();
-      if (message != null && message.isNotEmpty) return message;
-    } catch (_) {}
-    return 'GitHub 请求失败（${response.statusCode}）';
-  }
+  static const _api = GitHubContentsApi(owner: 'aurura12', repo: 'love_diary');
 
   static Future<TravelPullResult> pullFile({
     required String token,
     required String path,
   }) async {
-    try {
-      final res = await http.get(_contentsUri(path), headers: _headers(token));
-      if (res.statusCode == 404) {
-        return TravelPullResult.notFound();
-      }
-      if (res.statusCode != 200) {
-        return TravelPullResult.error(_extractErrorMessage(res));
-      }
-
-      final map = json.decode(res.body) as Map<String, dynamic>;
-      final rawContent = map['content']?.toString();
-      final sha = map['sha']?.toString();
-      if (rawContent == null || sha == null) {
-        return TravelPullResult.error('远端文件内容无效');
-      }
-      final decoded = utf8.decode(base64Decode(_normalizeBase64(rawContent)));
-      return TravelPullResult.success(decoded, sha);
-    } catch (e) {
-      return TravelPullResult.error('拉取失败: $e');
+    final result = await _api.pullText(token: token, path: path);
+    if (result.success) {
+      return TravelPullResult.success(result.content!, result.sha!);
     }
+    if (result.notFound) return TravelPullResult.notFound();
+    return TravelPullResult.error(result.error ?? '拉取失败');
   }
 
   static Future<TravelPushResult> pushFile({
@@ -118,34 +74,15 @@ class TravelGitHubService {
     required String content,
     required String commitMessage,
   }) async {
-    try {
-      String? sha;
-      final current = await pullFile(token: token, path: path);
-      if (current.success) {
-        sha = current.sha;
-      } else if (!current.notFound) {
-        return TravelPushResult.error(current.error ?? '读取远端文件失败');
-      }
-
-      final payload = <String, dynamic>{
-        'message': commitMessage,
-        'content': base64Encode(utf8.encode(content)),
-      };
-      if (sha != null) {
-        payload['sha'] = sha;
-      }
-
-      final res = await http.put(
-        _contentsUri(path),
-        headers: _headers(token),
-        body: json.encode(payload),
-      );
-      if (res.statusCode == 200 || res.statusCode == 201) {
-        return TravelPushResult.success(created: res.statusCode == 201);
-      }
-      return TravelPushResult.error(_extractErrorMessage(res));
-    } catch (e) {
-      return TravelPushResult.error('推送失败: $e');
+    final result = await _api.pushText(
+      token: token,
+      path: path,
+      content: content,
+      commitMessage: commitMessage,
+    );
+    if (result.success) {
+      return TravelPushResult.success(created: result.created);
     }
+    return TravelPushResult.error(result.error ?? '推送失败');
   }
 }

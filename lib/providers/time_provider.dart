@@ -67,11 +67,11 @@ class TimeProvider with ChangeNotifier {
 
   // 目标列表移至 Provider 管理
   final List<Target> _targets = [];
-  List<Target> get targets => _targets;
+  List<Target> get targets => List.unmodifiable(_targets);
 
   // 分类列表移至 Provider 管理
   List<Category> _categories = [];
-  List<Category> get categories => _categories;
+  List<Category> get categories => List.unmodifiable(_categories);
 
   final List<ScheduleTemplate> _templates = [];
   List<ScheduleTemplate> get templates => List.unmodifiable(_templates);
@@ -93,6 +93,7 @@ class TimeProvider with ChangeNotifier {
 
   // --- 标签到分类ID映射缓存 ---
   Map<String, String>? _labelCategoryIdCache;
+  Map<String, Category>? _categoryIdMapCache;
 
   // --- 目标统计变化通知（仅在目标相关数据变化时通知） ---
   final StreamController<void> _targetStatsChangedController =
@@ -930,18 +931,15 @@ class TimeProvider with ChangeNotifier {
         slot.categoryId!.isNotEmpty) {
       // categoryId 必须匹配
       if (slot.categoryId != target.categoryId) return false;
-      
-      // 查找目标对应的分类
-      final category = _categories.firstWhere(
-        (c) => c.id == target.categoryId,
-        orElse: () => Category(name: '', color: Colors.transparent),
-      );
-      
+
+      // 查找目标对应的分类（使用缓存的 Map，O(1) 查找）
+      final category = _categoryIdMap()[target.categoryId];
+
       // 如果目标名称等于分类名称（父分类目标），匹配该分类下所有子分类
-      if (category.name == target.name) {
+      if (category != null && category.name == target.name) {
         return true;
       }
-      
+
       // 否则匹配特定的子分类名称
       return slot.label == target.name;
     }
@@ -970,6 +968,17 @@ class TimeProvider with ChangeNotifier {
 
   void _invalidateLabelCategoryIdCache() {
     _labelCategoryIdCache = null;
+    _categoryIdMapCache = null;
+  }
+
+  Map<String, Category> _categoryIdMap() {
+    if (_categoryIdMapCache != null) return _categoryIdMapCache!;
+    final map = <String, Category>{};
+    for (final cat in _categories) {
+      map[cat.id] = cat;
+    }
+    _categoryIdMapCache = map;
+    return map;
   }
 
   void _propagateLabelRename(
@@ -1523,8 +1532,8 @@ class TimeProvider with ChangeNotifier {
     if (oldIndex < newIndex) {
       newIndex -= 1;
     }
-    final Category item = categories.removeAt(oldIndex);
-    categories.insert(newIndex, item);
+    final Category item = _categories.removeAt(oldIndex);
+    _categories.insert(newIndex, item);
 
     _categoriesDirty = true;  // 标记分类为脏
     notifyListeners();
