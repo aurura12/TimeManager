@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../models/check_in_goal.dart';
 
@@ -21,6 +22,9 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
   CheckInPeriod _period = CheckInPeriod.daily;
   bool _requireLocation = true;
   bool _requirePhoto = true;
+  DateTime? _startDate;
+  DateTime? _endDate;
+  int? _selectedDurationDays;
 
   static const _themeColors = [
     Color(0xFFF16B77),
@@ -34,6 +38,34 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
 
   static const _icons = CheckInGoalIcons.options;
 
+  static const _durationOptions = [
+    _DurationOption(label: '1周', days: 7),
+    _DurationOption(label: '2周', days: 14),
+    _DurationOption(label: '1个月', days: 30),
+    _DurationOption(label: '2个月', days: 60),
+    _DurationOption(label: '3个月', days: 90),
+    _DurationOption(label: '6个月', days: 180),
+    _DurationOption(label: '1年', days: 365),
+  ];
+
+  void _onDurationSelected(int? days) {
+    setState(() {
+      _selectedDurationDays = days;
+      if (days != null && _startDate != null) {
+        _endDate = _startDate!.add(Duration(days: days));
+      }
+    });
+  }
+
+  void _onStartDateChanged(DateTime? date) {
+    setState(() {
+      _startDate = date;
+      if (date != null && _selectedDurationDays != null) {
+        _endDate = date.add(Duration(days: _selectedDurationDays!));
+      }
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -45,6 +77,11 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
       _period = g.period;
       _requireLocation = g.requireLocation;
       _requirePhoto = g.requirePhoto;
+      _startDate = g.startDate;
+      _endDate = g.endDate;
+      if (_startDate != null && _endDate != null) {
+        _selectedDurationDays = _endDate!.difference(_startDate!).inDays;
+      }
       final ci = _themeColors.indexWhere((c) => c.toARGB32() == g.color.toARGB32());
       if (ci >= 0) _selectedColorIndex = ci;
       final ii = _icons.indexOf(g.icon);
@@ -84,6 +121,10 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
       records: widget.goal?.records ?? [],
       requireLocation: _requireLocation,
       requirePhoto: _requirePhoto,
+      startDate: _startDate,
+      endDate: _endDate,
+      isArchived: widget.goal?.isArchived ?? false,
+      archivedAt: widget.goal?.archivedAt,
     );
     Navigator.pop(context, goal);
   }
@@ -224,6 +265,65 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
             onChanged: (v) => setState(() => _requireLocation = v),
             contentPadding: EdgeInsets.zero,
           ),
+          const SizedBox(height: 24),
+          _sectionTitle('打卡时长（可选）'),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: () => _pickDate(isStart: true),
+            child: InputDecorator(
+              decoration: InputDecoration(
+                labelText: '开始日期',
+                border: const OutlineInputBorder(),
+                suffixIcon: _startDate != null
+                    ? IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        onPressed: () => _onStartDateChanged(null),
+                      )
+                    : const Icon(Icons.calendar_today, size: 18),
+              ),
+              child: Text(
+                _startDate != null
+                    ? DateFormat('yyyy-MM-dd').format(_startDate!)
+                    : '今天',
+                style: TextStyle(
+                  color: _startDate != null ? null : Colors.grey,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ..._durationOptions.map((opt) {
+                final selected = _selectedDurationDays == opt.days;
+                return ChoiceChip(
+                  label: Text(opt.label),
+                  selected: selected,
+                  onSelected: (_) => _onDurationSelected(
+                    selected ? null : opt.days,
+                  ),
+                );
+              }),
+              ChoiceChip(
+                label: const Text('自定义'),
+                selected: _selectedDurationDays != null &&
+                    !_durationOptions.any((o) => o.days == _selectedDurationDays),
+                onSelected: (_) => _showCustomDurationDialog(),
+              ),
+            ],
+          ),
+          if (_endDate != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              '结束日期：${DateFormat('yyyy-MM-dd').format(_endDate!)}',
+              style: TextStyle(
+                fontSize: 13,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
           const SizedBox(height: 32),
         ],
       ),
@@ -287,4 +387,73 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
       ),
     );
   }
+
+  Future<void> _pickDate({required bool isStart}) async {
+    final initial = isStart
+        ? (_startDate ?? DateTime.now())
+        : (_endDate ?? DateTime.now().add(const Duration(days: 30)));
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now().add(const Duration(days: 365 * 3)),
+    );
+    if (picked != null) {
+      if (isStart) {
+        _onStartDateChanged(picked);
+      } else {
+        setState(() {
+          _endDate = picked;
+          _selectedDurationDays = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _showCustomDurationDialog() async {
+    final controller = TextEditingController(
+      text: _selectedDurationDays?.toString() ?? '',
+    );
+    final result = await showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('自定义天数'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: '打卡天数',
+            suffixText: '天',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              final days = int.tryParse(controller.text);
+              if (days != null && days > 0) {
+                Navigator.pop(context, days);
+              }
+            },
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    if (result != null) {
+      _onDurationSelected(result);
+    }
+  }
+}
+
+class _DurationOption {
+  final String label;
+  final int days;
+
+  const _DurationOption({required this.label, required this.days});
 }

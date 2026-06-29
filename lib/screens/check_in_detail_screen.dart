@@ -165,6 +165,45 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     }
   }
 
+  Future<void> _archive() async {
+    if (!_isMine) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('归档目标'),
+        content: Text('确认归档「${_goal.name}」吗？\n归档后将从主列表隐藏，可在归档页面查看。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('归档'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final updated = _goal.copyWith(
+      isArchived: true,
+      archivedAt: DateTime.now(),
+    );
+    final result = await widget.syncService.saveGoal(updated);
+    if (!mounted) return;
+    if (result.success) {
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已归档「${_goal.name}」')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.error ?? '归档失败')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -207,7 +246,12 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
             ),
             actions: [
               if (_isMine) ...[
-                IconButton(icon: const Icon(Icons.edit), onPressed: _edit),
+                if (!_goal.isArchived)
+                  IconButton(icon: const Icon(Icons.edit), onPressed: _edit),
+                IconButton(
+                  icon: const Icon(Icons.archive_outlined),
+                  onPressed: _archive,
+                ),
                 IconButton(
                   icon: const Icon(Icons.delete_outline),
                   onPressed: _confirmDelete,
