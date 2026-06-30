@@ -1654,99 +1654,84 @@ class _ReorderableChipWrap extends StatefulWidget {
 
 class _ReorderableChipWrapState extends State<_ReorderableChipWrap> {
   int? _draggedIndex;
-  Offset _dragPosition = Offset.zero;
   final GlobalKey _wrapKey = GlobalKey();
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onLongPressStart: _onLongPressStart,
-      onLongPressMoveUpdate: _onLongPressMoveUpdate,
-      onLongPressEnd: _onLongPressEnd,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Wrap(
-            key: _wrapKey,
-            spacing: 8.0,
-            runSpacing: 8.0,
-            children: widget.items.asMap().entries.map((entry) {
-              final index = entry.key;
-              final item = entry.value;
-              final isDragged = _draggedIndex == index;
+    return Wrap(
+      key: _wrapKey,
+      spacing: 8.0,
+      runSpacing: 8.0,
+      children: widget.items.asMap().entries.map((entry) {
+        final index = entry.key;
+        final item = entry.value;
 
-              return AnimatedOpacity(
-                duration: const Duration(milliseconds: 150),
-                opacity: isDragged ? 0.2 : 1.0,
-                child: GestureDetector(
-                  onTap: () => widget.onTap(item, index),
-                  child: Chip(
-                    visualDensity: VisualDensity.compact,
-                    backgroundColor: widget.color.withValues(alpha: 0.8),
-                    label: Text(item,
-                        style:
-                            const TextStyle(color: Colors.white, fontSize: 12)),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8)),
-                    side: BorderSide.none,
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-          if (_draggedIndex != null)
-            Positioned(
-              left: _dragPosition.dx - 40,
-              top: _dragPosition.dy - 20,
-              child: Material(
-                elevation: 8.0,
-                child: Chip(
-                  visualDensity: VisualDensity.compact,
-                  backgroundColor: widget.color,
-                  label: Text(widget.items[_draggedIndex!],
-                      style:
-                          const TextStyle(color: Colors.white, fontSize: 12)),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8)),
-                ),
-              ),
+        return LongPressDraggable<String>(
+          data: item,
+          delay: const Duration(milliseconds: 300),
+          dragAnchorStrategy: pointerDragAnchorStrategy,
+          feedback: Material(
+            elevation: 8.0,
+            borderRadius: BorderRadius.circular(8),
+            child: Chip(
+              visualDensity: VisualDensity.compact,
+              backgroundColor: widget.color,
+              label: Text(item,
+                  style: const TextStyle(color: Colors.white, fontSize: 12)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+              side: BorderSide.none,
             ),
-        ],
-      ),
+          ),
+          childWhenDragging: Opacity(
+            opacity: 0.2,
+            child: _buildChip(item, index),
+          ),
+          onDragStarted: () {
+            setState(() {
+              _draggedIndex = index;
+            });
+          },
+          onDragUpdate: (details) {
+            if (_draggedIndex == null ||
+                _draggedIndex! >= widget.items.length) return;
+            final renderBox =
+                _wrapKey.currentContext?.findRenderObject() as RenderBox?;
+            if (renderBox == null) return;
+            final localPos = renderBox.globalToLocal(details.globalPosition);
+            final newIndex = _getItemIndexAtPosition(localPos);
+            if (newIndex != null && newIndex != _draggedIndex) {
+              final oldIndex = _draggedIndex!;
+              widget.onReorder(oldIndex, newIndex);
+              setState(() {
+                _draggedIndex = newIndex;
+              });
+            }
+          },
+          onDragEnd: (details) {
+            setState(() {
+              _draggedIndex = null;
+            });
+          },
+          child: _buildChip(item, index),
+        );
+      }).toList(),
     );
   }
 
-  void _onLongPressStart(LongPressStartDetails details) {
-    final index = _getItemIndexAtPosition(details.localPosition);
-    if (index != null) {
-      setState(() {
-        _draggedIndex = index;
-        _dragPosition = details.localPosition;
-      });
-    }
-  }
-
-  void _onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
-    if (_draggedIndex == null) return;
-
-    setState(() {
-      _dragPosition = details.localPosition;
-    });
-
-    final newIndex = _getItemIndexAtPosition(details.localPosition);
-    if (newIndex != null && newIndex != _draggedIndex) {
-      final oldIndex = _draggedIndex!;
-      widget.onReorder(oldIndex, newIndex);
-      setState(() {
-        _draggedIndex = newIndex;
-      });
-    }
-  }
-
-  void _onLongPressEnd(LongPressEndDetails details) {
-    setState(() {
-      _draggedIndex = null;
-    });
+  Widget _buildChip(String item, int index) {
+    return GestureDetector(
+      onTap: () => widget.onTap(item, index),
+      child: Chip(
+        visualDensity: VisualDensity.compact,
+        backgroundColor: widget.color.withValues(alpha: 0.8),
+        label: Text(item,
+            style: const TextStyle(color: Colors.white, fontSize: 12)),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8)),
+        side: BorderSide.none,
+      ),
+    );
   }
 
   int? _getItemIndexAtPosition(Offset position) {
