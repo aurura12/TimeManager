@@ -1240,6 +1240,41 @@ class _HomeScreenState extends State<HomeScreen> {
         onPressed: () => provider.undo(),
       ),
       _appBarIconButton(
+        tooltip: provider.isRemoteViewEnabled ? '关闭对方日程' : '查看对方日程',
+        icon: Icons.people_outline,
+        iconWidget: StreamBuilder<String>(
+          stream: provider.scheduleGiteeSyncStream,
+          initialData: '',
+          builder: (context, snapshot) {
+            final status = snapshot.data ?? '';
+            return Tooltip(
+              message: provider.isRemoteViewEnabled
+                  ? (status.isNotEmpty ? status : '点击关闭对方日程')
+                  : '查看对方日程',
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(
+                    Icons.people_outline,
+                    size: 23,
+                    color: provider.isRemoteViewEnabled
+                        ? Colors.blue
+                        : null,
+                  ),
+                  if (provider.isRemoteViewEnabled)
+                    const Positioned(
+                      right: -4,
+                      top: -4,
+                      child: Icon(Icons.check_circle, size: 12, color: Colors.blue),
+                    ),
+                ],
+              ),
+            );
+          },
+        ),
+        onPressed: () => provider.toggleRemoteScheduleView(),
+      ),
+      _appBarIconButton(
         tooltip: '同步日程到 Gitee',
         icon: Icons.cloud_upload_outlined,
         iconWidget: StreamBuilder<String>(
