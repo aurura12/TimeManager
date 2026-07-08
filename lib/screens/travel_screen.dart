@@ -4,7 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../models/travel_record.dart';
 import '../services/diary_local_store.dart';
-import '../services/travel_github_service.dart';
+import '../services/travel_gitee_service.dart';
 import '../services/travel_local_store.dart';
 
 enum _TravelViewMode { table, calendar, stats }
@@ -325,7 +325,7 @@ class _TravelScreenState extends State<TravelScreen> {
     final ok = await _ensureToken();
     if (!ok) return;
     setState(() => _processing = true);
-    final result = await TravelGitHubService.pullFile(
+    final result = await TravelGiteeService.pullFile(
       token: _token!,
       path: TravelRecordsDocument.filePath,
     );
@@ -364,7 +364,7 @@ class _TravelScreenState extends State<TravelScreen> {
     await _saveDraft();
     setState(() => _processing = true);
     final content = _document.toMarkdown();
-    final result = await TravelGitHubService.pushFile(
+    final result = await TravelGiteeService.pushFile(
       token: _token!,
       path: TravelRecordsDocument.filePath,
       content: content,

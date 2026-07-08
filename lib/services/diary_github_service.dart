@@ -1,11 +1,10 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import 'github_contents_api.dart';
 import '../config/remote_repo_config.dart';
-import '../models/remote_sync_platform.dart';
-import 'remote_sync_settings.dart';
+import 'contents_api_common.dart';
+import 'github_contents_api.dart';
 
 class DiaryPullResult {
   final bool success;
@@ -112,21 +111,12 @@ class DiaryListWithShaResult {
   }
 }
 
+/// GitHub 日记同步服务。
 class DiaryGitHubService {
-  static GitHubContentsApi _apiFor(RemoteSyncPlatform platform) {
-    switch (platform) {
-      case RemoteSyncPlatform.gitee:
-        return GitHubContentsApi.gitee(
-          owner: RemoteRepoConfig.giteeOwner,
-          repo: RemoteRepoConfig.giteeRepo,
-        );
-      case RemoteSyncPlatform.github:
-        return GitHubContentsApi.github(
-          owner: RemoteRepoConfig.githubOwner,
-          repo: RemoteRepoConfig.githubRepo,
-        );
-    }
-  }
+  static const _api = GitHubContentsApi(
+    owner: RemoteRepoConfig.githubOwner,
+    repo: RemoteRepoConfig.githubRepo,
+  );
 
   static bool _looksLikeDiaryMd(String path) {
     final lower = path.toLowerCase();
@@ -139,8 +129,7 @@ class DiaryGitHubService {
     required String token,
     required String path,
   }) async {
-    final api = _apiFor(await RemoteSyncSettings.loadPlatform());
-    final result = await api.pullText(token: token, path: path);
+    final result = await _api.pullText(token: token, path: path);
     if (result.success) {
       return DiaryPullResult.success(result.content!, result.sha!);
     }
@@ -154,8 +143,7 @@ class DiaryGitHubService {
     required String content,
     required String commitMessage,
   }) async {
-    final api = _apiFor(await RemoteSyncSettings.loadPlatform());
-    final result = await api.pushText(
+    final result = await _api.pushText(
       token: token,
       path: path,
       content: content,
@@ -183,12 +171,11 @@ class DiaryGitHubService {
     required String token,
   }) async {
     try {
-      final api = _apiFor(await RemoteSyncSettings.loadPlatform());
       final res = await requestWithRetry(
-        () => http.get(api.treeUri('HEAD', token: token), headers: api.headers(token)),
+        () => http.get(_api.treeUri('HEAD'), headers: _api.headers(token)),
       );
       if (res.statusCode != 200) {
-        return DiaryListWithShaResult.error(GitHubContentsApi.extractErrorMessage(res));
+        return DiaryListWithShaResult.error(extractErrorMessage(res));
       }
       final map = json.decode(res.body) as Map<String, dynamic>;
       final tree = map['tree'];

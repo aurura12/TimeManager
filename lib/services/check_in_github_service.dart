@@ -3,10 +3,9 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
-import 'github_contents_api.dart';
 import '../config/remote_repo_config.dart';
-import '../models/remote_sync_platform.dart';
-import 'remote_sync_settings.dart';
+import 'contents_api_common.dart';
+import 'github_contents_api.dart';
 
 class CheckInPullResult {
   final bool success;
@@ -110,29 +109,18 @@ class CheckInDeleteResult {
   }
 }
 
-/// 打卡 GitHub 同步（与日记/出行共用 love_diary 仓库）
+/// GitHub 打卡同步服务。
 class CheckInGitHubService {
-  static GitHubContentsApi _apiFor(RemoteSyncPlatform platform) {
-    switch (platform) {
-      case RemoteSyncPlatform.gitee:
-        return GitHubContentsApi.gitee(
-          owner: RemoteRepoConfig.giteeOwner,
-          repo: RemoteRepoConfig.giteeRepo,
-        );
-      case RemoteSyncPlatform.github:
-        return GitHubContentsApi.github(
-          owner: RemoteRepoConfig.githubOwner,
-          repo: RemoteRepoConfig.githubRepo,
-        );
-    }
-  }
+  static const _api = GitHubContentsApi(
+    owner: RemoteRepoConfig.githubOwner,
+    repo: RemoteRepoConfig.githubRepo,
+  );
 
   static Future<CheckInPullResult> pullText({
     required String token,
     required String path,
   }) async {
-    final api = _apiFor(await RemoteSyncSettings.loadPlatform());
-    final result = await api.pullText(token: token, path: path);
+    final result = await _api.pullText(token: token, path: path);
     if (result.success) {
       return CheckInPullResult.success(result.content!, result.sha!);
     }
@@ -145,13 +133,12 @@ class CheckInGitHubService {
     required String path,
   }) async {
     try {
-      final api = _apiFor(await RemoteSyncSettings.loadPlatform());
       final res = await requestWithRetry(
-        () => http.get(api.contentsUri(path, token: token), headers: api.headers(token)),
+        () => http.get(_api.contentsUri(path), headers: _api.headers(token)),
       );
       if (res.statusCode == 404) return CheckInBinaryPullResult.notFound();
       if (res.statusCode != 200) {
-        return CheckInBinaryPullResult.error(GitHubContentsApi.extractErrorMessage(res));
+        return CheckInBinaryPullResult.error(extractErrorMessage(res));
       }
 
       final map = json.decode(res.body) as Map<String, dynamic>;
@@ -160,7 +147,7 @@ class CheckInGitHubService {
         return CheckInBinaryPullResult.error('远端图片内容无效');
       }
       return CheckInBinaryPullResult.success(
-        base64Decode(GitHubContentsApi.normalizeBase64(rawContent)),
+        base64Decode(normalizeBase64(rawContent)),
       );
     } catch (e) {
       return CheckInBinaryPullResult.error('拉取图片失败: $e');
@@ -205,20 +192,16 @@ class CheckInGitHubService {
     bool skipGetSha = false,
   }) async {
     try {
-      final api = _apiFor(await RemoteSyncSettings.loadPlatform());
       String? sha;
       if (!skipGetSha) {
         final head = await requestWithRetry(
-          () => http.get(api.contentsUri(path, token: token), headers: api.headers(token)),
+          () => http.get(_api.contentsUri(path), headers: _api.headers(token)),
         );
         if (head.statusCode == 200) {
-          final body = json.decode(head.body);
-          // Gitee 可能返回列表而非 Map
-          if (body is Map<String, dynamic>) {
-            sha = body['sha']?.toString();
-          }
+          final map = json.decode(head.body) as Map<String, dynamic>;
+          sha = map['sha']?.toString();
         } else if (head.statusCode != 404) {
-          return CheckInPushResult.error(GitHubContentsApi.extractErrorMessage(head));
+          return CheckInPushResult.error(extractErrorMessage(head));
         }
       }
 
@@ -228,25 +211,17 @@ class CheckInGitHubService {
       };
       if (sha != null) payload['sha'] = sha;
 
-      // Gitee 创建新文件必须用 POST；更新用 PUT
-      final usePost = api.isGitee && sha == null;
       final res = await requestWithRetry(
-        () => usePost
-            ? http.post(
-                api.contentsUri(path, token: token),
-                headers: api.headers(token),
-                body: json.encode(payload),
-              )
-            : http.put(
-                api.contentsUri(path, token: token),
-                headers: api.headers(token),
-                body: json.encode(payload),
-              ),
+        () => http.put(
+          _api.contentsUri(path),
+          headers: _api.headers(token),
+          body: json.encode(payload),
+        ),
       );
       if (res.statusCode == 200 || res.statusCode == 201) {
         return CheckInPushResult.success(created: res.statusCode == 201);
       }
-      return CheckInPushResult.error(GitHubContentsApi.extractErrorMessage(res));
+      return CheckInPushResult.error(extractErrorMessage(res));
     } catch (e) {
       return CheckInPushResult.error('推送失败: $e');
     }
@@ -257,15 +232,14 @@ class CheckInGitHubService {
     required String path,
   }) async {
     try {
-      final api = _apiFor(await RemoteSyncSettings.loadPlatform());
       final head = await requestWithRetry(
-        () => http.get(api.contentsUri(path, token: token), headers: api.headers(token)),
+        () => http.get(_api.contentsUri(path), headers: _api.headers(token)),
       );
       if (head.statusCode == 404) {
         return CheckInDeleteResult.success();
       }
       if (head.statusCode != 200) {
-        return CheckInDeleteResult.error(GitHubContentsApi.extractErrorMessage(head));
+        return CheckInDeleteResult.error(extractErrorMessage(head));
       }
       final map = json.decode(head.body) as Map<String, dynamic>;
       final sha = map['sha']?.toString();
@@ -279,15 +253,15 @@ class CheckInGitHubService {
       });
       final res = await requestWithRetry(
         () => http.delete(
-          api.contentsUri(path, token: token),
-          headers: api.headers(token),
+          _api.contentsUri(path),
+          headers: _api.headers(token),
           body: payload,
         ),
       );
       if (res.statusCode == 200 || res.statusCode == 204) {
         return CheckInDeleteResult.success();
       }
-      return CheckInDeleteResult.error(GitHubContentsApi.extractErrorMessage(res));
+      return CheckInDeleteResult.error(extractErrorMessage(res));
     } catch (e) {
       return CheckInDeleteResult.error('删除文件失败: $e');
     }

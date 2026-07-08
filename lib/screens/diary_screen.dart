@@ -5,7 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../models/diary_kind.dart';
 import '../models/diary_search_result.dart';
-import '../services/diary_github_service.dart';
+import '../services/diary_gitee_service.dart';
 import '../services/diary_local_store.dart';
 import '../services/diary_search_service.dart';
 import 'diary_search_screen.dart';
@@ -165,7 +165,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (!forceRefresh && _isRemotePathsCacheFresh()) {
       return _remoteDiaryPaths;
     }
-    final listResult = await DiaryGitHubService.listDiaryPaths(token: token);
+    final listResult = await DiaryGiteeService.listDiaryPaths(token: token);
     if (!listResult.success) return null;
     _remoteDiaryPaths = listResult.paths;
     _remoteDiaryPathsFetchedAt = DateTime.now();
@@ -277,7 +277,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     String? raw = DiarySearchService.getCachedContentByPath(remotePath);
 
     if (raw == null) {
-      final result = await DiaryGitHubService.pullDiary(token: token, path: remotePath);
+      final result = await DiaryGiteeService.pullDiary(token: token, path: remotePath);
       if (!mounted || requestId != _contextRequestId) return;
       if (!result.success) return;
       if (_dirtySinceContextLoaded) return;
@@ -388,7 +388,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
     if (raw == null) {
     // 缓存未命中，从远程仓库拉取
-      final result = await DiaryGitHubService.pullDiary(token: _token!, path: path);
+      final result = await DiaryGiteeService.pullDiary(token: _token!, path: path);
       if (!mounted) return;
       if (!result.success) {
         _showMessage(result.error ?? '加载远程文件失败');
@@ -439,7 +439,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       _remoteTreeLoading = true;
       _remoteTreeError = null;
     });
-    final listResult = await DiaryGitHubService.listDiaryPaths(token: _token!);
+    final listResult = await DiaryGiteeService.listDiaryPaths(token: _token!);
     if (!mounted) return;
     setState(() {
       _remoteTreeLoading = false;
@@ -602,7 +602,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       return;
     }
     final targetPath = path ?? _buildFileName();
-    final result = await DiaryGitHubService.pullDiary(
+    final result = await DiaryGiteeService.pullDiary(
       token: _token!,
       path: targetPath,
     );
@@ -645,7 +645,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     }
     final fileName = remotePath ?? _buildFileName();
     final markdown = _buildMarkdownContent();
-    final result = await DiaryGitHubService.pushDiary(
+    final result = await DiaryGiteeService.pushDiary(
       token: _token!,
       path: fileName,
       content: markdown,
