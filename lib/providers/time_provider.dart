@@ -12,6 +12,7 @@ import '../models/search_result.dart';
 import '../services/home_widget_service.dart';
 import '../services/diary_local_store.dart';
 import '../services/schedule_gitee_service.dart';
+import '../models/diary_kind.dart';
 import 'target_stats_cache.dart';
 
 enum TimePointStatus { onTime, late, notDone }
@@ -49,6 +50,20 @@ class TimeProvider with ChangeNotifier {
   bool _remoteViewEnabled = false;
   bool get isRemoteViewEnabled => _remoteViewEnabled;
   final Map<String, String> _remoteViewBackup = {}; // dateKey → 本地 JSON 快照
+
+  /// 当前日程用户身份（g=乖乖, j=晶晶），决定文件路径
+  DiaryKind _scheduleUser = DiaryKind.g;
+  DiaryKind get scheduleUser => _scheduleUser;
+  String get scheduleUserCode => _scheduleUser.code;
+  static const String _scheduleUserKey = 'schedule_user_kind';
+
+  Future<void> setScheduleUser(DiaryKind kind) async {
+    if (_scheduleUser == kind) return;
+    _scheduleUser = kind;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_scheduleUserKey, kind.code);
+    notifyListeners();
+  }
 
   Future<void> setGoogleCalendarSyncEnabled(bool enabled) async {
     if (_googleCalendarSyncEnabled == enabled) return;
@@ -342,7 +357,7 @@ class TimeProvider with ChangeNotifier {
     });
   }
 
-  /// 推送当前日期日程到 Gitee（先拉取合并再推送，避免覆盖对方数据）
+  /// 推送当前日期日程到 Gitee（每人独立文件，无需合并）
   Future<void> syncScheduleToGitee() async {
     if (_scheduleGiteeSyncing) return;
     _scheduleGiteeSyncing = true;
@@ -357,41 +372,20 @@ class TimeProvider with ChangeNotifier {
       final slots = _dailySlots[dateKey];
       if (slots == null) return;
 
-      _scheduleGiteeSyncController?.add('同步中...');
-
-      // 1. 拉取远端数据，构建合并快照（不修改本地数据）
-      List<Map<String, dynamic>> merged = _serializeRecordedSlots(slots);
-      final pullResult = await ScheduleGiteeService.pullSchedule(
-        token: token, dateKey: dateKey);
-      if (pullResult.success && pullResult.content != null) {
-        try {
-          final remoteList = json.decode(pullResult.content!) as List<dynamic>;
-          // 用本地数据的 index 做集合，只补充本地没有的远端槽位
-          final localIndices = merged.map((e) => e['i'] as int).toSet();
-          for (final item in remoteList) {
-            final map = Map<String, dynamic>.from(item as Map);
-            final idx = map['i'] as int;
-            if (idx >= 0 && idx < slots.length && !localIndices.contains(idx)) {
-              merged.add(map);
-            }
-          }
-        } catch (_) {}
-      }
-
-      if (merged.isEmpty) {
+      final recorded = _serializeRecordedSlots(slots);
+      if (recorded.isEmpty) {
         _scheduleGiteeSyncController?.add('无日程');
         return;
       }
 
-      final content = json.encode(merged);
-      final commitMessage = '日程: $dateKey';
-
-      // 2. 推送合并结果
+      final content = json.encode(recorded);
+      _scheduleGiteeSyncController?.add('同步中...');
       final result = await ScheduleGiteeService.pushSchedule(
         token: token,
         dateKey: dateKey,
+        userCode: _scheduleUser.code,
         content: content,
-        commitMessage: commitMessage,
+        commitMessage: '日程: $dateKey',
       );
       if (result.success) {
         _scheduleGiteeSyncController?.add(result.created ? '已创建' : '已更新');
@@ -409,8 +403,8 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
-  /// 从 Gitee 拉取日程并合并到当前日期
-  Future<bool> pullScheduleFromGitee() async {
+  /// 从 Gitee 拉取指定用户日程并合并到当前日期
+  Future<bool> pullScheduleFromGitee({String? userCode}) async {
     final token = await DiaryLocalStore.loadToken();
     if (token == null || token.isEmpty) {
       _scheduleGiteeSyncController?.add('未配置同步 Token');
@@ -418,11 +412,13 @@ class TimeProvider with ChangeNotifier {
     }
 
     final dateKey = _getDateKey(_currentDate);
+    final code = userCode ?? _scheduleUser.code;
     try {
       _scheduleGiteeSyncController?.add('拉取中...');
       final result = await ScheduleGiteeService.pullSchedule(
         token: token,
         dateKey: dateKey,
+        userCode: code,
       );
       if (result.notFound) {
         _scheduleGiteeSyncController?.add('远端无数据');
@@ -522,24 +518,9 @@ class TimeProvider with ChangeNotifier {
         s.isFromCalendar = false;
         s.calendarEventId = null;
       }
-      await pullScheduleFromGitee();
-      // 过滤掉自己的日程，只保留对方的数据
-      if (_remoteViewBackup.containsKey(dateKey)) {
-        final backupJson = _remoteViewBackup[dateKey]!;
-        final backupList = json.decode(backupJson) as List<dynamic>;
-        final localIndices = backupList.map((e) => (e as Map)['i'] as int).toSet();
-        for (final s in daySlots) {
-          if (s.recorded) {
-            final slotIndex = s.hour * 6 + s.minute10;
-            if (localIndices.contains(slotIndex)) {
-              s.recorded = false;
-              s.label = null;
-              s.categoryId = null;
-              s.color = null;
-            }
-          }
-        }
-      }
+      // 拉取对方的文件（独立文件，无需过滤）
+      final otherCode = _scheduleUser.code == 'g' ? 'j' : 'g';
+      await pullScheduleFromGitee(userCode: otherCode);
       // 拉取后不保存到本地持久化
       _remoteViewEnabled = true;
     }
@@ -1756,6 +1737,8 @@ class TimeProvider with ChangeNotifier {
       ..addAll(prefs.getStringList('pending_sync_dates') ?? []);
     _googleCalendarSyncEnabled =
         prefs.getBool('google_calendar_sync_enabled') ?? true;
+    _scheduleUser =
+        DiaryKindX.fromCode(prefs.getString(_scheduleUserKey));
 
     // 7. 分类展开状态（key 为 Category ID）
     final expandStr = prefs.getString('category_expand_states');

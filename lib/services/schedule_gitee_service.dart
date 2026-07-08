@@ -51,14 +51,16 @@ class ScheduleGiteeService {
     repo: RemoteRepoConfig.giteeRepo,
   );
 
-  static String schedulePath(String dateKey) => 'schedule/$dateKey.json';
+  static String schedulePath(String dateKey, {required String userCode}) =>
+      'schedule/${dateKey}_$userCode.json';
 
   /// 拉取指定日期的日程文件。
   static Future<ScheduleGiteePullResult> pullSchedule({
     required String token,
     required String dateKey,
+    required String userCode,
   }) async {
-    final result = await _api.pullText(token: token, path: schedulePath(dateKey));
+    final result = await _api.pullText(token: token, path: schedulePath(dateKey, userCode: userCode));
     if (result.success) {
       return ScheduleGiteePullResult.success(result.content!, result.sha!);
     }
@@ -70,12 +72,13 @@ class ScheduleGiteeService {
   static Future<ScheduleGiteePushResult> pushSchedule({
     required String token,
     required String dateKey,
+    required String userCode,
     required String content,
     required String commitMessage,
   }) async {
     final result = await _api.pushText(
       token: token,
-      path: schedulePath(dateKey),
+      path: schedulePath(dateKey, userCode: userCode),
       content: content,
       commitMessage: commitMessage,
     );
