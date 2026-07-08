@@ -32,7 +32,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
 
   Future<void> _load() async {
     setState(() {});
-    await GoogleCalendarService.restoreSignIn(background: true);
+    // 不需要等待 Google 恢复，国内网络下会超时阻塞 UI
+    GoogleCalendarService.restoreSignIn(background: true);
     await _sync.initialize(silent: false);
     if (mounted) setState(() {});
   }
