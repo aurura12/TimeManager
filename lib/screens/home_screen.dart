@@ -1240,6 +1240,30 @@ class _HomeScreenState extends State<HomeScreen> {
         onPressed: () => provider.undo(),
       ),
       _appBarIconButton(
+        tooltip: '同步日程到 Gitee',
+        icon: Icons.cloud_upload_outlined,
+        iconWidget: StreamBuilder<String>(
+          stream: provider.scheduleGiteeSyncStream,
+          initialData: '',
+          builder: (context, snapshot) {
+            final status = snapshot.data ?? '';
+            return Tooltip(
+              message: status.isNotEmpty ? status : '同步日程到 Gitee',
+              child: Icon(
+                Icons.cloud_upload_outlined,
+                size: 23,
+                color: status == '同步中...' || status == '拉取中...'
+                    ? Colors.orange
+                    : status.isNotEmpty
+                        ? Colors.green
+                        : null,
+              ),
+            );
+          },
+        ),
+        onPressed: () => provider.syncScheduleToGitee(),
+      ),
+      _appBarIconButton(
         tooltip: _syncButtonTooltip(provider),
         icon: Icons.sync,
         onPressed: () => provider.synchronizeCalendar(),

@@ -10,6 +10,8 @@ import '../models/schedule_template.dart';
 import '../models/calendar_block.dart';
 import '../models/search_result.dart';
 import '../services/home_widget_service.dart';
+import '../services/diary_local_store.dart';
+import '../services/schedule_gitee_service.dart';
 import 'target_stats_cache.dart';
 
 enum TimePointStatus { onTime, late, notDone }
@@ -135,8 +137,10 @@ class TimeProvider with ChangeNotifier {
   @override
   void dispose() {
     _debounceTimer?.cancel();
+    _scheduleGiteeTimer?.cancel();
     _googleAuthSubscription?.cancel();
     _syncStatusController.close();
+    _scheduleGiteeSyncController?.close();
     _targetStatsChangedController.close();
     super.dispose();
   }
@@ -314,10 +318,138 @@ class TimeProvider with ChangeNotifier {
     synchronizeCalendar(delay: true);
   }
 
+  // --- Gitee 日程同步 ---
+
+  StreamController<String>? _scheduleGiteeSyncController;
+  Stream<String> get scheduleGiteeSyncStream {
+    _scheduleGiteeSyncController ??= StreamController<String>.broadcast();
+    return _scheduleGiteeSyncController!.stream;
+  }
+
+  Timer? _scheduleGiteeTimer;
+  bool _scheduleGiteeSyncing = false;
+
+  /// 标记当前日期需要同步到 Gitee（带 5 秒防抖）
+  void _markScheduleGiteePending() {
+    _scheduleGiteeTimer?.cancel();
+    _scheduleGiteeTimer = Timer(const Duration(seconds: 5), () {
+      syncScheduleToGitee();
+    });
+  }
+
+  /// 推送当前日期日程到 Gitee
+  Future<void> syncScheduleToGitee() async {
+    if (_scheduleGiteeSyncing) return;
+    _scheduleGiteeSyncing = true;
+    try {
+      final token = await DiaryLocalStore.loadToken();
+      if (token == null || token.isEmpty) {
+        _scheduleGiteeSyncController?.add('未配置同步 Token');
+        return;
+      }
+
+      final dateKey = _getDateKey(_currentDate);
+      final slots = _dailySlots[dateKey];
+      if (slots == null) return;
+
+      final recorded = _serializeRecordedSlots(slots);
+      if (recorded.isEmpty) {
+        _scheduleGiteeSyncController?.add('无日程');
+        return;
+      }
+
+      final content = json.encode(recorded);
+      final commitMessage = '日程: $dateKey';
+
+      _scheduleGiteeSyncController?.add('同步中...');
+      final result = await ScheduleGiteeService.pushSchedule(
+        token: token,
+        dateKey: dateKey,
+        content: content,
+        commitMessage: commitMessage,
+      );
+      if (result.success) {
+        _scheduleGiteeSyncController?.add(result.created ? '已创建' : '已更新');
+        Future.delayed(const Duration(seconds: 3), () {
+          _scheduleGiteeSyncController?.add('');
+        });
+      } else {
+        _scheduleGiteeSyncController?.add(result.error ?? '同步失败');
+      }
+    } catch (e) {
+      _scheduleGiteeSyncController?.add('同步失败: $e');
+    } finally {
+      _scheduleGiteeSyncing = false;
+    }
+  }
+
+  /// 从 Gitee 拉取日程并合并到当前日期
+  Future<bool> pullScheduleFromGitee() async {
+    final token = await DiaryLocalStore.loadToken();
+    if (token == null || token.isEmpty) {
+      _scheduleGiteeSyncController?.add('未配置同步 Token');
+      return false;
+    }
+
+    final dateKey = _getDateKey(_currentDate);
+    try {
+      _scheduleGiteeSyncController?.add('拉取中...');
+      final result = await ScheduleGiteeService.pullSchedule(
+        token: token,
+        dateKey: dateKey,
+      );
+      if (result.notFound) {
+        _scheduleGiteeSyncController?.add('远端无数据');
+        Future.delayed(const Duration(seconds: 3), () {
+          _scheduleGiteeSyncController?.add('');
+        });
+        return false;
+      }
+      if (!result.success || result.content == null) {
+        _scheduleGiteeSyncController?.add(result.error ?? '拉取失败');
+        return false;
+      }
+
+      final List<dynamic> slotList;
+      try {
+        slotList = json.decode(result.content!) as List<dynamic>;
+      } catch (_) {
+        _scheduleGiteeSyncController?.add('解析失败');
+        return false;
+      }
+
+      final daySlots = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
+      for (final item in slotList) {
+        final map = Map<String, dynamic>.from(item as Map);
+        final idx = map['i'] as int;
+        if (idx >= 0 && idx < daySlots.length) {
+          daySlots[idx].recorded = true;
+          daySlots[idx].label = map['l'] as String?;
+          daySlots[idx].categoryId = map['cid'] as String?;
+          if (map['c'] != null) {
+            daySlots[idx].color = Color(map['c'] as int);
+          }
+        }
+      }
+      _allSlotsDirty = true;
+      _saveData();
+      notifyListeners();
+      _scheduleGiteeSyncController?.add('已同步');
+      Future.delayed(const Duration(seconds: 3), () {
+        _scheduleGiteeSyncController?.add('');
+      });
+      return true;
+    } catch (e) {
+      _scheduleGiteeSyncController?.add('拉取失败: $e');
+      return false;
+    }
+  }
+
   /// 本地与云端日历不一致时标记（与是否已登录无关）
   void _markPendingSync() {
     _pendingSyncDates.add(_getDateKey(_currentDate));
     _syncDirty = true;
+    _markScheduleGiteePending();
   }
 
   void _clearPendingSyncForCurrentDate() {
