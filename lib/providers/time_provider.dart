@@ -342,7 +342,7 @@ class TimeProvider with ChangeNotifier {
     });
   }
 
-  /// 推送当前日期日程到 Gitee
+  /// 推送当前日期日程到 Gitee（先拉取合并再推送，避免覆盖对方数据）
   Future<void> syncScheduleToGitee() async {
     if (_scheduleGiteeSyncing) return;
     _scheduleGiteeSyncing = true;
@@ -357,16 +357,36 @@ class TimeProvider with ChangeNotifier {
       final slots = _dailySlots[dateKey];
       if (slots == null) return;
 
-      final recorded = _serializeRecordedSlots(slots);
-      if (recorded.isEmpty) {
+      _scheduleGiteeSyncController?.add('同步中...');
+
+      // 1. 拉取远端数据，构建合并快照（不修改本地数据）
+      List<Map<String, dynamic>> merged = _serializeRecordedSlots(slots);
+      final pullResult = await ScheduleGiteeService.pullSchedule(
+        token: token, dateKey: dateKey);
+      if (pullResult.success && pullResult.content != null) {
+        try {
+          final remoteList = json.decode(pullResult.content!) as List<dynamic>;
+          // 用本地数据的 index 做集合，只补充本地没有的远端槽位
+          final localIndices = merged.map((e) => e['i'] as int).toSet();
+          for (final item in remoteList) {
+            final map = Map<String, dynamic>.from(item as Map);
+            final idx = map['i'] as int;
+            if (idx >= 0 && idx < slots.length && !localIndices.contains(idx)) {
+              merged.add(map);
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (merged.isEmpty) {
         _scheduleGiteeSyncController?.add('无日程');
         return;
       }
 
-      final content = json.encode(recorded);
+      final content = json.encode(merged);
       final commitMessage = '日程: $dateKey';
 
-      _scheduleGiteeSyncController?.add('同步中...');
+      // 2. 推送合并结果
       final result = await ScheduleGiteeService.pushSchedule(
         token: token,
         dateKey: dateKey,
