@@ -7,7 +7,8 @@ import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../config/github_config.dart';
+import '../config/remote_repo_config.dart';
+import '../config/diary_gitee_config.dart';
 
 class UpdateInfo {
   final String version;
@@ -32,25 +33,27 @@ class UpdateCheckResult {
 }
 
 class UpdateService {
-  static String get _owner => GithubConfig.owner;
-  static String get _repo => GithubConfig.repo;
-  static String get _token => GithubConfig.token;
+  static String get _owner => RemoteRepoConfig.giteeOwner;
+  static String get _repo => RemoteRepoConfig.giteeRepo;
+  static String get _token => DiaryGiteeConfig.hardcodedToken;
 
   static const Duration _checkTimeout = Duration(seconds: 10);
   static const Duration _downloadConnectTimeout = Duration(seconds: 10);
   static const int _maxRetries = 1;
 
-  /// 检查是否有新版本
+  static Map<String, String> get _headers => {
+    'Accept': 'application/json',
+    'Authorization': 'token $_token',
+  };
+
+  /// 检查 Gitee 是否发布了新版本
   static Future<UpdateCheckResult> checkForUpdate() async {
     for (int i = 0; i <= _maxRetries; i++) {
       try {
-        debugPrint('检查更新: 请求 GitHub API... (尝试 ${i + 1})');
+        debugPrint('检查更新: 请求 Gitee API... (尝试 ${i + 1})');
         final response = await http.get(
-          Uri.parse('https://api.github.com/repos/$_owner/$_repo/releases/latest'),
-          headers: {
-            'Accept': 'application/vnd.github.v3+json',
-            'Authorization': 'Bearer $_token',
-          },
+          Uri.parse('https://gitee.com/api/v5/repos/$_owner/$_repo/releases/latest'),
+          headers: _headers,
         ).timeout(_checkTimeout);
 
         debugPrint('检查更新: HTTP ${response.statusCode}');
@@ -58,6 +61,9 @@ class UpdateService {
           if (i < _maxRetries) {
             await Future.delayed(const Duration(seconds: 1));
             continue;
+          }
+          if (response.statusCode == 404) {
+            return UpdateCheckResult(error: '暂无发布版本');
           }
           return UpdateCheckResult(error: '服务器返回错误 (${response.statusCode})');
         }
@@ -80,18 +86,18 @@ class UpdateService {
         }
 
         if (apkUrl == null) {
-          debugPrint('检查更新: 未找到 APK 文件');
           return UpdateCheckResult(error: '未找到可下载的安装包');
         }
         if (tagName.isEmpty) {
-          debugPrint('检查更新: tagName 为空');
           return UpdateCheckResult(error: '版本信息无效');
         }
+
+        // 私有仓库下载链接需要附带 token
+        apkUrl = '$apkUrl?access_token=$_token';
 
         final currentVersion = await _getCurrentVersion();
         debugPrint('检查更新: 当前版本=$currentVersion, 最新版本=$tagName');
         final isNewer = _isNewerVersion(tagName, currentVersion);
-        debugPrint('检查更新: 是否有新版本=$isNewer');
 
         if (isNewer) {
           return UpdateCheckResult(
@@ -146,7 +152,6 @@ class UpdateService {
     return false;
   }
 
-  /// 格式化下载速度
   static String _formatSpeed(int bytesPerSecond) {
     if (bytesPerSecond < 1024) {
       return '$bytesPerSecond B/s';
@@ -167,7 +172,6 @@ class UpdateService {
     final statusNotifier = ValueNotifier<String>('准备下载...');
 
     try {
-      // 显示下载进度对话框
       if (context.mounted) {
         showDialog(
           context: context,
@@ -179,7 +183,6 @@ class UpdateService {
         );
       }
 
-      // 使用 Client 获取流式响应（带连接超时）
       final client = http.Client();
       IOSink? sink;
       try {
@@ -201,11 +204,9 @@ class UpdateService {
           return;
         }
 
-        // 获取文件总大小
         final contentLength = response.contentLength ?? 0;
         debugPrint('下载: 文件大小=${contentLength ~/ 1024}KB');
 
-        // 流式写入文件
         final tempDir = await getTemporaryDirectory();
         final apkFile = File('${tempDir.path}/time_manager_v$version.apk');
         sink = apkFile.openWrite();
@@ -223,7 +224,6 @@ class UpdateService {
           final elapsed = now.difference(lastTime).inMilliseconds;
 
           if (elapsed >= 500) {
-            // 每 500ms 更新一次速度
             final speed = (received - lastReceived) * 1000 ~/ elapsed;
             final speedStr = _formatSpeed(speed);
 
@@ -245,17 +245,13 @@ class UpdateService {
 
         debugPrint('下载完成: ${apkFile.path}');
 
-        // 更新状态为安装中
         statusNotifier.value = '正在启动安装...';
         progressNotifier.value = 1.0;
 
-        // 等待一小段时间让用户看到"安装中"状态
         await Future.delayed(const Duration(milliseconds: 500));
 
-        // 关闭进度对话框
         if (context.mounted) Navigator.pop(context);
 
-        // 使用 MethodChannel 调用原生代码打开 APK
         final channel = MethodChannel('com.example.time_manager/install_apk');
         try {
           debugPrint('尝试通过 MethodChannel 安装 APK...');
