@@ -522,6 +522,23 @@ class TimeProvider with ChangeNotifier {
         s.calendarEventId = null;
       }
       await pullScheduleFromGitee();
+      // 过滤掉自己的日程，只保留对方的数据
+      if (_remoteViewBackup.containsKey(dateKey)) {
+        final backupJson = _remoteViewBackup[dateKey]!;
+        final backupList = json.decode(backupJson) as List<dynamic>;
+        final localIndices = backupList.map((e) => (e as Map)['i'] as int).toSet();
+        for (final s in daySlots) {
+          if (s.recorded) {
+            final slotIndex = s.hour * 6 + s.minute10;
+            if (localIndices.contains(slotIndex)) {
+              s.recorded = false;
+              s.label = null;
+              s.categoryId = null;
+              s.color = null;
+            }
+          }
+        }
+      }
       // 拉取后不保存到本地持久化
       _remoteViewEnabled = true;
     }
