@@ -169,6 +169,7 @@ class UpdateService {
   ) async {
     final progressNotifier = ValueNotifier<double>(0);
     final statusNotifier = ValueNotifier<String>('准备下载...');
+    IOSink? sink;
 
     try {
       if (context.mounted) {
@@ -182,19 +183,23 @@ class UpdateService {
         );
       }
 
-      final client = http.Client();
-      IOSink? sink;
-      try {
-        // 手动跟随重定向并重新添加认证头（跨域重定向时会丢失 Authorization）
-        var url = Uri.parse(downloadUrl);
-        http.StreamedResponse? response;
-        for (int hop = 0; hop < 5; hop++) {
+      final tempDir = await getTemporaryDirectory();
+      final apkFile = File('${tempDir.path}/time_manager_v$version.apk');
+      sink = apkFile.openWrite();
+
+      // 手动跟随重定向并重新添加认证头（跨域重定向时会丢失 Authorization）
+      var url = Uri.parse(downloadUrl);
+      http.StreamedResponse? finalResponse;
+      for (int hop = 0; hop < 5; hop++) {
+        final hopClient = http.Client();
+        try {
           final request = http.Request('GET', url);
           request.headers.addAll(_headers);
-          response = await client.send(request).timeout(
+          request.followRedirects = false;
+          final response = await hopClient.send(request).timeout(
             _downloadConnectTimeout,
             onTimeout: () {
-              client.close();
+              hopClient.close();
               throw TimeoutException('连接超时');
             },
           );
@@ -202,33 +207,38 @@ class UpdateService {
             final location = response.headers['location'];
             if (location == null) break;
             url = Uri.parse(location);
+            hopClient.close();
             continue;
           }
-          break;
-        }
-
-        if (response == null || response.statusCode != 200) {
-          client.close();
-          if (context.mounted) {
-            Navigator.pop(context);
-            _showDownloadFailedDialog(context, downloadUrl);
+          if (response.statusCode != 200) {
+            hopClient.close();
+            break;
           }
-          return;
+          finalResponse = response;
+          // hopClient 保持打开以流式读取响应体
+          break;
+        } catch (_) {
+          hopClient.close();
+          rethrow;
         }
+      }
 
-        final contentLength = response.contentLength ?? 0;
-        debugPrint('下载: 文件大小=${contentLength ~/ 1024}KB');
+      if (finalResponse == null) {
+        if (context.mounted) {
+          Navigator.pop(context);
+          _showDownloadFailedDialog(context, downloadUrl);
+        }
+        return;
+      }
 
-        final tempDir = await getTemporaryDirectory();
-        final apkFile = File('${tempDir.path}/time_manager_v$version.apk');
-        sink = apkFile.openWrite();
+      final contentLength = finalResponse.contentLength ?? 0;
 
-        int received = 0;
-        final startTime = DateTime.now();
-        int lastReceived = 0;
-        DateTime lastTime = startTime;
+      int received = 0;
+      final startTime = DateTime.now();
+      int lastReceived = 0;
+      DateTime lastTime = startTime;
 
-        await for (final chunk in response!.stream) {
+      await for (final chunk in finalResponse.stream) {
           sink.add(chunk);
           received += chunk.length;
 
@@ -284,7 +294,6 @@ class UpdateService {
         }
       } finally {
         await sink?.close();
-        client.close();
       }
     } on TimeoutException catch (e) {
       debugPrint('下载超时: $e');
