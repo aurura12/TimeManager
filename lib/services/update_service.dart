@@ -187,58 +187,38 @@ class UpdateService {
       final apkFile = File('${tempDir.path}/time_manager_v$version.apk');
       sink = apkFile.openWrite();
 
-      // 手动跟随重定向并重新添加认证头（跨域重定向时会丢失 Authorization）
-      var url = Uri.parse(downloadUrl);
-      http.StreamedResponse? finalResponse;
-      for (int hop = 0; hop < 5; hop++) {
-        final hopClient = http.Client();
-        try {
-          final request = http.Request('GET', url);
-          request.headers.addAll(_headers);
-          request.followRedirects = false;
-          final response = await hopClient.send(request).timeout(
-            _downloadConnectTimeout,
-            onTimeout: () {
-              hopClient.close();
-              throw TimeoutException('连接超时');
-            },
-          );
-          if (response.statusCode == 302 || response.statusCode == 301) {
-            final location = response.headers['location'];
-            if (location == null) break;
-            url = Uri.parse(location);
-            hopClient.close();
-            continue;
+      // Gitee 下载先经过两次同域重定向（auth 保留），
+      // 最后跨域到 foruda.gitee.com（auth 丢失但 URL 中已有下载 token）
+      final client = http.Client();
+      try {
+        final request = http.Request('GET', Uri.parse(downloadUrl));
+        request.headers.addAll(_headers);
+        final response = await client.send(request).timeout(
+          _downloadConnectTimeout,
+          onTimeout: () {
+            client.close();
+            throw TimeoutException('连接超时');
+          },
+        );
+
+        if (response.statusCode != 200) {
+          client.close();
+          if (context.mounted) {
+            Navigator.pop(context);
+            _showDownloadFailedDialog(context, downloadUrl);
           }
-          if (response.statusCode != 200) {
-            hopClient.close();
-            break;
-          }
-          finalResponse = response;
-          // hopClient 保持打开以流式读取响应体
-          break;
-        } catch (_) {
-          hopClient.close();
-          rethrow;
+          return;
         }
-      }
 
-      if (finalResponse == null) {
-        if (context.mounted) {
-          Navigator.pop(context);
-          _showDownloadFailedDialog(context, downloadUrl);
-        }
-        return;
-      }
+        final contentLength = response.contentLength ?? 0;
+        debugPrint('下载: 文件大小=${contentLength ~/ 1024}KB');
 
-      final contentLength = finalResponse.contentLength ?? 0;
+        int received = 0;
+        final startTime = DateTime.now();
+        int lastReceived = 0;
+        DateTime lastTime = startTime;
 
-      int received = 0;
-      final startTime = DateTime.now();
-      int lastReceived = 0;
-      DateTime lastTime = startTime;
-
-      await for (final chunk in finalResponse.stream) {
+        await for (final chunk in response.stream) {
           sink.add(chunk);
           received += chunk.length;
 
@@ -263,7 +243,6 @@ class UpdateService {
         }
         await sink.close();
         sink = null;
-        client.close();
 
         debugPrint('下载完成: ${apkFile.path}');
 
@@ -294,6 +273,7 @@ class UpdateService {
         }
       } finally {
         await sink?.close();
+        client.close();
       }
     } on TimeoutException catch (e) {
       debugPrint('下载超时: $e');
