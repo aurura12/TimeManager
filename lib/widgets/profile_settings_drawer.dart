@@ -2,14 +2,12 @@
 import '../models/google_calendar_user.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
-import '../models/remote_sync_platform.dart';
 import '../providers/theme_mode_provider.dart';
 import '../providers/time_provider.dart';
 import '../services/data_backup_service.dart';
 import '../services/update_service.dart';
 import '../screens/word_cloud_screen.dart';
 import '../services/google_calendar_service.dart';
-import '../services/remote_sync_settings.dart';
 
 class ProfileSettingsDrawer extends StatefulWidget {
   final VoidCallback onChanged;
@@ -21,35 +19,6 @@ class ProfileSettingsDrawer extends StatefulWidget {
 }
 
 class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
-  RemoteSyncPlatform _remotePlatform = RemoteSyncPlatform.gitee;
-  bool _remoteSettingsLoaded = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadRemoteSettings();
-  }
-
-  Future<void> _loadRemoteSettings() async {
-    final platform = await RemoteSyncSettings.loadPlatform();
-    if (!mounted) return;
-    setState(() {
-      _remotePlatform = platform;
-      _remoteSettingsLoaded = true;
-    });
-  }
-
-  Future<void> _setRemotePlatform(RemoteSyncPlatform platform) async {
-    if (_remotePlatform == platform) return;
-    await RemoteSyncSettings.savePlatform(platform);
-    if (!mounted) return;
-    setState(() {
-      _remotePlatform = platform;
-      _remoteSettingsLoaded = true;
-    });
-    widget.onChanged();
-  }
-
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<TimeProvider>();
@@ -159,37 +128,8 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
   }
 
   Widget _buildRemoteSyncSection(BuildContext context, TimeProvider provider) {
-    final subtitle = _remotePlatform == RemoteSyncPlatform.gitee
-        ? '默认同步到 Gitee'
-        : '兼容 GitHub 同步';
-
     return Column(
       children: [
-        ListTile(
-          leading: const Icon(Icons.cloud_sync_outlined),
-          title: const Text('远程同步平台'),
-          subtitle: Text(subtitle),
-          trailing: DropdownButtonHideUnderline(
-            child: DropdownButton<RemoteSyncPlatform>(
-              value: _remotePlatform,
-              onChanged: (value) {
-                if (value != null) {
-                  _setRemotePlatform(value);
-                }
-              },
-              items: const [
-                DropdownMenuItem(
-                  value: RemoteSyncPlatform.gitee,
-                  child: Text('Gitee'),
-                ),
-                DropdownMenuItem(
-                  value: RemoteSyncPlatform.github,
-                  child: Text('GitHub'),
-                ),
-              ],
-            ),
-          ),
-        ),
         SwitchListTile(
           secondary: const Icon(Icons.calendar_month_outlined),
           title: const Text('Google 日历同步'),
