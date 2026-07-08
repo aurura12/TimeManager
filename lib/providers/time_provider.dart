@@ -437,7 +437,7 @@ class TimeProvider with ChangeNotifier {
         }
       }
       _allSlotsDirty = true;
-      _saveData();
+      if (!_remoteViewEnabled) _saveData();
       notifyListeners();
       _scheduleGiteeSyncController?.add('已同步');
       Future.delayed(const Duration(seconds: 3), () {
@@ -450,7 +450,7 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
-  /// 切换查看对方日程。打开时备份本地数据并拉取远端合并；关闭时恢复本地数据。
+  /// 切换查看对方日程。打开时显示纯远端数据；关闭时恢复本地数据。
   Future<void> toggleRemoteScheduleView() async {
     final dateKey = _getDateKey(_currentDate);
     if (_remoteViewEnabled) {
@@ -458,7 +458,6 @@ class TimeProvider with ChangeNotifier {
       if (_remoteViewBackup.containsKey(dateKey)) {
         final slots = _dailySlots[dateKey] ?? _generateInitialSlots();
         final backupList = json.decode(_remoteViewBackup.remove(dateKey)!) as List<dynamic>;
-        // 先清空当前日期所有 slot
         for (final s in slots) {
           s.recorded = false;
           s.label = null;
@@ -467,7 +466,6 @@ class TimeProvider with ChangeNotifier {
           s.isFromCalendar = false;
           s.calendarEventId = null;
         }
-        // 恢复本地数据
         for (final item in backupList) {
           final map = Map<String, dynamic>.from(item as Map);
           final idx = map['i'] as int;
@@ -486,14 +484,25 @@ class TimeProvider with ChangeNotifier {
       }
       _remoteViewEnabled = false;
     } else {
-      // 打开：备份本地数据，拉取远端合并
+      // 打开：备份本地，清空当前日期，拉取纯远端数据
       final localSlots = _dailySlots[dateKey];
       if (localSlots != null) {
         _remoteViewBackup[dateKey] = json.encode(_serializeRecordedSlots(localSlots));
       } else {
         _remoteViewBackup[dateKey] = json.encode(<Map<String, dynamic>>[]);
       }
+      // 先清空当前日期，确保只显示远端数据
+      final daySlots = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
+      for (final s in daySlots) {
+        s.recorded = false;
+        s.label = null;
+        s.categoryId = null;
+        s.color = null;
+        s.isFromCalendar = false;
+        s.calendarEventId = null;
+      }
       await pullScheduleFromGitee();
+      // 拉取后不保存到本地持久化
       _remoteViewEnabled = true;
     }
     notifyListeners();
