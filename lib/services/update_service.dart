@@ -36,7 +36,7 @@ class UpdateCheckResult {
 
 class UpdateService {
   static String get _owner => RemoteRepoConfig.giteeOwner;
-  static String get _repo => RemoteRepoConfig.giteeRepo;
+  static String get _repo => 'time_manager_releases'; // 公开仓库，专用发布 APK
   static String get _token => DiaryGiteeConfig.hardcodedToken;
 
   static const Duration _checkTimeout = Duration(seconds: 10);
