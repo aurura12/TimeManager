@@ -90,11 +90,19 @@ class GitHubContentsApi {
 
   static String extractErrorMessage(http.Response response) {
     try {
-      final map = json.decode(response.body) as Map<String, dynamic>;
-      final message = map['message']?.toString();
-      if (message != null && message.isNotEmpty) return message;
+      final decoded = json.decode(response.body);
+      if (decoded is Map<String, dynamic>) {
+        // GitHub 格式: {"message": "..."}
+        final message = decoded['message']?.toString();
+        if (message != null && message.isNotEmpty) return message;
+        // Gitee 格式: {"messages": ["...", "..."]}
+        final messages = decoded['messages'];
+        if (messages is List && messages.isNotEmpty) {
+          return messages.join('; ');
+        }
+      }
     } catch (_) {}
-    return 'GitHub 请求失败（${response.statusCode}）';
+    return '请求失败（${response.statusCode}）';
   }
 
   /// Pull a text file from the repo. Returns (content, sha) or null if not found.
@@ -153,12 +161,20 @@ class GitHubContentsApi {
       };
       if (sha != null) payload['sha'] = sha;
 
+      // Gitee 创建新文件必须用 POST，更新用 PUT；GitHub 两种都支持 PUT
+      final usePost = isGitee && sha == null;
       final res = await requestWithRetry(
-        () => http.put(
-          contentsUri(path, token: token),
-          headers: headers(token),
-          body: json.encode(payload),
-        ),
+        () => usePost
+            ? http.post(
+                contentsUri(path, token: token),
+                headers: headers(token),
+                body: json.encode(payload),
+              )
+            : http.put(
+                contentsUri(path, token: token),
+                headers: headers(token),
+                body: json.encode(payload),
+              ),
       );
       if (res.statusCode == 200 || res.statusCode == 201) {
         return (success: true, created: res.statusCode == 201, error: null);
