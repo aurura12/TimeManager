@@ -113,7 +113,12 @@ class GitHubContentsApi {
         return (success: false, notFound: false, content: null, sha: null, error: extractErrorMessage(res));
       }
 
-      final map = json.decode(res.body) as Map<String, dynamic>;
+      final body = json.decode(res.body);
+      // Gitee 对不存在的文件路径可能返回目录列表 (List) 而非 404
+      if (body is List) {
+        return (success: false, notFound: true, content: null, sha: null, error: null);
+      }
+      final map = body as Map<String, dynamic>;
       final rawContent = map['content']?.toString();
       final sha = map['sha']?.toString();
       if (rawContent == null || sha == null) {
