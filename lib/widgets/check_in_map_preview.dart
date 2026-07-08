@@ -53,7 +53,7 @@ class CheckInMapPreview extends StatelessWidget {
                 children: [
                   TileLayer(
                     urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        'https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
                     userAgentPackageName: 'com.example.time_manager',
                   ),
                   if (mapData.markers.isNotEmpty)
