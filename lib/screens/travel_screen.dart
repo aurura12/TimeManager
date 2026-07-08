@@ -310,7 +310,7 @@ class _TravelScreenState extends State<TravelScreen> {
   Future<bool> _ensureToken() async {
     final token = (_token ?? '').trim();
     if (token.isNotEmpty) return true;
-    _showMessage('未配置 GitHub Token，请先配置日记模块 token');
+    _showMessage('未配置当前平台同步 Token，请先配置日记模块 token');
     return false;
   }
 
@@ -318,7 +318,7 @@ class _TravelScreenState extends State<TravelScreen> {
     final token = (_token ?? '').trim();
     if (token.isEmpty) {
       if (!silent) {
-        _showMessage('未配置 GitHub Token，请先配置日记模块 token');
+    _showMessage('未配置当前平台同步 Token，请先配置日记模块 token');
       }
       return;
     }

@@ -1,8 +1,11 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
 import 'github_contents_api.dart';
+import '../config/remote_repo_config.dart';
+import '../models/remote_sync_platform.dart';
+import 'remote_sync_settings.dart';
 
 class DiaryPullResult {
   final bool success;
@@ -110,15 +113,19 @@ class DiaryListWithShaResult {
 }
 
 class DiaryGitHubService {
-  static const _api = GitHubContentsApi(owner: 'aurura12', repo: 'love_diary');
-  static const String _baseHost = 'api.github.com';
-
-  static Uri _treeUri() {
-    return Uri.https(
-      _baseHost,
-      '/repos/aurura12/love_diary/git/trees/HEAD',
-      {'recursive': '1'},
-    );
+  static GitHubContentsApi _apiFor(RemoteSyncPlatform platform) {
+    switch (platform) {
+      case RemoteSyncPlatform.gitee:
+        return GitHubContentsApi.gitee(
+          owner: RemoteRepoConfig.giteeOwner,
+          repo: RemoteRepoConfig.giteeRepo,
+        );
+      case RemoteSyncPlatform.github:
+        return GitHubContentsApi.github(
+          owner: RemoteRepoConfig.githubOwner,
+          repo: RemoteRepoConfig.githubRepo,
+        );
+    }
   }
 
   static bool _looksLikeDiaryMd(String path) {
@@ -132,7 +139,8 @@ class DiaryGitHubService {
     required String token,
     required String path,
   }) async {
-    final result = await _api.pullText(token: token, path: path);
+    final api = _apiFor(await RemoteSyncSettings.loadPlatform());
+    final result = await api.pullText(token: token, path: path);
     if (result.success) {
       return DiaryPullResult.success(result.content!, result.sha!);
     }
@@ -146,7 +154,8 @@ class DiaryGitHubService {
     required String content,
     required String commitMessage,
   }) async {
-    final result = await _api.pushText(
+    final api = _apiFor(await RemoteSyncSettings.loadPlatform());
+    final result = await api.pushText(
       token: token,
       path: path,
       content: content,
@@ -174,8 +183,9 @@ class DiaryGitHubService {
     required String token,
   }) async {
     try {
+      final api = _apiFor(await RemoteSyncSettings.loadPlatform());
       final res = await requestWithRetry(
-        () => http.get(_treeUri(), headers: _api.headers(token)),
+        () => http.get(api.treeUri('HEAD', token: token), headers: api.headers(token)),
       );
       if (res.statusCode != 200) {
         return DiaryListWithShaResult.error(GitHubContentsApi.extractErrorMessage(res));

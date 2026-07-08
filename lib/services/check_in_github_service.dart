@@ -4,6 +4,9 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import 'github_contents_api.dart';
+import '../config/remote_repo_config.dart';
+import '../models/remote_sync_platform.dart';
+import 'remote_sync_settings.dart';
 
 class CheckInPullResult {
   final bool success;
@@ -109,13 +112,27 @@ class CheckInDeleteResult {
 
 /// 打卡 GitHub 同步（与日记/出行共用 love_diary 仓库）
 class CheckInGitHubService {
-  static const _api = GitHubContentsApi(owner: 'aurura12', repo: 'love_diary');
+  static GitHubContentsApi _apiFor(RemoteSyncPlatform platform) {
+    switch (platform) {
+      case RemoteSyncPlatform.gitee:
+        return GitHubContentsApi.gitee(
+          owner: RemoteRepoConfig.giteeOwner,
+          repo: RemoteRepoConfig.giteeRepo,
+        );
+      case RemoteSyncPlatform.github:
+        return GitHubContentsApi.github(
+          owner: RemoteRepoConfig.githubOwner,
+          repo: RemoteRepoConfig.githubRepo,
+        );
+    }
+  }
 
   static Future<CheckInPullResult> pullText({
     required String token,
     required String path,
   }) async {
-    final result = await _api.pullText(token: token, path: path);
+    final api = _apiFor(await RemoteSyncSettings.loadPlatform());
+    final result = await api.pullText(token: token, path: path);
     if (result.success) {
       return CheckInPullResult.success(result.content!, result.sha!);
     }
@@ -128,8 +145,9 @@ class CheckInGitHubService {
     required String path,
   }) async {
     try {
+      final api = _apiFor(await RemoteSyncSettings.loadPlatform());
       final res = await requestWithRetry(
-        () => http.get(_api.contentsUri(path), headers: _api.headers(token)),
+        () => http.get(api.contentsUri(path, token: token), headers: api.headers(token)),
       );
       if (res.statusCode == 404) return CheckInBinaryPullResult.notFound();
       if (res.statusCode != 200) {
@@ -187,10 +205,11 @@ class CheckInGitHubService {
     bool skipGetSha = false,
   }) async {
     try {
+      final api = _apiFor(await RemoteSyncSettings.loadPlatform());
       String? sha;
       if (!skipGetSha) {
         final head = await requestWithRetry(
-          () => http.get(_api.contentsUri(path), headers: _api.headers(token)),
+          () => http.get(api.contentsUri(path, token: token), headers: api.headers(token)),
         );
         if (head.statusCode == 200) {
           final map = json.decode(head.body) as Map<String, dynamic>;
@@ -208,8 +227,8 @@ class CheckInGitHubService {
 
       final res = await requestWithRetry(
         () => http.put(
-          _api.contentsUri(path),
-          headers: _api.headers(token),
+          api.contentsUri(path, token: token),
+          headers: api.headers(token),
           body: json.encode(payload),
         ),
       );
@@ -227,8 +246,9 @@ class CheckInGitHubService {
     required String path,
   }) async {
     try {
+      final api = _apiFor(await RemoteSyncSettings.loadPlatform());
       final head = await requestWithRetry(
-        () => http.get(_api.contentsUri(path), headers: _api.headers(token)),
+        () => http.get(api.contentsUri(path, token: token), headers: api.headers(token)),
       );
       if (head.statusCode == 404) {
         return CheckInDeleteResult.success();
@@ -248,8 +268,8 @@ class CheckInGitHubService {
       });
       final res = await requestWithRetry(
         () => http.delete(
-          _api.contentsUri(path),
-          headers: _api.headers(token),
+          api.contentsUri(path, token: token),
+          headers: api.headers(token),
           body: payload,
         ),
       );

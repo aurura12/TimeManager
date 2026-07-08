@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import '../models/remote_sync_platform.dart';
+
 const Duration _defaultTimeout = Duration(seconds: 15);
 const int _maxRetries = 2;
 
@@ -32,26 +34,54 @@ Future<http.Response> requestWithRetry(
   throw StateError('unreachable');
 }
 
-/// Shared GitHub Contents API helpers used by diary, travel, and check-in services.
+/// Shared repository contents API helpers used by diary, travel, and check-in services.
 class GitHubContentsApi {
-  static const String _baseHost = 'api.github.com';
-
   final String owner;
   final String repo;
+  final RemoteSyncPlatform platform;
 
-  const GitHubContentsApi({required this.owner, required this.repo});
+  const GitHubContentsApi.github({required this.owner, required this.repo})
+      : platform = RemoteSyncPlatform.github;
+
+  const GitHubContentsApi.gitee({required this.owner, required this.repo})
+      : platform = RemoteSyncPlatform.gitee;
+
+  bool get isGitee => platform == RemoteSyncPlatform.gitee;
+
+  String get _baseHost => isGitee ? 'gitee.com' : 'api.github.com';
+  String get _repoPrefix => isGitee ? '/api/v5/repos' : '/repos';
 
   Map<String, String> headers(String token) {
-    return {
-      'Accept': 'application/vnd.github+json',
-      'Authorization': 'Bearer $token',
-      'X-GitHub-Api-Version': '2022-11-28',
+    final headers = <String, String>{
+      'Accept': 'application/json',
       'Content-Type': 'application/json',
     };
+    headers['Authorization'] = isGitee ? 'token $token' : 'Bearer $token';
+    if (!isGitee) {
+      headers['X-GitHub-Api-Version'] = '2022-11-28';
+    }
+    return headers;
   }
 
-  Uri contentsUri(String path) {
-    return Uri.https(_baseHost, '/repos/$owner/$repo/contents/$path');
+  Uri contentsUri(String path, {String? token}) {
+    return Uri.https(
+      _baseHost,
+      '$_repoPrefix/$owner/$repo/contents/$path',
+      isGitee && token != null && token.isNotEmpty
+          ? {'access_token': token}
+          : null,
+    );
+  }
+
+  Uri treeUri(String ref, {bool recursive = true, String? token}) {
+    return Uri.https(
+      _baseHost,
+      '$_repoPrefix/$owner/$repo/git/trees/$ref',
+      {
+        if (recursive) 'recursive': '1',
+        if (isGitee && token != null && token.isNotEmpty) 'access_token': token,
+      },
+    );
   }
 
   static String normalizeBase64(String value) {
@@ -74,7 +104,7 @@ class GitHubContentsApi {
   }) async {
     try {
       final res = await requestWithRetry(
-        () => http.get(contentsUri(path), headers: headers(token)),
+        () => http.get(contentsUri(path, token: token), headers: headers(token)),
       );
       if (res.statusCode == 404) {
         return (success: false, notFound: true, content: null, sha: null, error: null);
@@ -120,7 +150,7 @@ class GitHubContentsApi {
 
       final res = await requestWithRetry(
         () => http.put(
-          contentsUri(path),
+          contentsUri(path, token: token),
           headers: headers(token),
           body: json.encode(payload),
         ),

@@ -111,7 +111,7 @@ class CheckInSyncService {
       try {
         final token = await _requireToken();
         if (token == null) {
-          return CheckInSyncResult.fail('未配置 GitHub Token');
+          return CheckInSyncResult.fail('未配置当前平台同步 Token');
         }
 
         final pull = await CheckInGitHubService.pullText(
@@ -154,7 +154,7 @@ class CheckInSyncService {
   Future<CheckInSyncResult> _pushToGitHubInternal() async {
     final token = await _requireToken();
     if (token == null) {
-      return CheckInSyncResult.fail('未配置 GitHub Token');
+      return CheckInSyncResult.fail('未配置当前平台同步 Token');
     }
 
     // 先拉远端合并，避免覆盖对方的打卡
@@ -214,7 +214,7 @@ class CheckInSyncService {
       try {
         final token = await _requireToken();
         if (token == null) {
-          return CheckInSyncResult.fail('未配置 GitHub Token');
+          return CheckInSyncResult.fail('未配置当前平台同步 Token');
         }
 
         final pull = await CheckInGitHubService.pullText(
@@ -266,7 +266,7 @@ class CheckInSyncService {
     try {
       final token = await _requireToken();
       if (token == null) {
-        return CheckInSyncResult.fail('未配置 GitHub Token');
+        return CheckInSyncResult.fail('未配置当前平台同步 Token');
       }
 
       // Step 1: Pull remote and merge to avoid overwriting others' data
@@ -334,7 +334,7 @@ class CheckInSyncService {
 
     final token = await _requireToken();
     if (token == null) {
-      return CheckInSyncResult.fail('未配置 GitHub Token，无法上传照片');
+      return CheckInSyncResult.fail('未配置当前平台同步 Token，无法上传照片');
     }
 
     final now = DateTime.now();

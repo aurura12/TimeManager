@@ -323,7 +323,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
   Future<void> _openSearch() async {
     final token = (_token ?? '').trim();
     if (token.isEmpty) {
-      _showMessage('请先配置 GitHub Token');
+      _showMessage('请先配置当前平台同步 Token');
       return;
     }
 
@@ -387,7 +387,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     String? raw = DiarySearchService.getCachedContentByPath(path);
 
     if (raw == null) {
-      // 缓存未命中，从 GitHub 拉取
+    // 缓存未命中，从远程仓库拉取
       final result = await DiaryGitHubService.pullDiary(token: _token!, path: path);
       if (!mounted) return;
       if (!result.success) {
@@ -430,7 +430,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
   Future<void> _loadRemoteTree() async {
     if ((_token ?? '').trim().isEmpty) {
       setState(() {
-        _remoteTreeError = '未配置 GitHub Token';
+      _remoteTreeError = '未配置当前平台同步 Token';
         _remoteTreeLoading = false;
       });
       return;
@@ -465,7 +465,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
   Future<bool> _ensureToken() async {
     final token = (_token ?? '').trim();
     if (token.isNotEmpty) return true;
-    _showMessage('未配置 GitHub Token，请在 diary_github_config.dart 里设置 hardcodedToken');
+    _showMessage('未配置当前平台同步 Token，请在对应配置文件里设置 hardcodedToken');
     return false;
   }
 
