@@ -14,6 +14,7 @@ import '../services/diary_local_store.dart';
 import '../services/schedule_gitee_service.dart';
 import '../models/diary_kind.dart';
 import '../models/known_google_users.dart';
+import '../services/app_user_identity_store.dart';
 import 'target_stats_cache.dart';
 
 enum TimePointStatus { onTime, late, notDone }
@@ -191,9 +192,22 @@ class TimeProvider with ChangeNotifier {
     await _loadData();
     notifyListeners();
     await _refreshHomeWidget();
-    // 无论如何都恢复 Google 身份识别（仅读本地缓存，不联网），
-    // 日程和打卡需要知道当前用户是谁（乖乖/晶晶）
+    // 从本地持久化存储直接加载用户身份（不联网，瞬间完成）
+    await _loadScheduleUserFromStore();
+    // 后台恢复 Google 日历会话（不阻塞）
     unawaited(GoogleCalendarService.restoreSignIn(background: true));
+  }
+
+  Future<void> _loadScheduleUserFromStore() async {
+    final identity = await AppUserIdentityStore.load();
+    if (identity != null) {
+      final nickname = KnownGoogleUsers.nicknameFor(identity.email);
+      if (nickname == '乖乖') {
+        _scheduleUser = DiaryKind.g;
+      } else if (nickname == '晶晶') {
+        _scheduleUser = DiaryKind.j;
+      }
+    }
   }
 
   Future<void> _restoreGoogleInBackground() async {
