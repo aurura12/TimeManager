@@ -52,7 +52,7 @@ class ScheduleGiteeService {
   );
 
   static String schedulePath(String dateKey, {required String userCode}) =>
-      'schedule/${dateKey}_$userCode.json';
+      'schedule/$userCode/$dateKey.json';
 
   /// 拉取指定日期的日程文件。
   static Future<ScheduleGiteePullResult> pullSchedule({

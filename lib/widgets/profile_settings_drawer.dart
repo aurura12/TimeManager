@@ -140,6 +140,18 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
             widget.onChanged();
           },
         ),
+        ListTile(
+          leading: const Icon(Icons.cloud_sync_outlined),
+          title: const Text('同步全部日程到 Gitee'),
+          subtitle: const Text('将所有日期的日程增量推送到远端'),
+          onTap: () {
+            provider.syncAllSchedulesToGitee();
+            Navigator.pop(context);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('正在后台同步全部日程...')),
+            );
+          },
+        ),
       ],
     );
   }

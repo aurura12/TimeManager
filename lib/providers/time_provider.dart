@@ -371,7 +371,7 @@ class TimeProvider with ChangeNotifier {
 
   /// 推送当前日期日程到 Gitee（每人独立文件，无需合并）
   Future<void> syncScheduleToGitee() async {
-    if (_scheduleGiteeSyncing) return;
+    if (_scheduleGiteeSyncing || _allScheduleSyncing) return;
     _scheduleGiteeSyncing = true;
     try {
       final token = await DiaryLocalStore.loadToken();
@@ -384,34 +384,97 @@ class TimeProvider with ChangeNotifier {
       final slots = _dailySlots[dateKey];
       if (slots == null) return;
 
-      final recorded = _serializeRecordedSlots(slots);
-      if (recorded.isEmpty) {
+      if (!slots.any((s) => s.recorded)) {
         _scheduleGiteeSyncController?.add('无日程');
         return;
       }
 
-      final content = json.encode(recorded);
       _scheduleGiteeSyncController?.add('同步中...');
-      final result = await ScheduleGiteeService.pushSchedule(
-        token: token,
-        dateKey: dateKey,
-        userCode: _scheduleUser.code,
-        content: content,
-        commitMessage: '日程: $dateKey',
-      );
-      if (result.success) {
-        _scheduleGiteeSyncController?.add(result.created ? '已创建' : '已更新');
+      final ok = await _pushScheduleDay(dateKey, slots);
+      if (ok) {
+        _scheduleGiteeSyncController?.add('已同步');
         _clearPendingSyncForCurrentDate();
         Future.delayed(const Duration(seconds: 3), () {
           _scheduleGiteeSyncController?.add('');
         });
       } else {
-        _scheduleGiteeSyncController?.add(result.error ?? '同步失败');
+        _scheduleGiteeSyncController?.add('同步失败');
       }
     } catch (e) {
       _scheduleGiteeSyncController?.add('同步失败: $e');
     } finally {
       _scheduleGiteeSyncing = false;
+    }
+  }
+
+  /// 提取单个日期推送逻辑，供全量同步复用
+  Future<bool> _pushScheduleDay(String dateKey, List<TimeSlot> slots) async {
+    final token = await DiaryLocalStore.loadToken();
+    if (token == null || token.isEmpty) return false;
+
+    final recorded = _serializeRecordedSlots(slots);
+    if (recorded.isEmpty) return true; // 无数据视为成功
+
+    final content = json.encode(recorded);
+    final result = await ScheduleGiteeService.pushSchedule(
+      token: token,
+      dateKey: dateKey,
+      userCode: _scheduleUser.code,
+      content: content,
+      commitMessage: '日程: $dateKey',
+    );
+    return result.success;
+  }
+
+  bool _allScheduleSyncing = false;
+
+  /// 全量同步所有日期的日程到 Gitee
+  Future<void> syncAllSchedulesToGitee() async {
+    if (_allScheduleSyncing) return;
+    _allScheduleSyncing = true;
+    // 取消可能正在等待的当日自动同步
+    _scheduleGiteeTimer?.cancel();
+    try {
+      final token = await DiaryLocalStore.loadToken();
+      if (token == null || token.isEmpty) {
+        _scheduleGiteeSyncController?.add('未配置同步 Token');
+        return;
+      }
+
+      // 收集所有有记录的日期
+      final dateKeys = <String>[];
+      for (final entry in _dailySlots.entries) {
+        if (entry.value.any((s) => s.recorded)) {
+          dateKeys.add(entry.key);
+        }
+      }
+
+      if (dateKeys.isEmpty) {
+        _scheduleGiteeSyncController?.add('无日程');
+        return;
+      }
+
+      final total = dateKeys.length;
+      var done = 0;
+      for (final dateKey in dateKeys) {
+        final slots = _dailySlots[dateKey]!;
+        _scheduleGiteeSyncController?.add('同步中 ${done + 1}/$total...');
+        final ok = await _pushScheduleDay(dateKey, slots);
+        if (ok) done++;
+      }
+
+      if (done == total) {
+        _scheduleGiteeSyncController?.add('全部同步完成 ($total 天)');
+      } else {
+        _scheduleGiteeSyncController?.add('同步完成 $done/$total');
+      }
+      Future.delayed(const Duration(seconds: 3), () {
+        _scheduleGiteeSyncController?.add('');
+      });
+    } catch (e) {
+      _scheduleGiteeSyncController?.add('全量同步失败: $e');
+    } finally {
+      _allScheduleSyncing = false;
     }
   }
 
