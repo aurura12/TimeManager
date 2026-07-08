@@ -521,6 +521,16 @@ class TimeProvider with ChangeNotifier {
     await _saveData();
   }
 
+  /// 统一同步：始终同步到 Gitee，若开启 Google 日历同步则同时同步 Google。
+  Future<void> syncAll() async {
+    // 先同步日程到 Gitee
+    await syncScheduleToGitee();
+    // 若开启了 Google 日历同步则同步日历
+    if (_googleCalendarSyncEnabled) {
+      await synchronizeCalendar();
+    }
+  }
+
   // 合并后的同步方法
   // delay: true 表示自动同步（带防抖），false 表示手动同步（立即执行）
   Future<void> synchronizeCalendar({bool delay = false}) async {

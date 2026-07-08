@@ -1144,9 +1144,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String _syncButtonTooltip(TimeProvider provider) {
-    if (!provider.hasPendingSyncForCurrentDate) return '同步到日历';
-    if (!provider.canSyncToCalendar) return '本地已改，登录后可同步到日历';
-    return '待同步到日历';
+    if (provider.googleCalendarSyncEnabled) {
+      return '同步到 Gitee 和 Google 日历';
+    }
+    return '同步日程到 Gitee';
   }
 
   Widget _appBarIconButton({
@@ -1275,33 +1276,9 @@ class _HomeScreenState extends State<HomeScreen> {
         onPressed: () => provider.toggleRemoteScheduleView(),
       ),
       _appBarIconButton(
-        tooltip: '同步日程到 Gitee',
-        icon: Icons.cloud_upload_outlined,
-        iconWidget: StreamBuilder<String>(
-          stream: provider.scheduleGiteeSyncStream,
-          initialData: '',
-          builder: (context, snapshot) {
-            final status = snapshot.data ?? '';
-            return Tooltip(
-              message: status.isNotEmpty ? status : '同步日程到 Gitee',
-              child: Icon(
-                Icons.cloud_upload_outlined,
-                size: 23,
-                color: status == '同步中...' || status == '拉取中...'
-                    ? Colors.orange
-                    : status.isNotEmpty
-                        ? Colors.green
-                        : null,
-              ),
-            );
-          },
-        ),
-        onPressed: () => provider.syncScheduleToGitee(),
-      ),
-      _appBarIconButton(
         tooltip: _syncButtonTooltip(provider),
         icon: Icons.sync,
-        onPressed: () => provider.synchronizeCalendar(),
+        onPressed: () => provider.syncAll(),
         iconWidget: Stack(
           clipBehavior: Clip.none,
           children: [
