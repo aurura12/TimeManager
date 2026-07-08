@@ -5,7 +5,7 @@ import '../models/check_in_document.dart';
 import '../models/check_in_goal.dart';
 import '../models/check_in_record.dart';
 import '../models/google_calendar_user.dart';
-import 'check_in_github_service.dart';
+import 'check_in_gitee_service.dart';
 import 'check_in_image_service.dart';
 import 'check_in_local_store.dart';
 import 'check_in_location_service.dart';
@@ -83,7 +83,7 @@ class CheckInSyncService {
         return;
       }
 
-      final pull = await CheckInGitHubService.pullText(
+      final pull = await CheckInGiteeService.pullText(
         token: token,
         path: CheckInDocument.filePath,
       );
@@ -114,7 +114,7 @@ class CheckInSyncService {
           return CheckInSyncResult.fail('未配置当前平台同步 Token');
         }
 
-        final pull = await CheckInGitHubService.pullText(
+        final pull = await CheckInGiteeService.pullText(
           token: token,
           path: CheckInDocument.filePath,
         );
@@ -158,7 +158,7 @@ class CheckInSyncService {
     }
 
     // 先拉远端合并，避免覆盖对方的打卡
-    final pull = await CheckInGitHubService.pullText(
+    final pull = await CheckInGiteeService.pullText(
       token: token,
       path: CheckInDocument.filePath,
     );
@@ -167,7 +167,7 @@ class CheckInSyncService {
       _document = CheckInDocument.merge(_document, remote);
     }
 
-    final push = await CheckInGitHubService.pushText(
+    final push = await CheckInGiteeService.pushText(
       token: token,
       path: CheckInDocument.filePath,
       content: _document.toMarkdown(),
@@ -217,7 +217,7 @@ class CheckInSyncService {
           return CheckInSyncResult.fail('未配置当前平台同步 Token');
         }
 
-        final pull = await CheckInGitHubService.pullText(
+        final pull = await CheckInGiteeService.pullText(
           token: token,
           path: CheckInDocument.filePath,
         );
@@ -229,7 +229,7 @@ class CheckInSyncService {
         _document = _document.removeGoal(goal.id);
         await CheckInLocalStore.saveDraft(_document);
 
-        final push = await CheckInGitHubService.pushText(
+        final push = await CheckInGiteeService.pushText(
           token: token,
           path: CheckInDocument.filePath,
           content: _document.toMarkdown(),
@@ -270,7 +270,7 @@ class CheckInSyncService {
       }
 
       // Step 1: Pull remote and merge to avoid overwriting others' data
-      final pull = await CheckInGitHubService.pullText(
+      final pull = await CheckInGiteeService.pullText(
         token: token,
         path: CheckInDocument.filePath,
       );
@@ -281,7 +281,7 @@ class CheckInSyncService {
 
       // Step 2: Delete photo from GitHub if present
       if (record.photoPath != null && record.photoPath!.isNotEmpty) {
-        await CheckInGitHubService.deleteFile(
+        await CheckInGiteeService.deleteFile(
           token: token,
           path: record.photoPath!,
         );
@@ -301,7 +301,7 @@ class CheckInSyncService {
       await CheckInLocalStore.saveDraft(_document);
 
       // Step 5: Push updated document to GitHub
-      final push = await CheckInGitHubService.pushText(
+      final push = await CheckInGiteeService.pushText(
         token: token,
         path: CheckInDocument.filePath,
         content: _document.toMarkdown(),
@@ -359,7 +359,7 @@ class CheckInSyncService {
       }
 
       // Photo is a new file, skip GET sha to save one HTTP request
-      final imagePush = await CheckInGitHubService.pushBinary(
+      final imagePush = await CheckInGiteeService.pushBinary(
         token: token,
         path: photoPath,
         bytes: compressed,

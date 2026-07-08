@@ -1,7 +1,5 @@
-﻿import 'github_contents_api.dart';
 import '../config/remote_repo_config.dart';
-import '../models/remote_sync_platform.dart';
-import 'remote_sync_settings.dart';
+import 'github_contents_api.dart';
 
 class TravelPullResult {
   final bool success;
@@ -56,28 +54,18 @@ class TravelPushResult {
   }
 }
 
+/// GitHub 出行同步服务。
 class TravelGitHubService {
-  static GitHubContentsApi _apiFor(RemoteSyncPlatform platform) {
-    switch (platform) {
-      case RemoteSyncPlatform.gitee:
-        return GitHubContentsApi.gitee(
-          owner: RemoteRepoConfig.giteeOwner,
-          repo: RemoteRepoConfig.giteeRepo,
-        );
-      case RemoteSyncPlatform.github:
-        return GitHubContentsApi.github(
-          owner: RemoteRepoConfig.githubOwner,
-          repo: RemoteRepoConfig.githubRepo,
-        );
-    }
-  }
+  static const _api = GitHubContentsApi(
+    owner: RemoteRepoConfig.githubOwner,
+    repo: RemoteRepoConfig.githubRepo,
+  );
 
   static Future<TravelPullResult> pullFile({
     required String token,
     required String path,
   }) async {
-    final api = _apiFor(await RemoteSyncSettings.loadPlatform());
-    final result = await api.pullText(token: token, path: path);
+    final result = await _api.pullText(token: token, path: path);
     if (result.success) {
       return TravelPullResult.success(result.content!, result.sha!);
     }
@@ -91,8 +79,7 @@ class TravelGitHubService {
     required String content,
     required String commitMessage,
   }) async {
-    final api = _apiFor(await RemoteSyncSettings.loadPlatform());
-    final result = await api.pushText(
+    final result = await _api.pushText(
       token: token,
       path: path,
       content: content,

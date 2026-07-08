@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-import 'check_in_github_service.dart';
+import 'check_in_gitee_service.dart';
 
 /// 打卡照片本地缓存（从 GitHub 拉取后存本地，避免重复请求）
 class CheckInPhotoCache {
@@ -34,7 +34,7 @@ class CheckInPhotoCache {
     final cached = await getCachedFile(photoPath);
     if (cached != null) return cached;
 
-    final result = await CheckInGitHubService.pullBinary(
+    final result = await CheckInGiteeService.pullBinary(
       token: token,
       path: photoPath,
     );

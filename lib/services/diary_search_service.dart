@@ -6,7 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/diary_search_result.dart';
-import 'diary_github_service.dart';
+import 'diary_gitee_service.dart';
 
 class DiarySearchService {
   static final Map<String, String> _cache = {};
@@ -64,7 +64,7 @@ class DiarySearchService {
     progress.value = 0;
     try {
       final listResult =
-          await DiaryGitHubService.listDiaryPathsWithSha(token: token);
+          await DiaryGiteeService.listDiaryPathsWithSha(token: token);
       if (!listResult.success) {
         debugPrint('日记索引: 获取远程文件列表失败: ${listResult.error}');
         return;
@@ -150,7 +150,7 @@ class DiarySearchService {
     String token,
     MapEntry<String, String> entry,
   ) async {
-    final pullResult = await DiaryGitHubService.pullDiary(
+    final pullResult = await DiaryGiteeService.pullDiary(
       token: token,
       path: entry.key,
     );
