@@ -395,6 +395,7 @@ class TimeProvider with ChangeNotifier {
       );
       if (result.success) {
         _scheduleGiteeSyncController?.add(result.created ? '已创建' : '已更新');
+        _clearPendingSyncForCurrentDate();
         Future.delayed(const Duration(seconds: 3), () {
           _scheduleGiteeSyncController?.add('');
         });
