@@ -13,10 +13,13 @@ class CheckInPhotoSheet extends StatefulWidget {
     super.key,
     required this.goal,
     required this.syncService,
+    this.initialDate,
   });
 
   final CheckInGoal goal;
   final CheckInSyncService syncService;
+  /// 初始打卡日期，为 null 时默认今天；非 null 时作为补打卡的初始日期
+  final DateTime? initialDate;
 
   @override
   State<CheckInPhotoSheet> createState() => _CheckInPhotoSheetState();
@@ -33,6 +36,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
   CheckInLocationResult? _location;
   late AnimationController _checkAnim;
   String? _error;
+  late DateTime _selectedDate;
 
   @override
   void initState() {
@@ -41,7 +45,28 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
       vsync: this,
       duration: const Duration(milliseconds: 600),
     );
+    _selectedDate = widget.initialDate ?? DateTime.now();
     _loadLocation();
+  }
+
+  bool get _isBackfill {
+    final now = DateTime.now();
+    final sel = _selectedDate;
+    return sel.year != now.year ||
+        sel.month != now.month ||
+        sel.day != now.day;
+  }
+
+  String get _dateLabel {
+    final now = DateTime.now();
+    if (_selectedDate.year == now.year &&
+        _selectedDate.month == now.month &&
+        _selectedDate.day == now.day) {
+      return '今天';
+    }
+    return '${_selectedDate.month}月${_selectedDate.day}日 '
+        '${_selectedDate.hour.toString().padLeft(2, '0')}:'
+        '${_selectedDate.minute.toString().padLeft(2, '0')}';
   }
 
   @override
@@ -97,6 +122,8 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
       goal: widget.goal,
       photoFile: _photoFile!,
       location: _location,
+      backfillDate: _isBackfill ? _selectedDate : null,
+      isBackfill: _isBackfill,
     );
 
     if (!mounted) return;
@@ -197,6 +224,67 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                 ],
               ),
               const SizedBox(height: 16),
+              // 日期选择行（补打卡时显示橙色标记）
+              InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: _uploading
+                    ? null
+                    : () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _selectedDate,
+                          firstDate: DateTime(2024),
+                          lastDate: DateTime.now(),
+                          locale: const Locale('zh'),
+                        );
+                        if (picked != null && mounted) {
+                          setState(() => _selectedDate = picked);
+                        }
+                      },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerHighest
+                        .withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.calendar_today,
+                          size: 16, color: colorScheme.onSurfaceVariant),
+                      const SizedBox(width: 6),
+                      Text(
+                        _dateLabel,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: colorScheme.onSurface,
+                        ),
+                      ),
+                      if (_isBackfill) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text('补',
+                              style: TextStyle(
+                                  fontSize: 10, color: Colors.orange)),
+                        ),
+                      ],
+                      const SizedBox(width: 6),
+                      Icon(Icons.arrow_drop_down,
+                          size: 18, color: colorScheme.onSurfaceVariant),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
               AspectRatio(
                 aspectRatio: 4 / 3,
                 child: Container(

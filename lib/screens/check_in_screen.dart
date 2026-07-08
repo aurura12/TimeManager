@@ -165,6 +165,61 @@ class _CheckInScreenState extends State<CheckInScreen> {
     }
   }
 
+  Future<void> _backfillCheckIn(CheckInGoal goal) async {
+    if (!_sync.hasIdentity) {
+      _showMessage('请先登录 Google');
+      return;
+    }
+    final userId = _currentUserId;
+    if (userId == null) {
+      _showMessage('无法获取用户信息，请重新登录');
+      return;
+    }
+    if (!goal.isOwnedBy(userId)) {
+      _showMessage('只能在自己的目标下打卡');
+      return;
+    }
+
+    // 先选日期，再选时间，然后打卡
+    final pickedDate = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime(2024),
+      lastDate: DateTime.now(),
+      locale: const Locale('zh'),
+    );
+    if (pickedDate == null || !mounted) return;
+
+    final pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+    );
+    if (pickedTime == null || !mounted) return;
+
+    final backfillDt = DateTime(
+      pickedDate.year,
+      pickedDate.month,
+      pickedDate.day,
+      pickedTime.hour,
+      pickedTime.minute,
+    );
+
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => CheckInPhotoSheet(
+        goal: goal,
+        syncService: _sync,
+        initialDate: backfillDt,
+      ),
+    );
+    if (ok == true && mounted) {
+      setState(() {});
+      _showMessage('「${goal.name}」补打卡成功');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -628,7 +683,19 @@ class _CheckInScreenState extends State<CheckInScreen> {
                       style: TextStyle(fontSize: 12, color: mutedColor),
                     ),
                     const Spacer(),
-                    if (isMine && !checked)
+                    if (isMine && !checked) ...[
+                      TextButton(
+                        onPressed: () => _backfillCheckIn(goal),
+                        style: TextButton.styleFrom(
+                          foregroundColor: onCardColor.withValues(alpha: 0.7),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20)),
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                        ),
+                        child: const Text('补打卡',
+                            style: TextStyle(fontSize: 12)),
+                      ),
+                      const SizedBox(width: 4),
                       TextButton.icon(
                         onPressed: () => _quickCheckIn(goal),
                         style: TextButton.styleFrom(
@@ -640,6 +707,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
                         icon: const Icon(Icons.camera_alt, size: 16),
                         label: const Text('打卡', style: TextStyle(fontSize: 13)),
                       ),
+                    ],
                   ],
                 ),
               ],

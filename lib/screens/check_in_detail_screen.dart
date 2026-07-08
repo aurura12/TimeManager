@@ -60,6 +60,46 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     }
   }
 
+  Future<void> _backfillCheckIn() async {
+    final pickedDate = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime(2024),
+      lastDate: DateTime.now(),
+      locale: const Locale('zh'),
+    );
+    if (pickedDate == null || !mounted) return;
+
+    final pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+    );
+    if (pickedTime == null || !mounted) return;
+
+    final backfillDt = DateTime(
+      pickedDate.year,
+      pickedDate.month,
+      pickedDate.day,
+      pickedTime.hour,
+      pickedTime.minute,
+    );
+
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => CheckInPhotoSheet(
+        goal: _goal,
+        syncService: widget.syncService,
+        initialDate: backfillDt,
+      ),
+    );
+    if (ok == true && mounted) {
+      _refreshGoalFromSync();
+      setState(() {});
+    }
+  }
+
   Future<void> _edit() async {
     if (!_isMine || _processing) return;
     final result = await Navigator.push<CheckInGoal>(
@@ -361,12 +401,29 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
       floatingActionButton: _isMine &&
               _userId != null &&
               !_goal.isCompletedTodayBy(_userId!)
-          ? FloatingActionButton.extended(
-              onPressed: _checkIn,
-              backgroundColor: _goal.color,
-              foregroundColor: onColor,
-              icon: const Icon(Icons.add_a_photo),
-              label: const Text('打卡'),
+          ? Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FloatingActionButton.small(
+                    heroTag: 'backfill',
+                    onPressed: _backfillCheckIn,
+                    backgroundColor: Colors.orange,
+                    foregroundColor: Colors.white,
+                    child: const Icon(Icons.history),
+                  ),
+                  const SizedBox(height: 8),
+                  FloatingActionButton.extended(
+                    heroTag: 'checkin',
+                    onPressed: _checkIn,
+                    backgroundColor: _goal.color,
+                    foregroundColor: onColor,
+                    icon: const Icon(Icons.add_a_photo),
+                    label: const Text('打卡'),
+                  ),
+                ],
+              ),
             )
           : null,
     );
@@ -411,6 +468,20 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                         Text(dateStr,
                             style: const TextStyle(
                                 fontWeight: FontWeight.w600, fontSize: 14)),
+                        if (record.isBackfill) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text('补',
+                                style: TextStyle(
+                                    fontSize: 10, color: Colors.orange)),
+                          ),
+                        ],
                         const SizedBox(width: 8),
                         Icon(Icons.check_circle,
                             size: 16, color: colorScheme.primary),
