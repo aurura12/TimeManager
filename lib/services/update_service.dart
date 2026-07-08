@@ -185,17 +185,29 @@ class UpdateService {
       final client = http.Client();
       IOSink? sink;
       try {
-        final request = http.Request('GET', Uri.parse(downloadUrl));
-        request.headers.addAll(_headers);
-        final response = await client.send(request).timeout(
-          _downloadConnectTimeout,
-          onTimeout: () {
-            client.close();
-            throw TimeoutException('连接超时');
-          },
-        );
+        // 手动跟随重定向并重新添加认证头（跨域重定向时会丢失 Authorization）
+        var url = Uri.parse(downloadUrl);
+        http.StreamedResponse? response;
+        for (int hop = 0; hop < 5; hop++) {
+          final request = http.Request('GET', url);
+          request.headers.addAll(_headers);
+          response = await client.send(request).timeout(
+            _downloadConnectTimeout,
+            onTimeout: () {
+              client.close();
+              throw TimeoutException('连接超时');
+            },
+          );
+          if (response.statusCode == 302 || response.statusCode == 301) {
+            final location = response.headers['location'];
+            if (location == null) break;
+            url = Uri.parse(location);
+            continue;
+          }
+          break;
+        }
 
-        if (response.statusCode != 200) {
+        if (response == null || response.statusCode != 200) {
           client.close();
           if (context.mounted) {
             Navigator.pop(context);
@@ -216,7 +228,7 @@ class UpdateService {
         int lastReceived = 0;
         DateTime lastTime = startTime;
 
-        await for (final chunk in response.stream) {
+        await for (final chunk in response!.stream) {
           sink.add(chunk);
           received += chunk.length;
 
