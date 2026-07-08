@@ -10,7 +10,6 @@ import '../services/update_service.dart';
 import '../screens/word_cloud_screen.dart';
 import '../services/google_calendar_service.dart';
 import '../services/remote_sync_settings.dart';
-import '../services/diary_local_store.dart';
 
 class ProfileSettingsDrawer extends StatefulWidget {
   final VoidCallback onChanged;
@@ -49,45 +48,6 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       _remoteSettingsLoaded = true;
     });
     widget.onChanged();
-  }
-
-  Future<void> _editRemoteToken(BuildContext context) async {
-    final currentToken = await DiaryLocalStore.loadToken();
-    if (!context.mounted) return;
-
-    final controller = TextEditingController(text: currentToken ?? '');
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('${_remotePlatform.label} 同步 Token'),
-        content: TextField(
-          controller: controller,
-          obscureText: true,
-          decoration: InputDecoration(
-            hintText: '请输入 ${_remotePlatform.label} 访问令牌',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('保存'),
-          ),
-        ],
-      ),
-    );
-    final token = controller.text.trim();
-    controller.dispose();
-    if (confirmed != true || !context.mounted) return;
-
-    await DiaryLocalStore.saveToken(token);
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${_remotePlatform.label} Token 已保存')),
-    );
   }
 
   @override
@@ -229,18 +189,6 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               ],
             ),
           ),
-        ),
-        ListTile(
-          leading: const Icon(Icons.key_outlined),
-          title: const Text('同步 Token'),
-          subtitle: Text(
-            _remotePlatform == RemoteSyncPlatform.gitee
-                ? '配置当前 Gitee 仓库访问令牌'
-                : '配置当前 GitHub 仓库访问令牌',
-          ),
-          onTap: _remoteSettingsLoaded
-              ? () => _editRemoteToken(context)
-              : null,
         ),
         SwitchListTile(
           secondary: const Icon(Icons.calendar_month_outlined),
