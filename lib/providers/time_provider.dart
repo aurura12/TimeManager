@@ -53,17 +53,8 @@ class TimeProvider with ChangeNotifier {
   bool get isRemoteViewEnabled => _remoteViewEnabled;
   final Map<String, String> _remoteViewBackup = {}; // dateKey → 本地 JSON 快照
 
-  /// 当前日程用户身份，从 Google 账号自动识别（乖乖=g, 晶晶=j），未登录默认 g
-  DiaryKind get scheduleUser {
-    final email = GoogleCalendarService.sessionUser?.email;
-    if (email != null) {
-      final nickname = KnownGoogleUsers.nicknameFor(email);
-      if (nickname == '乖乖') return DiaryKind.g;
-      if (nickname == '晶晶') return DiaryKind.j;
-    }
-    // fallback 到本地存储的用户设置
-    return _scheduleUser;
-  }
+  /// 当前日程用户身份，从本地持久化存储加载（与打卡一致）
+  DiaryKind get scheduleUser => _scheduleUser;
 
   String get scheduleUserCode => scheduleUser.code;
 
