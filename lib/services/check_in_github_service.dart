@@ -212,8 +212,11 @@ class CheckInGitHubService {
           () => http.get(api.contentsUri(path, token: token), headers: api.headers(token)),
         );
         if (head.statusCode == 200) {
-          final map = json.decode(head.body) as Map<String, dynamic>;
-          sha = map['sha']?.toString();
+          final body = json.decode(head.body);
+          // Gitee 可能返回列表而非 Map
+          if (body is Map<String, dynamic>) {
+            sha = body['sha']?.toString();
+          }
         } else if (head.statusCode != 404) {
           return CheckInPushResult.error(GitHubContentsApi.extractErrorMessage(head));
         }
@@ -225,12 +228,20 @@ class CheckInGitHubService {
       };
       if (sha != null) payload['sha'] = sha;
 
+      // Gitee 创建新文件必须用 POST；更新用 PUT
+      final usePost = api.isGitee && sha == null;
       final res = await requestWithRetry(
-        () => http.put(
-          api.contentsUri(path, token: token),
-          headers: api.headers(token),
-          body: json.encode(payload),
-        ),
+        () => usePost
+            ? http.post(
+                api.contentsUri(path, token: token),
+                headers: api.headers(token),
+                body: json.encode(payload),
+              )
+            : http.put(
+                api.contentsUri(path, token: token),
+                headers: api.headers(token),
+                body: json.encode(payload),
+              ),
       );
       if (res.statusCode == 200 || res.statusCode == 201) {
         return CheckInPushResult.success(created: res.statusCode == 201);
