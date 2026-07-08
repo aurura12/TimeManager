@@ -1,14 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../config/remote_repo_config.dart';
+
 import '../config/diary_gitee_config.dart';
+import '../config/remote_repo_config.dart';
 
 class UpdateInfo {
   final String version;
@@ -38,15 +40,65 @@ class UpdateService {
   static String get _token => DiaryGiteeConfig.hardcodedToken;
 
   static const Duration _checkTimeout = Duration(seconds: 10);
-  static const Duration _downloadConnectTimeout = Duration(seconds: 10);
+  static const Duration _downloadConnectTimeout = Duration(seconds: 20);
   static const int _maxRetries = 1;
 
   static Map<String, String> get _headers => {
-    'Accept': 'application/json',
-    'Authorization': 'token $_token',
-  };
+        'Accept': 'application/json',
+        'Authorization': 'token $_token',
+      };
 
-  /// 检查 Gitee 是否发布了新版本
+  static Map<String, String> get _downloadHeaders => {
+        'Accept': 'application/octet-stream',
+        'Authorization': 'token $_token',
+      };
+
+  static bool _isRedirectStatus(int statusCode) {
+    return statusCode == HttpStatus.movedPermanently ||
+        statusCode == HttpStatus.found ||
+        statusCode == HttpStatus.seeOther ||
+        statusCode == HttpStatus.temporaryRedirect ||
+        statusCode == HttpStatus.permanentRedirect;
+  }
+
+  static Uri _resolveRedirectUri(Uri baseUri, String location) {
+    final redirectUri = Uri.parse(location);
+    if (redirectUri.hasScheme) return redirectUri;
+    return baseUri.resolveUri(redirectUri);
+  }
+
+  static Future<http.StreamedResponse> _sendGetFollowingRedirects(
+    http.Client client,
+    Uri uri, {
+    required Map<String, String> headers,
+    int maxRedirects = 5,
+  }) async {
+    var currentUri = uri;
+
+    for (var redirectCount = 0; redirectCount <= maxRedirects; redirectCount++) {
+      final request = http.Request('GET', currentUri)
+        ..followRedirects = false
+        ..headers.addAll(headers);
+      final response = await client.send(request);
+
+      if (!_isRedirectStatus(response.statusCode)) {
+        return response;
+      }
+
+      final location = response.headers['location'];
+      // 消费响应体再继续，避免 HTTP 连接复用导致请求污染
+      await response.stream.drain<void>();
+      if (location == null || location.isEmpty) {
+        return response;
+      }
+
+      currentUri = _resolveRedirectUri(currentUri, location);
+    }
+
+    throw StateError('重定向次数过多');
+  }
+
+  /// Check whether Gitee has published a newer release.
   static Future<UpdateCheckResult> checkForUpdate() async {
     for (int i = 0; i <= _maxRetries; i++) {
       try {
@@ -63,7 +115,10 @@ class UpdateService {
             continue;
           }
           if (response.statusCode == 404) {
-            return UpdateCheckResult(error: '暂无发布版本');
+            return const UpdateCheckResult(error: '暂无发布版本');
+          }
+          if (response.statusCode == 401 || response.statusCode == 403) {
+            return const UpdateCheckResult(error: '更新接口认证失败，请检查 Gitee Token 和仓库权限');
           }
           return UpdateCheckResult(error: '服务器返回错误 (${response.statusCode})');
         }
@@ -80,19 +135,18 @@ class UpdateService {
           final name = asset['name'] as String? ?? '';
           debugPrint('检查更新: asset=$name');
           if (name.endsWith('.apk')) {
-            apkUrl = asset['browser_download_url'] as String?;
+            apkUrl = (asset['url'] as String?)?.trim();
+            apkUrl ??= (asset['browser_download_url'] as String?)?.trim();
             break;
           }
         }
 
-        if (apkUrl == null) {
-          return UpdateCheckResult(error: '未找到可下载的安装包');
+        if (apkUrl == null || apkUrl.isEmpty) {
+          return const UpdateCheckResult(error: '未找到可下载的安装包');
         }
         if (tagName.isEmpty) {
-          return UpdateCheckResult(error: '版本信息无效');
+          return const UpdateCheckResult(error: '版本信息无效');
         }
-
-        // 私有仓库下载需要 Authorization header 认证
 
         final currentVersion = await _getCurrentVersion();
         debugPrint('检查更新: 当前版本=$currentVersion, 最新版本=$tagName');
@@ -108,14 +162,14 @@ class UpdateService {
           );
         }
 
-        return UpdateCheckResult();
+        return const UpdateCheckResult();
       } on TimeoutException catch (e) {
         debugPrint('检查更新超时: $e');
         if (i < _maxRetries) {
           await Future.delayed(const Duration(seconds: 1));
           continue;
         }
-        return UpdateCheckResult(error: '网络超时，请检查网络连接后重试');
+        return const UpdateCheckResult(error: '网络超时，请检查网络连接后重试');
       } catch (e, st) {
         debugPrint('检查更新失败: $e');
         debugPrint('堆栈: $st');
@@ -126,7 +180,8 @@ class UpdateService {
         return UpdateCheckResult(error: '检查更新失败: $e');
       }
     }
-    return UpdateCheckResult(error: '检查更新失败');
+
+    return const UpdateCheckResult(error: '检查更新失败');
   }
 
   static Future<String> _getCurrentVersion() async {
@@ -161,7 +216,7 @@ class UpdateService {
     }
   }
 
-  /// 下载并安装 APK（带进度显示）
+  /// Download the APK and install it.
   static Future<void> downloadAndInstall(
     String downloadUrl,
     String version,
@@ -187,13 +242,13 @@ class UpdateService {
       final apkFile = File('${tempDir.path}/time_manager_v$version.apk');
       sink = apkFile.openWrite();
 
-      // Gitee 下载先经过两次同域重定向（auth 保留），
-      // 最后跨域到 foruda.gitee.com（auth 丢失但 URL 中已有下载 token）
       final client = http.Client();
       try {
-        final request = http.Request('GET', Uri.parse(downloadUrl));
-        request.headers.addAll(_headers);
-        final response = await client.send(request).timeout(
+        final response = await _sendGetFollowingRedirects(
+          client,
+          Uri.parse(downloadUrl),
+          headers: _downloadHeaders,
+        ).timeout(
           _downloadConnectTimeout,
           onTimeout: () {
             client.close();
@@ -202,10 +257,12 @@ class UpdateService {
         );
 
         if (response.statusCode != 200) {
+          final responseBody = await response.stream.bytesToString();
           client.close();
+          debugPrint('下载失败: HTTP ${response.statusCode}, body=$responseBody');
           if (context.mounted) {
             Navigator.pop(context);
-            _showDownloadFailedDialog(context, downloadUrl);
+            _showDownloadFailedDialog(context, version, response.statusCode);
           }
           return;
         }
@@ -224,7 +281,6 @@ class UpdateService {
 
           final now = DateTime.now();
           final elapsed = now.difference(lastTime).inMilliseconds;
-
           if (elapsed >= 500) {
             final speed = (received - lastReceived) * 1000 ~/ elapsed;
             final speedStr = _formatSpeed(speed);
@@ -232,7 +288,7 @@ class UpdateService {
             if (contentLength > 0) {
               final progress = received / contentLength;
               progressNotifier.value = progress;
-              statusNotifier.value = '下载中  $speedStr';
+              statusNotifier.value = '下载中 $speedStr';
             } else {
               statusNotifier.value = '下载中 ${received ~/ 1024}KB  $speedStr';
             }
@@ -241,6 +297,7 @@ class UpdateService {
             lastTime = now;
           }
         }
+
         await sink.close();
         sink = null;
 
@@ -263,12 +320,10 @@ class UpdateService {
           final uri = Uri.file(apkFile.path);
           if (await canLaunchUrl(uri)) {
             await launchUrl(uri, mode: LaunchMode.externalApplication);
-          } else {
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('无法打开安装程序')),
-              );
-            }
+          } else if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('无法打开安装程序')),
+            );
           }
         }
       } finally {
@@ -279,13 +334,13 @@ class UpdateService {
       debugPrint('下载超时: $e');
       if (context.mounted) {
         Navigator.pop(context);
-        _showDownloadFailedDialog(context, downloadUrl);
+        _showDownloadFailedDialog(context, version, null);
       }
     } catch (e) {
       debugPrint('下载安装失败: $e');
       if (context.mounted) {
         Navigator.pop(context);
-        _showDownloadFailedDialog(context, downloadUrl);
+        _showDownloadFailedDialog(context, version, null);
       }
     } finally {
       progressNotifier.dispose();
@@ -293,12 +348,25 @@ class UpdateService {
     }
   }
 
-  static void _showDownloadFailedDialog(BuildContext context, String downloadUrl) {
+  static void _showDownloadFailedDialog(
+    BuildContext context,
+    String version,
+    int? statusCode,
+  ) {
+    final releasePageUrl = Uri.https(
+      'gitee.com',
+      '/${_owner}/$_repo/releases/tag/$version',
+    ).toString();
+
+    final message = statusCode == 401 || statusCode == 403
+        ? '下载被拒绝，通常是私有仓库权限不足，或者 release 资产需要登录后访问。'
+        : '下载失败，你可以先打开发布页手动下载，或稍后重试。';
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('下载失败'),
-        content: const Text('下载速度过慢或网络连接失败，你可以尝试手动下载安装包。'),
+        content: Text(message),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -307,12 +375,12 @@ class UpdateService {
           FilledButton(
             onPressed: () async {
               Navigator.pop(context);
-              final uri = Uri.parse(downloadUrl);
+              final uri = Uri.parse(releasePageUrl);
               if (await canLaunchUrl(uri)) {
                 await launchUrl(uri, mode: LaunchMode.externalApplication);
               }
             },
-            child: const Text('浏览器下载'),
+            child: const Text('打开发布页'),
           ),
         ],
       ),
