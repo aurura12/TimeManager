@@ -45,6 +45,11 @@ class TimeProvider with ChangeNotifier {
   bool _googleCalendarSyncEnabled = true;
   bool get googleCalendarSyncEnabled => _googleCalendarSyncEnabled;
 
+  /// 是否正在查看对方日程（合并了远端数据）
+  bool _remoteViewEnabled = false;
+  bool get isRemoteViewEnabled => _remoteViewEnabled;
+  final Map<String, String> _remoteViewBackup = {}; // dateKey → 本地 JSON 快照
+
   Future<void> setGoogleCalendarSyncEnabled(bool enabled) async {
     if (_googleCalendarSyncEnabled == enabled) return;
     _googleCalendarSyncEnabled = enabled;
@@ -443,6 +448,55 @@ class TimeProvider with ChangeNotifier {
       _scheduleGiteeSyncController?.add('拉取失败: $e');
       return false;
     }
+  }
+
+  /// 切换查看对方日程。打开时备份本地数据并拉取远端合并；关闭时恢复本地数据。
+  Future<void> toggleRemoteScheduleView() async {
+    final dateKey = _getDateKey(_currentDate);
+    if (_remoteViewEnabled) {
+      // 关闭：恢复本地数据
+      if (_remoteViewBackup.containsKey(dateKey)) {
+        final slots = _dailySlots[dateKey] ?? _generateInitialSlots();
+        final backupList = json.decode(_remoteViewBackup.remove(dateKey)!) as List<dynamic>;
+        // 先清空当前日期所有 slot
+        for (final s in slots) {
+          s.recorded = false;
+          s.label = null;
+          s.categoryId = null;
+          s.color = null;
+          s.isFromCalendar = false;
+          s.calendarEventId = null;
+        }
+        // 恢复本地数据
+        for (final item in backupList) {
+          final map = Map<String, dynamic>.from(item as Map);
+          final idx = map['i'] as int;
+          if (idx >= 0 && idx < slots.length) {
+            slots[idx].recorded = true;
+            slots[idx].label = map['l'] as String?;
+            slots[idx].categoryId = map['cid'] as String?;
+            if (map['c'] != null) slots[idx].color = Color(map['c'] as int);
+            if (map['fc'] == true) slots[idx].isFromCalendar = true;
+            if (map['eid'] != null) slots[idx].calendarEventId = map['eid'] as String?;
+          }
+        }
+        _allSlotsDirty = true;
+        _saveData();
+        notifyListeners();
+      }
+      _remoteViewEnabled = false;
+    } else {
+      // 打开：备份本地数据，拉取远端合并
+      final localSlots = _dailySlots[dateKey];
+      if (localSlots != null) {
+        _remoteViewBackup[dateKey] = json.encode(_serializeRecordedSlots(localSlots));
+      } else {
+        _remoteViewBackup[dateKey] = json.encode(<Map<String, dynamic>>[]);
+      }
+      await pullScheduleFromGitee();
+      _remoteViewEnabled = true;
+    }
+    notifyListeners();
   }
 
   /// 本地与云端日历不一致时标记（与是否已登录无关）
