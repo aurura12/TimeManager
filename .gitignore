@@ -164,6 +164,8 @@ app.*.symbols
 .gclient_previous_custom_vars
 .gclient_previous_sync_commits
 lib/config/diary_github_config.dart
+lib/config/diary_gitee_config.dart
+lib/config/remote_repo_config.dart
 lib/config/siliconflow_config.dart
 lib/config/google_sign_in_config.dart
 lib/config/github_config.dart
