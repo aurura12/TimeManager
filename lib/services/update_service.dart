@@ -92,8 +92,7 @@ class UpdateService {
           return UpdateCheckResult(error: '版本信息无效');
         }
 
-        // 私有仓库下载链接需要附带 token
-        apkUrl = '$apkUrl?access_token=$_token';
+        // 私有仓库下载需要 Authorization header 认证
 
         final currentVersion = await _getCurrentVersion();
         debugPrint('检查更新: 当前版本=$currentVersion, 最新版本=$tagName');
@@ -187,6 +186,7 @@ class UpdateService {
       IOSink? sink;
       try {
         final request = http.Request('GET', Uri.parse(downloadUrl));
+        request.headers.addAll(_headers);
         final response = await client.send(request).timeout(
           _downloadConnectTimeout,
           onTimeout: () {
