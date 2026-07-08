@@ -191,9 +191,9 @@ class TimeProvider with ChangeNotifier {
     await _loadData();
     notifyListeners();
     await _refreshHomeWidget();
-    if (_googleCalendarSyncEnabled) {
-      unawaited(_restoreGoogleInBackground());
-    }
+    // 无论如何都恢复 Google 身份识别（仅读本地缓存，不联网），
+    // 日程和打卡需要知道当前用户是谁（乖乖/晶晶）
+    unawaited(GoogleCalendarService.restoreSignIn(background: true));
   }
 
   Future<void> _restoreGoogleInBackground() async {
