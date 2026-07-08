@@ -6,9 +6,10 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../models/check_in_record.dart';
+import '../models/coord_transform.dart';
 import '../models/known_google_users.dart';
 
-/// 打卡地图（OpenStreetMap 瓦片 + 标记点）
+/// 打卡地图（高德瓦片 + 标记点，WGS-84 → GCJ-02 坐标转换）
 class CheckInMapPreview extends StatelessWidget {
   const CheckInMapPreview({
     super.key,
@@ -23,7 +24,10 @@ class CheckInMapPreview extends StatelessWidget {
   final VoidCallback? onTap;
   final bool showLegend;
 
-  static const _defaultCenter = LatLng(39.9042, 116.4074);
+  static final _defaultCenter = () {
+    final gcj = CoordTransform.wgs84ToGcj02(39.9042, 116.4074);
+    return LatLng(gcj.$1, gcj.$2);
+  }();
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +57,7 @@ class CheckInMapPreview extends StatelessWidget {
                 children: [
                   TileLayer(
                     urlTemplate:
-                        'https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
+                        'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
                     userAgentPackageName: 'com.example.time_manager',
                   ),
                   if (mapData.markers.isNotEmpty)
@@ -133,8 +137,13 @@ class CheckInMapPreview extends StatelessWidget {
       return _MapData(center: _defaultCenter, zoom: 11, markers: const []);
     }
 
-    final lats = located.map((r) => r.latitude!).toList();
-    final lngs = located.map((r) => r.longitude!).toList();
+    // WGS-84 → GCJ-02 转换所有坐标
+    final gcjPoints = located.map((r) {
+      return CoordTransform.wgs84ToGcj02(r.latitude!, r.longitude!);
+    }).toList();
+
+    final lats = gcjPoints.map((p) => p.$1).toList();
+    final lngs = gcjPoints.map((p) => p.$2).toList();
     final minLat = lats.reduce(math.min);
     final maxLat = lats.reduce(math.max);
     final minLng = lngs.reduce(math.min);
@@ -157,25 +166,25 @@ class CheckInMapPreview extends StatelessWidget {
                 : 9.0;
 
     final counts = <String, int>{};
-    for (final r in located) {
-      final key =
-          '${r.latitude!.toStringAsFixed(5)},${r.longitude!.toStringAsFixed(5)}';
+    for (int i = 0; i < located.length; i++) {
+      final p = gcjPoints[i];
+      final key = '${p.$1.toStringAsFixed(5)},${p.$2.toStringAsFixed(5)}';
       counts[key] = (counts[key] ?? 0) + 1;
     }
 
     final markers = <Marker>[];
     final seen = <String>{};
-    for (final r in located) {
-      final key =
-          '${r.latitude!.toStringAsFixed(5)},${r.longitude!.toStringAsFixed(5)}';
+    for (int i = 0; i < located.length; i++) {
+      final p = gcjPoints[i];
+      final key = '${p.$1.toStringAsFixed(5)},${p.$2.toStringAsFixed(5)}';
       if (seen.contains(key)) continue;
       seen.add(key);
       final count = counts[key] ?? 1;
-      final color = _colorForEmail(r.userEmail);
+      final color = _colorForEmail(located[i].userEmail);
 
       markers.add(
         Marker(
-          point: LatLng(r.latitude!, r.longitude!),
+          point: LatLng(p.$1, p.$2),
           width: 44,
           height: 44,
           child: _MapPin(count: count, color: color),
