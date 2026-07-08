@@ -1,13 +1,16 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../models/google_calendar_user.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
+import '../models/remote_sync_platform.dart';
 import '../providers/theme_mode_provider.dart';
 import '../providers/time_provider.dart';
 import '../services/data_backup_service.dart';
 import '../services/update_service.dart';
 import '../screens/word_cloud_screen.dart';
 import '../services/google_calendar_service.dart';
+import '../services/remote_sync_settings.dart';
+import '../services/diary_local_store.dart';
 
 class ProfileSettingsDrawer extends StatefulWidget {
   final VoidCallback onChanged;
@@ -19,6 +22,74 @@ class ProfileSettingsDrawer extends StatefulWidget {
 }
 
 class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
+  RemoteSyncPlatform _remotePlatform = RemoteSyncPlatform.gitee;
+  bool _remoteSettingsLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRemoteSettings();
+  }
+
+  Future<void> _loadRemoteSettings() async {
+    final platform = await RemoteSyncSettings.loadPlatform();
+    if (!mounted) return;
+    setState(() {
+      _remotePlatform = platform;
+      _remoteSettingsLoaded = true;
+    });
+  }
+
+  Future<void> _setRemotePlatform(RemoteSyncPlatform platform) async {
+    if (_remotePlatform == platform) return;
+    await RemoteSyncSettings.savePlatform(platform);
+    if (!mounted) return;
+    setState(() {
+      _remotePlatform = platform;
+      _remoteSettingsLoaded = true;
+    });
+    widget.onChanged();
+  }
+
+  Future<void> _editRemoteToken(BuildContext context) async {
+    final currentToken = await DiaryLocalStore.loadToken();
+    if (!context.mounted) return;
+
+    final controller = TextEditingController(text: currentToken ?? '');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('${_remotePlatform.label} 同步 Token'),
+        content: TextField(
+          controller: controller,
+          obscureText: true,
+          decoration: InputDecoration(
+            hintText: '请输入 ${_remotePlatform.label} 访问令牌',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    final token = controller.text.trim();
+    controller.dispose();
+    if (confirmed != true || !context.mounted) return;
+
+    await DiaryLocalStore.saveToken(token);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('${_remotePlatform.label} Token 已保存')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<TimeProvider>();
@@ -47,6 +118,8 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                     ),
                   ),
                   _buildLoginSection(context, googleUser, provider),
+                  const Divider(height: 1),
+                  _buildRemoteSyncSection(context, provider),
                   const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.palette_outlined),
@@ -122,6 +195,64 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildRemoteSyncSection(BuildContext context, TimeProvider provider) {
+    final subtitle = _remotePlatform == RemoteSyncPlatform.gitee
+        ? '默认同步到 Gitee'
+        : '兼容 GitHub 同步';
+
+    return Column(
+      children: [
+        ListTile(
+          leading: const Icon(Icons.cloud_sync_outlined),
+          title: const Text('远程同步平台'),
+          subtitle: Text(subtitle),
+          trailing: DropdownButtonHideUnderline(
+            child: DropdownButton<RemoteSyncPlatform>(
+              value: _remotePlatform,
+              onChanged: (value) {
+                if (value != null) {
+                  _setRemotePlatform(value);
+                }
+              },
+              items: const [
+                DropdownMenuItem(
+                  value: RemoteSyncPlatform.gitee,
+                  child: Text('Gitee'),
+                ),
+                DropdownMenuItem(
+                  value: RemoteSyncPlatform.github,
+                  child: Text('GitHub'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        ListTile(
+          leading: const Icon(Icons.key_outlined),
+          title: const Text('同步 Token'),
+          subtitle: Text(
+            _remotePlatform == RemoteSyncPlatform.gitee
+                ? '配置当前 Gitee 仓库访问令牌'
+                : '配置当前 GitHub 仓库访问令牌',
+          ),
+          onTap: _remoteSettingsLoaded
+              ? () => _editRemoteToken(context)
+              : null,
+        ),
+        SwitchListTile(
+          secondary: const Icon(Icons.calendar_month_outlined),
+          title: const Text('Google 日历同步'),
+          subtitle: Text(provider.googleCalendarSyncEnabled ? '已开启' : '已关闭'),
+          value: provider.googleCalendarSyncEnabled,
+          onChanged: (value) {
+            provider.setGoogleCalendarSyncEnabled(value);
+            widget.onChanged();
+          },
+        ),
+      ],
     );
   }
 

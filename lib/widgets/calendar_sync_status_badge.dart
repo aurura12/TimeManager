@@ -12,6 +12,7 @@ class CalendarSyncStatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<TimeProvider>();
+    final enabled = provider.googleCalendarSyncEnabled;
     final loggedIn = GoogleCalendarService.isSignedIn;
     final needsReconnect = GoogleCalendarService.needsCalendarReconnect;
 
@@ -28,12 +29,17 @@ class CalendarSyncStatusBadge extends StatelessWidget {
         late final IconData icon;
         late final String tooltip;
 
-        if (!loggedIn) {
+        if (!enabled) {
+          label = '已关闭';
+          color = Colors.grey;
+          icon = Icons.sync_disabled_outlined;
+          tooltip = 'Google 日历同步已关闭，前往设置可重新开启';
+        } else if (!loggedIn) {
           if (needsReconnect) {
-            label = '重连日历';
+            label = '需重连';
             color = Colors.orange;
             icon = Icons.link_off;
-            tooltip = '身份已识别，点击重新连接 Google 日历';
+            tooltip = '身份已识别，但日历连接失效，点击重新连接 Google 日历';
           } else {
             label = '未连接';
             color = Colors.grey;
@@ -44,7 +50,7 @@ class CalendarSyncStatusBadge extends StatelessWidget {
           label = '同步中';
           color = const Color(0xFF9CB86A);
           icon = Icons.sync;
-          tooltip = '正在同步 Google 日历…';
+          tooltip = '正在同步 Google 日历';
         } else if (pendingCount > 0) {
           label = pendingCount > 1 ? '待同步 $pendingCount' : '待同步';
           color = Colors.orange;
@@ -62,7 +68,14 @@ class CalendarSyncStatusBadge extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.only(right: 12),
             child: InkWell(
-              onTap: () => _onTap(context, provider, loggedIn, needsReconnect, hasPending),
+              onTap: () => _onTap(
+                context,
+                provider,
+                enabled,
+                loggedIn,
+                needsReconnect,
+                hasPending,
+              ),
               borderRadius: BorderRadius.circular(14),
               child: Container(
                 padding:
@@ -108,10 +121,16 @@ class CalendarSyncStatusBadge extends StatelessWidget {
   Future<void> _onTap(
     BuildContext context,
     TimeProvider provider,
+    bool enabled,
     bool loggedIn,
     bool needsReconnect,
     bool hasPending,
   ) async {
+    if (!enabled) {
+      onNotLoggedIn?.call();
+      return;
+    }
+
     if (!loggedIn) {
       if (needsReconnect) {
         await _reconnect(context, provider);

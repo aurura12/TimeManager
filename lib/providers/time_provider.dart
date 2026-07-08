@@ -40,6 +40,27 @@ class TimeProvider with ChangeNotifier {
   bool _isSyncing = false; // 添加同步锁标志，防止并发同步导致重复
 
   /// 本地已改、尚未成功同步到日历的日期（dateKey 列表）
+  bool _googleCalendarSyncEnabled = true;
+  bool get googleCalendarSyncEnabled => _googleCalendarSyncEnabled;
+
+  Future<void> setGoogleCalendarSyncEnabled(bool enabled) async {
+    if (_googleCalendarSyncEnabled == enabled) return;
+    _googleCalendarSyncEnabled = enabled;
+    if (!enabled) {
+      _debounceTimer?.cancel();
+      _debounceTimer = null;
+      if (!_syncStatusController.isClosed) {
+        _syncStatusController.add("Google 鏃ュ巻鍚屾宸插叧闂?");
+      }
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('google_calendar_sync_enabled', enabled);
+    notifyListeners();
+    if (enabled) {
+      unawaited(_restoreGoogleInBackground());
+    }
+  }
+
   final Set<String> _pendingSyncDates = {};
   Set<String> get pendingSyncDates => Set.unmodifiable(_pendingSyncDates);
   bool get hasPendingSync => _pendingSyncDates.isNotEmpty;
@@ -134,10 +155,13 @@ class TimeProvider with ChangeNotifier {
     await _loadData();
     notifyListeners();
     await _refreshHomeWidget();
-    unawaited(_restoreGoogleInBackground());
+    if (_googleCalendarSyncEnabled) {
+      unawaited(_restoreGoogleInBackground());
+    }
   }
 
   Future<void> _restoreGoogleInBackground() async {
+    if (!_googleCalendarSyncEnabled) return;
     await GoogleCalendarService.restoreSignIn(background: true);
     if (GoogleCalendarService.isSignedIn) {
       notifyListeners();
@@ -314,6 +338,12 @@ class TimeProvider with ChangeNotifier {
   // 合并后的同步方法
   // delay: true 表示自动同步（带防抖），false 表示手动同步（立即执行）
   Future<void> synchronizeCalendar({bool delay = false}) async {
+    if (!_googleCalendarSyncEnabled) {
+      if (!delay) {
+        _syncStatusController.add("Google 鏃ュ巻鍚屾宸插叧闂?");
+      }
+      return;
+    }
     if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
 
     Future<void> executeSync() async {
@@ -380,6 +410,10 @@ class TimeProvider with ChangeNotifier {
 
   /// 手动同步所有待同步日期（用于个人中心“待同步”按钮）
   Future<void> synchronizeAllPendingCalendars() async {
+    if (!_googleCalendarSyncEnabled) {
+      _syncStatusController.add("Google 鏃ュ巻鍚屾宸插叧闂?");
+      return;
+    }
     if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
 
     // 可能与自动同步并发：等待当前同步完成，避免手动点击被无声忽略
@@ -599,12 +633,14 @@ class TimeProvider with ChangeNotifier {
   // --- Google 日历下拉 ---
 
   Future<void> pullGoogleCalendarForCurrentDate() async {
+    if (!_googleCalendarSyncEnabled) return;
     await pullGoogleCalendarForDate(_currentDate);
   }
 
   /// 从 Google 拉取外部会议并合并到指定日期；未登录 Google 时返回 false
   Future<bool> pullGoogleCalendarForDate(DateTime date,
       {bool notify = true}) async {
+    if (!_googleCalendarSyncEnabled) return false;
     if (!GoogleCalendarService.isSignedIn) return false;
 
     final blocks = await GoogleCalendarService.fetchExternalEvents(date);
@@ -1475,6 +1511,8 @@ class TimeProvider with ChangeNotifier {
     _pendingSyncDates
       ..clear()
       ..addAll(prefs.getStringList('pending_sync_dates') ?? []);
+    _googleCalendarSyncEnabled =
+        prefs.getBool('google_calendar_sync_enabled') ?? true;
 
     // 7. 分类展开状态（key 为 Category ID）
     final expandStr = prefs.getString('category_expand_states');

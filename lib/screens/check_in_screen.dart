@@ -248,7 +248,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
           else
             IconButton(
               icon: const Icon(Icons.sync),
-              tooltip: '从 GitHub 同步',
+              tooltip: '同步远程数据',
               onPressed: _pull,
             ),
           IconButton(
