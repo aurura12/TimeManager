@@ -13,6 +13,7 @@ import '../services/home_widget_service.dart';
 import '../services/diary_local_store.dart';
 import '../services/schedule_gitee_service.dart';
 import '../models/diary_kind.dart';
+import '../models/known_google_users.dart';
 import 'target_stats_cache.dart';
 
 enum TimePointStatus { onTime, late, notDone }
@@ -51,10 +52,21 @@ class TimeProvider with ChangeNotifier {
   bool get isRemoteViewEnabled => _remoteViewEnabled;
   final Map<String, String> _remoteViewBackup = {}; // dateKey → 本地 JSON 快照
 
-  /// 当前日程用户身份（g=乖乖, j=晶晶），决定文件路径
+  /// 当前日程用户身份，从 Google 账号自动识别（乖乖=g, 晶晶=j），未登录默认 g
+  DiaryKind get scheduleUser {
+    final email = GoogleCalendarService.sessionUser?.email;
+    if (email != null) {
+      final nickname = KnownGoogleUsers.nicknameFor(email);
+      if (nickname == '乖乖') return DiaryKind.g;
+      if (nickname == '晶晶') return DiaryKind.j;
+    }
+    // fallback 到本地存储的用户设置
+    return _scheduleUser;
+  }
+
+  String get scheduleUserCode => scheduleUser.code;
+
   DiaryKind _scheduleUser = DiaryKind.g;
-  DiaryKind get scheduleUser => _scheduleUser;
-  String get scheduleUserCode => _scheduleUser.code;
   static const String _scheduleUserKey = 'schedule_user_kind';
 
   Future<void> setScheduleUser(DiaryKind kind) async {
