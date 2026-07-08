@@ -324,6 +324,8 @@ class CheckInSyncService {
     required CheckInGoal goal,
     required File photoFile,
     CheckInLocationResult? location,
+    DateTime? backfillDate,
+    bool isBackfill = false,
   }) async {
     final user = _requireUser();
     if (!hasIdentity || user == null) {
@@ -335,10 +337,17 @@ class CheckInSyncService {
       return CheckInSyncResult.fail('未配置 GitHub Token，无法上传照片');
     }
 
+    final now = DateTime.now();
+    final effectiveDate = backfillDate ?? now;
+    // 不能补打未来日期
+    if (effectiveDate.isAfter(now)) {
+      return CheckInSyncResult.fail('不能补打未来日期');
+    }
+
     return _synchronized(() async {
     _syncing = true;
     try {
-      final recordId = DateTime.now().millisecondsSinceEpoch.toString();
+      final recordId = now.millisecondsSinceEpoch.toString();
       final photoPath = CheckInDocument.imagePathFor(
         userEmail: user.email,
         recordId: recordId,
@@ -369,11 +378,12 @@ class CheckInSyncService {
         userId: user.id,
         userEmail: user.email,
         userDisplayName: user.displayName ?? user.label,
-        timestamp: DateTime.now(),
+        timestamp: effectiveDate,
         latitude: location?.latitude,
         longitude: location?.longitude,
         locationName: location?.locationName,
         photoPath: photoPath,
+        isBackfill: isBackfill,
       );
 
       _document = _document.upsertRecord(record);

@@ -14,6 +14,7 @@ class CheckInRecord {
     this.locationName,
     this.photoPath,
     this.note,
+    this.isBackfill = false,
   });
 
   final String id;
@@ -28,6 +29,8 @@ class CheckInRecord {
   /// GitHub 仓库内路径，如 images/乖乖/{recordId}.jpg
   final String? photoPath;
   final String? note;
+  /// 是否为补打卡记录
+  final bool isBackfill;
 
   bool get hasLocation => latitude != null && longitude != null;
 
@@ -48,6 +51,7 @@ class CheckInRecord {
     String? locationName,
     String? photoPath,
     String? note,
+    bool? isBackfill,
   }) {
     return CheckInRecord(
       id: id ?? this.id,
@@ -61,6 +65,7 @@ class CheckInRecord {
       locationName: locationName ?? this.locationName,
       photoPath: photoPath ?? this.photoPath,
       note: note ?? this.note,
+      isBackfill: isBackfill ?? this.isBackfill,
     );
   }
 
@@ -77,6 +82,7 @@ class CheckInRecord {
       if (locationName != null) 'location_name': locationName,
       if (photoPath != null) 'photo_path': photoPath,
       if (note != null && note!.isNotEmpty) 'note': note,
+      if (isBackfill) 'is_backfill': true,
     };
   }
 
@@ -97,6 +103,7 @@ class CheckInRecord {
       locationName: json['location_name']?.toString(),
       photoPath: json['photo_path']?.toString(),
       note: json['note']?.toString(),
+      isBackfill: json['is_backfill'] == true,
     );
   }
 

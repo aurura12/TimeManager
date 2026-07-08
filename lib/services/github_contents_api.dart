@@ -4,14 +4,16 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
-const Duration _defaultTimeout = Duration(seconds: 10);
-const int _maxRetries = 1;
+const Duration _defaultTimeout = Duration(seconds: 15);
+const int _maxRetries = 2;
 
 bool _isRetryableError(Object e) {
   return e is TimeoutException ||
       e is SocketException ||
       e is HttpException ||
-      e is IOException;
+      e is IOException ||
+      e is HandshakeException ||
+      e is TlsException;
 }
 
 Future<http.Response> requestWithRetry(

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
@@ -8,8 +10,23 @@ import 'package:time_manager/screens/main_screen.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
+/// 自定义 HttpOverrides，解决部分 Android 设备（特别是 MIUI）上
+/// HttpClient 的 SSL 握手不稳定问题。
+class _StableHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    final client = super.createHttpClient(context);
+    // 延长连接超时，避免弱网环境下的频繁超时
+    client.connectionTimeout = const Duration(seconds: 20);
+    // 延长空闲超时，减少连接断开后重新 SSL 握手
+    client.idleTimeout = const Duration(seconds: 60);
+    return client;
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  HttpOverrides.global = _StableHttpOverrides();
 
   ErrorWidget.builder = (details) {
     return MaterialApp(
