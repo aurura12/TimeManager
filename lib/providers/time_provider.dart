@@ -382,33 +382,53 @@ class TimeProvider with ChangeNotifier {
       final token = await DiaryLocalStore.loadToken();
       if (token == null || token.isEmpty) {
         _scheduleGiteeSyncController?.add('未配置同步 Token');
+        _syncStatusController.add("未配置同步 Token");
         return;
       }
 
       final dateKey = _getDateKey(_currentDate);
       final slots = _dailySlots[dateKey];
-      if (slots == null) return;
+      if (slots == null) {
+        _clearPendingSyncForCurrentDate();
+        return;
+      }
 
       if (!slots.any((s) => s.recorded)) {
         _scheduleGiteeSyncController?.add('无日程');
+        _clearPendingSyncForCurrentDate();
         return;
       }
 
       _scheduleGiteeSyncController?.add('同步中...');
+      if (!_syncStatusController.isClosed) {
+        _syncStatusController.add("SYNCING");
+      }
       final ok = await _pushScheduleDay(dateKey, slots);
       if (ok) {
         _scheduleGiteeSyncController?.add('已同步');
         _clearPendingSyncForCurrentDate();
+        if (!_syncStatusController.isClosed) {
+          _syncStatusController.add("日程同步成功");
+        }
         Future.delayed(const Duration(seconds: 3), () {
           _scheduleGiteeSyncController?.add('');
         });
       } else {
         _scheduleGiteeSyncController?.add('同步失败');
+        if (!_syncStatusController.isClosed) {
+          _syncStatusController.add("日程同步失败");
+        }
       }
     } catch (e) {
       _scheduleGiteeSyncController?.add('同步失败: $e');
+      if (!_syncStatusController.isClosed) {
+        _syncStatusController.add("日程同步失败: $e");
+      }
     } finally {
       _scheduleGiteeSyncing = false;
+      if (!_syncStatusController.isClosed) {
+        _syncStatusController.add("IDLE");
+      }
     }
   }
 
