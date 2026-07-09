@@ -421,12 +421,20 @@ class TimeProvider with ChangeNotifier {
     if (recorded.isEmpty) return true; // 无数据视为成功
 
     final content = json.encode(recorded);
+    final userLabel = _scheduleUser == DiaryKind.g ? '乖乖' : '晶晶';
+    final labels = recorded
+        .map((m) => m['l']?.toString() ?? '')
+        .where((l) => l.isNotEmpty)
+        .toSet()
+        .take(5)
+        .join(', ');
+    final summary = labels.isEmpty ? '' : ' - $labels';
     final result = await ScheduleGiteeService.pushSchedule(
       token: token,
       dateKey: dateKey,
       userCode: _scheduleUser.code,
       content: content,
-      commitMessage: '日程: $dateKey',
+      commitMessage: '日程($userLabel): $dateKey$summary',
     );
     return result.success;
   }
