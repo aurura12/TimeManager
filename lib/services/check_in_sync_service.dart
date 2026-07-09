@@ -167,11 +167,12 @@ class CheckInSyncService {
       _document = CheckInDocument.merge(_document, remote);
     }
 
+    final userLabel = currentUser?.label ?? '?';
     final push = await CheckInGiteeService.pushText(
       token: token,
       path: CheckInDocument.filePath,
       content: _document.toMarkdown(),
-      commitMessage: 'check-in: update data',
+      commitMessage: 'check-in($userLabel): update data',
     );
     if (!push.success) {
       return CheckInSyncResult.fail(push.error ?? '推送失败');
@@ -233,7 +234,7 @@ class CheckInSyncService {
           token: token,
           path: CheckInDocument.filePath,
           content: _document.toMarkdown(),
-          commitMessage: 'check-in: delete goal ${goal.name}',
+          commitMessage: 'check-in(${user.label}): delete goal ${goal.name}',
         );
         if (!push.success) {
           return CheckInSyncResult.fail(push.error ?? '删除同步失败');
@@ -284,6 +285,7 @@ class CheckInSyncService {
         await CheckInGiteeService.deleteFile(
           token: token,
           path: record.photoPath!,
+          commitMessage: 'check-in(${user.label}): delete photo ${record.photoPath}',
         );
         // Also remove local cache (best-effort, ignore errors)
         try {
@@ -305,7 +307,7 @@ class CheckInSyncService {
         token: token,
         path: CheckInDocument.filePath,
         content: _document.toMarkdown(),
-        commitMessage: 'check-in: delete record ${record.id}',
+        commitMessage: 'check-in(${user.label}): delete record ${record.id}',
       );
       if (!push.success) {
         return CheckInSyncResult.fail(push.error ?? '删除同步失败');
@@ -363,7 +365,7 @@ class CheckInSyncService {
         token: token,
         path: photoPath,
         bytes: compressed,
-        commitMessage: 'check-in: photo $recordId',
+        commitMessage: 'check-in(${user.label}): photo $recordId',
         skipGetSha: true,
       );
       if (!imagePush.success) {

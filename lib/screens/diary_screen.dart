@@ -645,11 +645,12 @@ class _DiaryScreenState extends State<DiaryScreen> {
     }
     final fileName = remotePath ?? _buildFileName();
     final markdown = _buildMarkdownContent();
+    final userLabel = _kind == DiaryKind.g ? '乖乖' : '晶晶';
     final result = await DiaryGiteeService.pushDiary(
       token: _token!,
       path: fileName,
       content: markdown,
-      commitMessage: 'diary: update $fileName',
+      commitMessage: 'diary($userLabel): update $fileName',
     );
     if (!mounted) return;
     setState(() => _processing = false);

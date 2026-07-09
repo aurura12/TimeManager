@@ -230,6 +230,7 @@ class CheckInGitHubService {
   static Future<CheckInDeleteResult> deleteFile({
     required String token,
     required String path,
+    required String commitMessage,
   }) async {
     try {
       final head = await requestWithRetry(
@@ -248,7 +249,7 @@ class CheckInGitHubService {
       }
 
       final payload = json.encode({
-        'message': 'check-in: delete photo $path',
+        'message': commitMessage,
         'sha': sha,
       });
       final res = await requestWithRetry(
