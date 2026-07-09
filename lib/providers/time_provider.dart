@@ -369,7 +369,7 @@ class TimeProvider with ChangeNotifier {
   /// 标记当前日期需要同步到 Gitee（带 5 秒防抖）
   void _markScheduleGiteePending() {
     _scheduleGiteeTimer?.cancel();
-    _scheduleGiteeTimer = Timer(const Duration(seconds: 5), () {
+    _scheduleGiteeTimer = Timer(const Duration(seconds: 3), () {
       syncScheduleToGitee();
     });
   }
