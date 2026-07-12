@@ -31,12 +31,30 @@ class CheckInLocationService {
     final ok = await ensurePermission();
     if (!ok) return null;
 
-    final position = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.medium,
-        timeLimit: Duration(seconds: 12),
-      ),
-    );
+    // 优先用缓存位置（毫秒级），避免每次都等 GPS 冷启动
+    Position? position;
+    try {
+      position = await Geolocator.getLastKnownPosition().timeout(
+          const Duration(seconds: 3));
+    } catch (_) {}
+
+    if (position == null ||
+        DateTime.now()
+                .difference(position.timestamp)
+                .inSeconds >
+            30) {
+      // 缓存过期或不可用，重新获取
+      try {
+        position = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+            timeLimit: Duration(seconds: 8),
+          ),
+        );
+      } catch (_) {
+        return null;
+      }
+    }
 
     String? locationName;
     try {

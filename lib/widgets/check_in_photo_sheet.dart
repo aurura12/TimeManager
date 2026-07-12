@@ -125,11 +125,6 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
       _error = null;
     });
 
-    debugPrint(
-        '[CheckInPhotoSheet] 提交: isBackfill=$_isBackfill, '
-        'selectedDate=${_selectedDate.toIso8601String()}, '
-        'hasPhoto=${_photoFile != null}');
-
     final result = await widget.syncService.submitCheckIn(
       goal: widget.goal,
       photoFile: _photoFile,
