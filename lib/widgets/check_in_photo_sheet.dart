@@ -49,7 +49,9 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
     _loadLocation();
   }
 
+  /// 是否补卡：初始日期非空则一定是补卡入口，否则看日期是否是今天
   bool get _isBackfill {
+    if (widget.initialDate != null) return true;
     final now = DateTime.now();
     final sel = _selectedDate;
     return sel.year != now.year ||
@@ -58,6 +60,11 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
   }
 
   String get _dateLabel {
+    if (_isBackfill) {
+      return '${_selectedDate.month}月${_selectedDate.day}日 '
+          '${_selectedDate.hour.toString().padLeft(2, '0')}:'
+          '${_selectedDate.minute.toString().padLeft(2, '0')}';
+    }
     final now = DateTime.now();
     if (_selectedDate.year == now.year &&
         _selectedDate.month == now.month &&
@@ -107,7 +114,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
   }
 
   Future<void> _submit() async {
-    if (_photoFile == null) return;
+    if (widget.goal.requirePhoto && _photoFile == null) return;
     if (widget.goal.requireLocation && _location == null) {
       setState(() => _error = '需要位置信息才能打卡');
       return;
@@ -118,9 +125,14 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
       _error = null;
     });
 
+    debugPrint(
+        '[CheckInPhotoSheet] 提交: isBackfill=$_isBackfill, '
+        'selectedDate=${_selectedDate.toIso8601String()}, '
+        'hasPhoto=${_photoFile != null}');
+
     final result = await widget.syncService.submitCheckIn(
       goal: widget.goal,
-      photoFile: _photoFile!,
+      photoFile: _photoFile,
       location: _location,
       backfillDate: _isBackfill ? _selectedDate : null,
       isBackfill: _isBackfill,
@@ -150,7 +162,8 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
   }
 
   bool get _canSubmit {
-    if (_uploading || _photoFile == null) return false;
+    if (_uploading) return false;
+    if (widget.goal.requirePhoto && _photoFile == null) return false;
     if (_locating) return false;
     if (widget.goal.requireLocation && _location == null) return false;
     return true;
@@ -208,7 +221,9 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                           ),
                         ),
                         Text(
-                          '拍照或从相册选择，压缩后上传',
+                          widget.goal.requirePhoto
+                              ? '拍照或从相册选择，压缩后上传'
+                              : '照片可选，也可直接打卡',
                           style: TextStyle(
                             fontSize: 12,
                             color: colorScheme.onSurfaceVariant,
@@ -388,27 +403,43 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
               ],
               const SizedBox(height: 16),
               if (_photoFile == null)
-                Row(
+                Column(
                   children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: _uploading
-                            ? null
-                            : () => _pickImage(ImageSource.gallery),
-                        icon: const Icon(Icons.photo_library_outlined),
-                        label: const Text('相册'),
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _uploading
+                                ? null
+                                : () => _pickImage(ImageSource.gallery),
+                            icon: const Icon(Icons.photo_library_outlined),
+                            label: const Text('相册'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: _uploading
+                                ? null
+                                : () => _pickImage(ImageSource.camera),
+                            icon: const Icon(Icons.camera_alt),
+                            label: const Text('拍照'),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: _uploading
-                            ? null
-                            : () => _pickImage(ImageSource.camera),
-                        icon: const Icon(Icons.camera_alt),
-                        label: const Text('拍照'),
+                    if (!widget.goal.requirePhoto) ...[
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _canSubmit ? _submit : null,
+                          icon: const Icon(Icons.skip_next),
+                          label: Text(
+                              _uploading ? '打卡中...' : '不拍照，直接打卡'),
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 )
               else
