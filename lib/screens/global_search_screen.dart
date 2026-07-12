@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../models/search_result.dart';
 import '../providers/time_provider.dart';
 import '../theme/app_theme.dart';
+import 'dart:async';
 
 enum _SearchDateRange { all, week, month, year }
 
@@ -18,6 +19,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
   _SearchDateRange _dateRange = _SearchDateRange.all;
   List<SearchRecordGroup> _results = [];
   String _query = '';
+  Timer? _debounceTimer;
 
   @override
   void initState() {
@@ -27,15 +29,21 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _controller.removeListener(_onQueryChanged);
     _controller.dispose();
     super.dispose();
   }
 
   void _onQueryChanged() {
-    setState(() {
-      _query = _controller.text;
-      _runSearch();
+    _debounceTimer?.cancel();
+    final query = _controller.text;
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+      if (!mounted) return;
+      setState(() {
+        _query = query;
+        _runSearch();
+      });
     });
   }
 

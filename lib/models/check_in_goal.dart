@@ -128,14 +128,20 @@ class CheckInGoal {
 
     int streak = 0;
     var checkDate = DateTime.now();
+    // 仅在第一次迭代允许跳过"今天"（处理今天尚未打卡的情况）
+    bool firstDaySkipAllowed = true;
     for (final ts in userRecords) {
       if (_isSameDay(ts, checkDate)) {
         streak++;
         checkDate = checkDate.subtract(const Duration(days: 1));
-      } else if (_isSameDay(ts, checkDate.subtract(const Duration(days: 1)))) {
+      } else if (firstDaySkipAllowed &&
+          _isSameDay(
+              ts, checkDate.subtract(const Duration(days: 1)))) {
+        // 允许从昨天开始计算 streak（今天可能还没打卡）
         streak++;
         checkDate = DateTime(ts.year, ts.month, ts.day);
         checkDate = checkDate.subtract(const Duration(days: 1));
+        firstDaySkipAllowed = false;
       } else {
         break;
       }
@@ -150,6 +156,7 @@ class CheckInGoal {
 
   // 兼容旧 UI 调用（默认统计全部用户的记录）
   int get currentPeriodCount => currentPeriodCountFor(null);
+  @Deprecated('Use isCompletedTodayBy(userId) instead. This getter checks all users.')
   bool get isCompletedToday =>
       records.any((r) => _isSameDay(r.timestamp, DateTime.now()));
   int get streakDays => streakDaysFor(ownerId);

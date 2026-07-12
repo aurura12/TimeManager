@@ -141,6 +141,8 @@ class TimeProvider with ChangeNotifier {
   // --- 统计缓存 ---
   String? _statsCacheKey;
   Map<String, double>? _statsCache;
+  String? _occurrenceCacheKey;
+  Map<String, int>? _occurrenceCache;
 
   // --- 标签到分类ID映射缓存 ---
   Map<String, String>? _labelCategoryIdCache;
@@ -240,6 +242,14 @@ class TimeProvider with ChangeNotifier {
     return "${date.year}-${date.month}-${date.day}";
   }
 
+  /// 安全解析 JSON 中的整数，避免 `as int` 对 null/非数字值崩溃
+  static int? _parseInt(dynamic value) {
+    if (value is int) return value;
+    if (value is double) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
   void previousDay() {
     _currentDate = _currentDate.subtract(const Duration(days: 1));
     notifyListeners();
@@ -286,9 +296,32 @@ class TimeProvider with ChangeNotifier {
     _scheduleCalendarSync();
   }
 
+  /// 清理超过最大保留天数的旧日期撤销栈（防止内存无限增长）
+  static const int _maxUndoDayCount = 7;
+
+  void _cleanupOldUndoStacks() {
+    if (_undoStacks.length <= _maxUndoDayCount) return;
+    final now = DateTime.now();
+    final threshold =
+        now.subtract(Duration(days: _maxUndoDayCount));
+    _undoStacks.removeWhere((dateKey, _) {
+      final parts = dateKey.split('-');
+      if (parts.length != 3) return true; // 格式异常的也清理
+      final year = int.tryParse(parts[0]);
+      final month = int.tryParse(parts[1]);
+      final day = int.tryParse(parts[2]);
+      if (year == null || month == null || day == null) return true;
+      final date = DateTime(year, month, day);
+      return date.isBefore(DateTime(threshold.year, threshold.month,
+          threshold.day));
+    });
+  }
+
   void _saveSnapshot() {
     String dateKey = _getDateKey(_currentDate);
     _undoStacks.putIfAbsent(dateKey, () => []);
+
+    _cleanupOldUndoStacks();
 
     // 深度拷贝当前的 slots
     List<TimeSlot> snapshot = slots
@@ -551,13 +584,15 @@ class TimeProvider with ChangeNotifier {
       final daySlots = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
       for (final item in slotList) {
         final map = Map<String, dynamic>.from(item as Map);
-        final idx = map['i'] as int;
+        final idx = _parseInt(map['i']);
+        if (idx == null) continue;
         if (idx >= 0 && idx < daySlots.length) {
           daySlots[idx].recorded = true;
           daySlots[idx].label = map['l'] as String?;
           daySlots[idx].categoryId = map['cid'] as String?;
           if (map['c'] != null) {
-            daySlots[idx].color = Color(map['c'] as int);
+            final colorVal = _parseInt(map['c']);
+            if (colorVal != null) daySlots[idx].color = Color(colorVal);
           }
         }
       }
@@ -593,12 +628,16 @@ class TimeProvider with ChangeNotifier {
         }
         for (final item in backupList) {
           final map = Map<String, dynamic>.from(item as Map);
-          final idx = map['i'] as int;
+          final idx = _parseInt(map['i']);
+          if (idx == null) continue;
           if (idx >= 0 && idx < slots.length) {
             slots[idx].recorded = true;
             slots[idx].label = map['l'] as String?;
             slots[idx].categoryId = map['cid'] as String?;
-            if (map['c'] != null) slots[idx].color = Color(map['c'] as int);
+            if (map['c'] != null) {
+              final colorVal = _parseInt(map['c']);
+              if (colorVal != null) slots[idx].color = Color(colorVal);
+            }
             if (map['fc'] == true) slots[idx].isFromCalendar = true;
             if (map['eid'] != null) slots[idx].calendarEventId = map['eid'] as String?;
           }
@@ -1182,6 +1221,10 @@ class TimeProvider with ChangeNotifier {
     final dateKey = _getDateKey(_currentDate);
     if (mode == ApplyTemplateMode.replaceAll) {
       _dailySlots[dateKey] = _generateInitialSlots();
+      // 恢复日历导入事件（replaceAll 清空了全部 slot，需要重新拉取日历数据）
+      if (_googleCalendarSyncEnabled) {
+        unawaited(pullGoogleCalendarForCurrentDate());
+      }
     }
 
     final daySlots = slots;
@@ -1463,10 +1506,13 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> _saveDataImpl() async {
-    // Invalidate stats cache on any data change
-    if (_slotsDirty.isNotEmpty || _allSlotsDirty) {
+    // Invalidate stats cache on any data change (包括分类/目标结构变化)
+    if (_slotsDirty.isNotEmpty || _allSlotsDirty ||
+        _categoriesDirty || _targetsDirty) {
       _statsCache = null;
       _statsCacheKey = null;
+      _occurrenceCache = null;
+      _occurrenceCacheKey = null;
     }
 
     final prefs = await SharedPreferences.getInstance();
@@ -1497,6 +1543,8 @@ class TimeProvider with ChangeNotifier {
     // 3. 保存时间块（仅保存变化的日期）
     if (_allSlotsDirty) {
       // 全量保存所有时间块
+      _allSlotsDirty = false;
+      _slotsDirty.clear(); // 全量保存覆盖所有日期，增量脏标不需再用
       Map<String, dynamic> slotsJson = {};
       _dailySlots.forEach((dateKey, daySlots) {
         final recordedSlots = _serializeRecordedSlots(daySlots);
@@ -1505,11 +1553,12 @@ class TimeProvider with ChangeNotifier {
         }
       });
       await prefs.setString('daily_slots', json.encode(slotsJson));
-      _allSlotsDirty = false;
-      _slotsDirty.clear();
     } else if (_slotsDirty.isNotEmpty) {
-      // 增量保存：只保存变化的日期
-      // 先加载现有数据
+      // 增量保存：先对脏日期做快照，立即清空脏集合，
+      // 避免清空前又有新日期被标记导致丢失
+      final dirtyDates = Set<String>.from(_slotsDirty);
+      _slotsDirty.clear();
+      // 加载现有数据并合并
       String? slotsStr = prefs.getString('daily_slots');
       Map<String, dynamic> slotsJson = {};
       if (slotsStr != null) {
@@ -1518,7 +1567,7 @@ class TimeProvider with ChangeNotifier {
         } catch (_) {}
       }
       // 更新变化的日期
-      for (final dateKey in _slotsDirty) {
+      for (final dateKey in dirtyDates) {
         final daySlots = _dailySlots[dateKey];
         if (daySlots != null) {
           final recordedSlots = _serializeRecordedSlots(daySlots);
@@ -1532,7 +1581,6 @@ class TimeProvider with ChangeNotifier {
         }
       }
       await prefs.setString('daily_slots', json.encode(slotsJson));
-      _slotsDirty.clear();
     }
 
     // 4. 日程模板（仅在变化时）
@@ -1681,7 +1729,7 @@ class TimeProvider with ChangeNotifier {
           return Category(
             id: map['id'] as String?,
             name: map['name'] as String,
-            color: Color(map['color'] as int),
+            color: Color(map['color'] as int? ?? 0xFF9E9E9E),
             subCategories: List<String>.from(map['subCategories'] ?? []),
             hiddenSubCategories: List<String>.from(map['hiddenSubCategories'] ?? []),
           );
@@ -1748,13 +1796,17 @@ class TimeProvider with ChangeNotifier {
       final daySlots = _generateInitialSlots();
       for (final item in value as List<dynamic>) {
         final map = Map<String, dynamic>.from(item as Map);
-        final idx = map['i'] as int;
+        final idx = _parseInt(map['i']);
+        if (idx == null) continue;
         if (idx >= 0 && idx < daySlots.length) {
           daySlots[idx].recorded = true;
           daySlots[idx].label = map['l'] as String?;
           daySlots[idx].categoryId = map['cid'] as String?;
           if (map['c'] != null) {
-            daySlots[idx].color = Color(map['c'] as int);
+            final colorVal = _parseInt(map['c']);
+            if (colorVal != null) {
+              daySlots[idx].color = Color(colorVal);
+            }
           }
           if (map['fc'] == true) {
             daySlots[idx].isFromCalendar = true;
@@ -1779,7 +1831,7 @@ class TimeProvider with ChangeNotifier {
         return Category(
           id: map['id'] as String?,
           name: map['name'],
-          color: Color(map['color']),
+          color: Color(map['color'] as int? ?? 0xFF9E9E9E),
           subCategories: List<String>.from(map['subCategories'] ?? []),
           hiddenSubCategories: List<String>.from(map['hiddenSubCategories'] ?? []),
         );
@@ -2315,6 +2367,11 @@ class TimeProvider with ChangeNotifier {
 
   /// 统计每个事件在日期范围内出现的连续块次数（用于词云权重）
   Map<String, int> getEventOccurrenceCounts(DateTime start, DateTime end) {
+    final cacheKey = '_occ_${start.toIso8601String()}_${end.toIso8601String()}';
+    if (_occurrenceCacheKey == cacheKey && _occurrenceCache != null) {
+      return _occurrenceCache!;
+    }
+
     final counts = <String, int>{};
 
     for (int i = 0; i <= end.difference(start).inDays; i++) {
@@ -2344,6 +2401,8 @@ class TimeProvider with ChangeNotifier {
       }
     }
 
+    _occurrenceCacheKey = cacheKey;
+    _occurrenceCache = counts;
     return counts;
   }
 
