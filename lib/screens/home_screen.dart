@@ -162,6 +162,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               padding:
                                   const EdgeInsets.symmetric(vertical: 8),
                               itemCount: 24,
+                              itemExtent: 45,
                               itemBuilder: (context, h) =>
                                   _buildTimeLabelRow(h),
                             ),
@@ -177,6 +178,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   padding:
                                       const EdgeInsets.symmetric(vertical: 8),
                                   itemCount: 24,
+                                  itemExtent: 45,
                                   itemBuilder: (context, h) =>
                                       _buildGridRow(h, timeProvider),
                                 );
@@ -264,11 +266,13 @@ class _HomeScreenState extends State<HomeScreen> {
             int index = h * 6 + col;
             provider.removeEventFromSlot(index);
           },
-          onDoubleTap: () {},
+          onDoubleTap: () {}, // GestureDetector 要求同时设置 onDoubleTap 才能触发 onDoubleTapDown
           onPanStart: (d) =>
               _handleSelect(d.globalPosition, isStart: true),
           onPanUpdate: (d) => _handleSelect(d.globalPosition),
-          child: _buildGridRowContent(h, provider),
+          child: RepaintBoundary(
+            child: _buildGridRowContent(h, provider),
+          ),
         );
       },
     );
@@ -1015,11 +1019,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         spacing: 8.0,
                         runSpacing: 8.0,
                         children: tempHiddenSubCategories
-                            .asMap()
-                            .entries
-                            .map((entry) {
-                          int hiddenIndex = entry.key;
-                          String hiddenSubCat = entry.value;
+                            .map((hiddenSubCat) {
                           return ActionChip(
                             avatar: const Icon(Icons.restore,
                                 size: 14, color: Colors.grey),
@@ -1029,7 +1029,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             backgroundColor: Colors.grey.withValues(alpha: 0.2),
                             onPressed: () {
                               setDialogState(() {
-                                tempHiddenSubCategories.removeAt(hiddenIndex);
+                                tempHiddenSubCategories.remove(hiddenSubCat);
                                 tempSubCategories.add(hiddenSubCat);
                               });
                             },

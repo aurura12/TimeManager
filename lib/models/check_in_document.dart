@@ -60,6 +60,9 @@ class CheckInDocument {
   }
 
   /// 合并本地与远端（按 id 去重，同 id 保留较新的记录）
+  /// 目标（goal）元数据采用 "remote-first" 策略（首个出现者胜），
+  /// 因为目标名称/图标等元数据变更较少，remote wns 策略可避免冲突。
+  /// 记录（record）采用时间戳比较，保留较新的。
   static CheckInDocument merge(CheckInDocument local, CheckInDocument remote) {
     final goalMap = <String, CheckInGoal>{};
     for (final g in [...remote.goals, ...local.goals]) {

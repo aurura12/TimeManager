@@ -298,8 +298,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   void _onDateSelected(DateTime date) async {
-    Navigator.pop(context);
     await _switchContext(date: DateTime(date.year, date.month, date.day));
+    if (!mounted) return;
+    Navigator.pop(context);
   }
 
   void _showCalendarPicker() {
