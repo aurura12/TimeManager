@@ -113,7 +113,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
     }
   }
 
-  Future<void> _submit() async {
+    Future<void> _submit() async {
     if (widget.goal.requirePhoto && _photoFile == null) return;
     if (widget.goal.requireLocation && _location == null) {
       setState(() => _error = '需要位置信息才能打卡');
@@ -248,7 +248,10 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                           locale: const Locale('zh'),
                         );
                         if (picked != null && mounted) {
-                          setState(() => _selectedDate = picked);
+                          setState(() => _selectedDate = DateTime(
+                            picked.year, picked.month, picked.day,
+                            _selectedDate.hour, _selectedDate.minute,
+                          ));
                         }
                       },
                 child: Container(
