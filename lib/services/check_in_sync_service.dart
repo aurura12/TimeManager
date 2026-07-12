@@ -157,8 +157,6 @@ class CheckInSyncService {
       return CheckInSyncResult.fail('未配置当前平台同步 Token');
     }
 
-    print('[pushToGitHub] 推送前本地文档记录数=${_document.records.length}');
-
     // 先拉远端合并，避免覆盖对方的打卡
     final pull = await CheckInGiteeService.pullText(
       token: token,
@@ -166,15 +164,7 @@ class CheckInSyncService {
     );
     if (pull.success && pull.content != null) {
       final remote = CheckInDocument.fromMarkdown(pull.content!);
-      print(
-          '[pushToGitHub] 拉取远端成功, 远端记录数=${remote.records.length}');
       _document = CheckInDocument.merge(_document, remote);
-      print(
-          '[pushToGitHub] 合并后文档记录数=${_document.records.length}');
-    } else {
-      print(
-          '[pushToGitHub] 拉取远端: success=${pull.success}, '
-          'hasContent=${pull.content != null}');
     }
 
     final userLabel = currentUser?.label ?? '?';
@@ -346,11 +336,6 @@ class CheckInSyncService {
 
     final now = DateTime.now();
     final effectiveDate = backfillDate ?? now;
-
-    print(
-        '[submitCheckIn] 入口: backfillDate=${backfillDate?.toIso8601String()}, '
-        'effectiveDate=${effectiveDate.toIso8601String()}, '
-        'isBackfill=$isBackfill, hasPhoto=${photoFile != null}');
     // 不能补打未来日期
     if (effectiveDate.isAfter(now)) {
       return CheckInSyncResult.fail('不能补打未来日期');
@@ -408,22 +393,10 @@ class CheckInSyncService {
         isBackfill: isBackfill,
       );
 
-      print(
-          '[submitCheckIn] 新建记录: id=$recordId, '
-          'timestamp=${effectiveDate.toIso8601String()}, '
-          'isBackfill=$isBackfill, hasPhoto=${photoFile != null}');
-
       _document = _document.upsertRecord(record);
       await CheckInLocalStore.saveDraft(_document);
 
-      print(
-          '[submitCheckIn] upsert 后本地文档记录数=${_document.records.length}, '
-          '记录 id=$recordId isBackfill=${_document.records.firstWhere((r) => r.id == recordId).isBackfill}');
-
       final metaResult = await _pushToGitHubInternal();
-      print(
-          '[submitCheckIn] push 后文档记录数=${_document.records.length}, '
-          '记录 id=$recordId isBackfill=${_document.records.firstWhere((r) => r.id == recordId).isBackfill}');
       return metaResult;
     } catch (e) {
       return CheckInSyncResult.fail('打卡失败: $e');
