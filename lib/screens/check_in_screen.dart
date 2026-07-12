@@ -264,8 +264,6 @@ class _CheckInScreenState extends State<CheckInScreen> {
           : Column(
               children: [
                 if (!_sync.hasIdentity) _buildSignInBanner(colorScheme),
-                if (_sync.hasIdentity && !_sync.isCalendarOnline)
-                  _buildOfflineBanner(colorScheme),
                 _buildFilterBar(colorScheme),
                 Expanded(
                   child: _buildBody(colorScheme, isDark),
@@ -286,31 +284,6 @@ class _CheckInScreenState extends State<CheckInScreen> {
         ),
       ],
     );
-  }
-
-  Widget _buildOfflineBanner(ColorScheme colorScheme) {
-    final label = _sync.currentUser?.label ?? '当前用户';
-    return MaterialBanner(
-      content: Text('已识别为 $label，日历未连接。打卡正常，同步日历需重新连接'),
-      leading: Icon(Icons.wifi_off, color: colorScheme.tertiary),
-      actions: [
-        TextButton(
-          onPressed: _reconnectCalendar,
-          child: const Text('重连日历'),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _reconnectCalendar() async {
-    if (!GoogleCalendarService.isConfigured) {
-      _showMessage('未配置 Google 登录');
-      return;
-    }
-    final ok = await GoogleCalendarService.reconnectCalendar();
-    if (!mounted) return;
-    setState(() {});
-    _showMessage(ok ? 'Google 日历已重新连接' : (GoogleCalendarService.lastLoginError ?? '重连失败'));
   }
 
   Widget _buildFilterBar(ColorScheme colorScheme) {
