@@ -649,13 +649,26 @@ class TimeProvider with ChangeNotifier {
       _remoteViewEnabled = false;
     } else {
       // 打开：备份本地，清空当前日期，拉取纯远端数据
+      // 注意顺序很重要：先取消待处理同步 → 保存当前数据 → 再切换视图
+
+      // 1) 取消待处理的自动同步定时器，防止 3 秒后将对方数据推送到当前用户文件
+      _scheduleGiteeTimer?.cancel();
+      _scheduleGiteeTimer = null;
+      _debounceTimer?.cancel();
+      _debounceTimer = null;
+
+      // 2) 先持久化当前用户的最新编辑，确保不丢失
+      await _saveData();
+
+      // 3) 备份本地数据
       final localSlots = _dailySlots[dateKey];
       if (localSlots != null) {
         _remoteViewBackup[dateKey] = json.encode(_serializeRecordedSlots(localSlots));
       } else {
         _remoteViewBackup[dateKey] = json.encode(<Map<String, dynamic>>[]);
       }
-      // 先清空当前日期，确保只显示远端数据
+
+      // 4) 先清空当前日期，确保只显示远端数据
       final daySlots = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
       for (final s in daySlots) {
         s.recorded = false;
@@ -665,11 +678,15 @@ class TimeProvider with ChangeNotifier {
         s.isFromCalendar = false;
         s.calendarEventId = null;
       }
-      // 拉取对方的文件（独立文件，无需过滤）
+
+      // 5) 提前标记远程视图状态，这样 pullScheduleFromGitee 内部的
+      //    `if (!_remoteViewEnabled) _saveData()` 不会错误地保存到本地缓存
+      _remoteViewEnabled = true;
+
+      // 6) 拉取对方的文件（独立文件，无需过滤）
       final otherCode = _scheduleUser.code == 'g' ? 'j' : 'g';
       await pullScheduleFromGitee(userCode: otherCode);
-      // 拉取后不保存到本地持久化
-      _remoteViewEnabled = true;
+      // 拉取后不保存到本地持久化——由提前设置的 _remoteViewEnabled 保证
     }
     notifyListeners();
   }
