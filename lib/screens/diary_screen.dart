@@ -138,7 +138,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return DateTime.now().difference(_remoteDiaryPathsFetchedAt!) < _remotePathsTtl;
   }
 
-  void _updateDiaryDateKeys() {
+  Future<void> _updateDiaryDateKeys() async {
     final gKeys = <String>{};
     final jKeys = <String>{};
     for (final path in _remoteDiaryPaths) {
@@ -146,6 +146,15 @@ class _DiaryScreenState extends State<DiaryScreen> {
       if (date != null) {
         final dateKey = DateFormat('yyyy-MM-dd').format(date);
         final fileName = _fileNameFromPath(path);
+
+        // 尝试从缓存获取内容，检查正文是否为空
+        final content = DiarySearchService.getCachedContentByPath(path);
+        if (content != null) {
+          final body = _extractBodyFromMarkdown(content);
+          if (body.trim().isEmpty) continue; // 只有 yaml 头，没有实际正文
+        }
+        // 缓存未加载时，回退到文件存在检查（旧逻辑）
+
         if (fileName.startsWith('G')) {
           gKeys.add(dateKey);
         } else if (fileName.startsWith('J')) {
@@ -169,7 +178,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (!listResult.success) return null;
     _remoteDiaryPaths = listResult.paths;
     _remoteDiaryPathsFetchedAt = DateTime.now();
-    _updateDiaryDateKeys();
+    await _updateDiaryDateKeys();
     return listResult.paths;
   }
 
@@ -466,11 +475,14 @@ class _DiaryScreenState extends State<DiaryScreen> {
         _remoteDiaryPaths = listResult.paths;
         _remoteDiaryPathsFetchedAt = DateTime.now();
         _remoteTreeError = null;
-        _updateDiaryDateKeys();
       } else {
         _remoteTreeError = listResult.error ?? '读取远程列表失败';
       }
     });
+    if (listResult.success) {
+      await _updateDiaryDateKeys();
+      if (mounted) setState(() {});
+    }
   }
 
   Future<void> _openRemoteTreeDrawer() async {
@@ -1091,7 +1103,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
                 ),
               ),
               const SizedBox(width: 4),
-              const Text('G', style: TextStyle(fontSize: 12)),
+              const Text('乖乖', style: TextStyle(fontSize: 12)),
               const SizedBox(width: 16),
               Container(
                 width: 8,
@@ -1102,7 +1114,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
                 ),
               ),
               const SizedBox(width: 4),
-              const Text('J', style: TextStyle(fontSize: 12)),
+              const Text('晶晶', style: TextStyle(fontSize: 12)),
             ],
           ),
         ],
