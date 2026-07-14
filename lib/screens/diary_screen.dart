@@ -776,12 +776,6 @@ class _DiaryScreenState extends State<DiaryScreen> {
                   icon: const Icon(Icons.calendar_today_outlined, size: 16),
                   label: Text(_selectedDateText()),
                 ),
-                const SizedBox(width: 4),
-                IconButton(
-                  tooltip: '插入当前时间',
-                  onPressed: _insertCurrentTime,
-                  icon: const Icon(Icons.access_time, size: 20),
-                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -807,17 +801,36 @@ class _DiaryScreenState extends State<DiaryScreen> {
             ),
             const SizedBox(height: 12),
             Expanded(
-              child: TextField(
-                controller: _bodyController,
-                maxLines: null,
-                expands: true,
-                textAlignVertical: TextAlignVertical.top,
-                decoration: InputDecoration(
-                  hintText: '在这里写正文...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
+              child: Stack(
+                children: [
+                  TextField(
+                    controller: _bodyController,
+                    maxLines: null,
+                    expands: true,
+                    textAlignVertical: TextAlignVertical.top,
+                    decoration: InputDecoration(
+                      hintText: '在这里写正文...',
+                      contentPadding: const EdgeInsets.only(
+                        top: 16,
+                        left: 12,
+                        right: 44,
+                        bottom: 12,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
                   ),
-                ),
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: IconButton(
+                      tooltip: '插入当前时间',
+                      onPressed: _insertCurrentTime,
+                      icon: const Icon(Icons.access_time, size: 20),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
