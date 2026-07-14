@@ -231,6 +231,24 @@ class _DiaryScreenState extends State<DiaryScreen> {
     });
   }
 
+  void _insertCurrentTime() {
+    final now = DateTime.now();
+    final timeStr =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} '
+        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+    final text = _bodyController.text;
+    final selection = _bodyController.selection;
+    final offset = selection.isValid ? selection.start : text.length;
+
+    final before = text.substring(0, offset);
+    final after = text.substring(offset);
+    final insertStr = before.isEmpty ? timeStr : '\n$timeStr';
+
+    _bodyController.text = '$before$insertStr\n$after';
+    _bodyController.selection =
+        TextSelection.collapsed(offset: offset + insertStr.length + 1);
+  }
+
   Future<void> _switchContext({
     DiaryKind? kind,
     DateTime? date,
@@ -757,6 +775,12 @@ class _DiaryScreenState extends State<DiaryScreen> {
                   onPressed: _processing ? null : _showCalendarPicker,
                   icon: const Icon(Icons.calendar_today_outlined, size: 16),
                   label: Text(_selectedDateText()),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: '插入当前时间',
+                  onPressed: _insertCurrentTime,
+                  icon: const Icon(Icons.access_time, size: 20),
                 ),
               ],
             ),
