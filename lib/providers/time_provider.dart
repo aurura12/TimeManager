@@ -2450,6 +2450,16 @@ class TimeProvider with ChangeNotifier {
       }
     }
 
+    // 确定有效的 label 集合：如果 eventName 是父分类名，则包含其所有子分类名
+    Set<String> validLabels = {eventName};
+    for (final cat in _categories) {
+      if (cat.name == eventName) {
+        validLabels.addAll(cat.subCategories);
+        validLabels.addAll(cat.hiddenSubCategories);
+        break;
+      }
+    }
+
     // 遍历日期
     for (int i = 0; i <= now.difference(start).inDays; i++) {
       DateTime date = now.subtract(Duration(days: i));
@@ -2461,11 +2471,14 @@ class TimeProvider with ChangeNotifier {
 
         int j = 0;
         while (j < daySlots.length) {
-          if (daySlots[j].recorded && daySlots[j].label == eventName) {
+          if (daySlots[j].recorded &&
+              daySlots[j].label != null &&
+              validLabels.contains(daySlots[j].label)) {
             int startIdx = j;
             while (j < daySlots.length &&
                 daySlots[j].recorded &&
-                daySlots[j].label == eventName) {
+                daySlots[j].label != null &&
+                validLabels.contains(daySlots[j].label)) {
               j++;
             }
             // 转换索引为时间字符串，例如 "08:00 - 08:30"
