@@ -15,9 +15,9 @@ class EventDetailScreen extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final colorScheme = Theme.of(context).colorScheme;
 
-    // 获取筛选后的历史数据：Map<日期, List<时间范围字符串>>
-    // 例如：{"2026-02-01": ["08:00-09:00", "14:20-15:00"]}
-    final Map<String, List<String>> history =
+    // 获取筛选后的历史数据：Map<日期, List<{range, label}>>
+    // 例如：{"2月15日": [(range: "08:00 - 09:00", label: "编程"), (range: "14:20 - 15:00", label: "开会")]}
+    final Map<String, List<({String range, String label})>> history =
         provider.getEventHistory(eventName, tabIndex);
 
     return Scaffold(
@@ -67,7 +67,7 @@ class EventDetailScreen extends StatelessWidget {
                                     : const Color(0xFF9CB86A))),
                         const SizedBox(height: 8),
                         // 该日期下的所有时间段
-                        ...entry.value.map((range) => Padding(
+                        ...entry.value.map((item) => Padding(
                               padding:
                                   const EdgeInsets.only(bottom: 6.0, left: 8.0),
                               child: Row(
@@ -78,14 +78,14 @@ class EventDetailScreen extends StatelessWidget {
                                           ? colorScheme.onSurfaceVariant
                                           : Colors.grey),
                                   const SizedBox(width: 8),
-                                  Text(range,
+                                  Text(item.range,
                                       style: TextStyle(
                                           fontSize: 15,
                                           color: isDark
                                               ? colorScheme.onSurface
                                               : Colors.black87)),
                                   const SizedBox(width: 8),
-                                  Text(eventName,
+                                  Text(item.label,
                                       style: TextStyle(
                                           fontSize: 14,
                                           color: isDark

@@ -2424,8 +2424,9 @@ class TimeProvider with ChangeNotifier {
   }
 
   // 在 TimeProvider 类中添加
-  Map<String, List<String>> getEventHistory(String eventName, int tabIndex) {
-    Map<String, List<String>> history = {};
+  Map<String, List<({String range, String label})>> getEventHistory(
+      String eventName, int tabIndex) {
+    Map<String, List<({String range, String label})>> history = {};
 
     // 确定起始日期
     DateTime now = DateTime.now();
@@ -2467,13 +2468,14 @@ class TimeProvider with ChangeNotifier {
 
       if (_dailySlots.containsKey(dateKey)) {
         List<TimeSlot> daySlots = _dailySlots[dateKey]!;
-        List<String> ranges = [];
+        List<({String range, String label})> ranges = [];
 
         int j = 0;
         while (j < daySlots.length) {
           if (daySlots[j].recorded &&
               daySlots[j].label != null &&
               validLabels.contains(daySlots[j].label)) {
+            final blockLabel = daySlots[j].label!;
             int startIdx = j;
             while (j < daySlots.length &&
                 daySlots[j].recorded &&
@@ -2486,7 +2488,7 @@ class TimeProvider with ChangeNotifier {
                 "${(startIdx ~/ 6).toString().padLeft(2, '0')}:${(startIdx % 6 * 10).toString().padLeft(2, '0')}";
             String endT =
                 "${(j ~/ 6).toString().padLeft(2, '0')}:${(j % 6 * 10).toString().padLeft(2, '0')}";
-            ranges.add("$startT - $endT");
+            ranges.add((range: "$startT - $endT", label: blockLabel));
           } else {
             j++;
           }
