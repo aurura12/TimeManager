@@ -4,7 +4,7 @@ import 'package:intl/intl.dart';
 import '../models/target.dart';
 import '../providers/time_provider.dart';
 
-class TargetStatsSection extends StatelessWidget {
+class TargetStatsSection extends StatefulWidget {
   final Target target;
   final TimeProvider provider;
 
@@ -13,6 +13,42 @@ class TargetStatsSection extends StatelessWidget {
     required this.target,
     required this.provider,
   });
+
+  @override
+  State<TargetStatsSection> createState() => _TargetStatsSectionState();
+}
+
+class _TargetStatsSectionState extends State<TargetStatsSection> {
+  final ScrollController _calendarScrollController = ScrollController();
+  final ScrollController _frequencyScrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_calendarScrollController.hasClients) {
+        _calendarScrollController.jumpTo(
+          _calendarScrollController.position.maxScrollExtent,
+        );
+      }
+      if (_frequencyScrollController.hasClients) {
+        _frequencyScrollController.jumpTo(
+          _frequencyScrollController.position.maxScrollExtent,
+        );
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _calendarScrollController.dispose();
+    _frequencyScrollController.dispose();
+    super.dispose();
+  }
+
+  Target get target => widget.target;
+  TimeProvider get provider => widget.provider;
 
   @override
   Widget build(BuildContext context) {
@@ -580,9 +616,31 @@ class TargetStatsSection extends StatelessWidget {
 
   // --- 日历热力图 ---
 
+  /// 查找目标最新完成记录所在月份
+  DateTime? _findLatestRecordMonth() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    for (int i = 0; i < 365; i++) {
+      final date = today.subtract(Duration(days: i));
+      if (_isTargetCompletedOnDate(target, date)) {
+        return DateTime(date.year, date.month, 1);
+      }
+    }
+    return null;
+  }
+
   Widget _buildCalendarHeatmap(BuildContext context, ColorScheme colorScheme) {
     final now = DateTime.now();
-    final startMonth = DateTime(now.year, now.month - 5, 1);
+    final latestRecordMonth = _findLatestRecordMonth();
+
+    DateTime startMonth;
+    if (latestRecordMonth != null) {
+      // 让最新记录月份作为 6 个月范围的最后一月（索引 5）
+      startMonth = DateTime(latestRecordMonth.year, latestRecordMonth.month - 5, 1);
+    } else {
+      startMonth = DateTime(now.year, now.month - 5, 1);
+    }
 
     return Card(
       child: Padding(
@@ -603,6 +661,7 @@ class TargetStatsSection extends StatelessWidget {
     final today = DateTime(now.year, now.month, now.day);
 
     return SingleChildScrollView(
+      controller: _calendarScrollController,
       scrollDirection: Axis.horizontal,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -891,6 +950,9 @@ class TargetStatsSection extends StatelessWidget {
 
   Widget _buildFrequencyChart(ColorScheme colorScheme) {
     final now = DateTime.now();
+    final latestMonth = _findLatestRecordMonth();
+    // 以最新记录月为 12 个月窗口终点；无记录时用当前月
+    final endMonth = latestMonth ?? DateTime(now.year, now.month, 1);
     final weekdayStats = <int, int>{1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0};
 
     for (int i = 0; i < 365; i++) {
@@ -912,7 +974,7 @@ class TargetStatsSection extends StatelessWidget {
 
     final monthLabels = <String>[];
     for (int i = 11; i >= 0; i--) {
-      final month = DateTime(now.year, now.month - i, 1);
+      final month = DateTime(endMonth.year, endMonth.month - i, 1);
       monthLabels.add('${month.month}月');
     }
 
@@ -939,6 +1001,7 @@ class TargetStatsSection extends StatelessWidget {
                 ),
                 Expanded(
                   child: SingleChildScrollView(
+                    controller: _frequencyScrollController,
                     scrollDirection: Axis.horizontal,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -957,8 +1020,8 @@ class TargetStatsSection extends StatelessWidget {
                         ...weekdayStats.entries.map((entry) {
                           return Row(
                             children: List.generate(12, (monthIndex) {
-                              final month = DateTime(now.year, now.month - (11 - monthIndex), 1);
-                              final monthEnd = DateTime(now.year, now.month - (11 - monthIndex) + 1, 0);
+                              final month = DateTime(endMonth.year, endMonth.month - (11 - monthIndex), 1);
+                              final monthEnd = DateTime(endMonth.year, endMonth.month - (11 - monthIndex) + 1, 0);
                               var monthWeekdayCount = 0;
 
                               for (var d = month; !d.isAfter(monthEnd); d = d.add(const Duration(days: 1))) {
