@@ -475,19 +475,32 @@ class TimeProvider with ChangeNotifier {
 
     final content = json.encode(recorded);
     final userLabel = _scheduleUser == DiaryKind.g ? '乖乖' : '晶晶';
-    final labels = recorded
-        .map((m) => m['l']?.toString() ?? '')
-        .where((l) => l.isNotEmpty)
-        .toSet()
-        .take(5)
-        .join(', ');
-    final summary = labels.isEmpty ? '' : ' - $labels';
+
+    // 先拉取旧数据，用于生成差异描述
+    String? oldContent;
+    final pullResult = await ScheduleGiteeService.pullSchedule(
+      token: token,
+      dateKey: dateKey,
+      userCode: _scheduleUser.code,
+    );
+    if (pullResult.success) {
+      oldContent = pullResult.content;
+    }
+    // pullResult.notFound 或 error 时 oldContent 保持 null，表示无旧数据
+
+    final commitMessage = _buildScheduleDiffMessage(
+      userLabel,
+      dateKey,
+      oldContent,
+      recorded,
+    );
+
     final result = await ScheduleGiteeService.pushSchedule(
       token: token,
       dateKey: dateKey,
       userCode: _scheduleUser.code,
       content: content,
-      commitMessage: '日程($userLabel): $dateKey$summary',
+      commitMessage: commitMessage,
     );
     return result.success;
   }
@@ -1016,6 +1029,176 @@ class TimeProvider with ChangeNotifier {
   DateTime _slotIndexToDateTime(int index) {
     final d = _currentDate;
     return DateTime(d.year, d.month, d.day, index ~/ 6, (index % 6) * 10);
+  }
+
+  /// 将 slot 索引转换为 HH:mm 格式时间字符串。
+  String _slotIndexToTimeString(int index) {
+    final h = index ~/ 6;
+    final m = (index % 6) * 10;
+    return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
+  }
+
+  /// 将按索引排序的条目分组为连续时间段（同标签相邻 slot 合并为一个事件）。
+  /// 返回 [{label, startIndex, endIndex}]，endIndex 为该段最后一个 slot 的 index + 1。
+  List<({String label, int start, int end})> _groupConsecutiveSlots(
+      List<Map<String, dynamic>> entries) {
+    if (entries.isEmpty) return [];
+    final sorted = List<Map<String, dynamic>>.from(entries)
+      ..sort((a, b) => (a['i'] as int).compareTo(b['i'] as int));
+    final result = <({String label, int start, int end})>[];
+    var start = sorted.first['i'] as int;
+    var prevLabel = sorted.first['l']?.toString() ?? '';
+    var prevIndex = start;
+    for (int i = 1; i < sorted.length; i++) {
+      final curIndex = sorted[i]['i'] as int;
+      final curLabel = sorted[i]['l']?.toString() ?? '';
+      if (curLabel != prevLabel || curIndex != prevIndex + 1) {
+        result.add((label: prevLabel, start: start, end: prevIndex + 1));
+        start = curIndex;
+        prevLabel = curLabel;
+      }
+      prevIndex = curIndex;
+    }
+    result.add((label: prevLabel, start: start, end: prevIndex + 1));
+    return result;
+  }
+
+  /// 生成日程差异描述的 commit message。
+  /// 对比旧数据（Gitee 上的内容）与新数据，返回格式化的变更摘要。
+  String _buildScheduleDiffMessage(
+    String userLabel,
+    String dateKey,
+    String? oldContent,
+    List<Map<String, dynamic>> newEntries,
+  ) {
+    // 解析旧数据
+    final Map<int, Map<String, dynamic>> oldByIndex = {};
+    if (oldContent != null && oldContent.isNotEmpty) {
+      try {
+        final oldList = json.decode(oldContent) as List<dynamic>;
+        for (final item in oldList) {
+          final map = item as Map<String, dynamic>;
+          final idx = map['i'] as int;
+          oldByIndex[idx] = map;
+        }
+      } catch (_) {}
+    }
+
+    // 按 index 索引新数据
+    final Map<int, Map<String, dynamic>> newByIndex = {};
+    for (final entry in newEntries) {
+      final idx = entry['i'] as int;
+      newByIndex[idx] = entry;
+    }
+
+    // 对比分类
+    final added = <({String label, int start, int end})>[];
+    final deleted = <({String label, int start, int end})>[];
+    final modified = <({String label, int start, int end, String oldLabel})>[];
+
+    // 分别提取新增、删除、修改的条目
+    final addedEntries = <Map<String, dynamic>>[];
+    final deletedEntries = <Map<String, dynamic>>[];
+    final modifiedEntries = <Map<String, dynamic>>[];
+    final modifiedOldLabels = <int, String>{};
+
+    for (final idx in newByIndex.keys) {
+      if (!oldByIndex.containsKey(idx)) {
+        addedEntries.add(newByIndex[idx]!);
+      } else {
+        final oldLabel = oldByIndex[idx]!['l']?.toString() ?? '';
+        final newLabel = newByIndex[idx]!['l']?.toString() ?? '';
+        if (oldLabel != newLabel) {
+          modifiedEntries.add(newByIndex[idx]!);
+          modifiedOldLabels[idx] = oldLabel;
+        }
+      }
+    }
+    for (final idx in oldByIndex.keys) {
+      if (!newByIndex.containsKey(idx)) {
+        deletedEntries.add(oldByIndex[idx]!);
+      }
+    }
+
+    // 分组
+    for (final group in _groupConsecutiveSlots(addedEntries)) {
+      added.add(group);
+    }
+    for (final group in _groupConsecutiveSlots(deletedEntries)) {
+      deleted.add(group);
+    }
+    // 修改的条目需要单独处理：提取时带上旧标签
+    if (modifiedEntries.isNotEmpty) {
+      final modifiedSorted = List<Map<String, dynamic>>.from(modifiedEntries)
+        ..sort((a, b) => (a['i'] as int).compareTo(b['i'] as int));
+      var start = modifiedSorted.first['i'] as int;
+      var prevOldLabel = modifiedOldLabels[start] ?? '';
+      var prevNewLabel = modifiedSorted.first['l']?.toString() ?? '';
+      var prevIndex = start;
+      for (int i = 1; i < modifiedSorted.length; i++) {
+        final curIndex = modifiedSorted[i]['i'] as int;
+        final curNewLabel = modifiedSorted[i]['l']?.toString() ?? '';
+        final curOldLabel = modifiedOldLabels[curIndex] ?? '';
+        // 如果新旧标签对不一致，不能合并
+        if (curNewLabel != prevNewLabel ||
+            curOldLabel != prevOldLabel ||
+            curIndex != prevIndex + 1) {
+          modified.add((label: prevNewLabel, start: start, end: prevIndex + 1,
+              oldLabel: prevOldLabel));
+          start = curIndex;
+          prevNewLabel = curNewLabel;
+          prevOldLabel = curOldLabel;
+        }
+        prevIndex = curIndex;
+      }
+      modified.add((label: prevNewLabel, start: start, end: prevIndex + 1,
+          oldLabel: prevOldLabel));
+    }
+
+    // 格式化事件描述
+    String formatEvent(({String label, int start, int end}) ev) {
+      final timeStr = ev.start == ev.end - 1
+          ? _slotIndexToTimeString(ev.start)
+          : '${_slotIndexToTimeString(ev.start)}-${_slotIndexToTimeString(ev.end)}';
+      return '$timeStr ${ev.label}';
+    }
+
+    String formatModified(
+        ({String label, int start, int end, String oldLabel}) ev) {
+      final timeStr = ev.start == ev.end - 1
+          ? _slotIndexToTimeString(ev.start)
+          : '${_slotIndexToTimeString(ev.start)}-${_slotIndexToTimeString(ev.end)}';
+      return '$timeStr ${ev.oldLabel} → ${ev.label}';
+    }
+
+    final parts = <String>[];
+    const maxDisplay = 3;
+
+    if (added.isNotEmpty) {
+      final items = added.take(maxDisplay).map(formatEvent).join(', ');
+      final suffix = added.length > maxDisplay ? ' 等${added.length}条' : '';
+      parts.add('新增: $items$suffix');
+    }
+    if (deleted.isNotEmpty) {
+      final items = deleted.take(maxDisplay).map(formatEvent).join(', ');
+      final suffix = deleted.length > maxDisplay ? ' 等${deleted.length}条' : '';
+      parts.add('删除: $items$suffix');
+    }
+    if (modified.isNotEmpty) {
+      final items = modified.take(maxDisplay).map(formatModified).join(', ');
+      final suffix = modified.length > maxDisplay ? ' 等${modified.length}条' : '';
+      parts.add('修改: $items$suffix');
+    }
+
+    if (parts.isEmpty) {
+      // 无变化：列出当前所有日程
+      final allEvents = _groupConsecutiveSlots(newEntries);
+      final summary = allEvents.take(5).map(formatEvent).join(', ');
+      final suffix = allEvents.length > 5 ? ' 等${allEvents.length}条' : '';
+      return '日程($userLabel): $dateKey - $summary$suffix';
+    }
+
+    return '日程($userLabel): $dateKey\n${parts.join('\n')}';
   }
 
   // --- Google 日历下拉 ---
