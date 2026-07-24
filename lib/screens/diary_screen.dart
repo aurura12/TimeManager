@@ -451,6 +451,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     _suppressBodyListener = false;
     _startedAt = startedAt ?? DateTime.now();
     await _saveDraftNow();
+    if (!mounted) return;
     setState(() {});
     _showMessage('已载入：$path');
   }
@@ -503,6 +504,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
   Future<void> _openPathFromTree(String path) async {
     Navigator.of(context).pop();
     await _saveDraftNow();
+    if (!mounted) return;
     setState(() => _processing = true);
     await _loadRemoteFileToEditor(path);
     if (!mounted) return;
@@ -647,6 +649,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       _suppressBodyListener = false;
       _startedAt = startedAt ?? DateTime.now();
       await _saveDraftNow();
+      if (!mounted) return;
       _showMessage('拉取成功（已覆盖本地）');
       setState(() => _processing = false);
       return;
@@ -666,6 +669,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
     _startedAt ??= DateTime.now();
     await _saveDraftNow();
+    if (!mounted) return;
 
     setState(() => _processing = true);
     final remotePath = await _findRemotePathForCurrentContext(refresh: true);

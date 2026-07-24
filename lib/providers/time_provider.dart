@@ -239,7 +239,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   String _getDateKey(DateTime date) {
-    return "${date.year}-${date.month}-${date.day}";
+    return "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
   }
 
   /// 安全解析 JSON 中的整数，避免 `as int` 对 null/非数字值崩溃
@@ -349,6 +349,7 @@ class TimeProvider with ChangeNotifier {
     String dateKey = _getDateKey(_currentDate);
     if (_undoStacks[dateKey] != null && _undoStacks[dateKey]!.isNotEmpty) {
       _dailySlots[dateKey] = _undoStacks[dateKey]!.removeLast();
+      _targetStatsCache.invalidateDate(dateKey);
       _markPendingSync();
       _saveData();
       notifyListeners();
@@ -396,6 +397,12 @@ class TimeProvider with ChangeNotifier {
     return _scheduleGiteeSyncController!.stream;
   }
 
+  /// 安全地向 scheduleGiteeSyncController 发送状态消息
+  void _addScheduleSyncStatus(String message) {
+    final c = _scheduleGiteeSyncController;
+    if (c != null && !c.isClosed) c.add(message);
+  }
+
   Timer? _scheduleGiteeTimer;
   bool _scheduleGiteeSyncing = false;
 
@@ -414,7 +421,7 @@ class TimeProvider with ChangeNotifier {
     try {
       final token = await DiaryLocalStore.loadToken();
       if (token == null || token.isEmpty) {
-        _scheduleGiteeSyncController?.add('未配置同步 Token');
+        _addScheduleSyncStatus('未配置同步 Token');
         _syncStatusController.add("未配置同步 Token");
         return;
       }
@@ -427,33 +434,33 @@ class TimeProvider with ChangeNotifier {
       }
 
       if (!slots.any((s) => s.recorded)) {
-        _scheduleGiteeSyncController?.add('无日程');
+        _addScheduleSyncStatus('无日程');
         _clearPendingSyncForCurrentDate();
         return;
       }
 
-      _scheduleGiteeSyncController?.add('同步中...');
+      _addScheduleSyncStatus('同步中...');
       if (!_syncStatusController.isClosed) {
         _syncStatusController.add("SYNCING");
       }
       final ok = await _pushScheduleDay(dateKey, slots);
       if (ok) {
-        _scheduleGiteeSyncController?.add('已同步');
+        _addScheduleSyncStatus('已同步');
         _clearPendingSyncForCurrentDate();
         if (!_syncStatusController.isClosed) {
           _syncStatusController.add("日程同步成功");
         }
         Future.delayed(const Duration(seconds: 3), () {
-          _scheduleGiteeSyncController?.add('');
+          _addScheduleSyncStatus('');
         });
       } else {
-        _scheduleGiteeSyncController?.add('同步失败');
+        _addScheduleSyncStatus('同步失败');
         if (!_syncStatusController.isClosed) {
           _syncStatusController.add("日程同步失败");
         }
       }
     } catch (e) {
-      _scheduleGiteeSyncController?.add('同步失败: $e');
+      _addScheduleSyncStatus('同步失败: $e');
       if (!_syncStatusController.isClosed) {
         _syncStatusController.add("日程同步失败: $e");
       }
@@ -516,7 +523,7 @@ class TimeProvider with ChangeNotifier {
     try {
       final token = await DiaryLocalStore.loadToken();
       if (token == null || token.isEmpty) {
-        _scheduleGiteeSyncController?.add('未配置同步 Token');
+        _addScheduleSyncStatus('未配置同步 Token');
         return;
       }
 
@@ -529,7 +536,7 @@ class TimeProvider with ChangeNotifier {
       }
 
       if (dateKeys.isEmpty) {
-        _scheduleGiteeSyncController?.add('无日程');
+        _addScheduleSyncStatus('无日程');
         return;
       }
 
@@ -537,21 +544,21 @@ class TimeProvider with ChangeNotifier {
       var done = 0;
       for (final dateKey in dateKeys) {
         final slots = _dailySlots[dateKey]!;
-        _scheduleGiteeSyncController?.add('同步中 ${done + 1}/$total...');
+        _addScheduleSyncStatus('同步中 ${done + 1}/$total...');
         final ok = await _pushScheduleDay(dateKey, slots);
         if (ok) done++;
       }
 
       if (done == total) {
-        _scheduleGiteeSyncController?.add('全部同步完成 ($total 天)');
+        _addScheduleSyncStatus('全部同步完成 ($total 天)');
       } else {
-        _scheduleGiteeSyncController?.add('同步完成 $done/$total');
+        _addScheduleSyncStatus('同步完成 $done/$total');
       }
       Future.delayed(const Duration(seconds: 3), () {
-        _scheduleGiteeSyncController?.add('');
+        _addScheduleSyncStatus('');
       });
     } catch (e) {
-      _scheduleGiteeSyncController?.add('全量同步失败: $e');
+      _addScheduleSyncStatus('全量同步失败: $e');
     } finally {
       _allScheduleSyncing = false;
     }
@@ -561,28 +568,28 @@ class TimeProvider with ChangeNotifier {
   Future<bool> pullScheduleFromGitee({String? userCode}) async {
     final token = await DiaryLocalStore.loadToken();
     if (token == null || token.isEmpty) {
-      _scheduleGiteeSyncController?.add('未配置同步 Token');
+      _addScheduleSyncStatus('未配置同步 Token');
       return false;
     }
 
     final dateKey = _getDateKey(_currentDate);
     final code = userCode ?? _scheduleUser.code;
     try {
-      _scheduleGiteeSyncController?.add('拉取中...');
+      _addScheduleSyncStatus('拉取中...');
       final result = await ScheduleGiteeService.pullSchedule(
         token: token,
         dateKey: dateKey,
         userCode: code,
       );
       if (result.notFound) {
-        _scheduleGiteeSyncController?.add('远端无数据');
+        _addScheduleSyncStatus('远端无数据');
         Future.delayed(const Duration(seconds: 3), () {
-          _scheduleGiteeSyncController?.add('');
+          _addScheduleSyncStatus('');
         });
         return false;
       }
       if (!result.success || result.content == null) {
-        _scheduleGiteeSyncController?.add(result.error ?? '拉取失败');
+        _addScheduleSyncStatus(result.error ?? '拉取失败');
         return false;
       }
 
@@ -590,7 +597,7 @@ class TimeProvider with ChangeNotifier {
       try {
         slotList = json.decode(result.content!) as List<dynamic>;
       } catch (_) {
-        _scheduleGiteeSyncController?.add('解析失败');
+        _addScheduleSyncStatus('解析失败');
         return false;
       }
 
@@ -612,13 +619,13 @@ class TimeProvider with ChangeNotifier {
       _allSlotsDirty = true;
       if (!_remoteViewEnabled) _saveData();
       notifyListeners();
-      _scheduleGiteeSyncController?.add('已同步');
+      _addScheduleSyncStatus('已同步');
       Future.delayed(const Duration(seconds: 3), () {
-        _scheduleGiteeSyncController?.add('');
+        _addScheduleSyncStatus('');
       });
       return true;
     } catch (e) {
-      _scheduleGiteeSyncController?.add('拉取失败: $e');
+      _addScheduleSyncStatus('拉取失败: $e');
       return false;
     }
   }
@@ -1044,13 +1051,13 @@ class TimeProvider with ChangeNotifier {
       List<Map<String, dynamic>> entries) {
     if (entries.isEmpty) return [];
     final sorted = List<Map<String, dynamic>>.from(entries)
-      ..sort((a, b) => (a['i'] as int).compareTo(b['i'] as int));
+      ..sort((a, b) => (_parseInt(a['i']) ?? 0).compareTo(_parseInt(b['i']) ?? 0));
     final result = <({String label, int start, int end})>[];
-    var start = sorted.first['i'] as int;
+    var start = _parseInt(sorted.first['i']) ?? 0;
     var prevLabel = sorted.first['l']?.toString() ?? '';
     var prevIndex = start;
     for (int i = 1; i < sorted.length; i++) {
-      final curIndex = sorted[i]['i'] as int;
+      final curIndex = _parseInt(sorted[i]['i']) ?? 0;
       final curLabel = sorted[i]['l']?.toString() ?? '';
       if (curLabel != prevLabel || curIndex != prevIndex + 1) {
         result.add((label: prevLabel, start: start, end: prevIndex + 1));
@@ -1078,16 +1085,20 @@ class TimeProvider with ChangeNotifier {
         final oldList = json.decode(oldContent) as List<dynamic>;
         for (final item in oldList) {
           final map = item as Map<String, dynamic>;
-          final idx = map['i'] as int;
+          final idx = _parseInt(map['i']);
+          if (idx == null) continue;
           oldByIndex[idx] = map;
         }
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('解析远端日程数据失败: $e');
+      }
     }
 
     // 按 index 索引新数据
     final Map<int, Map<String, dynamic>> newByIndex = {};
     for (final entry in newEntries) {
-      final idx = entry['i'] as int;
+      final idx = _parseInt(entry['i']);
+      if (idx == null) continue;
       newByIndex[idx] = entry;
     }
 
@@ -1130,13 +1141,13 @@ class TimeProvider with ChangeNotifier {
     // 修改的条目需要单独处理：提取时带上旧标签
     if (modifiedEntries.isNotEmpty) {
       final modifiedSorted = List<Map<String, dynamic>>.from(modifiedEntries)
-        ..sort((a, b) => (a['i'] as int).compareTo(b['i'] as int));
-      var start = modifiedSorted.first['i'] as int;
+        ..sort((a, b) => (_parseInt(a['i']) ?? 0).compareTo(_parseInt(b['i']) ?? 0));
+      var start = _parseInt(modifiedSorted.first['i']) ?? 0;
       var prevOldLabel = modifiedOldLabels[start] ?? '';
       var prevNewLabel = modifiedSorted.first['l']?.toString() ?? '';
       var prevIndex = start;
       for (int i = 1; i < modifiedSorted.length; i++) {
-        final curIndex = modifiedSorted[i]['i'] as int;
+        final curIndex = _parseInt(modifiedSorted[i]['i']) ?? 0;
         final curNewLabel = modifiedSorted[i]['l']?.toString() ?? '';
         final curOldLabel = modifiedOldLabels[curIndex] ?? '';
         // 如果新旧标签对不一致，不能合并
@@ -1307,10 +1318,10 @@ class TimeProvider with ChangeNotifier {
       {bool excludeCalendar = false}) {
     return _serializeRecordedSlots(slotList, excludeCalendar: excludeCalendar)
         .map((m) => TemplateSlot(
-              index: m['i'] as int,
+              index: _parseInt(m['i']) ?? 0,
               label: m['l'] as String? ?? '',
               categoryId: m['cid'] as String?,
-              colorArgb: m['c'] as int?,
+              colorArgb: _parseInt(m['c']),
             ))
         .where((s) => s.label.isNotEmpty)
         .toList();
@@ -1645,7 +1656,6 @@ class TimeProvider with ChangeNotifier {
   }
 
   void _migrateToCategoryIds() {
-    final labelMap = _labelToCategoryIdMap();
     var categoriesChanged = false;
     _categories = _categories.map((cat) {
       if (cat.id.isEmpty) {
@@ -1655,6 +1665,10 @@ class TimeProvider with ChangeNotifier {
       }
       return cat;
     }).toList();
+
+    // 先让分类获得新 ID，再构建映射表
+    if (categoriesChanged) _invalidateLabelCategoryIdCache();
+    final labelMap = _labelToCategoryIdMap();
 
     var slotsChanged = false;
     _dailySlots.forEach((_, daySlots) {
@@ -1960,8 +1974,10 @@ class TimeProvider with ChangeNotifier {
     final ignored = data['ignoredCalendarImports'];
     if (ignored is Map) {
       ignored.forEach((dateKey, value) {
-        _ignoredCalendarImports[dateKey as String] =
-            Set<String>.from(value as List<dynamic>);
+        if (value is List) {
+          _ignoredCalendarImports[dateKey as String] =
+              Set<String>.from(value.cast<String>());
+        }
       });
     }
 
@@ -2238,7 +2254,7 @@ class TimeProvider with ChangeNotifier {
 
   /// 获取时间点目标在指定日期的状态
   TimePointStatus getTimePointStatus(Target target, DateTime date) {
-    final dateKey = "${date.year}-${date.month}-${date.day}";
+    final dateKey = _getDateKey(date);
     final daySlots = _dailySlots[dateKey];
     if (daySlots == null) return TimePointStatus.notDone;
 

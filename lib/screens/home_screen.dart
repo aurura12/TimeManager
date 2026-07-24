@@ -609,6 +609,11 @@ class _HomeScreenState extends State<HomeScreen> {
         _dragStartIndex = null;
         _dragEndIndex = null;
       });
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text("请先在左侧网格中选择时间块"), duration: Duration(seconds: 2)),
+      );
     }
   }
 
@@ -627,6 +632,11 @@ class _HomeScreenState extends State<HomeScreen> {
         _dragStartIndex = null;
         _dragEndIndex = null;
       });
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text("请先在左侧网格中选择时间块"), duration: Duration(seconds: 2)),
+      );
     }
   }
 

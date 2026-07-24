@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../models/google_calendar_user.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
@@ -146,8 +146,9 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           subtitle: const Text('将所有日期的日程增量推送到远端'),
           onTap: () {
             provider.syncAllSchedulesToGitee();
+            final messenger = ScaffoldMessenger.of(context);
             Navigator.pop(context);
-            ScaffoldMessenger.of(context).showSnackBar(
+            messenger.showSnackBar(
               const SnackBar(content: Text('正在后台同步全部日程...')),
             );
           },

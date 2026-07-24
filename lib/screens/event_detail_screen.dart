@@ -85,12 +85,15 @@ class EventDetailScreen extends StatelessWidget {
                                               ? colorScheme.onSurface
                                               : Colors.black87)),
                                   const SizedBox(width: 8),
-                                  Text(item.label,
-                                      style: TextStyle(
-                                          fontSize: 14,
-                                          color: isDark
-                                              ? colorScheme.onSurfaceVariant
-                                              : Colors.grey)),
+                                  Flexible(
+                                    child: Text(item.label,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                            fontSize: 14,
+                                            color: isDark
+                                                ? colorScheme.onSurfaceVariant
+                                                : Colors.grey)),
+                                  ),
                                 ],
                               ),
                             )),

@@ -69,7 +69,7 @@ class DailyReviewSummaryBuilder {
   }
 
   static String dateKey(DateTime date) =>
-      '${date.year}-${date.month}-${date.day}';
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
 
   static Future<DailyReviewAiResult?> loadCachedAi(DateTime date) async {
     final prefs = await SharedPreferences.getInstance();
