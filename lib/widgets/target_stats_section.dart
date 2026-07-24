@@ -74,7 +74,7 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
 
   // --- 通用方法 ---
 
-  String _dateKey(DateTime date) => "${date.year}-${date.month}-${date.day}";
+  String _dateKey(DateTime date) => "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
 
   bool _isTargetCompletedOnDate(Target target, DateTime date) {
     if (target.type == TargetType.timePoint) {

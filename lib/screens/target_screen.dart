@@ -147,7 +147,7 @@ class TargetScreen extends StatelessWidget {
               }
 
               return Slidable(
-                key: ValueKey(target), // 必须有 Key
+                key: ValueKey(target.id), // 必须有 Key
                 endActionPane: ActionPane(
                   motion: const ScrollMotion(),
                   extentRatio: 0.2, // 侧滑按钮占据的宽度比例
@@ -356,6 +356,7 @@ class _CountdownTextState extends State<_CountdownText> {
         _remaining = diff.isNegative ? Duration.zero : diff;
       });
     }
+    if (diff.isNegative) _timer.cancel();
   }
 
   @override

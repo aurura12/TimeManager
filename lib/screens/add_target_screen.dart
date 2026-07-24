@@ -14,7 +14,7 @@ class AddTargetScreen extends StatefulWidget {
 
 class _AddTargetScreenState extends State<AddTargetScreen> {
   TargetType _selectedType = TargetType.duration;
-  int _selectedColorIndex = 0;
+  Color _selectedColor = const Color(0xFFF16B77);
   String _selectedPeriod = "每周";
 
   // --- 可编辑的表单数据 ---
@@ -49,11 +49,8 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
       _selectedPeriod = t.period;
       _compareType = t.compareType;
 
-      // 查找颜色索引
-      int colorIndex = _themeColors.indexWhere((Color c) => c == t.color);
-      if (colorIndex != -1) {
-        _selectedColorIndex = colorIndex;
-      }
+      // 设置颜色（支持自定义颜色）
+      _selectedColor = t.color;
 
       // 根据类型回显具体数值
       if (t.type == TargetType.duration) {
@@ -116,7 +113,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
           hour: int.parse(parts[0]),
           minute: int.parse(parts[1] == "24" ? "0" : parts[1])),
     );
-    if (picked != null) {
+    if (picked != null && mounted) {
       setState(() {
         onSave(
             "${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}");
@@ -207,7 +204,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    Color activeColor = _themeColors[_selectedColorIndex];
+    Color activeColor = _selectedColor;
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
@@ -487,14 +484,14 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: List.generate(_themeColors.length, (index) {
           return GestureDetector(
-            onTap: () => setState(() => _selectedColorIndex = index),
+            onTap: () => setState(() => _selectedColor = _themeColors[index]),
             child: CircleAvatar(
               radius: 18,
               backgroundColor: _themeColors[index].withValues(alpha: 0.3),
               child: CircleAvatar(
                 radius: 14,
                 backgroundColor: _themeColors[index],
-                child: _selectedColorIndex == index
+                child: _selectedColor == _themeColors[index]
                     ? const Icon(Icons.check, size: 16, color: Colors.white)
                     : null,
               ),
