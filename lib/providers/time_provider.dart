@@ -242,6 +242,24 @@ class TimeProvider with ChangeNotifier {
     return "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
   }
 
+  /// 将日期 key 规范化为 yyyy-MM-dd 格式。
+  /// 兼容旧版本不补零的存储格式（如 "2024-7-24" → "2024-07-24"），
+  /// 避免升级后旧数据读取不到。
+  static String _normalizeDateKey(String key) {
+    final parts = key.split('-');
+    if (parts.length == 3) {
+      final year = parts[0];
+      final month = int.tryParse(parts[1]);
+      final day = int.tryParse(parts[2]);
+      if (month != null && day != null) {
+        final normalized =
+            '$year-${month.toString().padLeft(2, '0')}-${day.toString().padLeft(2, '0')}';
+        if (normalized != key) return normalized;
+      }
+    }
+    return key;
+  }
+
   /// 安全解析 JSON 中的整数，避免 `as int` 对 null/非数字值崩溃
   static int? _parseInt(dynamic value) {
     if (value is int) return value;
@@ -1975,8 +1993,11 @@ class TimeProvider with ChangeNotifier {
     if (ignored is Map) {
       ignored.forEach((dateKey, value) {
         if (value is List) {
-          _ignoredCalendarImports[dateKey as String] =
-              Set<String>.from(value.cast<String>());
+          final normalizedKey = _normalizeDateKey(dateKey as String);
+          final existing = _ignoredCalendarImports[normalizedKey];
+          final set = existing ?? <String>{};
+          set.addAll(value.cast<String>());
+          _ignoredCalendarImports[normalizedKey] = set;
         }
       });
     }
@@ -1984,7 +2005,8 @@ class TimeProvider with ChangeNotifier {
     _pendingSyncDates
       ..clear()
       ..addAll(
-        ((data['pendingSyncDates'] as List?) ?? []).cast<String>(),
+        ((data['pendingSyncDates'] as List?) ?? [])
+            .map((e) => _normalizeDateKey(e.toString())),
       );
   }
 
@@ -2008,8 +2030,11 @@ class TimeProvider with ChangeNotifier {
       ];
 
   void _loadDailySlotsFromJson(Map<String, dynamic> slotsJson) {
-    slotsJson.forEach((dateKey, value) {
-      final daySlots = _generateInitialSlots();
+    slotsJson.forEach((rawKey, value) {
+      final dateKey = _normalizeDateKey(rawKey);
+      // 若同一日期同时存在旧格式和新格式 key，合并两份数据（不丢失任一槽位）
+      final existing = _dailySlots[dateKey];
+      final daySlots = existing ?? _generateInitialSlots();
       for (final item in value as List<dynamic>) {
         final map = Map<String, dynamic>.from(item as Map);
         final idx = _parseInt(map['i']);
@@ -2099,8 +2124,11 @@ class TimeProvider with ChangeNotifier {
         final ignoredJson = json.decode(ignoredStr) as Map<String, dynamic>;
         _ignoredCalendarImports.clear();
         ignoredJson.forEach((dateKey, value) {
-          _ignoredCalendarImports[dateKey] =
-              Set<String>.from(value as List<dynamic>);
+          final normalizedKey = _normalizeDateKey(dateKey);
+          final existing = _ignoredCalendarImports[normalizedKey];
+          final set = existing ?? <String>{};
+          set.addAll((value as List<dynamic>).cast<String>());
+          _ignoredCalendarImports[normalizedKey] = set;
         });
       } catch (e) {
         debugPrint("加载忽略日历列表出错: $e");
@@ -2110,7 +2138,8 @@ class TimeProvider with ChangeNotifier {
     // 6. 待同步日期
     _pendingSyncDates
       ..clear()
-      ..addAll(prefs.getStringList('pending_sync_dates') ?? []);
+      ..addAll((prefs.getStringList('pending_sync_dates') ?? [])
+          .map(_normalizeDateKey));
     _googleCalendarSyncEnabled =
         prefs.getBool('google_calendar_sync_enabled') ?? true;
     _scheduleUser =
