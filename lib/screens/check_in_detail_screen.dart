@@ -63,9 +63,10 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
   Future<void> _backfillCheckIn() async {
     final pickedDate = await showDatePicker(
       context: context,
-      initialDate: DateTime.now(),
+      // 补打卡只能选过去的日期，避免误选今天导致当天重复打卡
+      initialDate: DateTime.now().subtract(const Duration(days: 1)),
       firstDate: DateTime(2024),
-      lastDate: DateTime.now(),
+      lastDate: DateTime.now().subtract(const Duration(days: 1)),
       locale: const Locale('zh'),
     );
     if (pickedDate == null || !mounted) return;
@@ -398,14 +399,13 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
           ),
         ],
       ),
-      floatingActionButton: _isMine &&
-              _userId != null &&
-              !_goal.isCompletedTodayBy(_userId!)
+      floatingActionButton: _isMine
           ? Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // 补打卡 — 自己的目标始终显示
                   FloatingActionButton.small(
                     heroTag: 'backfill',
                     onPressed: _backfillCheckIn,
@@ -413,15 +413,18 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                     foregroundColor: Colors.white,
                     child: const Icon(Icons.history),
                   ),
-                  const SizedBox(height: 8),
-                  FloatingActionButton.extended(
-                    heroTag: 'checkin',
-                    onPressed: _checkIn,
-                    backgroundColor: _goal.color,
-                    foregroundColor: onColor,
-                    icon: const Icon(Icons.add_a_photo),
-                    label: const Text('打卡'),
-                  ),
+                  // 打卡 — 仅当天未打卡时显示
+                  if (_userId != null && !_goal.isCompletedTodayBy(_userId!)) ...[
+                    const SizedBox(height: 8),
+                    FloatingActionButton.extended(
+                      heroTag: 'checkin',
+                      onPressed: _checkIn,
+                      backgroundColor: _goal.color,
+                      foregroundColor: onColor,
+                      icon: const Icon(Icons.add_a_photo),
+                      label: const Text('打卡'),
+                    ),
+                  ],
                 ],
               ),
             )

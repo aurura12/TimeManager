@@ -184,9 +184,10 @@ class _CheckInScreenState extends State<CheckInScreen> {
     // 先选日期，再选时间，然后打卡
     final pickedDate = await showDatePicker(
       context: context,
-      initialDate: DateTime.now(),
+      // 补打卡只能选过去的日期，避免误选今天导致当天重复打卡
+      initialDate: DateTime.now().subtract(const Duration(days: 1)),
       firstDate: DateTime(2024),
-      lastDate: DateTime.now(),
+      lastDate: DateTime.now().subtract(const Duration(days: 1)),
       locale: const Locale('zh'),
     );
     if (pickedDate == null || !mounted) return;
@@ -657,7 +658,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
                       style: TextStyle(fontSize: 12, color: mutedColor),
                     ),
                     const Spacer(),
-                    if (isMine && !checked) ...[
+                    // 补打卡 — 自己的目标始终显示，不受当天是否已打卡影响
+                    if (isMine) ...[
                       TextButton(
                         onPressed: () => _backfillCheckIn(goal),
                         style: TextButton.styleFrom(
@@ -669,6 +671,9 @@ class _CheckInScreenState extends State<CheckInScreen> {
                         child: const Text('补打卡',
                             style: TextStyle(fontSize: 12)),
                       ),
+                    ],
+                    // 打卡 — 仅当天未打卡时显示
+                    if (isMine && !checked) ...[
                       const SizedBox(width: 4),
                       TextButton.icon(
                         onPressed: () => _quickCheckIn(goal),
