@@ -7,6 +7,7 @@ import '../providers/time_provider.dart';
 import '../services/data_backup_service.dart';
 import '../services/update_service.dart';
 import '../screens/word_cloud_screen.dart';
+import '../screens/on_this_day_screen.dart';
 import '../services/google_calendar_service.dart';
 
 class ProfileSettingsDrawer extends StatefulWidget {
@@ -108,6 +109,15 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                     onTap: () {
                       Navigator.pop(context);
                       WordCloudScreen.open(context);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.history_rounded),
+                    title: const Text('那年今日'),
+                    subtitle: const Text('回顾往年今天的日记、出行和活动'),
+                    onTap: () {
+                      Navigator.pop(context);
+                      OnThisDayScreen.open(context);
                     },
                   ),
                   const Divider(height: 1),
