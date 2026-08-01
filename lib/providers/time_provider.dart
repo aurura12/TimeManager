@@ -109,6 +109,10 @@ class TimeProvider with ChangeNotifier {
   // 存储模型对象 Map
   final Map<String, List<TimeSlot>> _dailySlots = {};
 
+  // 本地数据初始加载是否已结束（无论成败都会置位，供依赖数据就绪的特性使用）
+  bool _isInitialLoadFinished = false;
+  bool get isInitialLoadFinished => _isInitialLoadFinished;
+
   /// 用户在 App 内删除的 Google 日历导入（按日期），不再自动拉回
   final Map<String, Set<String>> _ignoredCalendarImports = {};
 
@@ -182,7 +186,14 @@ class TimeProvider with ChangeNotifier {
 
   Future<void> _init() async {
     // 先加载本地数据并刷新 UI，避免等待 Google 静默登录阻塞首屏
-    await _loadData();
+    try {
+      await _loadData();
+    } catch (e) {
+      debugPrint('初始数据加载失败: $e');
+    } finally {
+      // 无论加载成败都标记加载已结束，避免依赖此标志的特性（如那年今日弹窗）被静默跳过
+      _isInitialLoadFinished = true;
+    }
     notifyListeners();
     await _refreshHomeWidget();
     // 从本地持久化存储直接加载用户身份（不联网，瞬间完成）
