@@ -37,8 +37,9 @@ class OnThisDayService {
 
     // ① 时间记录（同步，内存 Map 查询）
     for (final year in years) {
-      final date = DateTime(year, month, day);
-      final dateKey = dateKeyOf(date);
+      // 注意：不能直接 DateTime(year, month, day)——非闰年 2/29 会自动进位成 3/1，
+      // 导致日期键错位。用字符串拼接保证精确匹配。
+      final dateKey = _dateKeyOf(year, month, day);
       final slots = provider.getSlotsForDate(dateKey);
       if (slots == null || slots.isEmpty) continue;
 
@@ -66,9 +67,9 @@ class OnThisDayService {
 
     // ② 日记（异步，逐个年份读取，命中则确保 entry 存在）
     for (final year in years) {
-      final date = DateTime(year, month, day);
-      final g = await _readDiary(DiaryKind.g, date);
-      final j = await _readDiary(DiaryKind.j, date);
+      final dateKey = _dateKeyOf(year, month, day);
+      final g = await _readDiary(DiaryKind.g, dateKey);
+      final j = await _readDiary(DiaryKind.j, dateKey);
       if (g == null && j == null) continue;
 
       final entry = entriesByYear.putIfAbsent(
@@ -82,7 +83,7 @@ class OnThisDayService {
     // ③ 出行（异步，整份解析一次复用）
     final travelMap = await _loadTravelMap();
     for (final year in years) {
-      final travel = travelMap[dateKeyOf(DateTime(year, month, day))];
+      final travel = travelMap[_dateKeyOf(year, month, day)];
       if (travel == null) continue;
 
       final entry = entriesByYear.putIfAbsent(
@@ -101,7 +102,9 @@ class OnThisDayService {
     return result;
   }
 
-  static Future<String?> _readDiary(DiaryKind kind, DateTime date) async {
+  static Future<String?> _readDiary(DiaryKind kind, String dateKey) async {
+    // 从日期键解析出 DateTime（yyyy-MM-dd）
+    final date = DateTime.parse(dateKey);
     // 通道 A：搜索缓存（同步，App 启动后台索引）
     if (DiarySearchService.isLoaded) {
       final cached = DiarySearchService.getCachedContent(kind.code, date);
@@ -142,6 +145,12 @@ class OnThisDayService {
 
   /// 统一日期键格式 yyyy-MM-dd（与 TimeProvider._getDateKey 一致）
   static String dateKeyOf(DateTime date) {
-    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    return _dateKeyOf(date.year, date.month, date.day);
+  }
+
+  /// 由 year/month/day 直接拼接日期键。
+  /// 不使用 DateTime(year, month, day) 构造，避免非闰年 2/29 自动进位成 3/1。
+  static String _dateKeyOf(int year, int month, int day) {
+    return '$year-${month.toString().padLeft(2, '0')}-${day.toString().padLeft(2, '0')}';
   }
 }

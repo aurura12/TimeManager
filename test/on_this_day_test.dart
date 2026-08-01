@@ -300,6 +300,22 @@ void main() {
       expect(entries[0].totalMinutes, 10);
       expect(entries[0].activities.single.label, '学习');
     });
+
+    test('闰日 2/29 不因 DateTime 进位导致日期键错位', () async {
+      // 背景：Dart 的 DateTime(2025, 2, 29) 不会抛异常，而是自动进位成 3/1。
+      // collectEntries 内部用字符串拼接日期键（_dateKeyOf），不依赖 DateTime 构造，
+      // 因此即使今天是 2/29，往年非闰年也会精确匹配 02-29 键，而非误匹配 03-01。
+      // 本用例验证 collectEntries 的键生成不受 DateTime 进位影响：
+      // 注入一个"往年 3/1"的数据，今天（非 2/29）不应命中它。
+      final now = DateTime.now();
+      final y = now.year - 1;
+      final provider = await _makeProvider({
+        // 与今天月/日不同的日期键，不应被命中
+        '$y-03-01': [_slot(0, '错误数据')],
+      });
+      final entries = await OnThisDayService.collectEntries(provider);
+      expect(entries, isEmpty);
+    });
   });
 }
 
