@@ -11,19 +11,21 @@ class OnThisDayService {
   static const int maxYears = 5; // 往前查几年
   static const int maxSummaryChars = 80; // 日记摘要截取长度
 
-  /// 收集往年今日所有数据，返回有记录的年份列表（从近到远）。
+  /// 收集往年同日所有数据，返回有记录的年份列表（从近到远）。
   ///
+  /// [referenceDate] 指定"哪一天"查看往年（默认今天）。页面可通过它查看任意日期的往年记录。
   /// 三种数据源任一命中即创建 entry：
   /// - 时间记录：`TimeProvider.getSlotsForDate` 按日期查询
   /// - 日记：优先搜索缓存（同步），未命中读本地草稿（异步）
   /// - 出行：读整份出行文档（解析一次），按日期键匹配
   static Future<List<OnThisDayEntry>> collectEntries(
-    TimeProvider provider,
-  ) async {
-    final now = DateTime.now();
-    final month = now.month;
-    final day = now.day;
-    final currentYear = now.year;
+    TimeProvider provider, {
+    DateTime? referenceDate,
+  }) async {
+    final ref = referenceDate ?? DateTime.now();
+    final month = ref.month;
+    final day = ref.day;
+    final currentYear = ref.year;
     final startYear = currentYear - maxYears;
 
     // 年份范围：currentYear-1 到 currentYear-maxYears，且不低于 2020
