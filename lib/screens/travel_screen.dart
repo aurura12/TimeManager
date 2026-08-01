@@ -364,16 +364,14 @@ class _TravelScreenState extends State<TravelScreen> {
     await _saveDraft();
     setState(() => _processing = true);
     final content = _document.toMarkdown();
-    final recordSummary = _document.records
-        .take(5)
-        .map((r) => '${r.dateKey} ${r.location}')
-        .join(', ');
-    final extra = _document.records.length > 5 ? '...' : '';
+    final latest = _document.records.isEmpty ? null : _document.records.first;
     final result = await TravelGiteeService.pushFile(
       token: _token!,
       path: TravelRecordsDocument.filePath,
       content: content,
-      commitMessage: 'travel: update (${_document.records.length}条) $recordSummary$extra',
+      commitMessage: latest == null
+          ? 'travel: update'
+          : 'travel: update ${latest.dateKey} ${latest.location}',
     );
     if (!mounted) return;
     setState(() => _processing = false);

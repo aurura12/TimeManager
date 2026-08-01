@@ -1233,9 +1233,9 @@ class TimeProvider with ChangeNotifier {
     if (parts.isEmpty) {
       // 无变化：列出当前所有日程
       final allEvents = _groupConsecutiveSlots(newEntries);
-      final summary = allEvents.take(5).map(formatEvent).join(', ');
+      final lines = allEvents.take(5).map(formatEvent).toList();
       final suffix = allEvents.length > 5 ? ' 等${allEvents.length}条' : '';
-      return '日程($userLabel): $dateKey - $summary$suffix';
+      return '日程($userLabel): $dateKey\n${lines.join('\n')}$suffix';
     }
 
     return '日程($userLabel): $dateKey\n${parts.join('\n')}';
