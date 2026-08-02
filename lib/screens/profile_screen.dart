@@ -549,7 +549,12 @@ class _ProfileScreenState extends State<ProfileScreen>
     } else if (index == 1) {
       start = now.subtract(const Duration(days: 7));
     } else if (index == 2) {
-      start = DateTime(now.year, now.month - 1, now.day);
+      // 近一月：取上个月的同一天；若该日不存在（如 3/31 → 2 月只有 28/29 天），
+      // 取上个月最后一天，避免 DateTime 归一化导致窗口错位
+      final lastMonthLastDay = DateTime(now.year, now.month, 0);
+      start = now.day <= lastMonthLastDay.day
+          ? DateTime(now.year, now.month - 1, now.day)
+          : lastMonthLastDay;
     } else {
       start = DateTime(2025);
     }
