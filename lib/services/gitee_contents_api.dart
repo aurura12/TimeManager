@@ -26,7 +26,6 @@ class GiteeContentsApi {
     return Uri.https(
       _baseHost,
       '$_repoPrefix/$owner/$repo/contents/$path',
-      token != null && token.isNotEmpty ? {'access_token': token} : null,
     );
   }
 
@@ -34,10 +33,7 @@ class GiteeContentsApi {
     return Uri.https(
       _baseHost,
       '$_repoPrefix/$owner/$repo/git/trees/$ref',
-      {
-        if (recursive) 'recursive': '1',
-        if (token != null && token.isNotEmpty) 'access_token': token,
-      },
+      {if (recursive) 'recursive': '1'},
     );
   }
 
