@@ -1741,10 +1741,13 @@ class TimeProvider with ChangeNotifier {
 
   Future<void> _saveData() async {
     final previous = _ongoingSave;
-    final save = _saveDataImpl();
+    // 串行化保存：等待上一个保存完成后再启动本次，
+    // 避免并发读写导致整包写回时互相覆盖丢数据。
+    final save = (previous ?? Future<void>.value())
+        .catchError((_) {})  // 上一个保存失败不阻断本次
+        .then((_) => _saveDataImpl());
     _ongoingSave = save;
     try {
-      if (previous != null) await previous;
       await save;
     } finally {
       if (_ongoingSave == save) _ongoingSave = null;
