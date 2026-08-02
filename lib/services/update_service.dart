@@ -74,11 +74,12 @@ class UpdateService {
     int maxRedirects = 5,
   }) async {
     var currentUri = uri;
+    var currentHeaders = headers;
 
     for (var redirectCount = 0; redirectCount <= maxRedirects; redirectCount++) {
       final request = http.Request('GET', currentUri)
         ..followRedirects = false
-        ..headers.addAll(headers);
+        ..headers.addAll(currentHeaders);
       final response = await client.send(request);
 
       if (!_isRedirectStatus(response.statusCode)) {
@@ -92,7 +93,14 @@ class UpdateService {
         return response;
       }
 
-      currentUri = _resolveRedirectUri(currentUri, location);
+      final nextUri = _resolveRedirectUri(currentUri, location);
+      // 跨主机重定向：移除 Authorization，防止 token 泄露给第三方
+      if (nextUri.host != currentUri.host &&
+          currentHeaders.containsKey('Authorization')) {
+        currentHeaders = Map<String, String>.from(currentHeaders)
+          ..remove('Authorization');
+      }
+      currentUri = nextUri;
     }
 
     throw StateError('重定向次数过多');
