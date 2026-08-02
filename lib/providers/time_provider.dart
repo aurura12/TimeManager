@@ -301,6 +301,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void toggleSlot(int index) {
+    if (_remoteViewEnabled) return;  // 远程视图只读，禁止编辑本地数据
     _saveSnapshot();
     List<TimeSlot> currentSlots = slots;
     currentSlots[index].recorded = !currentSlots[index].recorded;
@@ -313,6 +314,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void clearAll() {
+    if (_remoteViewEnabled) return;  // 远程视图只读，禁止编辑本地数据
     _saveSnapshot();
     String dateKey = _getDateKey(_currentDate);
     _dailySlots[dateKey] = _generateInitialSlots();
@@ -375,6 +377,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void undo() {
+    if (_remoteViewEnabled) return;  // 远程视图只读，禁止编辑本地数据
     String dateKey = _getDateKey(_currentDate);
     if (_undoStacks[dateKey] != null && _undoStacks[dateKey]!.isNotEmpty) {
       _dailySlots[dateKey] = _undoStacks[dateKey]!.removeLast();
@@ -389,6 +392,7 @@ class TimeProvider with ChangeNotifier {
 
   void assignCategoryToSlots(Set<int> indices, Category category,
       {String? subLabel}) {
+    if (_remoteViewEnabled) return;  // 远程视图只读，禁止编辑本地数据
     if (indices.isEmpty) return;
 
     _saveSnapshot();
@@ -932,6 +936,7 @@ class TimeProvider with ChangeNotifier {
 
   // 移除指定时间块的事件
   void removeEventFromSlot(int index) {
+    if (_remoteViewEnabled) return;  // 远程视图只读，禁止编辑本地数据
     if (index >= 0 && index < slots.length) {
       if (slots[index].recorded) {
         final wasFromCalendar = slots[index].isFromCalendar;
@@ -1457,6 +1462,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void _applySlotEntries(List<TemplateSlot> entries, ApplyTemplateMode mode) {
+    if (_remoteViewEnabled) return;  // 远程视图只读，禁止编辑本地数据
     _saveSnapshot();
 
     final dateKey = _getDateKey(_currentDate);
