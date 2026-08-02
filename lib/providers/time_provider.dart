@@ -379,6 +379,7 @@ class TimeProvider with ChangeNotifier {
     if (_undoStacks[dateKey] != null && _undoStacks[dateKey]!.isNotEmpty) {
       _dailySlots[dateKey] = _undoStacks[dateKey]!.removeLast();
       _targetStatsCache.invalidateDate(dateKey);
+      _slotsDirty.add(dateKey);
       _markPendingSync();
       _saveData();
       notifyListeners();
@@ -1485,6 +1486,8 @@ class TimeProvider with ChangeNotifier {
       }
     }
 
+    _slotsDirty.add(dateKey);
+    _targetStatsCache.invalidateDate(dateKey);
     _markPendingSync();
     _saveData();
     notifyListeners();
