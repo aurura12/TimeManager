@@ -1978,51 +1978,68 @@ class TimeProvider with ChangeNotifier {
   }
 
   void _applyBackupMap(Map<String, dynamic> data) {
-    _categories = (data['categories'] as List)
-        .map((e) {
-          final map = Map<String, dynamic>.from(e as Map);
-          return Category(
-            id: map['id'] as String?,
-            name: map['name'] as String,
-            color: Color(map['color'] as int? ?? 0xFF9E9E9E),
-            subCategories: List<String>.from(map['subCategories'] ?? []),
-            hiddenSubCategories: List<String>.from(map['hiddenSubCategories'] ?? []),
-          );
-        })
-        .toList();
+    // 每个分区独立 try/catch：单个分区损坏不影响其余分区导入
+    _categories = [];
+    for (final e in data['categories'] as List) {
+      try {
+        final map = Map<String, dynamic>.from(e as Map);
+        _categories.add(Category(
+          id: map['id'] as String?,
+          name: map['name'] as String,
+          color: Color(map['color'] as int? ?? 0xFF9E9E9E),
+          subCategories: List<String>.from(map['subCategories'] ?? []),
+          hiddenSubCategories:
+              List<String>.from(map['hiddenSubCategories'] ?? []),
+        ));
+      } catch (err) {
+        debugPrint("导入分类数据出错: $err");
+      }
+    }
     _ensureTempCategory();
 
-    _targets
-      ..clear()
-      ..addAll(
-        ((data['targets'] as List?) ?? [])
-            .map((e) => Target.fromJson(Map<String, dynamic>.from(e as Map))),
-      );
+    _targets.clear();
+    for (final e in ((data['targets'] as List?) ?? [])) {
+      try {
+        _targets.add(Target.fromJson(Map<String, dynamic>.from(e as Map)));
+      } catch (err) {
+        debugPrint("导入目标数据出错: $err");
+      }
+    }
 
     _dailySlots.clear();
-    _loadDailySlotsFromJson(Map<String, dynamic>.from(data['dailySlots'] as Map));
+    try {
+      _loadDailySlotsFromJson(
+          Map<String, dynamic>.from(data['dailySlots'] as Map));
+    } catch (err) {
+      debugPrint("导入时间块数据出错: $err");
+    }
 
-    _templates
-      ..clear()
-      ..addAll(
-        ((data['scheduleTemplates'] as List?) ?? [])
-            .map((e) =>
-                ScheduleTemplate.fromJson(Map<String, dynamic>.from(e as Map)))
-            .toList(),
-      );
+    _templates.clear();
+    for (final e in ((data['scheduleTemplates'] as List?) ?? [])) {
+      try {
+        _templates
+            .add(ScheduleTemplate.fromJson(Map<String, dynamic>.from(e as Map)));
+      } catch (err) {
+        debugPrint("导入模板数据出错: $err");
+      }
+    }
 
     _ignoredCalendarImports.clear();
-    final ignored = data['ignoredCalendarImports'];
-    if (ignored is Map) {
-      ignored.forEach((dateKey, value) {
-        if (value is List) {
-          final normalizedKey = _normalizeDateKey(dateKey as String);
-          final existing = _ignoredCalendarImports[normalizedKey];
-          final set = existing ?? <String>{};
-          set.addAll(value.cast<String>());
-          _ignoredCalendarImports[normalizedKey] = set;
-        }
-      });
+    try {
+      final ignored = data['ignoredCalendarImports'];
+      if (ignored is Map) {
+        ignored.forEach((dateKey, value) {
+          if (value is List) {
+            final normalizedKey = _normalizeDateKey(dateKey.toString());
+            final existing = _ignoredCalendarImports[normalizedKey];
+            final set = existing ?? <String>{};
+            set.addAll(value.whereType<String>());
+            _ignoredCalendarImports[normalizedKey] = set;
+          }
+        });
+      }
+    } catch (err) {
+      debugPrint("导入忽略列表数据出错: $err");
     }
 
     _pendingSyncDates
@@ -2058,8 +2075,9 @@ class TimeProvider with ChangeNotifier {
       // 若同一日期同时存在旧格式和新格式 key，合并两份数据（不丢失任一槽位）
       final existing = _dailySlots[dateKey];
       final daySlots = existing ?? _generateInitialSlots();
-      for (final item in value as List<dynamic>) {
-        final map = Map<String, dynamic>.from(item as Map);
+      for (final item in value is List ? value : const <dynamic>[]) {
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
         final idx = _parseInt(map['i']);
         if (idx == null) continue;
         if (idx >= 0 && idx < daySlots.length) {
@@ -2090,16 +2108,22 @@ class TimeProvider with ChangeNotifier {
     // 1. 加载分类
     List<String>? catList = prefs.getStringList('categories');
     if (catList != null && catList.isNotEmpty) {
-      _categories = catList.map((str) {
-        Map<String, dynamic> map = json.decode(str);
-        return Category(
-          id: map['id'] as String?,
-          name: map['name'],
-          color: Color(map['color'] as int? ?? 0xFF9E9E9E),
-          subCategories: List<String>.from(map['subCategories'] ?? []),
-          hiddenSubCategories: List<String>.from(map['hiddenSubCategories'] ?? []),
-        );
-      }).toList();
+      _categories = [];
+      for (final str in catList) {
+        try {
+          final map = json.decode(str) as Map<String, dynamic>;
+          _categories.add(Category(
+            id: map['id'] as String?,
+            name: map['name'],
+            color: Color(map['color'] as int? ?? 0xFF9E9E9E),
+            subCategories: List<String>.from(map['subCategories'] ?? []),
+            hiddenSubCategories:
+                List<String>.from(map['hiddenSubCategories'] ?? []),
+          ));
+        } catch (e) {
+          debugPrint("加载分类数据出错: $e");
+        }
+      }
       _ensureTempCategory();
     } else {
       _categories = _defaultCategories();
@@ -2109,8 +2133,13 @@ class TimeProvider with ChangeNotifier {
     List<String>? targetList = prefs.getStringList('targets');
     if (targetList != null) {
       _targets.clear();
-      _targets.addAll(
-          targetList.map((str) => Target.fromJson(json.decode(str))).toList());
+      for (final str in targetList) {
+        try {
+          _targets.add(Target.fromJson(json.decode(str)));
+        } catch (e) {
+          debugPrint("加载目标数据出错: $e");
+        }
+      }
     }
 
     // 3. 加载时间块
@@ -2687,7 +2716,12 @@ class TimeProvider with ChangeNotifier {
     } else if (tabIndex == 1) {
       start = now.subtract(const Duration(days: 7));
     } else if (tabIndex == 2) {
-      start = DateTime(now.year, now.month - 1, now.day);
+      // 近一月：取上个月的同一天；若该日在上个月不存在（如 3/31 → 2 月
+      // 只有 28/29 天），则取上个月最后一天，避免 DateTime 归一化把窗口错位
+      final lastMonthLastDay = DateTime(now.year, now.month, 0); // 上个月最后一天
+      start = now.day <= lastMonthLastDay.day
+          ? DateTime(now.year, now.month - 1, now.day)
+          : lastMonthLastDay;
     } else {
       // 全部历史：从最早有数据的日期开始
       if (_dailySlots.isEmpty) {
