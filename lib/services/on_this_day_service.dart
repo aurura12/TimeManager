@@ -111,13 +111,25 @@ class OnThisDayService {
     if (DiarySearchService.isLoaded) {
       final cached = DiarySearchService.getCachedContent(kind.code, date);
       if (cached != null && cached.trim().isNotEmpty) {
-        return summarizeDiary(cached);
+        return extractDiaryBody(cached);
       }
     }
     // 通道 B：本地草稿（异步）
     final draft = await DiaryLocalStore.loadDraftBody(kind, date);
-    if (draft != null && draft.trim().isNotEmpty) return summarizeDiary(draft);
+    if (draft != null && draft.trim().isNotEmpty) return extractDiaryBody(draft);
     return null;
+  }
+
+  /// 剥离 front matter，返回完整日记正文（不截断）
+  ///
+  /// 与项目现有 _extractBodyFromMarkdown（diary_screen.dart）同款正则语义，
+  /// 额外支持 CRLF 换行（Windows 编辑的日记文件）。
+  static String? extractDiaryBody(String content) {
+    final match =
+        RegExp(r'^---\r?\n([\s\S]*?)\r?\n---\r?\n?').firstMatch(content);
+    final text = (match == null ? content : content.substring(match.end)).trim();
+    if (text.isEmpty) return null;
+    return text;
   }
 
   /// 剥离 front matter + 空行，取前 N 字作为摘要

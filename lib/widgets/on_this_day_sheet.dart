@@ -102,7 +102,8 @@ class _OnThisDayContent extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
                 shrinkWrap: true,
                 children: [
-                  for (final entry in entries) OnThisDayYearCard(entry: entry),
+                  for (final entry in entries)
+                    OnThisDayYearCard(entry: entry, compact: true),
                 ],
               ),
             ),

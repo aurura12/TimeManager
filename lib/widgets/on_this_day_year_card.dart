@@ -22,12 +22,15 @@ String formatOnThisDayDurationCompact(int minutes) {
   return '${minutes}m';
 }
 
-/// "那年今日"某个年份的卡片：展示时间记录 / 出行 / 日记摘要。
+/// "那年今日"某个年份的卡片：展示时间记录 / 出行 / 日记（默认摘要，点击展开全文）。
 /// 弹窗和独立页面共用。
+///
+/// [compact]：弹窗用简略模式——活动最多 3 个、日记只显示摘要不可展开。
 class OnThisDayYearCard extends StatelessWidget {
   final OnThisDayEntry entry;
+  final bool compact;
 
-  const OnThisDayYearCard({super.key, required this.entry});
+  const OnThisDayYearCard({super.key, required this.entry, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
@@ -72,7 +75,7 @@ class OnThisDayYearCard extends StatelessWidget {
                 spacing: 8,
                 runSpacing: 6,
                 children: [
-                  for (final a in entry.activities.take(5))
+                  for (final a in entry.activities.take(compact ? 3 : 5))
                     _ActivityChip(label: a.label, minutes: a.minutes),
                 ],
               ),
@@ -91,9 +94,17 @@ class OnThisDayYearCard extends StatelessWidget {
 
             // 日记摘要
             if (entry.diaryGuaiGuai != null)
-              _DiaryRow(nickname: '乖乖', content: entry.diaryGuaiGuai!),
+              _DiaryRow(
+                nickname: '乖乖',
+                content: entry.diaryGuaiGuai!,
+                expandable: !compact,
+              ),
             if (entry.diaryJingJing != null)
-              _DiaryRow(nickname: '晶晶', content: entry.diaryJingJing!),
+              _DiaryRow(
+                nickname: '晶晶',
+                content: entry.diaryJingJing!,
+                expandable: !compact,
+              ),
           ],
         ),
       ),
@@ -153,15 +164,44 @@ class _InfoRow extends StatelessWidget {
   }
 }
 
-class _DiaryRow extends StatelessWidget {
+/// 日记行：默认截断显示摘要。
+/// [expandable] 为 true 时点击可展开/收起完整日记；false 时始终只显示摘要。
+class _DiaryRow extends StatefulWidget {
   final String nickname;
   final String content;
+  final bool expandable;
 
-  const _DiaryRow({required this.nickname, required this.content});
+  const _DiaryRow({
+    required this.nickname,
+    required this.content,
+    this.expandable = true,
+  });
+
+  @override
+  State<_DiaryRow> createState() => _DiaryRowState();
+}
+
+class _DiaryRowState extends State<_DiaryRow> {
+  static const int _summaryChars = 80;
+  bool _expanded = false;
+
+  bool get _truncated => widget.content.length > _summaryChars;
+
+  String get _displayText {
+    final c = widget.content;
+    if (!widget.expandable) {
+      return _truncated ? '${c.substring(0, _summaryChars)}…' : c;
+    }
+    if (!_truncated || _expanded) return c;
+    return '${c.substring(0, _summaryChars)}…';
+  }
+
+  void _toggle() => setState(() => _expanded = !_expanded);
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
@@ -170,24 +210,56 @@ class _DiaryRow extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
-              color: theme.colorScheme.secondaryContainer,
+              color: colorScheme.secondaryContainer,
               borderRadius: BorderRadius.circular(6),
             ),
             child: Text(
-              nickname,
+              widget.nickname,
               style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.onSecondaryContainer,
+                color: colorScheme.onSecondaryContainer,
                 fontWeight: FontWeight.bold,
               ),
             ),
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              '"$content"',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                fontStyle: FontStyle.italic,
+            child: InkWell(
+              onTap: widget.expandable && _truncated ? _toggle : null,
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '"$_displayText"',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                    if (_truncated && widget.expandable)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Row(
+                          children: [
+                            Text(
+                              _expanded ? '收起' : '查看全文',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: colorScheme.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Icon(
+                              _expanded ? Icons.expand_less : Icons.expand_more,
+                              size: 14,
+                              color: colorScheme.primary,
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
