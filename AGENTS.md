@@ -26,7 +26,6 @@ Flutter time management app (v1.62.0) with Google Calendar integration, daily di
   - **Git 同步**：`GitHubContentsApi` (双平台 Gitee/GitHub API 封装)、`DiaryGitHubService`、`TravelGitHubService`、`CheckInGitHubService`
   - **打卡业务**：`CheckInSyncService` (合并编排)、`CheckInImageService` (图片压缩)、`CheckInLocationService` (GPS 定位)
   - **AI 板块**：`SiliconFlowAiService` (API 调用带重试 90s 超时)、`DailyReviewSummary` (复盘生成 + 数据哈希缓存)、`DailyReviewChatService` (多轮对话，最多 20 轮)
-  - **飞书日历**：`FeishuCalendarService` (OAuth 2.0 授权码模式)
   - **工具**：`DataBackupService` (JSON 导入导出)、`DiarySearchService` (全文搜索)、`UpdateService`
 - **Widgets**: `lib/widgets/` — `DatePickerPanel`, `TemplateBar`, `TimeGridTile`, `CalendarSyncStatusBadge`, 打卡照片相关组件等
 - **Config**: `lib/config/` — API keys and service configs (`.gitignore`d)
