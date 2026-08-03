@@ -43,6 +43,8 @@ class CheckInPhotoThumb extends StatelessWidget {
             width: width,
             height: height,
             fit: BoxFit.cover,
+            // 缩略图很小，按实际显示尺寸限制解码，避免全图解码占用内存
+            cacheWidth: (width * MediaQuery.devicePixelRatioOf(context)).round(),
           ),
         );
       },

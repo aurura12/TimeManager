@@ -74,15 +74,15 @@ class DailyReviewChatService {
     }
     apiMessages.add({'role': 'user', 'content': trimmed});
 
-    final reply = await SiliconFlowAiService.chat(messages: apiMessages);
-    if (reply == null || reply.isEmpty) {
+    final result = await SiliconFlowAiService.chat(messages: apiMessages);
+    if (result.content == null || result.content!.isEmpty) {
       return DailyReviewChatReply(
-        error: SiliconFlowAiService.lastCallTimedOut
+        error: result.timedOut
             ? DailyReviewChatError.timeout
             : DailyReviewChatError.networkFailed,
       );
     }
 
-    return DailyReviewChatReply(content: reply);
+    return DailyReviewChatReply(content: result.content);
   }
 }

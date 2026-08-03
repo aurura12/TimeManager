@@ -9,8 +9,7 @@ import '../config/siliconflow_config.dart';
 class SiliconFlowAiService {
   static const _maxAttempts = 2;
   static const _requestTimeout = Duration(seconds: 90);
-
-  static bool lastCallTimedOut = false;
+  static const _retryDelay = Duration(milliseconds: 800);
 
   static String? get _apiKey {
     final key = SiliconFlowConfig.apiKey.trim();
@@ -43,18 +42,22 @@ class SiliconFlowAiService {
     return false;
   }
 
-  /// 通用请求方法：带重试和超时
-  static Future<String?> _requestWithRetry({
+  /// 通用请求方法：带重试、退避和超时。
+  /// 返回内容与是否因超时失败，供调用方区分"超时"与"网络错误"。
+  static Future<({String? content, bool timedOut})> _requestWithRetry({
     required List<Map<String, String>> messages,
     required int maxTokens,
     required String logTag,
   }) async {
     final apiKey = _apiKey;
-    if (apiKey == null) return null;
+    if (apiKey == null) return (content: null, timedOut: false);
 
-    lastCallTimedOut = false;
     Object? lastError;
     for (var attempt = 1; attempt <= _maxAttempts; attempt++) {
+      if (attempt > 1) {
+        // 失败后短暂退避，避免连续重试压垮服务
+        await Future<void>.delayed(_retryDelay);
+      }
       try {
         final response = await http
             .post(
@@ -97,7 +100,7 @@ class SiliconFlowAiService {
           continue;
         }
 
-        return content;
+        return (content: content, timedOut: false);
       } on TimeoutException catch (e) {
         lastError = e;
         debugPrint('$logTag 超时(第$attempt次): $e');
@@ -111,12 +114,11 @@ class SiliconFlowAiService {
     }
 
     debugPrint('$logTag 最终失败: $lastError');
-    lastCallTimedOut = lastError is TimeoutException;
-    return null;
+    return (content: null, timedOut: lastError is TimeoutException);
   }
 
   /// 多轮对话；messages 需含 system / user / assistant
-  static Future<String?> chat({
+  static Future<({String? content, bool timedOut})> chat({
     required List<Map<String, String>> messages,
   }) {
     return _requestWithRetry(
@@ -127,7 +129,7 @@ class SiliconFlowAiService {
   }
 
   /// 根据当日记录数据生成复盘文案；未配置 Key 或请求失败时返回 null
-  static Future<String?> generateDailyReview({
+  static Future<({String? content, bool timedOut})> generateDailyReview({
     required String userPrompt,
   }) {
     return _requestWithRetry(
