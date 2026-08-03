@@ -96,6 +96,7 @@ class TimeProvider with ChangeNotifier {
 
   // 分类展开状态持久化（以 Category ID 为 key，避免拖动排序时错位）
   Map<String, bool> _categoryExpandStates = {};
+  bool _categoryExpandDirty = false; // 展开状态是否已变化，变化时才写盘
 
   bool getCategoryExpandState(String categoryId) {
     return _categoryExpandStates[categoryId] ?? true; // 默认展开
@@ -103,6 +104,7 @@ class TimeProvider with ChangeNotifier {
 
   void setCategoryExpandState(String categoryId, bool isExpanded) {
     _categoryExpandStates[categoryId] = isExpanded;
+    _categoryExpandDirty = true;
     notifyListeners();
     _saveData();
   }
@@ -1797,6 +1799,7 @@ class TimeProvider with ChangeNotifier {
     }
 
     // 3. 保存时间块（仅保存变化的日期）
+    bool slotsChanged = false;
     if (_allSlotsDirty) {
       // 全量保存所有时间块
       _allSlotsDirty = false;
@@ -1811,6 +1814,7 @@ class TimeProvider with ChangeNotifier {
       // 大 JSON 编码移入后台 isolate，避免主线程阻塞
       final encoded = await compute(_encodeSlotsJson, slotsJson);
       await prefs.setString('daily_slots', encoded);
+      slotsChanged = true;
     } else if (_slotsDirty.isNotEmpty) {
       // 增量保存：先对脏日期做快照，立即清空脏集合，
       // 避免清空前又有新日期被标记导致丢失
@@ -1839,6 +1843,7 @@ class TimeProvider with ChangeNotifier {
         }
       }
       await prefs.setString('daily_slots', json.encode(slotsJson));
+      slotsChanged = true;
     }
 
     // 4. 日程模板（仅在变化时）
@@ -1867,10 +1872,19 @@ class TimeProvider with ChangeNotifier {
       _syncDirty = false;
     }
 
-    // 7. 分类展开状态（总是保存，因为体积小）
-    await prefs.setString('category_expand_states', json.encode(_categoryExpandStates));
+    // 7. 分类展开状态（仅变化时写，体积小）
+    final expandChanged = _categoryExpandDirty;
+    if (expandChanged) {
+      await prefs.setString(
+          'category_expand_states', json.encode(_categoryExpandStates));
+      _categoryExpandDirty = false;
+    }
 
-    await _refreshHomeWidget();
+    // 小组件只在 slots 或展开状态实际变化时刷新，
+    // 避免每次保存（含无变化调用）都走平台通道
+    if (slotsChanged || expandChanged) {
+      await _refreshHomeWidget();
+    }
   }
 
   Future<void> _refreshHomeWidget() async {
