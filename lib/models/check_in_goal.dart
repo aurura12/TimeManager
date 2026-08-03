@@ -174,7 +174,8 @@ class CheckInGoal {
         final tsDay = DateTime(ts.year, ts.month, ts.day);
         final startDay =
             DateTime(weekStart.year, weekStart.month, weekStart.day);
-        return !tsDay.isBefore(startDay);
+        final endDay = startDay.add(const Duration(days: 6)); // 本周日
+        return !tsDay.isBefore(startDay) && !tsDay.isAfter(endDay);
       case CheckInPeriod.monthly:
         return ts.year == now.year && ts.month == now.month;
     }

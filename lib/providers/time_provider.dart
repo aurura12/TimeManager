@@ -1910,6 +1910,7 @@ class TimeProvider with ChangeNotifier {
                 'name': c.name,
                 'color': c.color.toARGB32(),
                 'subCategories': c.subCategories,
+                'hiddenSubCategories': c.hiddenSubCategories,
               })
           .toList(),
       'targets': _targets.map((t) => t.toJson()).toList(),
