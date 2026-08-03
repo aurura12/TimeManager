@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import '../models/time_slot.dart'; // 确保导入了模型
 import '../models/category.dart';
 import 'dart:convert';
@@ -1807,7 +1808,9 @@ class TimeProvider with ChangeNotifier {
           slotsJson[dateKey] = recordedSlots;
         }
       });
-      await prefs.setString('daily_slots', json.encode(slotsJson));
+      // 大 JSON 编码移入后台 isolate，避免主线程阻塞
+      final encoded = await compute(_encodeSlotsJson, slotsJson);
+      await prefs.setString('daily_slots', encoded);
     } else if (_slotsDirty.isNotEmpty) {
       // 增量保存：先对脏日期做快照，立即清空脏集合，
       // 避免清空前又有新日期被标记导致丢失
@@ -2844,42 +2847,53 @@ class TimeProvider with ChangeNotifier {
         ? DateTime(startDate.year, startDate.month, startDate.day)
         : DateTime(2020);
 
-    final groups = <SearchRecordGroup>[];
-    var current = endDay;
+    final startKey = _getDateKey(startDay);
+    final endKey = _getDateKey(endDay);
 
-    while (!current.isBefore(startDay)) {
-      final dateKey = _getDateKey(current);
+    // 只遍历范围内有记录的日期，避免对每一天（含大量空日期）逐日扫描
+    final keys = _dailySlots.keys
+        .where((k) => k.compareTo(startKey) >= 0 && k.compareTo(endKey) <= 0)
+        .toList()
+      ..sort((a, b) => b.compareTo(a)); // 按日期倒序
+
+    final groups = <SearchRecordGroup>[];
+    for (final dateKey in keys) {
       final daySlots = _dailySlots[dateKey];
-      if (daySlots != null) {
-        final entries = <SearchRecordEntry>[];
-        int i = 0;
-        while (i < daySlots.length) {
-          if (!_slotMatchesSearchQuery(daySlots[i], queryLower)) {
-            i++;
-            continue;
-          }
-          final label = daySlots[i].label!;
-          final color = daySlots[i].color;
-          final startIdx = i;
-          while (i < daySlots.length &&
-              daySlots[i].recorded &&
-              daySlots[i].label == label &&
-              _slotMatchesSearchQuery(daySlots[i], queryLower)) {
-            i++;
-          }
-          entries.add(SearchRecordEntry(
-            label: label,
-            timeRange: _formatRange(startIdx, i - 1),
-            color: color,
-            durationMinutes: (i - startIdx) * 10,
-          ));
+      if (daySlots == null) continue;
+      final entries = <SearchRecordEntry>[];
+      int i = 0;
+      while (i < daySlots.length) {
+        if (!_slotMatchesSearchQuery(daySlots[i], queryLower)) {
+          i++;
+          continue;
         }
-        if (entries.isNotEmpty) {
-          groups.add(SearchRecordGroup(date: current, entries: entries));
+        final label = daySlots[i].label!;
+        final color = daySlots[i].color;
+        final startIdx = i;
+        // 连续块内 label 相同且首槽已匹配，无需对每个槽位重复匹配查询
+        while (i < daySlots.length &&
+            daySlots[i].recorded &&
+            daySlots[i].label == label) {
+          i++;
         }
+        entries.add(SearchRecordEntry(
+          label: label,
+          timeRange: _formatRange(startIdx, i - 1),
+          color: color,
+          durationMinutes: (i - startIdx) * 10,
+        ));
       }
-      current = current.subtract(const Duration(days: 1));
+      if (entries.isNotEmpty) {
+        groups.add(SearchRecordGroup(
+          date: DateTime.parse(dateKey),
+          entries: entries,
+        ));
+      }
     }
     return groups;
   }
 }
+
+/// 在后台 isolate 中执行全量时间块 JSON 编码（compute 回调必须是顶层函数）
+String _encodeSlotsJson(Map<String, dynamic> slotsJson) =>
+    json.encode(slotsJson);
