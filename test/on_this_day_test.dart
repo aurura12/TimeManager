@@ -2,9 +2,11 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/material.dart';
 import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/providers/time_provider.dart';
+import 'package:time_manager/models/category.dart';
 import 'package:time_manager/services/on_this_day_service.dart';
 
 /// 构造一个带记录的槽位 JSON
@@ -315,6 +317,20 @@ void main() {
       });
       final entries = await OnThisDayService.collectEntries(provider);
       expect(entries, isEmpty);
+    });
+  });
+
+  group('TimeProvider grid revisions', () {
+    test('slot and category changes advance their revisions', () async {
+      final provider = await _makeProvider({});
+      final initialSlotsRevision = provider.slotsRevision;
+      final initialCategoriesRevision = provider.categoriesRevision;
+
+      provider.toggleSlot(0);
+      provider.addCategory(Category(name: '新分类', color: Colors.blue));
+
+      expect(provider.slotsRevision, greaterThan(initialSlotsRevision));
+      expect(provider.categoriesRevision, greaterThan(initialCategoriesRevision));
     });
   });
 

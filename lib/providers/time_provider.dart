@@ -106,6 +106,7 @@ class TimeProvider with ChangeNotifier {
   void setCategoryExpandState(String categoryId, bool isExpanded) {
     _categoryExpandStates[categoryId] = isExpanded;
     _categoryExpandDirty = true;
+    _categoriesRevision++;
     notifyListeners();
     _saveData();
   }
@@ -135,7 +136,13 @@ class TimeProvider with ChangeNotifier {
 
   // --- 增量保存脏标记 ---
   bool _categoriesDirty = false;
+  int _categoriesRevision = 0;
+  int get categoriesRevision => _categoriesRevision;
   bool _targetsDirty = false;
+  int _templatesRevision = 0;
+  int get templatesRevision => _templatesRevision;
+  int _slotsRevision = 0;
+  int get slotsRevision => _slotsRevision;
   final Set<String> _slotsDirty = {};  // 变化的日期 key
   bool _allSlotsDirty = false;  // 全量脏标记（用于 _propagateLabelRename 等场景）
   bool _templatesDirty = false;
@@ -310,7 +317,7 @@ class TimeProvider with ChangeNotifier {
     List<TimeSlot> currentSlots = slots;
     currentSlots[index].recorded = !currentSlots[index].recorded;
     final dateKey = _getDateKey(_currentDate);
-    _slotsDirty.add(dateKey);
+    _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
     _saveData();
     notifyListeners();
@@ -322,7 +329,7 @@ class TimeProvider with ChangeNotifier {
     _saveSnapshot();
     String dateKey = _getDateKey(_currentDate);
     _dailySlots[dateKey] = _generateInitialSlots();
-    _slotsDirty.add(dateKey);
+    _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
     _markPendingSync();
     _saveData();
@@ -386,7 +393,7 @@ class TimeProvider with ChangeNotifier {
     if (_undoStacks[dateKey] != null && _undoStacks[dateKey]!.isNotEmpty) {
       _dailySlots[dateKey] = _undoStacks[dateKey]!.removeLast();
       _targetStatsCache.invalidateDate(dateKey);
-      _slotsDirty.add(dateKey);
+      _markSlotsDirty(dateKey);
       _markPendingSync();
       _saveData();
       notifyListeners();
@@ -410,7 +417,7 @@ class TimeProvider with ChangeNotifier {
       slots[index].isFromCalendar = false;
       slots[index].calendarEventId = null;
     }
-    _slotsDirty.add(_getDateKey(_currentDate));
+    _markSlotsDirty(_getDateKey(_currentDate));
     _targetStatsCache.invalidateDate(_getDateKey(_currentDate));
     _markPendingSync();
     _saveData();
@@ -654,7 +661,7 @@ class TimeProvider with ChangeNotifier {
           }
         }
       }
-      _allSlotsDirty = true;
+      _markAllSlotsDirty();
       if (!_remoteViewEnabled) _saveData();
       notifyListeners();
       _addScheduleSyncStatus('已同步');
@@ -700,7 +707,7 @@ class TimeProvider with ChangeNotifier {
             if (map['eid'] != null) slots[idx].calendarEventId = map['eid'] as String?;
           }
         }
-        _allSlotsDirty = true;
+        _markAllSlotsDirty();
         _saveData();
         notifyListeners();
       }
@@ -736,6 +743,7 @@ class TimeProvider with ChangeNotifier {
         s.isFromCalendar = false;
         s.calendarEventId = null;
       }
+      _markAllSlotsDirty();
 
       // 5) 提前标记远程视图状态，这样 pullScheduleFromGitee 内部的
       //    `if (!_remoteViewEnabled) _saveData()` 不会错误地保存到本地缓存
@@ -950,7 +958,7 @@ class TimeProvider with ChangeNotifier {
         } else {
           _clearSlot(index);
           final dateKey = _getDateKey(_currentDate);
-          _slotsDirty.add(dateKey);
+          _markSlotsDirty(dateKey);
           _targetStatsCache.invalidateDate(dateKey);
           _markPendingSync();
           _scheduleCalendarSync();
@@ -1024,7 +1032,7 @@ class TimeProvider with ChangeNotifier {
           );
     }
 
-    _slotsDirty.add(dateKey);  // 标记当前日期为脏
+    _markSlotsDirty(dateKey);  // 标记当前日期为脏
     _calendarDirty = true;  // 忽略列表也变了
     _targetStatsCache.invalidateDate(dateKey);  // 失效该日期的缓存
     await _saveData();
@@ -1268,7 +1276,7 @@ class TimeProvider with ChangeNotifier {
     if (blocks == null) return false;
     final dateKey = _getDateKey(date);
     _mergeCalendarBlocks(dateKey, blocks, date);
-    _slotsDirty.add(dateKey);
+    _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);  // 失效该日期的缓存
     await _saveData();
     if (notify) notifyListeners();
@@ -1380,7 +1388,7 @@ class TimeProvider with ChangeNotifier {
       slots: entries,
       createdAt: DateTime.now().millisecondsSinceEpoch,
     ));
-    _templatesDirty = true;  // 标记模板为脏
+    _markTemplatesChanged();  // 标记模板为脏
     _saveData();
     notifyListeners();
     return true;
@@ -1496,7 +1504,7 @@ class TimeProvider with ChangeNotifier {
       }
     }
 
-    _slotsDirty.add(dateKey);
+    _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
     _markPendingSync();
     _saveData();
@@ -1511,14 +1519,14 @@ class TimeProvider with ChangeNotifier {
     final index = _templates.indexWhere((t) => t.id == id);
     if (index == -1) return;
     _templates[index] = _templates[index].copyWith(name: trimmed);
-    _templatesDirty = true;  // 标记模板为脏
+    _markTemplatesChanged();  // 标记模板为脏
     _saveData();
     notifyListeners();
   }
 
   void deleteTemplate(String id) {
     _templates.removeWhere((t) => t.id == id);
-    _templatesDirty = true;  // 标记模板为脏
+    _markTemplatesChanged();  // 标记模板为脏
     _saveData();
     notifyListeners();
   }
@@ -1527,7 +1535,7 @@ class TimeProvider with ChangeNotifier {
 
   void addCategory(Category category) {
     _categories.add(category);
-    _categoriesDirty = true;
+    _markCategoriesChanged();
     _invalidateLabelCategoryIdCache();  // 清除缓存
     _saveData();
     notifyListeners();
@@ -1557,7 +1565,7 @@ class TimeProvider with ChangeNotifier {
     }
 
     _categories[index] = updated;
-    _categoriesDirty = true;
+    _markCategoriesChanged();
     _invalidateLabelCategoryIdCache();  // 清除缓存
     _saveData();
     notifyListeners();
@@ -1572,7 +1580,7 @@ class TimeProvider with ChangeNotifier {
       subCategories: newSubs,
       hiddenSubCategories: newHidden,
     );
-    _categoriesDirty = true;  // 标记分类为脏
+    _markCategoriesChanged();  // 标记分类为脏
     _saveData();
     notifyListeners();
   }
@@ -1586,7 +1594,7 @@ class TimeProvider with ChangeNotifier {
       subCategories: newSubs,
       hiddenSubCategories: newHidden,
     );
-    _categoriesDirty = true;  // 标记分类为脏
+    _markCategoriesChanged();  // 标记分类为脏
     _saveData();
     notifyListeners();
   }
@@ -1689,9 +1697,9 @@ class TimeProvider with ChangeNotifier {
     }
 
     // 重命名会影响所有日期的时间块、目标和模板
-    _allSlotsDirty = true;
+    _markAllSlotsDirty();
     _targetsDirty = true;
-    _templatesDirty = true;
+    _markTemplatesChanged();
     _targetStatsCache.invalidate();
     _invalidateLabelCategoryIdCache();
     _targetStatsChangedController.add(null);  // 通知目标统计变化
@@ -1740,11 +1748,31 @@ class TimeProvider with ChangeNotifier {
     }
 
     if (categoriesChanged || slotsChanged || targetsChanged) {
-      if (categoriesChanged) _categoriesDirty = true;
-      if (slotsChanged) _allSlotsDirty = true;
+      if (categoriesChanged) _markCategoriesChanged();
+      if (slotsChanged) _markAllSlotsDirty();
       if (targetsChanged) _targetsDirty = true;
       _saveData();
     }
+  }
+
+  void _markCategoriesChanged() {
+    _categoriesDirty = true;
+    _categoriesRevision++;
+  }
+
+  void _markTemplatesChanged() {
+    _templatesDirty = true;
+    _templatesRevision++;
+  }
+
+  void _markSlotsDirty(String dateKey) {
+    _slotsDirty.add(dateKey);
+    _slotsRevision++;
+  }
+
+  void _markAllSlotsDirty() {
+    _allSlotsDirty = true;
+    _slotsRevision++;
   }
 
   // --- 数据持久化逻辑 ---
@@ -1992,10 +2020,10 @@ class TimeProvider with ChangeNotifier {
     _applyBackupMap(data);
     _migrateToCategoryIds();
     // 导入是全量操作，设置所有脏标记
-    _categoriesDirty = true;
+    _markCategoriesChanged();
     _targetsDirty = true;
-    _allSlotsDirty = true;
-    _templatesDirty = true;
+    _markAllSlotsDirty();
+    _markTemplatesChanged();
     _calendarDirty = true;
     _syncDirty = true;
     await _saveData();
@@ -2316,9 +2344,9 @@ class TimeProvider with ChangeNotifier {
     }
 
     // 4. 通知 UI 刷新
-    _categoriesDirty = true;
+    _markCategoriesChanged();
     _targetsDirty = true;
-    _allSlotsDirty = true;
+    _markAllSlotsDirty();
     _invalidateLabelCategoryIdCache();
     _targetStatsCache.invalidate();
     _targetStatsChangedController.add(null);
@@ -2333,7 +2361,7 @@ class TimeProvider with ChangeNotifier {
     final Category item = _categories.removeAt(oldIndex);
     _categories.insert(newIndex, item);
 
-    _categoriesDirty = true;  // 标记分类为脏
+    _markCategoriesChanged();  // 标记分类为脏
     notifyListeners();
     _saveData();
   }
@@ -2341,7 +2369,7 @@ class TimeProvider with ChangeNotifier {
   void deleteCategory(int index) {
     final categoryId = _categories[index].id;
     _categories.removeAt(index);
-    _categoriesDirty = true;
+    _markCategoriesChanged();
     _invalidateLabelCategoryIdCache();
 
     // Clean up orphaned slot references
