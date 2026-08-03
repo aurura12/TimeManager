@@ -310,7 +310,10 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                     fit: StackFit.expand,
                     children: [
                       if (_photoFile != null)
-                        Image.file(_photoFile!, fit: BoxFit.cover)
+                        // cacheWidth 限制解码尺寸：相机原图约 12MP，
+                        // 预览仅需屏幕宽度，避免解码全分辨率导致内存峰值
+                        Image.file(_photoFile!,
+                            fit: BoxFit.cover, cacheWidth: 1280)
                       else
                         Center(
                           child: Column(

@@ -133,15 +133,15 @@ class DailyReviewSummaryBuilder {
       unrecordedGaps: await _loadUnrecordedGaps(prefs, date),
     );
 
-    final aiText = await SiliconFlowAiService.generateDailyReview(
+    final result = await SiliconFlowAiService.generateDailyReview(
       userPrompt: prompt,
     );
 
-    if (aiText == null || aiText.isEmpty) {
+    if (result.content == null || result.content!.isEmpty) {
       return DailyReviewAiResult(
         date: date,
         title: title,
-        error: SiliconFlowAiService.lastCallTimedOut
+        error: result.timedOut
             ? DailyReviewAiError.timeout
             : DailyReviewAiError.networkFailed,
       );
@@ -149,13 +149,13 @@ class DailyReviewSummaryBuilder {
 
     await prefs.setString(
       '$_cachePrefix${dateKey(date)}',
-      json.encode({'hash': dataHash, 'body': aiText}),
+      json.encode({'hash': dataHash, 'body': result.content}),
     );
 
     return DailyReviewAiResult(
       date: date,
       title: title,
-      body: aiText,
+      body: result.content,
       fromCache: false,
     );
   }
