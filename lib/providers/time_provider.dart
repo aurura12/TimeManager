@@ -41,6 +41,7 @@ class TimeProvider with ChangeNotifier {
   static const Color calendarImportColor = Color(0xFF78909C);
   Timer? _debounceTimer;
   Future<void>? _ongoingSave;
+  int _saveRequestRevision = 0;
 
   DateTime _currentDate = DateTime.now();
   bool _isSyncing = false; // 添加同步锁标志，防止并发同步导致重复
@@ -1750,11 +1751,12 @@ class TimeProvider with ChangeNotifier {
 
   Future<void> _saveData() async {
     final previous = _ongoingSave;
+    final requestRevision = ++_saveRequestRevision;
     // 串行化保存：等待上一个保存完成后再启动本次，
     // 避免并发读写导致整包写回时互相覆盖丢数据。
     final save = (previous ?? Future<void>.value())
         .catchError((_) {})  // 上一个保存失败不阻断本次
-        .then((_) => _saveDataImpl());
+        .then((_) => _saveDataImpl(requestRevision));
     _ongoingSave = save;
     try {
       await save;
@@ -1763,7 +1765,7 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
-  Future<void> _saveDataImpl() async {
+  Future<void> _saveDataImpl(int requestRevision) async {
     // Invalidate stats cache on any data change (包括分类/目标结构变化)
     if (_slotsDirty.isNotEmpty || _allSlotsDirty ||
         _categoriesDirty || _targetsDirty) {
@@ -1776,7 +1778,8 @@ class TimeProvider with ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
 
     // 1. 保存分类（仅在变化时）
-    if (_categoriesDirty) {
+    final categoriesDirtyAtStart = _categoriesDirty;
+    if (categoriesDirtyAtStart) {
       List<String> catList = _categories.map((c) {
         return json.encode({
           'id': c.id,
@@ -1787,23 +1790,28 @@ class TimeProvider with ChangeNotifier {
         });
       }).toList();
       await prefs.setStringList('categories', catList);
-      _categoriesDirty = false;
+      if (_saveRequestRevision == requestRevision) {
+        _categoriesDirty = false;
+      }
     }
 
     // 2. 保存目标（仅在变化时）
-    if (_targetsDirty) {
+    final targetsDirtyAtStart = _targetsDirty;
+    if (targetsDirtyAtStart) {
       List<String> targetList =
           _targets.map((t) => json.encode(t.toJson())).toList();
       await prefs.setStringList('targets', targetList);
-      _targetsDirty = false;
+      if (_saveRequestRevision == requestRevision) {
+        _targetsDirty = false;
+      }
     }
 
     // 3. 保存时间块（仅保存变化的日期）
     bool slotsChanged = false;
-    if (_allSlotsDirty) {
+    final allSlotsDirtyAtStart = _allSlotsDirty;
+    final dirtyDatesAtStart = Set<String>.from(_slotsDirty);
+    if (allSlotsDirtyAtStart) {
       // 全量保存所有时间块
-      _allSlotsDirty = false;
-      _slotsDirty.clear(); // 全量保存覆盖所有日期，增量脏标不需再用
       Map<String, dynamic> slotsJson = {};
       _dailySlots.forEach((dateKey, daySlots) {
         final recordedSlots = _serializeRecordedSlots(daySlots);
@@ -1815,11 +1823,13 @@ class TimeProvider with ChangeNotifier {
       final encoded = await compute(_encodeSlotsJson, slotsJson);
       await prefs.setString('daily_slots', encoded);
       slotsChanged = true;
-    } else if (_slotsDirty.isNotEmpty) {
-      // 增量保存：先对脏日期做快照，立即清空脏集合，
-      // 避免清空前又有新日期被标记导致丢失
-      final dirtyDates = Set<String>.from(_slotsDirty);
-      _slotsDirty.clear();
+      if (_saveRequestRevision == requestRevision) {
+        _allSlotsDirty = false;
+        _slotsDirty.clear();
+      }
+    } else if (dirtyDatesAtStart.isNotEmpty) {
+      // 增量保存：先对本次请求的脏日期做快照，成功后再清理，
+      // 保存期间产生的新修改会保留给下一次保存。
       // 加载现有数据并合并
       String? slotsStr = prefs.getString('daily_slots');
       Map<String, dynamic> slotsJson = {};
@@ -1829,7 +1839,7 @@ class TimeProvider with ChangeNotifier {
         } catch (_) {}
       }
       // 更新变化的日期
-      for (final dateKey in dirtyDates) {
+      for (final dateKey in dirtyDatesAtStart) {
         final daySlots = _dailySlots[dateKey];
         if (daySlots != null) {
           final recordedSlots = _serializeRecordedSlots(daySlots);
@@ -1844,32 +1854,44 @@ class TimeProvider with ChangeNotifier {
       }
       await prefs.setString('daily_slots', json.encode(slotsJson));
       slotsChanged = true;
+      if (_saveRequestRevision == requestRevision) {
+        _slotsDirty.removeAll(dirtyDatesAtStart);
+      }
     }
 
     // 4. 日程模板（仅在变化时）
-    if (_templatesDirty) {
+    final templatesDirtyAtStart = _templatesDirty;
+    if (templatesDirtyAtStart) {
       await prefs.setString(
         'schedule_templates',
         json.encode(_templates.map((t) => t.toJson()).toList()),
       );
-      _templatesDirty = false;
+      if (_saveRequestRevision == requestRevision) {
+        _templatesDirty = false;
+      }
     }
 
     // 5. 已忽略的 Google 日历导入（仅在变化时）
-    if (_calendarDirty) {
+    final calendarDirtyAtStart = _calendarDirty;
+    if (calendarDirtyAtStart) {
       final ignoredJson = <String, dynamic>{};
       _ignoredCalendarImports.forEach((dateKey, ids) {
         if (ids.isNotEmpty) ignoredJson[dateKey] = ids.toList();
       });
       await prefs.setString('ignored_calendar_imports', json.encode(ignoredJson));
-      _calendarDirty = false;
+      if (_saveRequestRevision == requestRevision) {
+        _calendarDirty = false;
+      }
     }
 
     // 6. 待同步日期（仅在变化时）
-    if (_syncDirty) {
+    final syncDirtyAtStart = _syncDirty;
+    if (syncDirtyAtStart) {
       await prefs.setStringList(
           'pending_sync_dates', _pendingSyncDates.toList());
-      _syncDirty = false;
+      if (_saveRequestRevision == requestRevision) {
+        _syncDirty = false;
+      }
     }
 
     // 7. 分类展开状态（仅变化时写，体积小）
@@ -1877,7 +1899,9 @@ class TimeProvider with ChangeNotifier {
     if (expandChanged) {
       await prefs.setString(
           'category_expand_states', json.encode(_categoryExpandStates));
-      _categoryExpandDirty = false;
+      if (_saveRequestRevision == requestRevision) {
+        _categoryExpandDirty = false;
+      }
     }
 
     // 小组件只在 slots 或展开状态实际变化时刷新，
@@ -1996,12 +2020,12 @@ class TimeProvider with ChangeNotifier {
   }
 
   void _applyBackupMap(Map<String, dynamic> data) {
-    // 每个分区独立 try/catch：单个分区损坏不影响其余分区导入
-    _categories = [];
+    // 先解析到临时容器，全部完成后再替换真实状态，避免畸形备份造成半导入。
+    final parsedCategories = <Category>[];
     for (final e in data['categories'] as List) {
       try {
         final map = Map<String, dynamic>.from(e as Map);
-        _categories.add(Category(
+        parsedCategories.add(Category(
           id: map['id'] as String?,
           name: map['name'] as String,
           color: Color(map['color'] as int? ?? 0xFF9E9E9E),
@@ -2013,59 +2037,80 @@ class TimeProvider with ChangeNotifier {
         debugPrint("导入分类数据出错: $err");
       }
     }
-    _ensureTempCategory();
+    if (!parsedCategories.any((c) => c.name == '临时')) {
+      parsedCategories.add(Category(name: '临时', color: const Color(0xFF9E9E9E)));
+    }
 
-    _targets.clear();
-    for (final e in ((data['targets'] as List?) ?? [])) {
-      try {
-        _targets.add(Target.fromJson(Map<String, dynamic>.from(e as Map)));
-      } catch (err) {
-        debugPrint("导入目标数据出错: $err");
+    final parsedTargets = <Target>[];
+    final targets = data['targets'];
+    if (targets is List) {
+      for (final e in targets) {
+        try {
+          parsedTargets.add(Target.fromJson(Map<String, dynamic>.from(e as Map)));
+        } catch (err) {
+          debugPrint("导入目标数据出错: $err");
+        }
       }
     }
 
-    _dailySlots.clear();
+    final parsedDailySlots = <String, List<TimeSlot>>{};
     try {
       _loadDailySlotsFromJson(
-          Map<String, dynamic>.from(data['dailySlots'] as Map));
+        Map<String, dynamic>.from(data['dailySlots'] as Map),
+        destination: parsedDailySlots,
+      );
     } catch (err) {
       debugPrint("导入时间块数据出错: $err");
     }
 
-    _templates.clear();
-    for (final e in ((data['scheduleTemplates'] as List?) ?? [])) {
-      try {
-        _templates
-            .add(ScheduleTemplate.fromJson(Map<String, dynamic>.from(e as Map)));
-      } catch (err) {
-        debugPrint("导入模板数据出错: $err");
+    final parsedTemplates = <ScheduleTemplate>[];
+    final templates = data['scheduleTemplates'];
+    if (templates is List) {
+      for (final e in templates) {
+        try {
+          parsedTemplates
+              .add(ScheduleTemplate.fromJson(Map<String, dynamic>.from(e as Map)));
+        } catch (err) {
+          debugPrint("导入模板数据出错: $err");
+        }
       }
     }
 
-    _ignoredCalendarImports.clear();
-    try {
-      final ignored = data['ignoredCalendarImports'];
-      if (ignored is Map) {
-        ignored.forEach((dateKey, value) {
-          if (value is List) {
-            final normalizedKey = _normalizeDateKey(dateKey.toString());
-            final existing = _ignoredCalendarImports[normalizedKey];
-            final set = existing ?? <String>{};
-            set.addAll(value.whereType<String>());
-            _ignoredCalendarImports[normalizedKey] = set;
-          }
-        });
-      }
-    } catch (err) {
-      debugPrint("导入忽略列表数据出错: $err");
+    final parsedIgnored = <String, Set<String>>{};
+    final ignored = data['ignoredCalendarImports'];
+    if (ignored is Map) {
+      ignored.forEach((dateKey, value) {
+        if (value is List) {
+          final normalizedKey = _normalizeDateKey(dateKey.toString());
+          parsedIgnored[normalizedKey] = value.whereType<String>().toSet();
+        }
+      });
     }
 
+    final parsedPending = <String>{};
+    final pending = data['pendingSyncDates'];
+    if (pending is List) {
+      parsedPending.addAll(
+        pending.map((e) => _normalizeDateKey(e.toString())),
+      );
+    }
+
+    _categories = parsedCategories;
+    _targets
+      ..clear()
+      ..addAll(parsedTargets);
+    _dailySlots
+      ..clear()
+      ..addAll(parsedDailySlots);
+    _templates
+      ..clear()
+      ..addAll(parsedTemplates);
+    _ignoredCalendarImports
+      ..clear()
+      ..addAll(parsedIgnored);
     _pendingSyncDates
       ..clear()
-      ..addAll(
-        ((data['pendingSyncDates'] as List?) ?? [])
-            .map((e) => _normalizeDateKey(e.toString())),
-      );
+      ..addAll(parsedPending);
   }
 
   void _ensureTempCategory() {
@@ -2087,11 +2132,15 @@ class TimeProvider with ChangeNotifier {
         Category(name: '临时', color: const Color(0xFF9E9E9E)),
       ];
 
-  void _loadDailySlotsFromJson(Map<String, dynamic> slotsJson) {
+  void _loadDailySlotsFromJson(
+      Map<String, dynamic> slotsJson, {
+      Map<String, List<TimeSlot>>? destination,
+    }) {
+    final target = destination ?? _dailySlots;
     slotsJson.forEach((rawKey, value) {
       final dateKey = _normalizeDateKey(rawKey);
       // 若同一日期同时存在旧格式和新格式 key，合并两份数据（不丢失任一槽位）
-      final existing = _dailySlots[dateKey];
+      final existing = target[dateKey];
       final daySlots = existing ?? _generateInitialSlots();
       for (final item in value is List ? value : const <dynamic>[]) {
         if (item is! Map) continue;
@@ -2116,7 +2165,7 @@ class TimeProvider with ChangeNotifier {
           }
         }
       }
-      _dailySlots[dateKey] = daySlots;
+      target[dateKey] = daySlots;
     });
   }
 

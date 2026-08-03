@@ -317,6 +317,37 @@ void main() {
       expect(entries, isEmpty);
     });
   });
+
+  group('TimeProvider.importBackupJson robustness', () {
+    test('optional sections with invalid types do not abort the import', () async {
+      final now = DateTime.now();
+      final dateKey = OnThisDayService.dateKeyOf(now);
+      final provider = await _makeProvider({
+        dateKey: [_slot(0, '旧记录')],
+      });
+
+      await provider.importBackupJson(jsonEncode({
+        'categories': [
+          {
+            'id': 'new-category',
+            'name': '新分类',
+            'color': 0xFF000000,
+            'subCategories': <String>[],
+            'hiddenSubCategories': <String>[],
+          },
+        ],
+        'targets': '损坏的目标列表',
+        'dailySlots': {
+          dateKey: [_slot(0, '新记录')],
+        },
+        'scheduleTemplates': <String, dynamic>{'invalid': true},
+        'pendingSyncDates': 123,
+      }));
+
+      expect(provider.categories.any((c) => c.name == '新分类'), isTrue);
+      expect(provider.slots[0].label, '新记录');
+    });
+  });
 }
 
 String _two(int v) => v.toString().padLeft(2, '0');
