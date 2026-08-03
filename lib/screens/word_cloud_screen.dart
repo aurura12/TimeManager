@@ -20,6 +20,32 @@ class WordCloudScreen extends StatefulWidget {
 class _WordCloudScreenState extends State<WordCloudScreen> {
   _WordCloudShape _shape = _WordCloudShape.whale;
 
+  // 布局缓存：_layoutWords 用固定随机种子，同输入结果相同；
+  // 避免每次 build/layout 都重跑 TextPainter + 420 次放置尝试
+  int _wordsSignature = -1;
+  final Map<String, List<_PlacedWord>> _layoutCache = {};
+
+  int _wordsSignatureOf(List<_WordCloudItem> words) {
+    var hash = 0;
+    for (final w in words) {
+      hash = (hash * 31 + w.label.hashCode) & 0x7fffffff;
+      hash = (hash * 31 + w.weight.hashCode) & 0x7fffffff;
+    }
+    return hash;
+  }
+
+  List<_PlacedWord> _cachedLayout(
+      List<_WordCloudItem> words, Size size, _WordCloudShape shape) {
+    final signature = _wordsSignatureOf(words);
+    if (signature != _wordsSignature) {
+      // 词云数据变化，清空布局缓存
+      _wordsSignature = signature;
+      _layoutCache.clear();
+    }
+    final key = '${size.width.round()}_${size.height.round()}_${shape.index}';
+    return _layoutCache.putIfAbsent(key, () => _layoutWords(words, size, shape));
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<TimeProvider>();
@@ -108,7 +134,7 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final size = Size(constraints.maxWidth, constraints.maxHeight);
-          final placed = _layoutWords(words, size, _shape);
+          final placed = _cachedLayout(words, size, _shape);
 
           return Stack(
             children: [

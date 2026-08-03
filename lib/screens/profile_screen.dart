@@ -570,29 +570,31 @@ class _ProfileScreenState extends State<ProfileScreen>
     return provider.getStatistics(start, now);
   }
 
+  // 一次遍历最近 30 天，同时得到每日总时长与事件数，
+  // 避免时间/数量两个方法各重复遍历一次
+  List<({double hours, int count})> _computeDaily30(TimeProvider provider) {
+    final now = DateTime.now();
+    final daily = <({double hours, int count})>[];
+    for (int i = 0; i < 30; i++) {
+      final date = now.subtract(Duration(days: 29 - i));
+      final dayStats = provider.getStatistics(date, date);
+      final hours = double.parse(
+        dayStats.values.fold(0.0, (sum, item) => sum + item).toStringAsFixed(1),
+      );
+      daily.add((hours: hours, count: dayStats.length));
+    }
+    return daily;
+  }
+
   // 获取最近30天每天的 [时长] 数据点
   List<FlSpot> _generateTimeSpots(TimeProvider provider) {
-    List<FlSpot> spots = [];
-    DateTime now = DateTime.now();
-    for (int i = 0; i < 30; i++) {
-      DateTime date = now.subtract(Duration(days: 29 - i));
-      var dayStats = provider.getStatistics(date, date);
-      double totalHours = dayStats.values.fold(0.0, (sum, item) => sum + item);
-      totalHours = double.parse(totalHours.toStringAsFixed(1));
-      spots.add(FlSpot(i + 1.0, totalHours));
-    }
-    return spots;
+    final daily = _computeDaily30(provider);
+    return List.generate(30, (i) => FlSpot(i + 1.0, daily[i].hours));
   }
 
   // 获取最近30天每天的 [事件数量] 数据点
   List<FlSpot> _generateCountSpots(TimeProvider provider) {
-    List<FlSpot> spots = [];
-    DateTime now = DateTime.now();
-    for (int i = 0; i < 30; i++) {
-      DateTime date = now.subtract(Duration(days: 29 - i));
-      var dayStats = provider.getStatistics(date, date);
-      spots.add(FlSpot(i + 1.0, dayStats.length.toDouble()));
-    }
-    return spots;
+    final daily = _computeDaily30(provider);
+    return List.generate(30, (i) => FlSpot(i + 1.0, daily[i].count.toDouble()));
   }
 }

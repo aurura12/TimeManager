@@ -22,6 +22,28 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
   final ScrollController _calendarScrollController = ScrollController();
   final ScrollController _frequencyScrollController = ScrollController();
 
+  // 365 天循环计算结果的缓存：依赖目标数据（revision 递增时失效），
+  // 避免每次 build/notify 都重跑遍历
+  int _statsRevision = -1;
+  String? _cachedTargetId;
+  DateTime? _cachedLatestMonth;
+  List<_StreakData>? _cachedStreaks;
+  Map<int, int>? _cachedWeekdayStats;
+
+  bool get _statsStale =>
+      _cachedTargetId != widget.target.id ||
+      provider.targetStatsCache.revision != _statsRevision;
+
+  /// 数据变化时重算全部 365 天统计，否则复用缓存
+  void _maybeRefreshStats() {
+    if (!_statsStale) return;
+    _statsRevision = provider.targetStatsCache.revision;
+    _cachedTargetId = widget.target.id;
+    _cachedLatestMonth = _computeLatestRecordMonth();
+    _cachedStreaks = _computeStreaks();
+    _cachedWeekdayStats = _computeWeekdayStats();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -618,6 +640,11 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
 
   /// 查找目标最新完成记录所在月份
   DateTime? _findLatestRecordMonth() {
+    _maybeRefreshStats();
+    return _cachedLatestMonth;
+  }
+
+  DateTime? _computeLatestRecordMonth() {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
 
@@ -888,6 +915,11 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
   }
 
   List<_StreakData> _calculateStreaks() {
+    _maybeRefreshStats();
+    return _cachedStreaks!;
+  }
+
+  List<_StreakData> _computeStreaks() {
     final now = DateTime.now();
     final completionDates = <DateTime>{};
 
@@ -948,11 +980,8 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
 
   // --- 频率气泡图 ---
 
-  Widget _buildFrequencyChart(ColorScheme colorScheme) {
+  Map<int, int> _computeWeekdayStats() {
     final now = DateTime.now();
-    final latestMonth = _findLatestRecordMonth();
-    // 以最新记录月为 12 个月窗口终点；无记录时用当前月
-    final endMonth = latestMonth ?? DateTime(now.year, now.month, 1);
     final weekdayStats = <int, int>{1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0};
 
     for (int i = 0; i < 365; i++) {
@@ -969,6 +998,15 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
         }
       }
     }
+    return weekdayStats;
+  }
+
+  Widget _buildFrequencyChart(ColorScheme colorScheme) {
+    _maybeRefreshStats();
+    final now = DateTime.now();
+    // 以最新记录月为 12 个月窗口终点；无记录时用当前月
+    final endMonth = _cachedLatestMonth ?? DateTime(now.year, now.month, 1);
+    final weekdayStats = _cachedWeekdayStats!;
 
     final dayNames = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
