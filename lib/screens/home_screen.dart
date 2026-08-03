@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 import '../models/category.dart';
-import '../models/time_slot.dart';
 import 'dart:async';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/template_bar.dart';
+import '../widgets/time_grid.dart';
 import '../models/schedule_template.dart';
 import 'daily_review_screen.dart';
 import 'global_search_screen.dart';
@@ -92,15 +92,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return row * 6 + col;
   }
 
-  bool _isHighlighted(int index) {
-    if (_dragStartIndex == null || _dragEndIndex == null) return false;
-    int s =
-        _dragStartIndex! < _dragEndIndex! ? _dragStartIndex! : _dragEndIndex!;
-    int e =
-        _dragStartIndex! < _dragEndIndex! ? _dragEndIndex! : _dragStartIndex!;
-    return index >= s && index <= e;
-  }
-
   void _handleSelect(Offset globalPosition,
       {bool isClick = false, bool isStart = false}) {
     int currentIndex = _calculateIndex(globalPosition);
@@ -130,7 +121,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final timeProvider = context.watch<TimeProvider>();
+    final timeProvider = context.read<TimeProvider>();
+    final currentDate =
+        context.select<TimeProvider, DateTime>((p) => p.currentDate);
+    final googleSyncEnabled = context.select<TimeProvider, bool>(
+        (p) => p.googleCalendarSyncEnabled);
+    final isRemoteViewEnabled = context.select<TimeProvider, bool>(
+        (p) => p.isRemoteViewEnabled);
+    final hasPendingSyncForCurrentDate = context.select<TimeProvider, bool>(
+        (p) => p.hasPendingSyncForCurrentDate);
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -141,8 +140,14 @@ class _HomeScreenState extends State<HomeScreen> {
         surfaceTintColor: Colors.transparent,
         titleSpacing: 8,
         actionsPadding: const EdgeInsets.only(right: 15),
-        title: _buildAppBarDateNav(timeProvider),
-        actions: _buildAppBarActions(timeProvider),
+        title: _buildAppBarDateNav(timeProvider, currentDate),
+        actions: _buildAppBarActions(
+          timeProvider,
+          currentDate,
+          googleSyncEnabled,
+          isRemoteViewEnabled,
+          hasPendingSyncForCurrentDate,
+        ),
       ),
       body: Stack(
         children: [
@@ -168,29 +173,32 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                           Expanded(
-                            child: Selector<TimeProvider, ({List<TimeSlot> slots, List<Category> categories, int startHour})>(
-                              selector: (_, p) => (slots: p.slots, categories: p.categories, startHour: p.startHour),
-                              builder: (context, data, _) {
-                                return ListView.builder(
-                                  key: _gridKey,
-                                  controller: _gridScrollController,
-                                  physics: const NeverScrollableScrollPhysics(),
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 8),
-                                  itemCount: 24,
-                                  itemExtent: 45,
-                                  itemBuilder: (context, h) =>
-                                      _buildGridRow(h, timeProvider),
-                                );
-                              },
+                            child: TimeGrid(
+                              gridKey: _gridKey,
+                              controller: _gridScrollController,
+                              dragStartIndex: _dragStartIndex,
+                              dragEndIndex: _dragEndIndex,
+                              onTapDown: (position) =>
+                                  _handleSelect(position, isClick: true),
+                              onPanStart: (position) =>
+                                  _handleSelect(position, isStart: true),
+                              onPanUpdate: (position) =>
+                                  _handleSelect(position),
+                              onRemoveSlot: (index) =>
+                                  timeProvider.removeEventFromSlot(index),
                             ),
                           ),
                         ],
                       ),
                     ),
-                    Selector<TimeProvider, ({List<Category> categories, DateTime currentDate})>(
-                      selector: (_, p) => (categories: p.categories, currentDate: p.currentDate),
-                      builder: (context, data, _) => _buildCategorySidebar(timeProvider),
+                    Selector<TimeProvider, ({int categoriesRevision, int templatesRevision, DateTime currentDate})>(
+                      selector: (_, p) => (
+                        categoriesRevision: p.categoriesRevision,
+                        templatesRevision: p.templatesRevision,
+                        currentDate: p.currentDate,
+                      ),
+                      builder: (context, data, _) =>
+                          _buildCategorySidebar(timeProvider),
                     ),
                   ],
                 ),
@@ -224,7 +232,7 @@ class _HomeScreenState extends State<HomeScreen> {
               left: 0,
               right: 0,
               child: DatePickerPanel(
-                initialDate: timeProvider.currentDate,
+                initialDate: currentDate,
                 onDateSelected: (selected) {
                   timeProvider.goToDate(selected);
                   setState(() {
@@ -251,142 +259,6 @@ class _HomeScreenState extends State<HomeScreen> {
         "${h.toString().padLeft(2, '0')}:00",
         style: TextStyle(color: Colors.grey[600], fontSize: 12),
       ),
-    );
-  }
-
-  Widget _buildGridRow(int h, TimeProvider provider) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapDown: (d) => _handleSelect(d.globalPosition, isClick: true),
-          onDoubleTapDown: (d) {
-            double width = constraints.maxWidth;
-            int col = (d.localPosition.dx / (width / 6)).floor().clamp(0, 5);
-            int index = h * 6 + col;
-            provider.removeEventFromSlot(index);
-          },
-          onDoubleTap: () {}, // GestureDetector 要求同时设置 onDoubleTap 才能触发 onDoubleTapDown
-          onPanStart: (d) =>
-              _handleSelect(d.globalPosition, isStart: true),
-          onPanUpdate: (d) => _handleSelect(d.globalPosition),
-          child: RepaintBoundary(
-            child: _buildGridRowContent(h, provider),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildGridRowContent(int h, TimeProvider provider) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final highlightColor = colorScheme.primary.withValues(alpha: 0.28);
-    final emptyCellColor = isDark
-        ? colorScheme.surfaceContainerHigh
-        : const Color.fromARGB(255, 188, 186, 186);
-
-    return Container(
-      height: 45,
-      padding: const EdgeInsets.symmetric(vertical: 1),
-      child: Row(
-        children: () {
-          List<Widget> segments = [];
-          int m = 0;
-          while (m < 6) {
-            int index = h * 6 + m;
-            var slot = provider.slots[index];
-            String? label = slot.label;
-
-            if (label != null && slot.color != null) {
-              int span = 1;
-              while (m + span < 6 &&
-                  provider.slots[h * 6 + m + span].label == label) {
-                span++;
-              }
-              bool highlighted = false;
-              for (int k = 0; k < span; k++) {
-                if (_isHighlighted(h * 6 + m + k)) {
-                  highlighted = true;
-                  break;
-                }
-              }
-
-              segments.add(Expanded(
-                flex: span,
-                child: Container(
-                  margin: EdgeInsets.only(
-                    top: 1,
-                    bottom: 1,
-                    left: _shouldBridgeLeft(provider, index) ? 0 : 1,
-                    right:
-                        _shouldBridgeRight(provider, index + span - 1) ? 0 : 1,
-                  ),
-                  decoration: BoxDecoration(
-                    color: highlighted ? highlightColor : slot.color!,
-                    borderRadius: _computeSegmentBorderRadius(
-                        provider, h, m, span, highlighted),
-                  ),
-                  child: Center(
-                    child: Text(label,
-                        style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold),
-                        overflow: TextOverflow.ellipsis),
-                  ),
-                ),
-              ));
-              m += span;
-            } else {
-              bool highlighted = _isHighlighted(index);
-              segments.add(Expanded(
-                flex: 1,
-                child: Container(
-                  margin: const EdgeInsets.all(1),
-                  decoration: BoxDecoration(
-                    color: highlighted ? highlightColor : emptyCellColor,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  // 关键改动：去掉 SizedBox.shrink()，或者使用 BoxConstraints.expand()
-                  child: const SizedBox.expand(),
-                ),
-              ));
-              m++;
-            }
-          }
-          return segments;
-        }(),
-      ),
-    );
-  }
-
-  // --- 逻辑辅助函数 ---
-  bool _shouldBridgeLeft(TimeProvider p, int i) =>
-      i % 6 != 0 &&
-      p.slots[i].label != null &&
-      p.slots[i].label == p.slots[i - 1].label;
-  bool _shouldBridgeRight(TimeProvider p, int i) =>
-      i % 6 != 5 &&
-      p.slots[i].label != null &&
-      p.slots[i].label == p.slots[i + 1].label;
-
-  BorderRadius _computeSegmentBorderRadius(
-      TimeProvider p, int h, int startM, int span, bool isHighlight) {
-    if (isHighlight) return BorderRadius.circular(4);
-    int startIndex = h * 6 + startM;
-    int endIndex = startIndex + span - 1;
-    bool leftRounded = startIndex % 6 == 0 ||
-        startIndex == 0 ||
-        (p.slots[startIndex].label != p.slots[startIndex - 1].label);
-    bool rightRounded = endIndex % 6 == 5 ||
-        endIndex >= p.slots.length - 1 ||
-        (p.slots[endIndex].label != p.slots[endIndex + 1].label);
-    return BorderRadius.only(
-      topLeft: leftRounded ? const Radius.circular(4) : Radius.zero,
-      bottomLeft: leftRounded ? const Radius.circular(4) : Radius.zero,
-      topRight: rightRounded ? const Radius.circular(4) : Radius.zero,
-      bottomRight: rightRounded ? const Radius.circular(4) : Radius.zero,
     );
   }
 
@@ -1153,13 +1025,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  String _syncButtonTooltip(TimeProvider provider) {
-    if (provider.googleCalendarSyncEnabled) {
-      return '同步到 Gitee 和 Google 日历';
-    }
-    return '同步日程到 Gitee';
-  }
-
   Widget _appBarIconButton({
     required IconData icon,
     required VoidCallback onPressed,
@@ -1181,8 +1046,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildAppBarDateNav(TimeProvider provider) {
-    final date = provider.currentDate;
+  Widget _buildAppBarDateNav(TimeProvider provider, DateTime date) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Row(
@@ -1225,8 +1089,13 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  List<Widget> _buildAppBarActions(TimeProvider provider) {
-    final date = provider.currentDate;
+  List<Widget> _buildAppBarActions(
+    TimeProvider provider,
+    DateTime date,
+    bool googleSyncEnabled,
+    bool remoteViewEnabled,
+    bool hasPendingSyncForCurrentDate,
+  ) {
     return [
       _appBarIconButton(
         icon: Icons.auto_awesome,
@@ -1251,7 +1120,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onPressed: () => provider.undo(),
       ),
       _appBarIconButton(
-        tooltip: provider.isRemoteViewEnabled ? '关闭对方日程' : '查看对方日程',
+        tooltip: remoteViewEnabled ? '关闭对方日程' : '查看对方日程',
         icon: Icons.people_outline,
         iconWidget: StreamBuilder<String>(
           stream: provider.scheduleGiteeSyncStream,
@@ -1259,7 +1128,7 @@ class _HomeScreenState extends State<HomeScreen> {
           builder: (context, snapshot) {
             final status = snapshot.data ?? '';
             return Tooltip(
-              message: provider.isRemoteViewEnabled
+              message: remoteViewEnabled
                   ? (status.isNotEmpty ? status : '点击关闭对方日程')
                   : '查看对方日程',
               child: Stack(
@@ -1268,11 +1137,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   Icon(
                     Icons.people_outline,
                     size: 23,
-                    color: provider.isRemoteViewEnabled
-                        ? Colors.blue
-                        : null,
+                    color: remoteViewEnabled ? Colors.blue : null,
                   ),
-                  if (provider.isRemoteViewEnabled)
+                  if (remoteViewEnabled)
                     const Positioned(
                       right: -4,
                       top: -4,
@@ -1286,14 +1153,16 @@ class _HomeScreenState extends State<HomeScreen> {
         onPressed: () => provider.toggleRemoteScheduleView(),
       ),
       _appBarIconButton(
-        tooltip: _syncButtonTooltip(provider),
+        tooltip: googleSyncEnabled ?
+            '同步到 Gitee 和 Google 日历' :
+            '同步日程到 Gitee',
         icon: Icons.sync,
         onPressed: () => provider.syncAll(),
         iconWidget: Stack(
           clipBehavior: Clip.none,
           children: [
             const Icon(Icons.sync, size: 23),
-            if (provider.hasPendingSyncForCurrentDate)
+            if (hasPendingSyncForCurrentDate)
               Positioned(
                 right: -1,
                 top: -1,
