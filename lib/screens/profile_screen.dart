@@ -28,6 +28,12 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final provider = Provider.of<TimeProvider>(context);
     final colorScheme = Theme.of(context).colorScheme;
