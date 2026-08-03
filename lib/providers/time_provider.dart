@@ -2608,7 +2608,8 @@ class TimeProvider with ChangeNotifier {
   Map<String, double> getStatistics(DateTime start, DateTime end) {
     final cacheKey = '${_getDateKey(start)}_${_getDateKey(end)}';
     if (_statsCacheKey == cacheKey && _statsCache != null) {
-      return _statsCache!;
+      // 返回不可变包装，防止调用方修改污染缓存
+      return Map.unmodifiable(_statsCache!);
     }
 
     Map<String, double> stats = {};
@@ -2630,7 +2631,7 @@ class TimeProvider with ChangeNotifier {
 
     _statsCacheKey = cacheKey;
     _statsCache = stats;
-    return stats;
+    return Map.unmodifiable(stats);
   }
 
   /// 获取按父事件汇总的统计（每个父事件包含自己的时间 + 所有子事件的时间）
@@ -2666,7 +2667,8 @@ class TimeProvider with ChangeNotifier {
   Map<String, int> getEventOccurrenceCounts(DateTime start, DateTime end) {
     final cacheKey = '_occ_${start.toIso8601String()}_${end.toIso8601String()}';
     if (_occurrenceCacheKey == cacheKey && _occurrenceCache != null) {
-      return _occurrenceCache!;
+      // 返回不可变包装，防止调用方修改污染缓存
+      return Map.unmodifiable(_occurrenceCache!);
     }
 
     final counts = <String, int>{};
@@ -2700,7 +2702,7 @@ class TimeProvider with ChangeNotifier {
 
     _occurrenceCacheKey = cacheKey;
     _occurrenceCache = counts;
-    return counts;
+    return Map.unmodifiable(counts);
   }
 
   // 在 TimeProvider 类中添加
