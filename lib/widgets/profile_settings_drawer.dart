@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import '../models/google_calendar_user.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -9,6 +11,7 @@ import '../services/update_service.dart';
 import '../screens/word_cloud_screen.dart';
 import '../screens/on_this_day_screen.dart';
 import '../services/google_calendar_service.dart';
+import '../models/diary_kind.dart';
 
 class ProfileSettingsDrawer extends StatefulWidget {
   final VoidCallback onChanged;
@@ -47,14 +50,18 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                       ),
                     ),
                   ),
-                  _buildLoginSection(context, googleUser, provider),
+                  if (Platform.isWindows)
+                    _buildWindowsIdentitySection(context, provider)
+                  else
+                    _buildLoginSection(context, googleUser, provider),
                   const Divider(height: 1),
                   _buildRemoteSyncSection(context, provider),
                   const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.palette_outlined),
                     title: const Text('外观模式'),
-                    subtitle: Text(_themeModeLabel(themeModeProvider.themeMode)),
+                    subtitle:
+                        Text(_themeModeLabel(themeModeProvider.themeMode)),
                     trailing: DropdownButtonHideUnderline(
                       child: DropdownButton<ThemeMode>(
                         value: themeModeProvider.themeMode,
@@ -138,6 +145,18 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
   }
 
   Widget _buildRemoteSyncSection(BuildContext context, TimeProvider provider) {
+    if (Platform.isWindows) {
+      return Column(
+        children: [
+          const ListTile(
+            leading: Icon(Icons.desktop_windows_outlined),
+            title: Text('Windows 同步方式'),
+            subtitle: Text('Windows 版本不使用 Google 日历，日程和日记通过 Gitee 同步'),
+          ),
+          _buildGiteeSyncTile(context, provider),
+        ],
+      );
+    }
     return Column(
       children: [
         SwitchListTile(
@@ -150,17 +169,58 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
             widget.onChanged();
           },
         ),
+        _buildGiteeSyncTile(context, provider),
+      ],
+    );
+  }
+
+  Widget _buildGiteeSyncTile(BuildContext context, TimeProvider provider) {
+    return ListTile(
+      leading: const Icon(Icons.cloud_sync_outlined),
+      title: const Text('同步全部日程到 Gitee'),
+      subtitle: const Text('将所有日期的日程增量推送到远端'),
+      onTap: () {
+        provider.syncAllSchedulesToGitee();
+        final messenger = ScaffoldMessenger.of(context);
+        Navigator.pop(context);
+        messenger.showSnackBar(
+          const SnackBar(content: Text('正在后台同步全部日程...')),
+        );
+      },
+    );
+  }
+
+  Widget _buildWindowsIdentitySection(
+      BuildContext context, TimeProvider provider) {
+    final selected =
+        provider.hasSelectedScheduleUser ? provider.scheduleUser : null;
+    return Column(
+      children: [
         ListTile(
-          leading: const Icon(Icons.cloud_sync_outlined),
-          title: const Text('同步全部日程到 Gitee'),
-          subtitle: const Text('将所有日期的日程增量推送到远端'),
-          onTap: () {
-            provider.syncAllSchedulesToGitee();
-            final messenger = ScaffoldMessenger.of(context);
-            Navigator.pop(context);
-            messenger.showSnackBar(
-              const SnackBar(content: Text('正在后台同步全部日程...')),
-            );
+          leading: const Icon(Icons.person_pin_outlined),
+          title: const Text('Windows 用户身份'),
+          subtitle: Text(
+            selected == null
+                ? '请选择身份后再同步'
+                : '当前身份：${selected == DiaryKind.g ? '乖乖' : '晶晶'}',
+          ),
+        ),
+        RadioListTile<DiaryKind>(
+          title: const Text('乖乖'),
+          value: DiaryKind.g,
+          groupValue: selected,
+          onChanged: (kind) {
+            if (kind != null) provider.setScheduleUser(kind);
+            widget.onChanged();
+          },
+        ),
+        RadioListTile<DiaryKind>(
+          title: const Text('晶晶'),
+          value: DiaryKind.j,
+          groupValue: selected,
+          onChanged: (kind) {
+            if (kind != null) provider.setScheduleUser(kind);
+            widget.onChanged();
           },
         ),
       ],
@@ -271,8 +331,10 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               children: [
                 CircleAvatar(
                   radius: 28,
-                  backgroundColor:
-                      Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+                  backgroundColor: Theme.of(context)
+                      .colorScheme
+                      .primary
+                      .withValues(alpha: 0.12),
                   backgroundImage: googleUser.photoUrl != null
                       ? NetworkImage(googleUser.photoUrl!)
                       : null,
@@ -425,7 +487,8 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     );
   }
 
-  Future<void> _connectGoogle(BuildContext context, TimeProvider provider) async {
+  Future<void> _connectGoogle(
+      BuildContext context, TimeProvider provider) async {
     if (!GoogleCalendarService.isConfigured) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

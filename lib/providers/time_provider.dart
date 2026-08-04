@@ -6,6 +6,7 @@ import 'dart:convert';
 import '../services/google_calendar_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
+import 'dart:io';
 import '../models/target.dart';
 import '../models/schedule_template.dart';
 import '../models/calendar_block.dart';
@@ -47,8 +48,12 @@ class TimeProvider with ChangeNotifier {
   bool _isSyncing = false; // 添加同步锁标志，防止并发同步导致重复
 
   /// 本地已改、尚未成功同步到日历的日期（dateKey 列表）
-  bool _googleCalendarSyncEnabled = true;
-  bool get googleCalendarSyncEnabled => _googleCalendarSyncEnabled;
+  bool _googleCalendarSyncEnabled = !Platform.isWindows;
+  bool get googleCalendarSyncEnabled =>
+      !Platform.isWindows && _googleCalendarSyncEnabled;
+  bool get isWindows => Platform.isWindows;
+  bool _hasSelectedScheduleUser = !Platform.isWindows;
+  bool get hasSelectedScheduleUser => _hasSelectedScheduleUser;
 
   /// 是否正在查看对方日程（合并了远端数据）
   bool _remoteViewEnabled = false;
@@ -64,14 +69,20 @@ class TimeProvider with ChangeNotifier {
   static const String _scheduleUserKey = 'schedule_user_kind';
 
   Future<void> setScheduleUser(DiaryKind kind) async {
-    if (_scheduleUser == kind) return;
+    if (_scheduleUser == kind && _hasSelectedScheduleUser) return;
     _scheduleUser = kind;
+    _hasSelectedScheduleUser = true;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_scheduleUserKey, kind.code);
+    await AppUserIdentityStore.saveManualKind(kind);
     notifyListeners();
+    if (Platform.isWindows && _pendingSyncDates.isNotEmpty) {
+      unawaited(syncAllSchedulesToGitee());
+    }
   }
 
   Future<void> setGoogleCalendarSyncEnabled(bool enabled) async {
+    if (Platform.isWindows) return;
     if (_googleCalendarSyncEnabled == enabled) return;
     _googleCalendarSyncEnabled = enabled;
     if (!enabled) {
@@ -143,8 +154,8 @@ class TimeProvider with ChangeNotifier {
   int get templatesRevision => _templatesRevision;
   int _slotsRevision = 0;
   int get slotsRevision => _slotsRevision;
-  final Set<String> _slotsDirty = {};  // 变化的日期 key
-  bool _allSlotsDirty = false;  // 全量脏标记（用于 _propagateLabelRename 等场景）
+  final Set<String> _slotsDirty = {}; // 变化的日期 key
+  bool _allSlotsDirty = false; // 全量脏标记（用于 _propagateLabelRename 等场景）
   bool _templatesDirty = false;
   bool _calendarDirty = false;
   bool _syncDirty = false;
@@ -214,6 +225,15 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> _loadScheduleUserFromStore() async {
+    if (Platform.isWindows) {
+      final manualKind = await AppUserIdentityStore.loadManualKind();
+      if (manualKind != null) {
+        _scheduleUser = manualKind;
+        _hasSelectedScheduleUser = true;
+      }
+      notifyListeners();
+      return;
+    }
     final identity = await AppUserIdentityStore.load();
     if (identity != null) {
       final nickname = KnownGoogleUsers.nicknameFor(identity.email);
@@ -312,7 +332,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void toggleSlot(int index) {
-    if (_remoteViewEnabled) return;  // 远程视图只读，禁止编辑本地数据
+    if (_remoteViewEnabled) return; // 远程视图只读，禁止编辑本地数据
     _saveSnapshot();
     List<TimeSlot> currentSlots = slots;
     currentSlots[index].recorded = !currentSlots[index].recorded;
@@ -321,11 +341,11 @@ class TimeProvider with ChangeNotifier {
     _targetStatsCache.invalidateDate(dateKey);
     _saveData();
     notifyListeners();
-    _targetStatsChangedController.add(null);  // 通知目标统计变化
+    _targetStatsChangedController.add(null); // 通知目标统计变化
   }
 
   void clearAll() {
-    if (_remoteViewEnabled) return;  // 远程视图只读，禁止编辑本地数据
+    if (_remoteViewEnabled) return; // 远程视图只读，禁止编辑本地数据
     _saveSnapshot();
     String dateKey = _getDateKey(_currentDate);
     _dailySlots[dateKey] = _generateInitialSlots();
@@ -334,7 +354,7 @@ class TimeProvider with ChangeNotifier {
     _markPendingSync();
     _saveData();
     notifyListeners();
-    _targetStatsChangedController.add(null);  // 通知目标统计变化
+    _targetStatsChangedController.add(null); // 通知目标统计变化
     _scheduleCalendarSync();
   }
 
@@ -344,8 +364,7 @@ class TimeProvider with ChangeNotifier {
   void _cleanupOldUndoStacks() {
     if (_undoStacks.length <= _maxUndoDayCount) return;
     final now = DateTime.now();
-    final threshold =
-        now.subtract(Duration(days: _maxUndoDayCount));
+    final threshold = now.subtract(Duration(days: _maxUndoDayCount));
     _undoStacks.removeWhere((dateKey, _) {
       final parts = dateKey.split('-');
       if (parts.length != 3) return true; // 格式异常的也清理
@@ -354,8 +373,8 @@ class TimeProvider with ChangeNotifier {
       final day = int.tryParse(parts[2]);
       if (year == null || month == null || day == null) return true;
       final date = DateTime(year, month, day);
-      return date.isBefore(DateTime(threshold.year, threshold.month,
-          threshold.day));
+      return date
+          .isBefore(DateTime(threshold.year, threshold.month, threshold.day));
     });
   }
 
@@ -388,7 +407,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void undo() {
-    if (_remoteViewEnabled) return;  // 远程视图只读，禁止编辑本地数据
+    if (_remoteViewEnabled) return; // 远程视图只读，禁止编辑本地数据
     String dateKey = _getDateKey(_currentDate);
     if (_undoStacks[dateKey] != null && _undoStacks[dateKey]!.isNotEmpty) {
       _dailySlots[dateKey] = _undoStacks[dateKey]!.removeLast();
@@ -403,7 +422,7 @@ class TimeProvider with ChangeNotifier {
 
   void assignCategoryToSlots(Set<int> indices, Category category,
       {String? subLabel}) {
-    if (_remoteViewEnabled) return;  // 远程视图只读，禁止编辑本地数据
+    if (_remoteViewEnabled) return; // 远程视图只读，禁止编辑本地数据
     if (indices.isEmpty) return;
 
     _saveSnapshot();
@@ -422,7 +441,7 @@ class TimeProvider with ChangeNotifier {
     _markPendingSync();
     _saveData();
     notifyListeners();
-    _targetStatsChangedController.add(null);  // 通知目标统计变化
+    _targetStatsChangedController.add(null); // 通知目标统计变化
     _scheduleCalendarSync();
   }
 
@@ -461,6 +480,10 @@ class TimeProvider with ChangeNotifier {
 
   /// 推送当前日期日程到 Gitee（每人独立文件，无需合并）
   Future<void> syncScheduleToGitee() async {
+    if (!_hasSelectedScheduleUser) {
+      _addScheduleSyncStatus('请先选择身份');
+      return;
+    }
     if (_scheduleGiteeSyncing || _allScheduleSyncing) return;
     _scheduleGiteeSyncing = true;
     try {
@@ -561,6 +584,10 @@ class TimeProvider with ChangeNotifier {
 
   /// 全量同步所有日期的日程到 Gitee
   Future<void> syncAllSchedulesToGitee() async {
+    if (!_hasSelectedScheduleUser) {
+      _addScheduleSyncStatus('请先选择身份');
+      return;
+    }
     if (_allScheduleSyncing) return;
     _allScheduleSyncing = true;
     // 取消可能正在等待的当日自动同步
@@ -611,6 +638,10 @@ class TimeProvider with ChangeNotifier {
 
   /// 从 Gitee 拉取指定用户日程并合并到当前日期
   Future<bool> pullScheduleFromGitee({String? userCode}) async {
+    if (!_hasSelectedScheduleUser) {
+      _addScheduleSyncStatus('请先选择身份');
+      return false;
+    }
     final token = await DiaryLocalStore.loadToken();
     if (token == null || token.isEmpty) {
       _addScheduleSyncStatus('未配置同步 Token');
@@ -677,12 +708,17 @@ class TimeProvider with ChangeNotifier {
 
   /// 切换查看对方日程。打开时显示纯远端数据；关闭时恢复本地数据。
   Future<void> toggleRemoteScheduleView() async {
+    if (!_hasSelectedScheduleUser) {
+      _addScheduleSyncStatus('请先选择身份');
+      return;
+    }
     final dateKey = _getDateKey(_currentDate);
     if (_remoteViewEnabled) {
       // 关闭：恢复本地数据
       if (_remoteViewBackup.containsKey(dateKey)) {
         final slots = _dailySlots[dateKey] ?? _generateInitialSlots();
-        final backupList = json.decode(_remoteViewBackup.remove(dateKey)!) as List<dynamic>;
+        final backupList =
+            json.decode(_remoteViewBackup.remove(dateKey)!) as List<dynamic>;
         for (final s in slots) {
           s.recorded = false;
           s.label = null;
@@ -704,7 +740,8 @@ class TimeProvider with ChangeNotifier {
               if (colorVal != null) slots[idx].color = Color(colorVal);
             }
             if (map['fc'] == true) slots[idx].isFromCalendar = true;
-            if (map['eid'] != null) slots[idx].calendarEventId = map['eid'] as String?;
+            if (map['eid'] != null)
+              slots[idx].calendarEventId = map['eid'] as String?;
           }
         }
         _markAllSlotsDirty();
@@ -728,7 +765,8 @@ class TimeProvider with ChangeNotifier {
       // 3) 备份本地数据
       final localSlots = _dailySlots[dateKey];
       if (localSlots != null) {
-        _remoteViewBackup[dateKey] = json.encode(_serializeRecordedSlots(localSlots));
+        _remoteViewBackup[dateKey] =
+            json.encode(_serializeRecordedSlots(localSlots));
       } else {
         _remoteViewBackup[dateKey] = json.encode(<Map<String, dynamic>>[]);
       }
@@ -792,7 +830,7 @@ class TimeProvider with ChangeNotifier {
   // 合并后的同步方法
   // delay: true 表示自动同步（带防抖），false 表示手动同步（立即执行）
   Future<void> synchronizeCalendar({bool delay = false}) async {
-    if (!_googleCalendarSyncEnabled) {
+    if (Platform.isWindows || !_googleCalendarSyncEnabled) {
       if (!delay) {
         _syncStatusController.add("Google 鏃ュ巻鍚屾宸插叧闂?");
       }
@@ -822,10 +860,10 @@ class TimeProvider with ChangeNotifier {
           _syncStatusController.add("SYNCING");
         }
 
-        bool pullOk = await pullGoogleCalendarForDate(_currentDate,
-            notify: false);
-        final success = await GoogleCalendarService.syncSlotsToGoogle(
-            slots, _currentDate);
+        bool pullOk =
+            await pullGoogleCalendarForDate(_currentDate, notify: false);
+        final success =
+            await GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
 
         if (success) {
           _clearPendingSyncForCurrentDate();
@@ -948,7 +986,7 @@ class TimeProvider with ChangeNotifier {
 
   // 移除指定时间块的事件
   void removeEventFromSlot(int index) {
-    if (_remoteViewEnabled) return;  // 远程视图只读，禁止编辑本地数据
+    if (_remoteViewEnabled) return; // 远程视图只读，禁止编辑本地数据
     if (index >= 0 && index < slots.length) {
       if (slots[index].recorded) {
         final wasFromCalendar = slots[index].isFromCalendar;
@@ -964,7 +1002,7 @@ class TimeProvider with ChangeNotifier {
           _scheduleCalendarSync();
           _saveData();
           notifyListeners();
-          _targetStatsChangedController.add(null);  // 通知目标统计变化
+          _targetStatsChangedController.add(null); // 通知目标统计变化
         }
       }
     }
@@ -1018,8 +1056,7 @@ class TimeProvider with ChangeNotifier {
     }
 
     if (eventId != null && eventId.isNotEmpty) {
-      final deleted =
-          await GoogleCalendarService.deleteExternalEvent(eventId);
+      final deleted = await GoogleCalendarService.deleteExternalEvent(eventId);
       if (!deleted) {
         _ignoredCalendarImports.putIfAbsent(dateKey, () => {}).add(eventId);
         if (!_syncStatusController.isClosed) {
@@ -1032,9 +1069,9 @@ class TimeProvider with ChangeNotifier {
           );
     }
 
-    _markSlotsDirty(dateKey);  // 标记当前日期为脏
-    _calendarDirty = true;  // 忽略列表也变了
-    _targetStatsCache.invalidateDate(dateKey);  // 失效该日期的缓存
+    _markSlotsDirty(dateKey); // 标记当前日期为脏
+    _calendarDirty = true; // 忽略列表也变了
+    _targetStatsCache.invalidateDate(dateKey); // 失效该日期的缓存
     await _saveData();
     notifyListeners();
   }
@@ -1060,8 +1097,7 @@ class TimeProvider with ChangeNotifier {
     return null;
   }
 
-  String _calendarBlockFingerprint(
-      String title, DateTime start, DateTime end) {
+  String _calendarBlockFingerprint(String title, DateTime start, DateTime end) {
     return 'fp:$title|${start.millisecondsSinceEpoch}|${end.millisecondsSinceEpoch}';
   }
 
@@ -1098,7 +1134,8 @@ class TimeProvider with ChangeNotifier {
       List<Map<String, dynamic>> entries) {
     if (entries.isEmpty) return [];
     final sorted = List<Map<String, dynamic>>.from(entries)
-      ..sort((a, b) => (_parseInt(a['i']) ?? 0).compareTo(_parseInt(b['i']) ?? 0));
+      ..sort(
+          (a, b) => (_parseInt(a['i']) ?? 0).compareTo(_parseInt(b['i']) ?? 0));
     final result = <({String label, int start, int end})>[];
     var start = _parseInt(sorted.first['i']) ?? 0;
     var prevLabel = sorted.first['l']?.toString() ?? '';
@@ -1188,7 +1225,8 @@ class TimeProvider with ChangeNotifier {
     // 修改的条目需要单独处理：提取时带上旧标签
     if (modifiedEntries.isNotEmpty) {
       final modifiedSorted = List<Map<String, dynamic>>.from(modifiedEntries)
-        ..sort((a, b) => (_parseInt(a['i']) ?? 0).compareTo(_parseInt(b['i']) ?? 0));
+        ..sort((a, b) =>
+            (_parseInt(a['i']) ?? 0).compareTo(_parseInt(b['i']) ?? 0));
       var start = _parseInt(modifiedSorted.first['i']) ?? 0;
       var prevOldLabel = modifiedOldLabels[start] ?? '';
       var prevNewLabel = modifiedSorted.first['l']?.toString() ?? '';
@@ -1201,16 +1239,24 @@ class TimeProvider with ChangeNotifier {
         if (curNewLabel != prevNewLabel ||
             curOldLabel != prevOldLabel ||
             curIndex != prevIndex + 1) {
-          modified.add((label: prevNewLabel, start: start, end: prevIndex + 1,
-              oldLabel: prevOldLabel));
+          modified.add((
+            label: prevNewLabel,
+            start: start,
+            end: prevIndex + 1,
+            oldLabel: prevOldLabel
+          ));
           start = curIndex;
           prevNewLabel = curNewLabel;
           prevOldLabel = curOldLabel;
         }
         prevIndex = curIndex;
       }
-      modified.add((label: prevNewLabel, start: start, end: prevIndex + 1,
-          oldLabel: prevOldLabel));
+      modified.add((
+        label: prevNewLabel,
+        start: start,
+        end: prevIndex + 1,
+        oldLabel: prevOldLabel
+      ));
     }
 
     // 格式化事件描述
@@ -1244,7 +1290,8 @@ class TimeProvider with ChangeNotifier {
     }
     if (modified.isNotEmpty) {
       final items = modified.take(maxDisplay).map(formatModified).join(', ');
-      final suffix = modified.length > maxDisplay ? ' 等${modified.length}条' : '';
+      final suffix =
+          modified.length > maxDisplay ? ' 等${modified.length}条' : '';
       parts.add('修改: $items$suffix');
     }
 
@@ -1262,14 +1309,14 @@ class TimeProvider with ChangeNotifier {
   // --- Google 日历下拉 ---
 
   Future<void> pullGoogleCalendarForCurrentDate() async {
-    if (!_googleCalendarSyncEnabled) return;
+    if (Platform.isWindows || !_googleCalendarSyncEnabled) return;
     await pullGoogleCalendarForDate(_currentDate);
   }
 
   /// 从 Google 拉取外部会议并合并到指定日期；未登录 Google 时返回 false
   Future<bool> pullGoogleCalendarForDate(DateTime date,
       {bool notify = true}) async {
-    if (!_googleCalendarSyncEnabled) return false;
+    if (Platform.isWindows || !_googleCalendarSyncEnabled) return false;
     if (!GoogleCalendarService.isSignedIn) return false;
 
     final blocks = await GoogleCalendarService.fetchExternalEvents(date);
@@ -1277,7 +1324,7 @@ class TimeProvider with ChangeNotifier {
     final dateKey = _getDateKey(date);
     _mergeCalendarBlocks(dateKey, blocks, date);
     _markSlotsDirty(dateKey);
-    _targetStatsCache.invalidateDate(dateKey);  // 失效该日期的缓存
+    _targetStatsCache.invalidateDate(dateKey); // 失效该日期的缓存
     await _saveData();
     if (notify) notifyListeners();
     return true;
@@ -1388,7 +1435,7 @@ class TimeProvider with ChangeNotifier {
       slots: entries,
       createdAt: DateTime.now().millisecondsSinceEpoch,
     ));
-    _markTemplatesChanged();  // 标记模板为脏
+    _markTemplatesChanged(); // 标记模板为脏
     _saveData();
     notifyListeners();
     return true;
@@ -1430,8 +1477,7 @@ class TimeProvider with ChangeNotifier {
     _applySlotEntries(template.slots, mode);
   }
 
-  DateTime get _yesterdayDate =>
-      _currentDate.subtract(const Duration(days: 1));
+  DateTime get _yesterdayDate => _currentDate.subtract(const Duration(days: 1));
 
   List<TimeSlot>? get _yesterdaySlots {
     final key = _getDateKey(_yesterdayDate);
@@ -1466,7 +1512,8 @@ class TimeProvider with ChangeNotifier {
   }
 
   /// 将昨天安排复制到当前日；无可复制内容时返回 false
-  bool copyFromYesterday({ApplyTemplateMode mode = ApplyTemplateMode.fillEmptyOnly}) {
+  bool copyFromYesterday(
+      {ApplyTemplateMode mode = ApplyTemplateMode.fillEmptyOnly}) {
     final entries = _yesterdayCopyEntries();
     if (entries.isEmpty) return false;
     _applySlotEntries(entries, mode);
@@ -1474,7 +1521,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void _applySlotEntries(List<TemplateSlot> entries, ApplyTemplateMode mode) {
-    if (_remoteViewEnabled) return;  // 远程视图只读，禁止编辑本地数据
+    if (_remoteViewEnabled) return; // 远程视图只读，禁止编辑本地数据
     _saveSnapshot();
 
     final dateKey = _getDateKey(_currentDate);
@@ -1495,8 +1542,8 @@ class TimeProvider with ChangeNotifier {
       }
       daySlots[entry.index].recorded = true;
       daySlots[entry.index].label = entry.label;
-      daySlots[entry.index].categoryId = entry.categoryId ??
-          resolveCategoryIdForLabel(entry.label);
+      daySlots[entry.index].categoryId =
+          entry.categoryId ?? resolveCategoryIdForLabel(entry.label);
       daySlots[entry.index].isFromCalendar = false;
       daySlots[entry.index].calendarEventId = null;
       if (entry.colorArgb != null) {
@@ -1509,7 +1556,7 @@ class TimeProvider with ChangeNotifier {
     _markPendingSync();
     _saveData();
     notifyListeners();
-    _targetStatsChangedController.add(null);  // 通知目标统计变化
+    _targetStatsChangedController.add(null); // 通知目标统计变化
     _scheduleCalendarSync();
   }
 
@@ -1519,14 +1566,14 @@ class TimeProvider with ChangeNotifier {
     final index = _templates.indexWhere((t) => t.id == id);
     if (index == -1) return;
     _templates[index] = _templates[index].copyWith(name: trimmed);
-    _markTemplatesChanged();  // 标记模板为脏
+    _markTemplatesChanged(); // 标记模板为脏
     _saveData();
     notifyListeners();
   }
 
   void deleteTemplate(String id) {
     _templates.removeWhere((t) => t.id == id);
-    _markTemplatesChanged();  // 标记模板为脏
+    _markTemplatesChanged(); // 标记模板为脏
     _saveData();
     notifyListeners();
   }
@@ -1536,7 +1583,7 @@ class TimeProvider with ChangeNotifier {
   void addCategory(Category category) {
     _categories.add(category);
     _markCategoriesChanged();
-    _invalidateLabelCategoryIdCache();  // 清除缓存
+    _invalidateLabelCategoryIdCache(); // 清除缓存
     _saveData();
     notifyListeners();
   }
@@ -1566,7 +1613,7 @@ class TimeProvider with ChangeNotifier {
 
     _categories[index] = updated;
     _markCategoriesChanged();
-    _invalidateLabelCategoryIdCache();  // 清除缓存
+    _invalidateLabelCategoryIdCache(); // 清除缓存
     _saveData();
     notifyListeners();
   }
@@ -1575,12 +1622,13 @@ class TimeProvider with ChangeNotifier {
     if (catIndex < 0 || catIndex >= _categories.length) return;
     final cat = _categories[catIndex];
     final newSubs = List<String>.from(cat.subCategories)..remove(subCategory);
-    final newHidden = List<String>.from(cat.hiddenSubCategories)..add(subCategory);
+    final newHidden = List<String>.from(cat.hiddenSubCategories)
+      ..add(subCategory);
     _categories[catIndex] = cat.copyWith(
       subCategories: newSubs,
       hiddenSubCategories: newHidden,
     );
-    _markCategoriesChanged();  // 标记分类为脏
+    _markCategoriesChanged(); // 标记分类为脏
     _saveData();
     notifyListeners();
   }
@@ -1588,13 +1636,14 @@ class TimeProvider with ChangeNotifier {
   void restoreSubCategory(int catIndex, String subCategory) {
     if (catIndex < 0 || catIndex >= _categories.length) return;
     final cat = _categories[catIndex];
-    final newHidden = List<String>.from(cat.hiddenSubCategories)..remove(subCategory);
+    final newHidden = List<String>.from(cat.hiddenSubCategories)
+      ..remove(subCategory);
     final newSubs = List<String>.from(cat.subCategories)..add(subCategory);
     _categories[catIndex] = cat.copyWith(
       subCategories: newSubs,
       hiddenSubCategories: newHidden,
     );
-    _markCategoriesChanged();  // 标记分类为脏
+    _markCategoriesChanged(); // 标记分类为脏
     _saveData();
     notifyListeners();
   }
@@ -1630,7 +1679,7 @@ class TimeProvider with ChangeNotifier {
 
   Map<String, String> _labelToCategoryIdMap() {
     if (_labelCategoryIdCache != null) return _labelCategoryIdCache!;
-    
+
     final map = <String, String>{};
     for (final cat in _categories) {
       map[cat.name] = cat.id;
@@ -1702,7 +1751,7 @@ class TimeProvider with ChangeNotifier {
     _markTemplatesChanged();
     _targetStatsCache.invalidate();
     _invalidateLabelCategoryIdCache();
-    _targetStatsChangedController.add(null);  // 通知目标统计变化
+    _targetStatsChangedController.add(null); // 通知目标统计变化
   }
 
   void _migrateToCategoryIds() {
@@ -1783,7 +1832,7 @@ class TimeProvider with ChangeNotifier {
     // 串行化保存：等待上一个保存完成后再启动本次，
     // 避免并发读写导致整包写回时互相覆盖丢数据。
     final save = (previous ?? Future<void>.value())
-        .catchError((_) {})  // 上一个保存失败不阻断本次
+        .catchError((_) {}) // 上一个保存失败不阻断本次
         .then((_) => _saveDataImpl(requestRevision));
     _ongoingSave = save;
     try {
@@ -1795,8 +1844,10 @@ class TimeProvider with ChangeNotifier {
 
   Future<void> _saveDataImpl(int requestRevision) async {
     // Invalidate stats cache on any data change (包括分类/目标结构变化)
-    if (_slotsDirty.isNotEmpty || _allSlotsDirty ||
-        _categoriesDirty || _targetsDirty) {
+    if (_slotsDirty.isNotEmpty ||
+        _allSlotsDirty ||
+        _categoriesDirty ||
+        _targetsDirty) {
       _statsCache = null;
       _statsCacheKey = null;
       _occurrenceCache = null;
@@ -1906,7 +1957,8 @@ class TimeProvider with ChangeNotifier {
       _ignoredCalendarImports.forEach((dateKey, ids) {
         if (ids.isNotEmpty) ignoredJson[dateKey] = ids.toList();
       });
-      await prefs.setString('ignored_calendar_imports', json.encode(ignoredJson));
+      await prefs.setString(
+          'ignored_calendar_imports', json.encode(ignoredJson));
       if (_saveRequestRevision == requestRevision) {
         _calendarDirty = false;
       }
@@ -2066,7 +2118,8 @@ class TimeProvider with ChangeNotifier {
       }
     }
     if (!parsedCategories.any((c) => c.name == '临时')) {
-      parsedCategories.add(Category(name: '临时', color: const Color(0xFF9E9E9E)));
+      parsedCategories
+          .add(Category(name: '临时', color: const Color(0xFF9E9E9E)));
     }
 
     final parsedTargets = <Target>[];
@@ -2074,7 +2127,8 @@ class TimeProvider with ChangeNotifier {
     if (targets is List) {
       for (final e in targets) {
         try {
-          parsedTargets.add(Target.fromJson(Map<String, dynamic>.from(e as Map)));
+          parsedTargets
+              .add(Target.fromJson(Map<String, dynamic>.from(e as Map)));
         } catch (err) {
           debugPrint("导入目标数据出错: $err");
         }
@@ -2096,8 +2150,8 @@ class TimeProvider with ChangeNotifier {
     if (templates is List) {
       for (final e in templates) {
         try {
-          parsedTemplates
-              .add(ScheduleTemplate.fromJson(Map<String, dynamic>.from(e as Map)));
+          parsedTemplates.add(
+              ScheduleTemplate.fromJson(Map<String, dynamic>.from(e as Map)));
         } catch (err) {
           debugPrint("导入模板数据出错: $err");
         }
@@ -2161,9 +2215,9 @@ class TimeProvider with ChangeNotifier {
       ];
 
   void _loadDailySlotsFromJson(
-      Map<String, dynamic> slotsJson, {
-      Map<String, List<TimeSlot>>? destination,
-    }) {
+    Map<String, dynamic> slotsJson, {
+    Map<String, List<TimeSlot>>? destination,
+  }) {
     final target = destination ?? _dailySlots;
     slotsJson.forEach((rawKey, value) {
       final dateKey = _normalizeDateKey(rawKey);
@@ -2256,8 +2310,7 @@ class TimeProvider with ChangeNotifier {
         _templates
           ..clear()
           ..addAll(list
-              .map((e) =>
-                  ScheduleTemplate.fromJson(e as Map<String, dynamic>))
+              .map((e) => ScheduleTemplate.fromJson(e as Map<String, dynamic>))
               .toList());
       } catch (e) {
         debugPrint("加载模板数据出错: $e");
@@ -2287,10 +2340,10 @@ class TimeProvider with ChangeNotifier {
       ..clear()
       ..addAll((prefs.getStringList('pending_sync_dates') ?? [])
           .map(_normalizeDateKey));
-    _googleCalendarSyncEnabled =
-        prefs.getBool('google_calendar_sync_enabled') ?? true;
-    _scheduleUser =
-        DiaryKindX.fromCode(prefs.getString(_scheduleUserKey));
+    _googleCalendarSyncEnabled = Platform.isWindows
+        ? false
+        : (prefs.getBool('google_calendar_sync_enabled') ?? true);
+    _scheduleUser = DiaryKindX.fromCode(prefs.getString(_scheduleUserKey));
 
     // 7. 分类展开状态（key 为 Category ID）
     final expandStr = prefs.getString('category_expand_states');
@@ -2361,7 +2414,7 @@ class TimeProvider with ChangeNotifier {
     final Category item = _categories.removeAt(oldIndex);
     _categories.insert(newIndex, item);
 
-    _markCategoriesChanged();  // 标记分类为脏
+    _markCategoriesChanged(); // 标记分类为脏
     notifyListeners();
     _saveData();
   }
@@ -2395,7 +2448,7 @@ class TimeProvider with ChangeNotifier {
     _targetsDirty = true;
     _saveData();
     notifyListeners();
-    _targetStatsChangedController.add(null);  // 通知目标统计变化
+    _targetStatsChangedController.add(null); // 通知目标统计变化
   }
 
   void updateTarget(Target newTarget) {
@@ -2405,7 +2458,7 @@ class TimeProvider with ChangeNotifier {
       _targetsDirty = true;
       _saveData();
       notifyListeners();
-      _targetStatsChangedController.add(null);  // 通知目标统计变化
+      _targetStatsChangedController.add(null); // 通知目标统计变化
     }
   }
 
@@ -2414,7 +2467,7 @@ class TimeProvider with ChangeNotifier {
     _targetsDirty = true;
     _saveData();
     notifyListeners();
-    _targetStatsChangedController.add(null);  // 通知目标统计变化
+    _targetStatsChangedController.add(null); // 通知目标统计变化
   }
 
   void reorderTargets(int oldIndex, int newIndex) {
@@ -2423,7 +2476,7 @@ class TimeProvider with ChangeNotifier {
     }
     final Target item = _targets.removeAt(oldIndex);
     _targets.insert(newIndex, item);
-    _targetsDirty = true;  // 标记目标为脏
+    _targetsDirty = true; // 标记目标为脏
     _saveData();
     notifyListeners();
   }
@@ -2495,8 +2548,7 @@ class TimeProvider with ChangeNotifier {
 
     // 1. 找出所有包含该目标记录的日期
     List<String> validDates = _dailySlots.keys.where((dateKey) {
-      return _dailySlots[dateKey]!
-          .any((s) => slotMatchesTarget(s, target));
+      return _dailySlots[dateKey]!.any((s) => slotMatchesTarget(s, target));
     }).toList();
 
     // 2. 按日期倒序排列 (最新的在前面)
@@ -2674,7 +2726,8 @@ class TimeProvider with ChangeNotifier {
   int getTargetWeeklyGoal(Target target) {
     final dailyGoal = getTargetDailyGoal(target);
     if (target.period == "每天") return dailyGoal * 7;
-    if (target.period == "每周" || target.period == "本周") return target.frequencyCount;
+    if (target.period == "每周" || target.period == "本周")
+      return target.frequencyCount;
     return dailyGoal * 7;
   }
 
@@ -2682,7 +2735,8 @@ class TimeProvider with ChangeNotifier {
   int getTargetMonthlyGoal(Target target) {
     final dailyGoal = getTargetDailyGoal(target);
     if (target.period == "每天") return dailyGoal * 30;
-    if (target.period == "每月" || target.period == "本月") return target.frequencyCount;
+    if (target.period == "每月" || target.period == "本月")
+      return target.frequencyCount;
     return dailyGoal * 30;
   }
 
@@ -2901,9 +2955,7 @@ class TimeProvider with ChangeNotifier {
     }
     for (final daySlots in _dailySlots.values) {
       for (final slot in daySlots) {
-        if (slot.recorded &&
-            slot.label != null &&
-            slot.label!.isNotEmpty) {
+        if (slot.recorded && slot.label != null && slot.label!.isNotEmpty) {
           labels.add(slot.label!);
         }
       }

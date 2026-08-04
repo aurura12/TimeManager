@@ -2,6 +2,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import '../models/google_calendar_user.dart';
+import '../models/diary_kind.dart';
 
 /// 持久保存「曾登录过的用户身份」，不因网络/token 失效而清除。
 /// 仅在用户主动退出 Google 登录时清除。
@@ -11,6 +12,7 @@ class AppUserIdentityStore {
   static const _idKey = 'app_user_identity_id';
   static const _nameKey = 'app_user_identity_display_name';
   static const _photoKey = 'app_user_identity_photo_url';
+  static const _manualKindKey = 'app_user_identity_manual_kind';
 
   static Future<void> save(GoogleSignInAccount account) async {
     await saveUser(GoogleCalendarUser.fromAccount(account));
@@ -50,5 +52,16 @@ class AppUserIdentityStore {
     await _storage.delete(key: _idKey);
     await _storage.delete(key: _nameKey);
     await _storage.delete(key: _photoKey);
+    await _storage.delete(key: _manualKindKey);
+  }
+
+  static Future<DiaryKind?> loadManualKind() async {
+    final value = await _storage.read(key: _manualKindKey);
+    if (value == null || value.isEmpty) return null;
+    return DiaryKindX.fromCode(value);
+  }
+
+  static Future<void> saveManualKind(DiaryKind kind) async {
+    await _storage.write(key: _manualKindKey, value: kind.code);
   }
 }

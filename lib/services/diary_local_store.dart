@@ -6,6 +6,7 @@ import '../config/diary_github_config.dart';
 import '../models/diary_kind.dart';
 import '../models/remote_sync_platform.dart';
 import 'remote_sync_settings.dart';
+import 'app_user_identity_store.dart';
 
 class DiaryLocalStore {
   static const String _githubTokenKey = 'diary_github_pat';
@@ -82,6 +83,10 @@ class DiaryLocalStore {
   static Future<void> savePreferredKind(DiaryKind kind) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kindKey, kind.code);
+  }
+
+  static Future<DiaryKind?> loadManualKind() {
+    return AppUserIdentityStore.loadManualKind();
   }
 
   static Future<String?> loadDraftBody(DiaryKind kind, DateTime date) async {
