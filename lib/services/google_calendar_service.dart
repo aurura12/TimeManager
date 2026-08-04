@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -15,7 +16,9 @@ import 'app_user_identity_store.dart';
 class GoogleCalendarService {
   static const String _appSignature = "乖乖🥰晶晶";
   static final _logger = Logger();
-  static const List<String> _scopes = [calendar.CalendarApi.calendarEventsScope];
+  static const List<String> _scopes = [
+    calendar.CalendarApi.calendarEventsScope
+  ];
   static final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
 
   static GoogleSignInAccount? _currentUser;
@@ -30,7 +33,9 @@ class GoogleCalendarService {
   static final StreamController<void> _authStateController =
       StreamController<void>.broadcast();
 
-  static bool get isConfigured => GoogleSignInConfig.serverClientId.trim().isNotEmpty;
+  static bool get isConfigured =>
+      GoogleSignInConfig.serverClientId.trim().isNotEmpty;
+  static bool get isSupportedPlatform => !Platform.isWindows;
   static String? get lastLoginError => _lastLoginError;
   static Stream<void> get authStateChanges => _authStateController.stream;
 
@@ -77,6 +82,10 @@ class GoogleCalendarService {
 
   static Future<void> _doBootstrap() async {
     if (_initialized) return;
+    if (!isSupportedPlatform) {
+      _log('Windows 版本不启用 Google 日历');
+      return;
+    }
     if (!isConfigured) {
       _log('未配置 serverClientId，跳过 Google 初始化');
       return;
@@ -161,7 +170,8 @@ class GoogleCalendarService {
   }
 
   static GoogleSignInAuthorizationClient _authorizationClient() {
-    return _currentUser?.authorizationClient ?? _googleSignIn.authorizationClient;
+    return _currentUser?.authorizationClient ??
+        _googleSignIn.authorizationClient;
   }
 
   /// 轻量登录失败时：用本地档案 + authorizationForScopes 尝试恢复 token
@@ -219,6 +229,7 @@ class GoogleCalendarService {
   }
 
   static Future<GoogleSignInAccount?> login() async {
+    if (!isSupportedPlatform) return null;
     _lastLoginError = null;
     try {
       await bootstrap();
@@ -238,6 +249,11 @@ class GoogleCalendarService {
   }
 
   static Future<void> logout() async {
+    if (!isSupportedPlatform) {
+      await _clearAllIdentity();
+      _notifyAuthStateChanged();
+      return;
+    }
     await bootstrap();
     await _googleSignIn.signOut();
     await _clearAllIdentity();
@@ -247,6 +263,7 @@ class GoogleCalendarService {
 
   /// 重新连接 Google 日历：先静默恢复，失败则弹出登录
   static Future<bool> reconnectCalendar() async {
+    if (!isSupportedPlatform) return false;
     _lastLoginError = null;
     if (!isConfigured) return false;
 
@@ -262,7 +279,7 @@ class GoogleCalendarService {
   static Future<GoogleSignInAccount?> restoreSignIn({
     bool background = false,
   }) async {
-    if (!isConfigured) return null;
+    if (!isSupportedPlatform || !isConfigured) return null;
     await bootstrap();
     await _ensureKnownUserLoaded();
     if (_currentUser != null) {
@@ -320,6 +337,7 @@ class GoogleCalendarService {
   }
 
   static Future<calendar.CalendarApi?> getCalendarApi() async {
+    if (!isSupportedPlatform) return null;
     await bootstrap();
     if (!isSignedIn) {
       await restoreSignIn();
@@ -380,8 +398,7 @@ class GoogleCalendarService {
       return null;
     }
 
-    final clippedStart =
-        localStart.isBefore(dayStart) ? dayStart : localStart;
+    final clippedStart = localStart.isBefore(dayStart) ? dayStart : localStart;
     final clippedEnd = localEnd.isAfter(dayEnd) ? dayEnd : localEnd;
     if (!clippedEnd.isAfter(clippedStart)) return null;
 

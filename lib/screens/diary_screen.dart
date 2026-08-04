@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -59,14 +60,18 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   Future<void> _loadInitial() async {
     final token = await DiaryLocalStore.loadToken();
-    final kind = await DiaryLocalStore.loadPreferredKind();
+    final kind = Platform.isWindows
+        ? (await DiaryLocalStore.loadManualKind() ??
+            await DiaryLocalStore.loadPreferredKind())
+        : await DiaryLocalStore.loadPreferredKind();
     _token = token;
     _kind = kind;
     await _loadDraftForCurrentContext();
     _dirtySinceContextLoaded = false;
     if (!mounted) return;
     setState(() => _loading = false);
-    _refreshCurrentContextFromRemote(_contextRequestId, forcePathRefresh: false);
+    _refreshCurrentContextFromRemote(_contextRequestId,
+        forcePathRefresh: false);
 
     // 后台加载搜索缓存
     if (token != null && token.isNotEmpty) {
@@ -135,7 +140,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (_remoteDiaryPathsFetchedAt == null || _remoteDiaryPaths.isEmpty) {
       return false;
     }
-    return DateTime.now().difference(_remoteDiaryPathsFetchedAt!) < _remotePathsTtl;
+    return DateTime.now().difference(_remoteDiaryPathsFetchedAt!) <
+        _remotePathsTtl;
   }
 
   Future<void> _updateDiaryDateKeys() async {
@@ -182,20 +188,24 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return listResult.paths;
   }
 
-  Future<String?> _findRemotePathForCurrentContext({bool refresh = true}) async {
+  Future<String?> _findRemotePathForCurrentContext(
+      {bool refresh = true}) async {
     List<String> paths = _remoteDiaryPaths;
     if (refresh || paths.isEmpty) {
-      final fetched = await _fetchRemoteDiaryPathsSilently(forceRefresh: refresh);
+      final fetched =
+          await _fetchRemoteDiaryPathsSilently(forceRefresh: refresh);
       if (fetched != null) {
         paths = fetched;
       }
     }
     if (paths.isEmpty) return null;
 
-    final matched =
-        paths.where((p) => _matchesKindAndDate(p, _kind, _selectedDate)).toList();
+    final matched = paths
+        .where((p) => _matchesKindAndDate(p, _kind, _selectedDate))
+        .toList();
     if (matched.isEmpty) return null;
-    final pinned = _contextRemotePathOverrides[_contextKey(_kind, _selectedDate)];
+    final pinned =
+        _contextRemotePathOverrides[_contextKey(_kind, _selectedDate)];
     if (pinned != null && matched.contains(pinned)) {
       _lastContextPathAmbiguous = false;
       return pinned;
@@ -225,7 +235,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
       _bodyController.text,
     );
     if (_startedAt != null) {
-      await DiaryLocalStore.saveDraftStartedAt(_kind, _selectedDate, _startedAt!);
+      await DiaryLocalStore.saveDraftStartedAt(
+          _kind, _selectedDate, _startedAt!);
     }
   }
 
@@ -304,7 +315,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
     String? raw = DiarySearchService.getCachedContentByPath(remotePath);
 
     if (raw == null) {
-      final result = await DiaryGiteeService.pullDiary(token: token, path: remotePath);
+      final result =
+          await DiaryGiteeService.pullDiary(token: token, path: remotePath);
       if (!mounted || requestId != _contextRequestId) return;
       if (!result.success) return;
       if (_dirtySinceContextLoaded) return;
@@ -344,6 +356,14 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   Future<void> _changeKind(DiaryKind kind) async {
+    if (Platform.isWindows) {
+      final manualKind = await DiaryLocalStore.loadManualKind();
+      if (manualKind != null && manualKind != kind) {
+        _showMessage(
+            'Windows 版本当前身份为${manualKind == DiaryKind.g ? '乖乖' : '晶晶'}，不能切换日记分区');
+        return;
+      }
+    }
     if (_kind == kind) return;
     await _switchContext(kind: kind);
   }
@@ -415,8 +435,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
     String? raw = DiarySearchService.getCachedContentByPath(path);
 
     if (raw == null) {
-    // 缓存未命中，从远程仓库拉取
-      final result = await DiaryGiteeService.pullDiary(token: _token!, path: path);
+      // 缓存未命中，从远程仓库拉取
+      final result =
+          await DiaryGiteeService.pullDiary(token: _token!, path: path);
       if (!mounted) return;
       if (!result.success) {
         _showMessage(result.error ?? '加载远程文件失败');
@@ -440,7 +461,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
     }
     final parsedDate = _parseDateFromPath(path);
     if (parsedDate != null) {
-      _selectedDate = DateTime(parsedDate.year, parsedDate.month, parsedDate.day);
+      _selectedDate =
+          DateTime(parsedDate.year, parsedDate.month, parsedDate.day);
     }
     _contextRemotePathOverrides[_contextKey(_kind, _selectedDate)] = path;
     _contextRequestId++;
@@ -459,7 +481,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
   Future<void> _loadRemoteTree() async {
     if ((_token ?? '').trim().isEmpty) {
       setState(() {
-      _remoteTreeError = '未配置当前平台同步 Token';
+        _remoteTreeError = '未配置当前平台同步 Token';
         _remoteTreeLoading = false;
       });
       return;
@@ -664,6 +686,17 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   Future<void> _pushDiary() async {
+    if (Platform.isWindows) {
+      final manualKind = await DiaryLocalStore.loadManualKind();
+      if (manualKind == null) {
+        _showMessage('请先在设置中选择“乖乖”或“晶晶”身份');
+        return;
+      }
+      if (_kind != manualKind) {
+        _showMessage('当前日记分区与 Windows 用户身份不一致，请先切换回正确分区');
+        return;
+      }
+    }
     final ok = await _ensureToken();
     if (!ok) return;
 
@@ -773,86 +806,88 @@ class _DiaryScreenState extends State<DiaryScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-            Row(
-              children: [
-                ChoiceChip(
-                  label: const Text('G'),
-                  selected: _kind == DiaryKind.g,
-                  onSelected: (_) => _changeKind(DiaryKind.g),
-                ),
-                const SizedBox(width: 8),
-                ChoiceChip(
-                  label: const Text('J'),
-                  selected: _kind == DiaryKind.j,
-                  onSelected: (_) => _changeKind(DiaryKind.j),
-                ),
-                const Spacer(),
-                OutlinedButton.icon(
-                  onPressed: _processing ? null : _showCalendarPicker,
-                  icon: const Icon(Icons.calendar_today_outlined, size: 16),
-                  label: Text(_selectedDateText()),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHigh,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: startedAt == null
-                  ? Text(
-                      '开始输入正文后，会自动生成 title 与 date。',
-                      style: TextStyle(color: colorScheme.onSurfaceVariant),
-                    )
-                  : Text(
-                      'title: ${_frontMatterTitle(startedAt)}\n'
-                      'date: ${_frontMatterDate(startedAt)}',
-                      style: TextStyle(
-                        height: 1.5,
-                        color: colorScheme.onSurface,
+                  Row(
+                    children: [
+                      ChoiceChip(
+                        label: const Text('G'),
+                        selected: _kind == DiaryKind.g,
+                        onSelected: (_) => _changeKind(DiaryKind.g),
                       ),
-                    ),
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: Stack(
-                children: [
-                  TextField(
-                    controller: _bodyController,
-                    maxLines: null,
-                    expands: true,
-                    textAlignVertical: TextAlignVertical.top,
-                    decoration: InputDecoration(
-                      hintText: '在这里写正文...',
-                      contentPadding: const EdgeInsets.only(
-                        top: 16,
-                        left: 12,
-                        right: 44,
-                        bottom: 12,
+                      const SizedBox(width: 8),
+                      ChoiceChip(
+                        label: const Text('J'),
+                        selected: _kind == DiaryKind.j,
+                        onSelected: (_) => _changeKind(DiaryKind.j),
                       ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
+                      const Spacer(),
+                      OutlinedButton.icon(
+                        onPressed: _processing ? null : _showCalendarPicker,
+                        icon:
+                            const Icon(Icons.calendar_today_outlined, size: 16),
+                        label: Text(_selectedDateText()),
                       ),
-                    ),
+                    ],
                   ),
-                  Positioned(
-                    top: 0,
-                    right: 0,
-                    child: IconButton(
-                      tooltip: '插入当前时间',
-                      onPressed: _insertCurrentTime,
-                      icon: const Icon(Icons.access_time, size: 20),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHigh,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: startedAt == null
+                        ? Text(
+                            '开始输入正文后，会自动生成 title 与 date。',
+                            style:
+                                TextStyle(color: colorScheme.onSurfaceVariant),
+                          )
+                        : Text(
+                            'title: ${_frontMatterTitle(startedAt)}\n'
+                            'date: ${_frontMatterDate(startedAt)}',
+                            style: TextStyle(
+                              height: 1.5,
+                              color: colorScheme.onSurface,
+                            ),
+                          ),
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: Stack(
+                      children: [
+                        TextField(
+                          controller: _bodyController,
+                          maxLines: null,
+                          expands: true,
+                          textAlignVertical: TextAlignVertical.top,
+                          decoration: InputDecoration(
+                            hintText: '在这里写正文...',
+                            contentPadding: const EdgeInsets.only(
+                              top: 16,
+                              left: 12,
+                              right: 44,
+                              bottom: 12,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          top: 0,
+                          right: 0,
+                          child: IconButton(
+                            tooltip: '插入当前时间',
+                            onPressed: _insertCurrentTime,
+                            icon: const Icon(Icons.access_time, size: 20),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
             ),
-          ],
-        ),
-      ),
-      ),
+          ),
           ValueListenableBuilder<double>(
             valueListenable: DiarySearchService.progress,
             builder: (context, value, child) {
@@ -860,11 +895,13 @@ class _DiaryScreenState extends State<DiaryScreen> {
                 return const SizedBox.shrink();
               }
               return Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                 color: colorScheme.surfaceContainerHigh,
                 child: Row(
                   children: [
-                    Icon(Icons.search, size: 16, color: colorScheme.onSurfaceVariant),
+                    Icon(Icons.search,
+                        size: 16, color: colorScheme.onSurfaceVariant),
                     const SizedBox(width: 8),
                     Expanded(
                       child: LinearProgressIndicator(
@@ -1066,8 +1103,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
                           children: [
                             if (hasGDiary)
                               Container(
-                                margin:
-                                    const EdgeInsets.only(top: 2, right: 1),
+                                margin: const EdgeInsets.only(top: 2, right: 1),
                                 width: 5,
                                 height: 5,
                                 decoration: const BoxDecoration(
@@ -1077,8 +1113,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
                               ),
                             if (hasJDiary)
                               Container(
-                                margin:
-                                    const EdgeInsets.only(top: 2, left: 1),
+                                margin: const EdgeInsets.only(top: 2, left: 1),
                                 width: 5,
                                 height: 5,
                                 decoration: const BoxDecoration(
