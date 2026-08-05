@@ -54,7 +54,35 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                     ),
                   ),
                   if (Platform.isWindows)
-                    _buildWindowsIdentitySection(context, provider)
+                    ...[
+                      _buildWindowsIdentitySection(context, provider),
+                      ListTile(
+                        leading: const Icon(Icons.cloud_download_outlined),
+                        title: const Text('拉取所有日程'),
+                        subtitle: const Text('从 Gitee 合并所有日期的日程到本地'),
+                        onTap: () {
+                          provider.pullAllSchedulesFromGitee();
+                          final messenger = ScaffoldMessenger.of(context);
+                          Navigator.pop(context);
+                          messenger.showSnackBar(
+                            const SnackBar(content: Text('正在后台拉取所有日程...')),
+                          );
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.cloud_upload_outlined),
+                        title: const Text('推送所有日程'),
+                        subtitle: const Text('将所有日期的日程增量推送到远端'),
+                        onTap: () {
+                          provider.syncAllSchedulesToGitee();
+                          final messenger = ScaffoldMessenger.of(context);
+                          Navigator.pop(context);
+                          messenger.showSnackBar(
+                            const SnackBar(content: Text('正在后台推送所有日程...')),
+                          );
+                        },
+                      ),
+                    ]
                   else ...[
                     _buildLoginSection(context, googleUser, provider),
                     const Divider(height: 1),

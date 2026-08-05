@@ -136,20 +136,21 @@ class UpdateService {
         final body = data['body'] as String? ?? '';
         debugPrint('检查更新: 最新版本 tag=$tagName');
 
-        String? apkUrl;
+        final String assetSuffix = Platform.isWindows ? '.exe' : '.apk';
+        String? installUrl;
         final assets = data['assets'] as List<dynamic>? ?? [];
         debugPrint('检查更新: assets 数量=${assets.length}');
         for (final asset in assets) {
           final name = asset['name'] as String? ?? '';
           debugPrint('检查更新: asset=$name');
-          if (name.endsWith('.apk')) {
-            apkUrl = (asset['url'] as String?)?.trim();
-            apkUrl ??= (asset['browser_download_url'] as String?)?.trim();
+          if (name.endsWith(assetSuffix)) {
+            installUrl = (asset['url'] as String?)?.trim();
+            installUrl ??= (asset['browser_download_url'] as String?)?.trim();
             break;
           }
         }
 
-        if (apkUrl == null || apkUrl.isEmpty) {
+        if (installUrl == null || installUrl.isEmpty) {
           return const UpdateCheckResult(error: '未找到可下载的安装包');
         }
         if (tagName.isEmpty) {
@@ -164,7 +165,7 @@ class UpdateService {
           return UpdateCheckResult(
             info: UpdateInfo(
               version: tagName,
-              downloadUrl: apkUrl,
+              downloadUrl: installUrl,
               releaseNotes: body,
             ),
           );
@@ -198,8 +199,8 @@ class UpdateService {
   }
 
   static bool _isNewerVersion(String newVersion, String currentVersion) {
-    final newV = newVersion.replaceFirst(RegExp(r'^v'), '');
-    final currentV = currentVersion.replaceFirst(RegExp(r'^v'), '');
+    final newV = _normalizeVersion(newVersion);
+    final currentV = _normalizeVersion(currentVersion);
 
     final newParts = newV.split('.');
     final currentParts = currentV.split('.');
@@ -213,6 +214,10 @@ class UpdateService {
     }
     return false;
   }
+
+  /// 归一化版本号：去前导 v、+build 元数据与预发布后缀，只留数字段。
+  static String _normalizeVersion(String version) =>
+      version.replaceFirst(RegExp(r'^v'), '').split('+').first.split('-').first;
 
   static String _formatSpeed(int bytesPerSecond) {
     if (bytesPerSecond < 1024) {
@@ -247,8 +252,10 @@ class UpdateService {
       }
 
       final tempDir = await getTemporaryDirectory();
-      final apkFile = File('${tempDir.path}/time_manager_v$version.apk');
-      sink = apkFile.openWrite();
+      final fileExt = Platform.isWindows ? 'exe' : 'apk';
+      final installerFile =
+          File('${tempDir.path}/time_manager_v$version.$fileExt');
+      sink = installerFile.openWrite();
 
       final client = http.Client();
       try {
@@ -309,7 +316,7 @@ class UpdateService {
         await sink.close();
         sink = null;
 
-        debugPrint('下载完成: ${apkFile.path}');
+        debugPrint('下载完成: ${installerFile.path}');
 
         statusNotifier.value = '正在启动安装...';
         progressNotifier.value = 1.0;
@@ -318,20 +325,28 @@ class UpdateService {
 
         if (context.mounted) Navigator.pop(context);
 
-        final channel = MethodChannel('com.example.time_manager/install_apk');
-        try {
-          debugPrint('尝试通过 MethodChannel 安装 APK...');
-          await channel.invokeMethod('installApk', {'path': apkFile.path});
-          debugPrint('MethodChannel 安装成功');
-        } catch (e) {
-          debugPrint('MethodChannel 失败: $e，降级到 url_launcher');
-          final uri = Uri.file(apkFile.path);
-          if (await canLaunchUrl(uri)) {
-            await launchUrl(uri, mode: LaunchMode.externalApplication);
-          } else if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('无法打开安装程序')),
-            );
+        if (Platform.isWindows) {
+          if (context.mounted) {
+            await _launchWindowsInstaller(installerFile.path, context);
+          }
+        } else {
+          final channel =
+              MethodChannel('com.example.time_manager/install_apk');
+          try {
+            debugPrint('尝试通过 MethodChannel 安装 APK...');
+            await channel
+                .invokeMethod('installApk', {'path': installerFile.path});
+            debugPrint('MethodChannel 安装成功');
+          } catch (e) {
+            debugPrint('MethodChannel 失败: $e，降级到 url_launcher');
+            final uri = Uri.file(installerFile.path);
+            if (await canLaunchUrl(uri)) {
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+            } else if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('无法打开安装程序')),
+              );
+            }
           }
         }
       } finally {
@@ -356,6 +371,29 @@ class UpdateService {
     }
   }
 
+  /// Windows：非阻塞启动安装向导。
+  /// 用 `cmd /c start` 而非直接 Process.start(exe)：
+  /// 前者走 ShellExecuteEx，可自动触发 UAC 提权确认；后者 CreateProcess 对
+  /// 需要提权的安装器会直接失败（ERROR_ELEVATION_REQUIRED 740）。
+  static Future<void> _launchWindowsInstaller(
+    String installerPath,
+    BuildContext context,
+  ) async {
+    try {
+      debugPrint('启动 Windows 安装程序: $installerPath');
+      await Process.run('cmd', ['/c', 'start', '', installerPath]);
+      debugPrint('Windows 安装程序已启动');
+    } catch (e, st) {
+      debugPrint('启动安装程序失败: $e');
+      debugPrint('堆栈: $st');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法启动安装程序，请打开发布页手动下载安装包')),
+        );
+      }
+    }
+  }
+
   static void _showDownloadFailedDialog(
     BuildContext context,
     String version,
@@ -363,7 +401,7 @@ class UpdateService {
   ) {
     final releasePageUrl = Uri.https(
       'gitee.com',
-      '/${_owner}/$_repo/releases/tag/$version',
+      '/$_owner/$_repo/releases/tag/$version',
     ).toString();
 
     final message = statusCode == 401 || statusCode == 403
