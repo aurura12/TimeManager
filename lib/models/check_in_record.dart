@@ -34,6 +34,12 @@ class CheckInRecord {
 
   bool get hasLocation => latitude != null && longitude != null;
 
+  /// 是否属于指定用户：按 id 或 email 双通道匹配（兼容 Windows 手动身份与安卓 Google sub id）
+  bool belongsTo(String userId, String email) =>
+      this.userId == userId ||
+      KnownGoogleUsers.normalizeEmail(userEmail) ==
+          KnownGoogleUsers.normalizeEmail(email);
+
   String get userLabel => KnownGoogleUsers.displayLabel(
         email: userEmail,
         googleDisplayName: userDisplayName,

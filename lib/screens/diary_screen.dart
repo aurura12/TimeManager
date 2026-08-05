@@ -311,17 +311,13 @@ class _DiaryScreenState extends State<DiaryScreen> {
     }
     if (remotePath == null) return;
 
-    // 优先从搜索缓存读取
-    String? raw = DiarySearchService.getCachedContentByPath(remotePath);
-
-    if (raw == null) {
-      final result =
-          await DiaryGiteeService.pullDiary(token: token, path: remotePath);
-      if (!mounted || requestId != _contextRequestId) return;
-      if (!result.success) return;
-      if (_dirtySinceContextLoaded) return;
-      raw = result.content!;
-    }
+    // 直接从远端拉取，避免陈旧搜索缓存覆盖新内容
+    final result =
+        await DiaryGiteeService.pullDiary(token: token, path: remotePath);
+    if (!mounted || requestId != _contextRequestId) return;
+    if (!result.success) return;
+    if (_dirtySinceContextLoaded) return;
+    final raw = result.content!;
 
     if (_dirtySinceContextLoaded) return;
     final body = _extractBodyFromMarkdown(raw);
@@ -431,20 +427,15 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   Future<void> _loadRemoteFileToEditor(String path) async {
-    // 优先从搜索缓存读取
-    String? raw = DiarySearchService.getCachedContentByPath(path);
-
-    if (raw == null) {
-      // 缓存未命中，从远程仓库拉取
-      final result =
-          await DiaryGiteeService.pullDiary(token: _token!, path: path);
-      if (!mounted) return;
-      if (!result.success) {
-        _showMessage(result.error ?? '加载远程文件失败');
-        return;
-      }
-      raw = result.content!;
+    // 直接从远程仓库拉取，避免陈旧搜索缓存覆盖新内容
+    final result =
+        await DiaryGiteeService.pullDiary(token: _token!, path: path);
+    if (!mounted) return;
+    if (!result.success) {
+      _showMessage(result.error ?? '加载远程文件失败');
+      return;
     }
+    final raw = result.content!;
 
     final body = _extractBodyFromMarkdown(raw);
     final startedAt = _parseStartedAtFromMarkdown(raw);
@@ -663,6 +654,32 @@ class _DiaryScreenState extends State<DiaryScreen> {
     );
     if (!mounted) return;
     if (result.success) {
+      // 本地有未保存修改时先确认，避免覆盖
+      if (_dirtySinceContextLoaded) {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('本地有未保存修改'),
+            content: const Text('拉取远端会覆盖当前编辑器中的内容，是否继续？'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('覆盖'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) {
+          if (!mounted) return;
+          setState(() => _processing = false);
+          return;
+        }
+        if (!mounted) return;
+      }
       final raw = result.content!;
       final body = _extractBodyFromMarkdown(raw);
       final startedAt = _parseStartedAtFromMarkdown(raw);
@@ -670,7 +687,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
       _bodyController.text = body;
       _suppressBodyListener = false;
       _startedAt = startedAt ?? DateTime.now();
+      _dirtySinceContextLoaded = false;
       await _saveDraftNow();
+      // 刷新搜索缓存，避免下次读到旧内容
+      DiarySearchService.updateCache(_kind.code, _selectedDate, raw);
       if (!mounted) return;
       _showMessage('拉取成功（已覆盖本地）');
       setState(() => _processing = false);
@@ -724,8 +744,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
     setState(() => _processing = false);
 
     if (result.success) {
-      // 后台更新搜索缓存
-      DiarySearchService.loadInBackground(_token!);
+      // 本地更新单文件搜索缓存，立即可搜到（无需重拉全仓库）
+      DiarySearchService.updateCache(_kind.code, _selectedDate, markdown);
+      _dirtySinceContextLoaded = false;
       _showMessage(result.created ? '同步成功（已新建远端文件）' : '同步成功');
       return;
     }

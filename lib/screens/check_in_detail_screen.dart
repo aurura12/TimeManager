@@ -44,7 +44,9 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
   }
 
   String? get _userId => widget.syncService.currentUser?.id;
-  bool get _isMine => _userId != null && _goal.isOwnedBy(_userId!);
+  bool get _isMine =>
+      _userId != null &&
+      _goal.isOwnedBy(_userId!, email: widget.syncService.currentUser?.email);
 
   Future<void> _checkIn() async {
     final ok = await showModalBottomSheet<bool>(
@@ -171,7 +173,12 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
 
   Future<void> _confirmDeleteRecord(CheckInRecord record) async {
     final userId = _userId;
-    if (userId == null || record.userId != userId || _processing) return;
+    final email = widget.syncService.currentUser?.email;
+    if (userId == null ||
+        !record.belongsTo(userId, email ?? '') ||
+        _processing) {
+      return;
+    }
 
     final dateStr = DateFormat('M月d日 HH:mm').format(record.timestamp);
     final confirmed = await showDialog<bool>(
@@ -434,7 +441,8 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
 
   Widget _buildRecordTile(CheckInRecord record, ColorScheme colorScheme) {
     final dateStr = DateFormat('M月d日 HH:mm').format(record.timestamp);
-    final isMe = _userId != null && record.userId == _userId;
+    final isMe = _userId != null &&
+        record.belongsTo(_userId!, widget.syncService.currentUser?.email ?? '');
     final hasPhoto = record.photoPath != null && record.photoPath!.isNotEmpty;
 
     final tile = Card(

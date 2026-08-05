@@ -4,7 +4,10 @@ import 'dart:io';
 import '../models/check_in_document.dart';
 import '../models/check_in_goal.dart';
 import '../models/check_in_record.dart';
+import '../models/diary_kind.dart';
 import '../models/google_calendar_user.dart';
+import '../models/known_google_users.dart';
+import 'app_user_identity_store.dart';
 import 'check_in_gitee_service.dart';
 import 'check_in_image_service.dart';
 import 'check_in_local_store.dart';
@@ -62,10 +65,17 @@ class CheckInSyncService {
 
   List<CheckInGoal> get goalsWithRecords => _document.goalsWithRecords();
 
-  GoogleCalendarUser? get currentUser => GoogleCalendarService.sessionUser;
+  /// Windows 手动身份派生的打卡用户（仅 Windows 使用）
+  GoogleCalendarUser? _manualUser;
+
+  GoogleCalendarUser? get currentUser => Platform.isWindows
+      ? _manualUser
+      : GoogleCalendarService.sessionUser;
 
   /// 是否已识别用户（含曾登录但日历 token 暂时失效）
-  bool get hasIdentity => GoogleCalendarService.hasKnownUser;
+  bool get hasIdentity => Platform.isWindows
+      ? _manualUser != null
+      : GoogleCalendarService.hasKnownUser;
 
   /// 日历是否在线（与打卡身份无关）
   bool get isCalendarOnline => GoogleCalendarService.isSignedIn;
@@ -75,6 +85,11 @@ class CheckInSyncService {
     if (!silent) _loading = true;
     _lastError = null;
     try {
+      // Windows 无 Google 登录，打卡身份来自手动选择的角色
+      if (Platform.isWindows) {
+        _manualUser = await _loadManualUser();
+      }
+
       final local = await CheckInLocalStore.loadDraft();
       if (local != null) _document = local;
 
@@ -183,7 +198,7 @@ class CheckInSyncService {
   }
 
   Future<CheckInSyncResult> saveGoal(CheckInGoal goal) async {
-    final user = _requireUser();
+    final user = await _requireUser();
     if (!hasIdentity || user == null) {
       return CheckInSyncResult.fail('请先至少登录一次 Google 以识别身份');
     }
@@ -201,11 +216,11 @@ class CheckInSyncService {
   }
 
   Future<CheckInSyncResult> deleteGoal(CheckInGoal goal) async {
-    final user = _requireUser();
+    final user = await _requireUser();
     if (!hasIdentity || user == null) {
       return CheckInSyncResult.fail('请先至少登录一次 Google 以识别身份');
     }
-    if (!goal.isOwnedBy(user.id)) {
+    if (!goal.isOwnedBy(user.id, email: user.email)) {
       return CheckInSyncResult.fail('只能删除自己创建的目标');
     }
 
@@ -227,7 +242,7 @@ class CheckInSyncService {
           _document = CheckInDocument.merge(_document, remote);
         }
 
-        _document = _document.removeGoal(goal.id);
+        _document = _document.tombstoneGoal(goal.id);
         await CheckInLocalStore.saveDraft(_document);
 
         final push = await CheckInGiteeService.pushText(
@@ -253,11 +268,11 @@ class CheckInSyncService {
     CheckInGoal goal,
     CheckInRecord record,
   ) async {
-    final user = _requireUser();
+    final user = await _requireUser();
     if (!hasIdentity || user == null) {
       return CheckInSyncResult.fail('请先至少登录一次 Google 以识别身份');
     }
-    if (record.userId != user.id) {
+    if (!record.belongsTo(user.id, user.email)) {
       return CheckInSyncResult.fail('只能删除自己的打卡记录');
     }
 
@@ -297,7 +312,7 @@ class CheckInSyncService {
       }
 
       // Step 3: Remove record from document
-      _document = _document.removeRecord(record.id);
+      _document = _document.tombstoneRecord(record.id);
 
       // Step 4: Save locally
       await CheckInLocalStore.saveDraft(_document);
@@ -329,7 +344,7 @@ class CheckInSyncService {
     DateTime? backfillDate,
     bool isBackfill = false,
   }) async {
-    final user = _requireUser();
+    final user = await _requireUser();
     if (!hasIdentity || user == null) {
       return CheckInSyncResult.fail('请先至少登录一次 Google 以识别身份');
     }
@@ -418,5 +433,31 @@ class CheckInSyncService {
     return token;
   }
 
-  GoogleCalendarUser? _requireUser() => GoogleCalendarService.sessionUser;
+  Future<GoogleCalendarUser?> _requireUser() async {
+    if (Platform.isWindows) {
+      _manualUser ??= await _loadManualUser();
+      return _manualUser;
+    }
+    return GoogleCalendarService.sessionUser;
+  }
+
+  /// 从手动身份派生打卡用户，保证跨设备稳定且照片目录与安卓一致
+  Future<GoogleCalendarUser?> _loadManualUser() async {
+    final kind = await AppUserIdentityStore.loadManualKind();
+    if (kind == null) return null;
+    switch (kind) {
+      case DiaryKind.g:
+        return GoogleCalendarUser(
+          email: KnownGoogleUsers.guaiGuaiEmail,
+          id: 'manual-g',
+          displayName: '乖乖',
+        );
+      case DiaryKind.j:
+        return GoogleCalendarUser(
+          email: KnownGoogleUsers.jingJingEmail,
+          id: 'manual-j',
+          displayName: '晶晶',
+        );
+    }
+  }
 }

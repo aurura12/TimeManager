@@ -10,13 +10,21 @@ import 'known_google_users.dart';
 class CheckInDocument {
   static const String filePath = 'check_in_data.md';
   static const String imagesDir = 'images';
+  static const int currentVersion = 2;
 
   final List<CheckInGoal> goals;
   final List<CheckInRecord> records;
 
+  /// 已删除目标/记录的 tombstone id，防止 merge 时被旧副本复活。
+  /// 个人双人 App 数据量小，长期累积可接受；如需裁剪需权衡离线期复活风险。
+  final Set<String> deletedGoalIds;
+  final Set<String> deletedRecordIds;
+
   const CheckInDocument({
     required this.goals,
     required this.records,
+    this.deletedGoalIds = const {},
+    this.deletedRecordIds = const {},
   });
 
   static const empty = CheckInDocument(goals: [], records: []);
@@ -36,18 +44,33 @@ class CheckInDocument {
   CheckInDocument upsertGoal(CheckInGoal goal) {
     final meta = goal.withoutRecords();
     final nextGoals = [...goals.where((g) => g.id != meta.id), meta];
-    return CheckInDocument(goals: nextGoals, records: records);
+    return CheckInDocument(
+      goals: nextGoals,
+      records: records,
+      deletedGoalIds: deletedGoalIds,
+      deletedRecordIds: deletedRecordIds,
+    );
   }
 
   CheckInDocument upsertRecord(CheckInRecord record) {
     final nextRecords = [...records.where((r) => r.id != record.id), record]
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    return CheckInDocument(goals: goals, records: nextRecords);
+    return CheckInDocument(
+      goals: goals,
+      records: nextRecords,
+      deletedGoalIds: deletedGoalIds,
+      deletedRecordIds: deletedRecordIds,
+    );
   }
 
   CheckInDocument removeRecord(String recordId) {
     final nextRecords = records.where((r) => r.id != recordId).toList();
-    return CheckInDocument(goals: goals, records: nextRecords);
+    return CheckInDocument(
+      goals: goals,
+      records: nextRecords,
+      deletedGoalIds: deletedGoalIds,
+      deletedRecordIds: deletedRecordIds,
+    );
   }
 
   /// 删除目标；默认同时删除该目标下的所有打卡记录
@@ -56,16 +79,54 @@ class CheckInDocument {
     final nextRecords = removeRecords
         ? records.where((r) => r.goalId != goalId).toList()
         : records;
-    return CheckInDocument(goals: nextGoals, records: nextRecords);
+    return CheckInDocument(
+      goals: nextGoals,
+      records: nextRecords,
+      deletedGoalIds: deletedGoalIds,
+      deletedRecordIds: deletedRecordIds,
+    );
+  }
+
+  /// 删除目标并写入 tombstone（防止 merge 复活）；同时删除其所有记录
+  CheckInDocument tombstoneGoal(String goalId) {
+    final nextGoals = goals.where((g) => g.id != goalId).toList();
+    final nextRecords = records.where((r) => r.goalId != goalId).toList();
+    final goalRecordIds =
+        records.where((r) => r.goalId == goalId).map((r) => r.id);
+    return CheckInDocument(
+      goals: nextGoals,
+      records: nextRecords,
+      deletedGoalIds: {...deletedGoalIds, goalId},
+      deletedRecordIds: {...deletedRecordIds, ...goalRecordIds},
+    );
+  }
+
+  /// 删除单条打卡记录并写入 tombstone（防止 merge 复活）
+  CheckInDocument tombstoneRecord(String recordId) {
+    final nextRecords = records.where((r) => r.id != recordId).toList();
+    return CheckInDocument(
+      goals: goals,
+      records: nextRecords,
+      deletedGoalIds: deletedGoalIds,
+      deletedRecordIds: {...deletedRecordIds, recordId},
+    );
   }
 
   /// 合并本地与远端（按 id 去重，同 id 保留较新的记录）
   /// 目标（goal）元数据采用 "remote-first" 策略（首个出现者胜），
   /// 因为目标名称/图标等元数据变更较少，remote wns 策略可避免冲突。
   /// 记录（record）采用时间戳比较，保留较新的。
+  /// 已被 tombstone 标记删除的目标/记录不参与合并（不会复活）。
   static CheckInDocument merge(CheckInDocument local, CheckInDocument remote) {
+    final deletedGoals = {...local.deletedGoalIds, ...remote.deletedGoalIds};
+    final deletedRecords = {
+      ...local.deletedRecordIds,
+      ...remote.deletedRecordIds,
+    };
+
     final goalMap = <String, CheckInGoal>{};
     for (final g in [...remote.goals, ...local.goals]) {
+      if (deletedGoals.contains(g.id)) continue; // 已删目标不复活
       final meta = g.withoutRecords();
       final existing = goalMap[meta.id];
       if (existing == null) {
@@ -75,6 +136,8 @@ class CheckInDocument {
 
     final recordMap = <String, CheckInRecord>{};
     for (final r in [...remote.records, ...local.records]) {
+      if (deletedRecords.contains(r.id)) continue; // 已删记录不复活
+      if (deletedGoals.contains(r.goalId)) continue; // 目标已删则其记录一并排除
       final existing = recordMap[r.id];
       if (existing == null || r.timestamp.isAfter(existing.timestamp)) {
         recordMap[r.id] = r;
@@ -87,13 +150,18 @@ class CheckInDocument {
     return CheckInDocument(
       goals: goalMap.values.toList(),
       records: mergedRecords,
+      deletedGoalIds: deletedGoals,
+      deletedRecordIds: deletedRecords,
     );
   }
 
   String toMarkdown() {
     final payload = {
+      'version': currentVersion,
       'goals': goals.map((g) => g.withoutRecords().toJson()).toList(),
       'records': records.map((r) => r.toJson()).toList(),
+      'deleted_goals': deletedGoalIds.toList()..sort(),
+      'deleted_records': deletedRecordIds.toList()..sort(),
     };
     final body = const JsonEncoder.withIndent('  ').convert(payload);
     final now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
@@ -135,7 +203,28 @@ class CheckInDocument {
     }
     records.sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
-    return CheckInDocument(goals: goals, records: records);
+    // v1 数据无 tombstone 字段，默认空集合（零迁移）
+    final deletedGoals = <String>{};
+    final deletedRecords = <String>{};
+    final deletedGoalsRaw = decoded['deleted_goals'];
+    if (deletedGoalsRaw is List) {
+      for (final item in deletedGoalsRaw) {
+        if (item is String && item.isNotEmpty) deletedGoals.add(item);
+      }
+    }
+    final deletedRecordsRaw = decoded['deleted_records'];
+    if (deletedRecordsRaw is List) {
+      for (final item in deletedRecordsRaw) {
+        if (item is String && item.isNotEmpty) deletedRecords.add(item);
+      }
+    }
+
+    return CheckInDocument(
+      goals: goals,
+      records: records,
+      deletedGoalIds: deletedGoals,
+      deletedRecordIds: deletedRecords,
+    );
   }
 
   /// 仓库内照片路径，如 images/乖乖/{recordId}.jpg

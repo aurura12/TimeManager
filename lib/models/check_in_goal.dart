@@ -93,7 +93,11 @@ class CheckInGoal {
         googleDisplayName: ownerDisplayName,
       );
 
-  bool isOwnedBy(String userId) => ownerId == userId;
+  bool isOwnedBy(String userId, {String? email}) =>
+      ownerId == userId ||
+      (email != null &&
+          KnownGoogleUsers.normalizeEmail(ownerEmail) ==
+              KnownGoogleUsers.normalizeEmail(email));
 
   bool get isActive =>
       !isArchived && (endDate == null || endDate!.isAfter(DateTime.now()));
@@ -102,25 +106,24 @@ class CheckInGoal {
 
   int get totalCheckIns => records.length;
 
-  int currentPeriodCountFor(String? userId) {
+  int currentPeriodCountFor(String? userId, {String? email}) {
     final now = DateTime.now();
     return records
         .where((r) =>
-            (userId == null || r.userId == userId) &&
-            _isInCurrentPeriod(r.timestamp, now))
+            _matchesUser(r, userId, email) && _isInCurrentPeriod(r.timestamp, now))
         .length;
   }
 
-  bool isCompletedTodayBy(String userId) {
+  bool isCompletedTodayBy(String userId, {String? email}) {
     final now = DateTime.now();
     return records.any(
-      (r) => r.userId == userId && _isSameDay(r.timestamp, now),
+      (r) => _matchesUser(r, userId, email) && _isSameDay(r.timestamp, now),
     );
   }
 
-  int streakDaysFor(String userId) {
+  int streakDaysFor(String userId, {String? email}) {
     final userRecords = records
-        .where((r) => r.userId == userId)
+        .where((r) => _matchesUser(r, userId, email))
         .map((r) => r.timestamp)
         .toList()
       ..sort((a, b) => b.compareTo(a));
@@ -161,6 +164,18 @@ class CheckInGoal {
       records.any((r) => _isSameDay(r.timestamp, DateTime.now()));
   int get streakDays => streakDaysFor(ownerId);
   double get progress => progressFor(null);
+
+  bool _matchesUser(CheckInRecord r, String? userId, String? email) {
+    // userId 与 email 均为空表示统计所有用户
+    if (userId == null && email == null) return true;
+    if (userId != null && r.userId == userId) return true;
+    if (email != null &&
+        KnownGoogleUsers.normalizeEmail(r.userEmail) ==
+            KnownGoogleUsers.normalizeEmail(email)) {
+      return true;
+    }
+    return false;
+  }
 
   bool _isSameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
