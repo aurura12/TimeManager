@@ -1,13 +1,15 @@
-import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../providers/time_provider.dart';
-import '../models/category.dart';
 import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
+import 'package:provider/provider.dart';
+import '../models/category.dart';
+import '../models/schedule_template.dart';
+import '../providers/time_provider.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/template_bar.dart';
 import '../widgets/time_grid.dart';
-import '../models/schedule_template.dart';
 import 'daily_review_screen.dart';
 import 'global_search_screen.dart';
 
@@ -25,8 +27,11 @@ class _HomeScreenState extends State<HomeScreen> {
   final ScrollController _gridScrollController = ScrollController();
   StreamSubscription? _syncSubscription;
 
-  int? _dragStartIndex;
-  int? _dragEndIndex;
+  // 当前选中待分配的范围（跨平台统一）。
+  // Windows 双列下由各 _DayGrid 上报其日期，安卓恒为当前日期。
+  int? _selectionStart;
+  int? _selectionEnd;
+  DateTime? _selectionDate;
 
   bool _isDatePickerVisible = false;
 
@@ -92,29 +97,32 @@ class _HomeScreenState extends State<HomeScreen> {
     return row * 6 + col;
   }
 
-  void _handleSelect(Offset globalPosition,
+  void _handleSelect(Offset globalPosition, DateTime date,
       {bool isClick = false, bool isStart = false}) {
-    int currentIndex = _calculateIndex(globalPosition);
+    final currentIndex = _calculateIndex(globalPosition);
 
     setState(() {
       if (isClick) {
         // --- 逻辑修复：点击切换 ---
         // 如果当前已经选中了东西，且点击的是选中的范围，则清空
-        if (_dragStartIndex == currentIndex && _dragEndIndex == currentIndex) {
-          _dragStartIndex = null;
-          _dragEndIndex = null;
+        if (_selectionStart == currentIndex && _selectionEnd == currentIndex) {
+          _selectionStart = null;
+          _selectionEnd = null;
+          _selectionDate = null;
         } else {
           // 否则，单选当前格子
-          _dragStartIndex = currentIndex;
-          _dragEndIndex = currentIndex;
+          _selectionStart = currentIndex;
+          _selectionEnd = currentIndex;
+          _selectionDate = date;
         }
       } else {
         // --- 逻辑修复：滑动逻辑 ---
         if (isStart) {
           // 每次重新开始滑动时，重置起始点和终点为当前点
-          _dragStartIndex = currentIndex;
+          _selectionStart = currentIndex;
         }
-        _dragEndIndex = currentIndex;
+        _selectionEnd = currentIndex;
+        _selectionDate = date;
       }
     });
   }
@@ -172,22 +180,67 @@ class _HomeScreenState extends State<HomeScreen> {
                                   _buildTimeLabelRow(h),
                             ),
                           ),
+                  if (Platform.isWindows)
+                    Expanded(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
                           Expanded(
-                            child: TimeGrid(
-                              gridKey: _gridKey,
-                              controller: _gridScrollController,
-                              dragStartIndex: _dragStartIndex,
-                              dragEndIndex: _dragEndIndex,
-                              onTapDown: (position) =>
-                                  _handleSelect(position, isClick: true),
-                              onPanStart: (position) =>
-                                  _handleSelect(position, isStart: true),
-                              onPanUpdate: (position) =>
-                                  _handleSelect(position),
-                              onRemoveSlot: (index) =>
-                                  timeProvider.removeEventFromSlot(index),
+                            child: _DayGrid(
+                              date: currentDate,
+                              timeAxisController: _scrollController,
+                              onSelectionChanged: (date, start, end) {
+                                setState(() {
+                                  _selectionDate = date;
+                                  _selectionStart = start;
+                                  _selectionEnd = end;
+                                });
+                              },
+                              onRemoveSlot: (date, index) => timeProvider
+                                  .removeEventFromSlot(index, date: date),
                             ),
                           ),
+                          const VerticalDivider(
+                            width: 1,
+                            thickness: 1,
+                            color: Color(0x33000000),
+                          ),
+                          Expanded(
+                            child: _DayGrid(
+                              date:
+                                  currentDate.add(const Duration(days: 1)),
+                              timeAxisController: _scrollController,
+                              onSelectionChanged: (date, start, end) {
+                                setState(() {
+                                  _selectionDate = date;
+                                  _selectionStart = start;
+                                  _selectionEnd = end;
+                                });
+                              },
+                              onRemoveSlot: (date, index) => timeProvider
+                                  .removeEventFromSlot(index, date: date),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    Expanded(
+                      child: TimeGrid(
+                        gridKey: _gridKey,
+                        controller: _gridScrollController,
+                        dragStartIndex: _selectionStart,
+                        dragEndIndex: _selectionEnd,
+                        onTapDown: (position) => _handleSelect(position,
+                            currentDate, isClick: true),
+                        onPanStart: (position) => _handleSelect(position,
+                            currentDate, isStart: true),
+                        onPanUpdate: (position) =>
+                            _handleSelect(position, currentDate),
+                        onRemoveSlot: (index) =>
+                            timeProvider.removeEventFromSlot(index),
+                      ),
+                    ),
                         ],
                       ),
                     ),
@@ -237,8 +290,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   timeProvider.goToDate(selected);
                   setState(() {
                     _isDatePickerVisible = false;
-                    _dragStartIndex = null;
-                    _dragEndIndex = null;
+                    _selectionStart = null;
+                    _selectionEnd = null;
+                    _selectionDate = null;
                   });
                 },
                 onClose: () => setState(() => _isDatePickerVisible = false),
@@ -467,19 +521,22 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _assignCategory(Category cat, TimeProvider provider) {
-    if (_dragStartIndex != null && _dragEndIndex != null) {
-      int s =
-          _dragStartIndex! < _dragEndIndex! ? _dragStartIndex! : _dragEndIndex!;
-      int e =
-          _dragStartIndex! < _dragEndIndex! ? _dragEndIndex! : _dragStartIndex!;
+    if (_selectionStart != null && _selectionEnd != null) {
+      int s = _selectionStart! < _selectionEnd!
+          ? _selectionStart!
+          : _selectionEnd!;
+      int e = _selectionStart! < _selectionEnd!
+          ? _selectionEnd!
+          : _selectionStart!;
       Set<int> rangeIndices = {};
       for (int i = s; i <= e; i++) {
         rangeIndices.add(i);
       }
-      provider.assignCategoryToSlots(rangeIndices, cat);
+      provider.assignCategoryToSlots(rangeIndices, cat, date: _selectionDate);
       setState(() {
-        _dragStartIndex = null;
-        _dragEndIndex = null;
+        _selectionStart = null;
+        _selectionEnd = null;
+        _selectionDate = null;
       });
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -490,19 +547,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _assignSubCategory(Category cat, String subCat, TimeProvider provider) {
-    if (_dragStartIndex != null && _dragEndIndex != null) {
-      int s =
-          _dragStartIndex! < _dragEndIndex! ? _dragStartIndex! : _dragEndIndex!;
-      int e =
-          _dragStartIndex! < _dragEndIndex! ? _dragEndIndex! : _dragStartIndex!;
+    if (_selectionStart != null && _selectionEnd != null) {
+      int s = _selectionStart! < _selectionEnd!
+          ? _selectionStart!
+          : _selectionEnd!;
+      int e = _selectionStart! < _selectionEnd!
+          ? _selectionEnd!
+          : _selectionStart!;
       Set<int> rangeIndices = {};
       for (int i = s; i <= e; i++) {
         rangeIndices.add(i);
       }
-      provider.assignCategoryToSlots(rangeIndices, cat, subLabel: subCat);
+      provider.assignCategoryToSlots(rangeIndices, cat,
+          subLabel: subCat, date: _selectionDate);
       setState(() {
-        _dragStartIndex = null;
-        _dragEndIndex = null;
+        _selectionStart = null;
+        _selectionEnd = null;
+        _selectionDate = null;
       });
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -513,7 +574,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showTemporaryEventDialog(TimeProvider provider) {
-    if (_dragStartIndex == null || _dragEndIndex == null) {
+    if (_selectionStart == null || _selectionEnd == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text("请先在左侧网格中选择时间块"), duration: Duration(seconds: 2)),
@@ -1056,10 +1117,7 @@ class _HomeScreenState extends State<HomeScreen> {
           icon: Icons.arrow_back_ios,
           compact: true,
           onPressed: () {
-            setState(() {
-              _dragStartIndex = null;
-              _dragEndIndex = null;
-            });
+            _clearSelection();
             provider.previousDay();
           },
         ),
@@ -1078,10 +1136,7 @@ class _HomeScreenState extends State<HomeScreen> {
           icon: Icons.arrow_forward_ios,
           compact: true,
           onPressed: () {
-            setState(() {
-              _dragStartIndex = null;
-              _dragEndIndex = null;
-            });
+            _clearSelection();
             provider.nextDay();
           },
         ),
@@ -1179,6 +1234,14 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     ];
+  }
+
+  void _clearSelection() {
+    setState(() {
+      _selectionStart = null;
+      _selectionEnd = null;
+      _selectionDate = null;
+    });
   }
 
   void _showDatePicker() {
@@ -1504,6 +1567,140 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Windows 双列布局中单个日期列：自持拖选/高亮状态，并与共享时间轴联动滚动。
+class _DayGrid extends StatefulWidget {
+  final DateTime date;
+  final ScrollController timeAxisController;
+  final void Function(DateTime date, int startIndex, int endIndex)
+      onSelectionChanged;
+  final void Function(DateTime date, int index) onRemoveSlot;
+
+  const _DayGrid({
+    required this.date,
+    required this.timeAxisController,
+    required this.onSelectionChanged,
+    required this.onRemoveSlot,
+  });
+
+  @override
+  State<_DayGrid> createState() => _DayGridState();
+}
+
+class _DayGridState extends State<_DayGrid> {
+  final GlobalKey _gridKey = GlobalKey();
+  final ScrollController _gridScrollController = ScrollController();
+  int? _dragStartIndex;
+  int? _dragEndIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    // 共享时间轴滚动时保持网格对齐
+    widget.timeAxisController.addListener(_syncFromTimeAxis);
+    // 首帧定位到共享时间轴当前位置
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_gridScrollController.hasClients) {
+        _gridScrollController.jumpTo(widget.timeAxisController.offset);
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _DayGrid oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.timeAxisController != widget.timeAxisController) {
+      oldWidget.timeAxisController.removeListener(_syncFromTimeAxis);
+      widget.timeAxisController.addListener(_syncFromTimeAxis);
+    }
+    if (oldWidget.date != widget.date) {
+      // 日期变化时重置拖选并保持与时间轴对齐
+      setState(() {
+        _dragStartIndex = null;
+        _dragEndIndex = null;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_gridScrollController.hasClients) {
+          _gridScrollController.jumpTo(widget.timeAxisController.offset);
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.timeAxisController.removeListener(_syncFromTimeAxis);
+    _gridScrollController.dispose();
+    super.dispose();
+  }
+
+  void _syncFromTimeAxis() {
+    if (!_gridScrollController.hasClients) return;
+    final target = widget.timeAxisController.offset;
+    if ((_gridScrollController.offset - target).abs() > 0.5) {
+      _gridScrollController.jumpTo(target);
+    }
+  }
+
+  int _calculateIndex(Offset globalPosition) {
+    final RenderBox? box =
+        _gridKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return 0;
+
+    final Offset localOffset = box.globalToLocal(globalPosition);
+    final double adjustedDy = localOffset.dy + widget.timeAxisController.offset;
+
+    double topPadding = 8.0;
+    int row = ((adjustedDy - topPadding) / 45).floor().clamp(0, 23);
+
+    double gridWidth = box.size.width;
+    int col = (localOffset.dx / (gridWidth / 6)).floor().clamp(0, 5);
+
+    return row * 6 + col;
+  }
+
+  void _handleSelect(Offset globalPosition,
+      {bool isClick = false, bool isStart = false}) {
+    final currentIndex = _calculateIndex(globalPosition);
+
+    setState(() {
+      if (isClick) {
+        // 点击已选中的格子则取消选择
+        if (_dragStartIndex == currentIndex && _dragEndIndex == currentIndex) {
+          _dragStartIndex = null;
+          _dragEndIndex = null;
+        } else {
+          _dragStartIndex = currentIndex;
+          _dragEndIndex = currentIndex;
+        }
+      } else {
+        if (isStart) {
+          _dragStartIndex = currentIndex;
+        }
+        _dragEndIndex = currentIndex;
+      }
+    });
+
+    if (_dragStartIndex != null && _dragEndIndex != null) {
+      widget.onSelectionChanged(widget.date, _dragStartIndex!, _dragEndIndex!);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TimeGrid(
+      gridKey: _gridKey,
+      date: widget.date,
+      controller: _gridScrollController,
+      dragStartIndex: _dragStartIndex,
+      dragEndIndex: _dragEndIndex,
+      onTapDown: (position) => _handleSelect(position, isClick: true),
+      onPanStart: (position) => _handleSelect(position, isStart: true),
+      onPanUpdate: (position) => _handleSelect(position),
+      onRemoveSlot: (index) => widget.onRemoveSlot(widget.date, index),
     );
   }
 }
