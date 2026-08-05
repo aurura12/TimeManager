@@ -169,3 +169,5 @@ lib/config/remote_repo_config.dart
 lib/config/siliconflow_config.dart
 lib/config/google_sign_in_config.dart
 lib/config/github_config.dart
+.codebuddy/
+.VSCodeCounter/

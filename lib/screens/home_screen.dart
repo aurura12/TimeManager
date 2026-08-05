@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:provider/provider.dart';
 import '../models/category.dart';
@@ -12,6 +13,10 @@ import '../widgets/template_bar.dart';
 import '../widgets/time_grid.dart';
 import 'daily_review_screen.dart';
 import 'global_search_screen.dart';
+
+/// Windows 三列视图下列头高度，与左侧时间标签占位共用，保证对齐。
+const double _kDayHeaderHeight = 40;
+const List<String> _kWeekdayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -132,6 +137,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final timeProvider = context.read<TimeProvider>();
     final currentDate =
         context.select<TimeProvider, DateTime>((p) => p.currentDate);
+    // Windows 三列视图：以选中日为中间，左右各一天
+    final prevDate = currentDate.subtract(const Duration(days: 1));
+    final nextDate = currentDate.add(const Duration(days: 1));
     final googleSyncEnabled = context.select<TimeProvider, bool>(
         (p) => p.googleCalendarSyncEnabled);
     final isRemoteViewEnabled = context.select<TimeProvider, bool>(
@@ -147,6 +155,8 @@ class _HomeScreenState extends State<HomeScreen> {
         foregroundColor: isDark ? colorScheme.onSurface : Colors.white,
         surfaceTintColor: Colors.transparent,
         titleSpacing: 8,
+        // 仅 Windows：切换日期的按钮居中；安卓保持默认左对齐
+        centerTitle: Platform.isWindows,
         actionsPadding: const EdgeInsets.only(right: 15),
         title: _buildAppBarDateNav(timeProvider, currentDate),
         actions: _buildAppBarActions(
@@ -170,55 +180,115 @@ class _HomeScreenState extends State<HomeScreen> {
                         children: [
                           SizedBox(
                             width: 55,
-                            child: ListView.builder(
-                              controller: _scrollController,
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 8),
-                              itemCount: 24,
-                              itemExtent: 45,
-                              itemBuilder: (context, h) =>
-                                  _buildTimeLabelRow(h),
+                            child: Column(
+                              children: [
+                                // Windows 下与右侧列头对齐的占位
+                                if (Platform.isWindows)
+                                  const SizedBox(height: _kDayHeaderHeight),
+                                Expanded(
+                                  child: ListView.builder(
+                                    controller: _scrollController,
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 8),
+                                    itemCount: 24,
+                                    itemExtent: 45,
+                                    itemBuilder: (context, h) =>
+                                        _buildTimeLabelRow(h),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                   if (Platform.isWindows)
                     Expanded(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      child: Column(
                         children: [
-                          Expanded(
-                            child: _DayGrid(
-                              date: currentDate,
-                              timeAxisController: _scrollController,
-                              onSelectionChanged: (date, start, end) {
-                                setState(() {
-                                  _selectionDate = date;
-                                  _selectionStart = start;
-                                  _selectionEnd = end;
-                                });
-                              },
-                              onRemoveSlot: (date, index) => timeProvider
-                                  .removeEventFromSlot(index, date: date),
-                            ),
+                          // 三列日期头（插入与网格行相同的分割线占位以保持列宽一致）
+                          Row(
+                            children: [
+                              Expanded(child: _DayHeader(date: prevDate)),
+                              const VerticalDivider(
+                                width: 1,
+                                thickness: 1,
+                                color: Color(0x33000000),
+                              ),
+                              Expanded(
+                                  child: _DayHeader(date: currentDate)),
+                              const VerticalDivider(
+                                width: 1,
+                                thickness: 1,
+                                color: Color(0x33000000),
+                              ),
+                              Expanded(child: _DayHeader(date: nextDate)),
+                            ],
                           ),
-                          const VerticalDivider(
-                            width: 1,
-                            thickness: 1,
-                            color: Color(0x33000000),
-                          ),
+                          // 三列网格：昨天 / 今天 / 明天
                           Expanded(
-                            child: _DayGrid(
-                              date:
-                                  currentDate.add(const Duration(days: 1)),
-                              timeAxisController: _scrollController,
-                              onSelectionChanged: (date, start, end) {
-                                setState(() {
-                                  _selectionDate = date;
-                                  _selectionStart = start;
-                                  _selectionEnd = end;
-                                });
-                              },
-                              onRemoveSlot: (date, index) => timeProvider
-                                  .removeEventFromSlot(index, date: date),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: _DayGrid(
+                                    date: prevDate,
+                                    timeAxisController: _scrollController,
+                                    onSelectionChanged: (date, start, end) {
+                                      setState(() {
+                                        _selectionDate = date;
+                                        _selectionStart = start;
+                                        _selectionEnd = end;
+                                      });
+                                    },
+                                    onRemoveSlot: (date, index) =>
+                                        timeProvider.removeEventFromSlot(
+                                            index,
+                                            date: date),
+                                  ),
+                                ),
+                                const VerticalDivider(
+                                  width: 1,
+                                  thickness: 1,
+                                  color: Color(0x33000000),
+                                ),
+                                Expanded(
+                                  child: _DayGrid(
+                                    date: currentDate,
+                                    timeAxisController: _scrollController,
+                                    onSelectionChanged: (date, start, end) {
+                                      setState(() {
+                                        _selectionDate = date;
+                                        _selectionStart = start;
+                                        _selectionEnd = end;
+                                      });
+                                    },
+                                    onRemoveSlot: (date, index) =>
+                                        timeProvider.removeEventFromSlot(
+                                            index,
+                                            date: date),
+                                  ),
+                                ),
+                                const VerticalDivider(
+                                  width: 1,
+                                  thickness: 1,
+                                  color: Color(0x33000000),
+                                ),
+                                Expanded(
+                                  child: _DayGrid(
+                                    date: nextDate,
+                                    timeAxisController: _scrollController,
+                                    onSelectionChanged: (date, start, end) {
+                                      setState(() {
+                                        _selectionDate = date;
+                                        _selectionStart = start;
+                                        _selectionEnd = end;
+                                      });
+                                    },
+                                    onRemoveSlot: (date, index) =>
+                                        timeProvider.removeEventFromSlot(
+                                            index,
+                                            date: date),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
@@ -284,18 +354,28 @@ class _HomeScreenState extends State<HomeScreen> {
               top: 0,
               left: 0,
               right: 0,
-              child: DatePickerPanel(
-                initialDate: currentDate,
-                onDateSelected: (selected) {
-                  timeProvider.goToDate(selected);
-                  setState(() {
-                    _isDatePickerVisible = false;
-                    _selectionStart = null;
-                    _selectionEnd = null;
-                    _selectionDate = null;
-                  });
-                },
-                onClose: () => setState(() => _isDatePickerVisible = false),
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    // 仅 Windows 限制宽度，避免宽屏下日历格子等比放大；安卓保持整宽
+                    maxWidth: Platform.isWindows ? 360 : double.infinity,
+                  ),
+                  child: DatePickerPanel(
+                    initialDate: currentDate,
+                    onDateSelected: (selected) {
+                      timeProvider.goToDate(selected);
+                      setState(() {
+                        _isDatePickerVisible = false;
+                        _selectionStart = null;
+                        _selectionEnd = null;
+                        _selectionDate = null;
+                      });
+                    },
+                    onClose: () =>
+                        setState(() => _isDatePickerVisible = false),
+                  ),
+                ),
               ),
             ),
           ],
@@ -1572,6 +1652,47 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 /// Windows 双列布局中单个日期列：自持拖选/高亮状态，并与共享时间轴联动滚动。
+/// Windows 三列视图下的单列日期头：显示日期 + 星期，今天的列高亮。
+class _DayHeader extends StatelessWidget {
+  final DateTime date;
+
+  const _DayHeader({required this.date});
+
+  bool get _isToday {
+    final now = DateTime.now();
+    return now.year == date.year && now.month == date.month && now.day == date.day;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final today = _isToday;
+    return SizedBox(
+      height: _kDayHeaderHeight,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: today ? colorScheme.primary.withValues(alpha: 0.12) : null,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          '${date.month}月${date.day}日 ${_kWeekdayLabels[date.weekday - 1]}',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: today ? FontWeight.bold : FontWeight.w500,
+            color: today
+                ? colorScheme.primary
+                : (isDark ? colorScheme.onSurfaceVariant : Colors.black87),
+          ),
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    );
+  }
+}
+
 class _DayGrid extends StatefulWidget {
   final DateTime date;
   final ScrollController timeAxisController;
@@ -1691,16 +1812,29 @@ class _DayGridState extends State<_DayGrid> {
 
   @override
   Widget build(BuildContext context) {
-    return TimeGrid(
-      gridKey: _gridKey,
-      date: widget.date,
-      controller: _gridScrollController,
-      dragStartIndex: _dragStartIndex,
-      dragEndIndex: _dragEndIndex,
-      onTapDown: (position) => _handleSelect(position, isClick: true),
-      onPanStart: (position) => _handleSelect(position, isStart: true),
-      onPanUpdate: (position) => _handleSelect(position),
-      onRemoveSlot: (index) => widget.onRemoveSlot(widget.date, index),
+    // 网格自身不可滚动（时间轴驱动），鼠标滚轮事件由监听器转发给共享时间轴，
+    // 从而光标停留在网格上时也能上下滚动（安卓无滚轮事件，不受影响）。
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerSignal: (event) {
+        if (event is PointerScrollEvent) {
+          final axis = widget.timeAxisController;
+          if (axis.hasClients) {
+            axis.position.pointerScroll(event.scrollDelta.dy);
+          }
+        }
+      },
+      child: TimeGrid(
+        gridKey: _gridKey,
+        date: widget.date,
+        controller: _gridScrollController,
+        dragStartIndex: _dragStartIndex,
+        dragEndIndex: _dragEndIndex,
+        onTapDown: (position) => _handleSelect(position, isClick: true),
+        onPanStart: (position) => _handleSelect(position, isStart: true),
+        onPanUpdate: (position) => _handleSelect(position),
+        onRemoveSlot: (index) => widget.onRemoveSlot(widget.date, index),
+      ),
     );
   }
 }
