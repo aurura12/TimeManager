@@ -345,13 +345,40 @@ class TimeProvider with ChangeNotifier {
     _pullOwnScheduleIfWindows();
   }
 
-  /// Windows 上拉取当前日期"自己身份"的日程并合并（union），
+  /// Windows 上切日/初始化后的日程拉取：
+  /// 远程视图开启时拉取对方三列数据；否则拉取当前日期"自己身份"的日程并合并（union），
   /// 解决安卓端推送后 Windows 本地无数据看不到自己日程的问题。
   /// 拉取失败静默，不打断用户操作。
   void _pullOwnScheduleIfWindows() {
     if (!Platform.isWindows) return;
-    if (!_hasSelectedScheduleUser || _remoteViewEnabled) return;
-    unawaited(pullScheduleFromGitee());
+    if (!_hasSelectedScheduleUser) return;
+    if (_remoteViewEnabled) {
+      _pullRemoteViewSchedules();
+    } else {
+      unawaited(pullScheduleFromGitee());
+    }
+  }
+
+  /// 远程视图下：对当前三列日期备份本地（仅首次访问的日期）并拉取对方数据。
+  /// 远程视图期间切换日期时，由 [_pullOwnScheduleIfWindows] 调用。
+  void _pullRemoteViewSchedules() {
+    final otherCode = _scheduleUser.code == 'g' ? 'j' : 'g';
+    for (final d in _getRemoteViewDates()) {
+      _backupAndClearDay(_getDateKey(d));
+      unawaited(pullScheduleFromGitee(userCode: otherCode, date: d));
+    }
+    _markAllSlotsDirty();
+    notifyListeners();
+  }
+
+  /// 备份一天的本地数据（仅首次，避免覆盖已备份的本地快照）并清空当天槽位。
+  void _backupAndClearDay(String dateKey) {
+    if (!_remoteViewBackup.containsKey(dateKey)) {
+      final localSlots = _dailySlots[dateKey] ?? _generateInitialSlots();
+      _remoteViewBackup[dateKey] =
+          json.encode(_serializeRecordedSlots(localSlots));
+    }
+    _clearDaySlots(_dailySlots.putIfAbsent(dateKey, _generateInitialSlots));
   }
 
   void toggleSlot(int index) {
@@ -737,8 +764,9 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
-  /// 从 Gitee 拉取指定用户日程并合并到当前日期
-  Future<bool> pullScheduleFromGitee({String? userCode}) async {
+  /// 从 Gitee 拉取指定用户日程并合并到指定日期。
+  /// [date] 为 null 时拉取当前选中日期。
+  Future<bool> pullScheduleFromGitee({String? userCode, DateTime? date}) async {
     if (!_hasSelectedScheduleUser) {
       _addScheduleSyncStatus('请先选择身份');
       return false;
@@ -749,7 +777,7 @@ class TimeProvider with ChangeNotifier {
       return false;
     }
 
-    final dateKey = _getDateKey(_currentDate);
+    final dateKey = _getDateKey(date ?? _currentDate);
     final code = userCode ?? _scheduleUser.code;
     try {
       _addScheduleSyncStatus('拉取中...');
@@ -805,26 +833,19 @@ class TimeProvider with ChangeNotifier {
   }
 
   /// 切换查看对方日程。打开时显示纯远端数据；关闭时恢复本地数据。
+  /// Windows 三列视图下覆盖选中日及前后各一天，安卓仅覆盖选中日。
   Future<void> toggleRemoteScheduleView() async {
     if (!_hasSelectedScheduleUser) {
       _addScheduleSyncStatus('请先选择身份');
       return;
     }
-    final dateKey = _getDateKey(_currentDate);
     if (_remoteViewEnabled) {
-      // 关闭：恢复本地数据
-      if (_remoteViewBackup.containsKey(dateKey)) {
-        final slots = _dailySlots[dateKey] ?? _generateInitialSlots();
-        final backup = parseScheduleContent(_remoteViewBackup.remove(dateKey));
-        for (final s in slots) {
-          s.recorded = false;
-          s.label = null;
-          s.categoryId = null;
-          s.color = null;
-          s.isFromCalendar = false;
-          s.calendarEventId = null;
-          s.modifiedAt = null;
-        }
+      // 关闭：按备份过的日期逐一恢复本地数据
+      final backupKeys = _remoteViewBackup.keys.toList();
+      for (final dk in backupKeys) {
+        final slots = _dailySlots[dk] ?? _generateInitialSlots();
+        final backup = parseScheduleContent(_remoteViewBackup.remove(dk));
+        _clearDaySlots(slots, clearModifiedAt: true);
         for (final map in backup.slots) {
           final idx = _parseInt(map['i']);
           if (idx == null) continue;
@@ -845,13 +866,14 @@ class TimeProvider with ChangeNotifier {
             }
           }
         }
+      }
+      if (backupKeys.isNotEmpty) {
         _markAllSlotsDirty();
         _saveData();
-        notifyListeners();
       }
       _remoteViewEnabled = false;
     } else {
-      // 打开：备份本地，清空当前日期，拉取纯远端数据
+      // 打开：备份本地，清空日期，拉取纯远端数据
       // 注意顺序很重要：先取消待处理同步 → 保存当前数据 → 再切换视图
 
       // 1) 取消待处理的自动同步定时器，防止 3 秒后将对方数据推送到当前用户文件
@@ -863,24 +885,10 @@ class TimeProvider with ChangeNotifier {
       // 2) 先持久化当前用户的最新编辑，确保不丢失
       await _saveData();
 
-      // 3) 备份本地数据
-      final localSlots = _dailySlots[dateKey];
-      if (localSlots != null) {
-        _remoteViewBackup[dateKey] =
-            json.encode(_serializeRecordedSlots(localSlots));
-      } else {
-        _remoteViewBackup[dateKey] = json.encode(<Map<String, dynamic>>[]);
-      }
-
-      // 4) 先清空当前日期，确保只显示远端数据
-      final daySlots = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
-      for (final s in daySlots) {
-        s.recorded = false;
-        s.label = null;
-        s.categoryId = null;
-        s.color = null;
-        s.isFromCalendar = false;
-        s.calendarEventId = null;
+      // 3) 备份并清空（Windows 三天 / 安卓一天）
+      final dates = _getRemoteViewDates();
+      for (final d in dates) {
+        _backupAndClearDay(_getDateKey(d));
       }
       _markAllSlotsDirty();
 
@@ -888,12 +896,37 @@ class TimeProvider with ChangeNotifier {
       //    `if (!_remoteViewEnabled) _saveData()` 不会错误地保存到本地缓存
       _remoteViewEnabled = true;
 
-      // 6) 拉取对方的文件（独立文件，无需过滤）
+      // 6) 拉取对方的文件（独立文件，无需过滤）；Windows 逐日拉取三天
       final otherCode = _scheduleUser.code == 'g' ? 'j' : 'g';
-      await pullScheduleFromGitee(userCode: otherCode);
+      for (final d in dates) {
+        await pullScheduleFromGitee(userCode: otherCode, date: d);
+      }
       // 拉取后不保存到本地持久化——由提前设置的 _remoteViewEnabled 保证
     }
     notifyListeners();
+  }
+
+  /// 远程视图覆盖的日期：Windows 三列（选中日 ±1 天），安卓仅选中日。
+  List<DateTime> _getRemoteViewDates() {
+    if (!Platform.isWindows) return [_currentDate];
+    return [
+      _currentDate.subtract(const Duration(days: 1)),
+      _currentDate,
+      _currentDate.add(const Duration(days: 1)),
+    ];
+  }
+
+  /// 清空一天的槽位数据（远程视图备份/恢复用）
+  void _clearDaySlots(List<TimeSlot> slots, {bool clearModifiedAt = false}) {
+    for (final s in slots) {
+      s.recorded = false;
+      s.label = null;
+      s.categoryId = null;
+      s.color = null;
+      s.isFromCalendar = false;
+      s.calendarEventId = null;
+      if (clearModifiedAt) s.modifiedAt = null;
+    }
   }
 
   /// 本地与云端日历不一致时标记（与是否已登录无关）

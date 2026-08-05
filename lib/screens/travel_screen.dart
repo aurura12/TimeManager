@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
+import 'dart:io';
 
 import '../models/travel_record.dart';
 import '../services/diary_local_store.dart';
@@ -1131,7 +1132,17 @@ class _TravelScreenState extends State<TravelScreen> {
               child: _viewMode == _TravelViewMode.table
                   ? _buildTableView()
                   : _viewMode == _TravelViewMode.calendar
-                      ? _buildCalendarView()
+                      // 仅 Windows 限制日历宽度并居中，避免宽屏下格子等比放大；安卓保持全宽
+                      ? Align(
+                          alignment: Alignment.topCenter,
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth:
+                                  Platform.isWindows ? 360 : double.infinity,
+                            ),
+                            child: _buildCalendarView(),
+                          ),
+                        )
                       : _buildStatsView(),
             ),
           ],
