@@ -11,6 +11,7 @@ import 'diary_gitee_service.dart';
 class DiarySearchService {
   static final Map<String, String> _cache = {};
   static final Map<String, String> _cacheSha = {};
+
   /// 预计算的小写内容缓存，搜索时避免重复 toLowerCase
   static final Map<String, String> _lowerCache = {};
   static bool _loaded = false;
@@ -39,23 +40,34 @@ class DiarySearchService {
   static Future<void> loadInBackground(String token) async {
     if (token.isEmpty || _loading) return;
 
-    await _loadFromDisk();
+    // 必须在第一次 await 之前抢占加载锁，避免多个页面同时启动索引。
+    _loading = true;
+    try {
+      await _loadFromDisk();
 
-    // 磁盘缓存有效且未过期，直接使用
-    if (_loaded && _cache.isNotEmpty && _lastLoadTime != null) {
-      final elapsed = DateTime.now().difference(_lastLoadTime!);
-      if (elapsed < _cacheExpiry) {
-        progress.value = 1.0;
-        return;
+      // 磁盘缓存有效且未过期，直接使用
+      if (_loaded && _cache.isNotEmpty && _lastLoadTime != null) {
+        final elapsed = DateTime.now().difference(_lastLoadTime!);
+        if (elapsed < _cacheExpiry) {
+          progress.value = 1.0;
+          return;
+        }
       }
-    }
 
-    await _syncFromRemote(token);
+      await _syncFromRemote(token);
+    } finally {
+      _loading = false;
+    }
   }
 
   static Future<void> refreshCache(String token) async {
     if (token.isEmpty || _loading) return;
-    await _syncFromRemote(token);
+    _loading = true;
+    try {
+      await _syncFromRemote(token);
+    } finally {
+      _loading = false;
+    }
   }
 
   /// 从远程同步缓存（增量 + 并行下载）
@@ -134,7 +146,7 @@ class DiarySearchService {
           _syncedCount++;
           progress.value = _totalToSync > 0 ? _syncedCount / _totalToSync : 1.0;
           if (_syncedCount >= _totalToSync) {
-            completer.complete();
+            if (!completer.isCompleted) completer.complete();
           } else {
             startNext();
           }
@@ -256,8 +268,7 @@ class DiarySearchService {
   }
 
   static DateTime? _parseDateFromFileName(String fileName) {
-    final match =
-        RegExp(r'(\d{4})年(\d{1,2})月(\d{1,2})日').firstMatch(fileName);
+    final match = RegExp(r'(\d{4})年(\d{1,2})月(\d{1,2})日').firstMatch(fileName);
     if (match == null) return null;
     final year = int.tryParse(match.group(1) ?? '');
     final month = int.tryParse(match.group(2) ?? '');
@@ -324,7 +335,8 @@ class DiarySearchService {
       String content, int matchIndex, int matchLength) {
     const snippetRadius = 30;
     final start = (matchIndex - snippetRadius).clamp(0, content.length);
-    final end = (matchIndex + matchLength + snippetRadius).clamp(0, content.length);
+    final end =
+        (matchIndex + matchLength + snippetRadius).clamp(0, content.length);
 
     var snippet = content.substring(start, end).replaceAll('\n', ' ');
     if (start > 0) snippet = '...$snippet';
