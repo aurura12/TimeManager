@@ -89,12 +89,15 @@ class _CheckInScreenState extends State<CheckInScreen> {
     final userId = _currentUserId;
     if (userId == null) return 0;
     return _allGoals
-        .where((g) => g.isOwnedBy(userId) && g.isCompletedTodayBy(userId))
+        .where((g) => g.isOwnedBy(userId, email: _sync.currentUser?.email) &&
+            g.isCompletedTodayBy(userId, email: _sync.currentUser?.email))
         .length;
   }
 
-  int get _myGoalCount =>
-      _allGoals.where((g) => g.isOwnedBy(_currentUserId ?? '')).length;
+  int get _myGoalCount => _allGoals
+      .where((g) => g.isOwnedBy(_currentUserId ?? '',
+          email: _sync.currentUser?.email))
+      .length;
 
   void _showMessage(String msg) {
     if (!mounted) return;
@@ -149,7 +152,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
       _showMessage('无法获取用户信息，请重新登录');
       return;
     }
-    if (!goal.isOwnedBy(userId)) {
+    if (!goal.isOwnedBy(userId, email: _sync.currentUser?.email)) {
       _showMessage('只能在自己的目标下打卡');
       return;
     }
@@ -176,7 +179,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
       _showMessage('无法获取用户信息，请重新登录');
       return;
     }
-    if (!goal.isOwnedBy(userId)) {
+    if (!goal.isOwnedBy(userId, email: _sync.currentUser?.email)) {
       _showMessage('只能在自己的目标下打卡');
       return;
     }
@@ -440,8 +443,10 @@ class _CheckInScreenState extends State<CheckInScreen> {
     final maxStreak = _allGoals.isEmpty
         ? 0
         : _allGoals
-            .where((g) => userId.isEmpty || g.isOwnedBy(userId))
-            .map((g) => g.streakDaysFor(userId))
+            .where((g) =>
+                userId.isEmpty ||
+                g.isOwnedBy(userId, email: _sync.currentUser?.email))
+            .map((g) => g.streakDaysFor(userId, email: _sync.currentUser?.email))
             .fold(0, (a, b) => a > b ? a : b);
 
     return Container(
@@ -567,8 +572,10 @@ class _CheckInScreenState extends State<CheckInScreen> {
             ? Colors.white
             : Colors.black87;
     final mutedColor = onCardColor.withValues(alpha: 0.75);
-    final isMine = userId != null && goal.isOwnedBy(userId);
-    final checked = userId != null && goal.isCompletedTodayBy(userId);
+    final isMine = userId != null &&
+        goal.isOwnedBy(userId, email: _sync.currentUser?.email);
+    final checked = userId != null &&
+        goal.isCompletedTodayBy(userId, email: _sync.currentUser?.email);
     final progressUserId = _filter == CheckInViewFilter.all
         ? null
         : _filter == CheckInViewFilter.guaiGuai
