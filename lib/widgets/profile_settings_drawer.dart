@@ -23,6 +23,9 @@ class ProfileSettingsDrawer extends StatefulWidget {
 }
 
 class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
+  /// Windows 用户身份选择是否展开（选中角色后自动收起）
+  bool _identityExpanded = false;
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<TimeProvider>();
@@ -52,10 +55,11 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                   ),
                   if (Platform.isWindows)
                     _buildWindowsIdentitySection(context, provider)
-                  else
+                  else ...[
                     _buildLoginSection(context, googleUser, provider),
-                  const Divider(height: 1),
-                  _buildRemoteSyncSection(context, provider),
+                    const Divider(height: 1),
+                    _buildRemoteSyncSection(context, provider),
+                  ],
                   const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.palette_outlined),
@@ -145,18 +149,6 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
   }
 
   Widget _buildRemoteSyncSection(BuildContext context, TimeProvider provider) {
-    if (Platform.isWindows) {
-      return Column(
-        children: [
-          const ListTile(
-            leading: Icon(Icons.desktop_windows_outlined),
-            title: Text('Windows 同步方式'),
-            subtitle: Text('Windows 版本不使用 Google 日历，日程和日记通过 Gitee 同步'),
-          ),
-          _buildGiteeSyncTile(context, provider),
-        ],
-      );
-    }
     return Column(
       children: [
         SwitchListTile(
@@ -194,6 +186,8 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       BuildContext context, TimeProvider provider) {
     final selected =
         provider.hasSelectedScheduleUser ? provider.scheduleUser : null;
+    // 未选择时强制展开以便选择；选中后默认收起，点击身份行可展开切换
+    final expanded = selected == null || _identityExpanded;
     return Column(
       children: [
         ListTile(
@@ -204,25 +198,37 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                 ? '请选择身份后再同步'
                 : '当前身份：${selected == DiaryKind.g ? '乖乖' : '晶晶'}',
           ),
-        ),
-        RadioListTile<DiaryKind>(
-          title: const Text('乖乖'),
-          value: DiaryKind.g,
-          groupValue: selected,
-          onChanged: (kind) {
-            if (kind != null) provider.setScheduleUser(kind);
-            widget.onChanged();
+          trailing: Icon(expanded ? Icons.expand_less : Icons.expand_more),
+          onTap: () {
+            setState(() => _identityExpanded = !_identityExpanded);
           },
         ),
-        RadioListTile<DiaryKind>(
-          title: const Text('晶晶'),
-          value: DiaryKind.j,
-          groupValue: selected,
-          onChanged: (kind) {
-            if (kind != null) provider.setScheduleUser(kind);
-            widget.onChanged();
-          },
-        ),
+        if (expanded) ...[
+          RadioListTile<DiaryKind>(
+            title: const Text('乖乖'),
+            value: DiaryKind.g,
+            groupValue: selected,
+            onChanged: (kind) {
+              if (kind != null) {
+                provider.setScheduleUser(kind);
+                widget.onChanged();
+                setState(() => _identityExpanded = false); // 选中后收起
+              }
+            },
+          ),
+          RadioListTile<DiaryKind>(
+            title: const Text('晶晶'),
+            value: DiaryKind.j,
+            groupValue: selected,
+            onChanged: (kind) {
+              if (kind != null) {
+                provider.setScheduleUser(kind);
+                widget.onChanged();
+                setState(() => _identityExpanded = false); // 选中后收起
+              }
+            },
+          ),
+        ],
       ],
     );
   }
