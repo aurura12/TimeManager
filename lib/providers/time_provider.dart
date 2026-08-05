@@ -560,7 +560,8 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('请先选择身份');
       return;
     }
-    if (_scheduleGiteeSyncing || _allScheduleSyncing) return;
+    if (_scheduleGiteeSyncing || _allScheduleSyncing || _allSchedulePulling)
+      return;
     _scheduleGiteeSyncing = true;
     try {
       final token = await DiaryLocalStore.loadToken();
@@ -705,6 +706,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   bool _allScheduleSyncing = false;
+  bool _allSchedulePulling = false;
 
   /// 全量同步所有日期的日程到 Gitee
   Future<void> syncAllSchedulesToGitee() async {
@@ -716,7 +718,7 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('请先选择身份');
       return;
     }
-    if (_allScheduleSyncing) return;
+    if (_allScheduleSyncing || _allSchedulePulling) return;
     _allScheduleSyncing = true;
     // 取消可能正在等待的当日自动同步
     _scheduleGiteeTimer?.cancel();
@@ -762,6 +764,113 @@ class TimeProvider with ChangeNotifier {
     } finally {
       _allScheduleSyncing = false;
     }
+  }
+
+  /// 从 Gitee 拉取当前用户所有日期的日程，逐日双向合并后统一落盘。
+  Future<void> pullAllSchedulesFromGitee() async {
+    if (_remoteViewEnabled) {
+      _addScheduleSyncStatus('远程视图下不拉取');
+      return;
+    }
+    if (!_hasSelectedScheduleUser) {
+      _addScheduleSyncStatus('请先选择身份');
+      return;
+    }
+    if (_allSchedulePulling || _allScheduleSyncing) return;
+    _allSchedulePulling = true;
+    // 取消等待中的当日自动推送，避免与全量拉取并发
+    _scheduleGiteeTimer?.cancel();
+    try {
+      final token = await DiaryLocalStore.loadToken();
+      if (token == null || token.isEmpty) {
+        _addScheduleSyncStatus('未配置同步 Token');
+        return;
+      }
+
+      // 1) 列出远端当前用户所有日程文件
+      final listResult = await ScheduleGiteeService.listSchedulePathsWithSha(
+        token: token,
+        userCode: _scheduleUser.code,
+      );
+      if (!listResult.success) {
+        _addScheduleSyncStatus(listResult.error ?? '读取远端日程列表失败');
+        return;
+      }
+
+      // 2) 从 path 提取 dateKey 并规范化（兼容旧格式），去重排序
+      final dateKeys = <String>[];
+      for (final path in listResult.pathShaMap.keys) {
+        final fileName = path.split('/').last;
+        if (!fileName.endsWith('.json')) continue;
+        final raw = fileName.substring(0, fileName.length - '.json'.length);
+        final normalized = _normalizeDateKey(raw);
+        if (!dateKeys.contains(normalized)) dateKeys.add(normalized);
+      }
+      dateKeys.sort();
+
+      if (dateKeys.isEmpty) {
+        _addScheduleSyncStatus('远端无日程');
+        Future.delayed(const Duration(seconds: 3), () {
+          _addScheduleSyncStatus('');
+        });
+        return;
+      }
+
+      // 3) 逐日拉取并双向合并（单日失败不中断整体）
+      final total = dateKeys.length;
+      var done = 0;
+      for (final dateKey in dateKeys) {
+        _addScheduleSyncStatus('拉取中 ${done + 1}/$total...');
+        final ok = await _pullScheduleDayFromGitee(token, dateKey);
+        if (ok) done++;
+      }
+
+      // 4) 全部完成后统一落盘 + 通知（避免逐日保存）
+      if (done > 0) {
+        await _saveData();
+        notifyListeners();
+      }
+
+      if (done == total) {
+        _addScheduleSyncStatus('全部拉取完成 ($total 天)');
+      } else if (done > 0) {
+        _addScheduleSyncStatus('拉取完成 $done/$total');
+      } else {
+        _addScheduleSyncStatus('拉取失败');
+      }
+      Future.delayed(const Duration(seconds: 3), () {
+        _addScheduleSyncStatus('');
+      });
+    } catch (e) {
+      _addScheduleSyncStatus('全量拉取失败: $e');
+    } finally {
+      _allSchedulePulling = false;
+    }
+  }
+
+  /// 拉取单日日程并与本地双向合并，返回是否成功。
+  Future<bool> _pullScheduleDayFromGitee(String token, String dateKey) async {
+    final result = await ScheduleGiteeService.pullSchedule(
+      token: token,
+      dateKey: dateKey,
+      userCode: _scheduleUser.code,
+    );
+    if (result.notFound || !result.success || result.content == null) {
+      return false; // notFound/error 不中断整体，计入失败数
+    }
+
+    final remote = parseScheduleContent(result.content);
+    final daySlots = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
+    final localEntries = _serializeRecordedSlots(daySlots);
+    // 双向合并：union + 同槽 ts 大者胜，与推送 mergeScheduleSlots 完全对称
+    final merged = mergeScheduleSlots(
+      localEntries: localEntries,
+      remoteEntries: remote.slots,
+    );
+    _applyScheduleEntriesToSlots(daySlots, merged);
+    _markSlotsDirty(dateKey);
+    _targetStatsCache.invalidateDate(dateKey);
+    return true;
   }
 
   /// 从 Gitee 拉取指定用户日程并合并到指定日期。
