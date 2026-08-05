@@ -271,6 +271,12 @@ class TimeProvider with ChangeNotifier {
     return _dailySlots[dateKey];
   }
 
+  /// 获取（必要时生成）指定日期的 144 槽位，供双列视图等按日期渲染使用。
+  /// 空槽不会被标记为 dirty，不会触发落盘。
+  List<TimeSlot> slotsForDate(DateTime date) {
+    return _dailySlots.putIfAbsent(_getDateKey(date), () => _generateInitialSlots());
+  }
+
   // 生成一天 144 个初始槽位对象
   List<TimeSlot> _generateInitialSlots() {
     return List.generate(144, (index) {
@@ -378,14 +384,15 @@ class TimeProvider with ChangeNotifier {
     });
   }
 
-  void _saveSnapshot() {
-    String dateKey = _getDateKey(_currentDate);
-    _undoStacks.putIfAbsent(dateKey, () => []);
+  void _saveSnapshot([String? dateKey]) {
+    final key = dateKey ?? _getDateKey(_currentDate);
+    _undoStacks.putIfAbsent(key, () => []);
 
     _cleanupOldUndoStacks();
 
     // 深度拷贝当前的 slots
-    List<TimeSlot> snapshot = slots
+    final daySlots = _dailySlots.putIfAbsent(key, () => _generateInitialSlots());
+    List<TimeSlot> snapshot = daySlots
         .map((s) => TimeSlot(
               hour: s.hour,
               minute10: s.minute10,
@@ -398,11 +405,11 @@ class TimeProvider with ChangeNotifier {
             ))
         .toList();
 
-    _undoStacks[dateKey]!.add(snapshot);
+    _undoStacks[key]!.add(snapshot);
 
     // 如果超过最大步数，移除最早的一条
-    if (_undoStacks[dateKey]!.length > _maxStackSize) {
-      _undoStacks[dateKey]!.removeAt(0);
+    if (_undoStacks[key]!.length > _maxStackSize) {
+      _undoStacks[key]!.removeAt(0);
     }
   }
 
@@ -421,28 +428,40 @@ class TimeProvider with ChangeNotifier {
   }
 
   void assignCategoryToSlots(Set<int> indices, Category category,
-      {String? subLabel}) {
+      {String? subLabel, DateTime? date}) {
     if (_remoteViewEnabled) return; // 远程视图只读，禁止编辑本地数据
     if (indices.isEmpty) return;
 
-    _saveSnapshot();
+    // 未指定日期时维持原有行为（操作当前日期，走完整同步链路）
+    final targetDate = date ?? _currentDate;
+    final dateKey = _getDateKey(targetDate);
+    final daySlots = slotsForDate(targetDate);
+
+    _saveSnapshot(dateKey);
 
     final label = subLabel ?? category.name;
     for (var index in indices) {
-      slots[index].recorded = true;
-      slots[index].label = label;
-      slots[index].categoryId = category.id;
-      slots[index].color = category.color;
-      slots[index].isFromCalendar = false;
-      slots[index].calendarEventId = null;
+      daySlots[index].recorded = true;
+      daySlots[index].label = label;
+      daySlots[index].categoryId = category.id;
+      daySlots[index].color = category.color;
+      daySlots[index].isFromCalendar = false;
+      daySlots[index].calendarEventId = null;
     }
-    _markSlotsDirty(_getDateKey(_currentDate));
-    _targetStatsCache.invalidateDate(_getDateKey(_currentDate));
-    _markPendingSync();
+    _markSlotsDirty(dateKey);
+    _targetStatsCache.invalidateDate(dateKey);
+    // 编辑当前日期（含 Windows 双列左列）走完整同步链路；只有编辑其他日期才跳过防抖同步
+    if (date == null || dateKey == _getDateKey(_currentDate)) {
+      _markPendingSync();
+      _scheduleCalendarSync();
+    } else {
+      // 双列视图编辑非当前日期：只标记待同步，不触发当前日期的防抖同步
+      _pendingSyncDates.add(dateKey);
+      _syncDirty = true;
+    }
     _saveData();
     notifyListeners();
     _targetStatsChangedController.add(null); // 通知目标统计变化
-    _scheduleCalendarSync();
   }
 
   /// 是否已登录可同步的 Google 日历账号
@@ -985,21 +1004,30 @@ class TimeProvider with ChangeNotifier {
   }
 
   // 移除指定时间块的事件
-  void removeEventFromSlot(int index) {
+  void removeEventFromSlot(int index, {DateTime? date}) {
     if (_remoteViewEnabled) return; // 远程视图只读，禁止编辑本地数据
-    if (index >= 0 && index < slots.length) {
-      if (slots[index].recorded) {
-        final wasFromCalendar = slots[index].isFromCalendar;
-        _saveSnapshot();
+    final targetDate = date ?? _currentDate;
+    final dateKey = _getDateKey(targetDate);
+    final daySlots = slotsForDate(targetDate);
+    if (index >= 0 && index < daySlots.length) {
+      if (daySlots[index].recorded) {
+        final wasFromCalendar = daySlots[index].isFromCalendar;
+        _saveSnapshot(dateKey);
         if (wasFromCalendar) {
-          _dismissCalendarImportAt(index);
+          _dismissCalendarImportAt(index, date: targetDate);
         } else {
-          _clearSlot(index);
-          final dateKey = _getDateKey(_currentDate);
+          _clearSlotAt(daySlots, index);
           _markSlotsDirty(dateKey);
           _targetStatsCache.invalidateDate(dateKey);
-          _markPendingSync();
-          _scheduleCalendarSync();
+          // 编辑当前日期（含 Windows 双列左列）走完整同步链路；只有编辑其他日期才跳过防抖同步
+          if (date == null || dateKey == _getDateKey(_currentDate)) {
+            _markPendingSync();
+            _scheduleCalendarSync();
+          } else {
+            // 双列视图编辑非当前日期：只标记待同步，不触发当前日期的防抖同步
+            _pendingSyncDates.add(dateKey);
+            _syncDirty = true;
+          }
           _saveData();
           notifyListeners();
           _targetStatsChangedController.add(null); // 通知目标统计变化
@@ -1007,8 +1035,6 @@ class TimeProvider with ChangeNotifier {
       }
     }
   }
-
-  void _clearSlot(int index) => _clearSlotAt(slots, index);
 
   void _clearSlotAt(List<TimeSlot> daySlots, int index) {
     daySlots[index].recorded = false;
@@ -1019,9 +1045,10 @@ class TimeProvider with ChangeNotifier {
     daySlots[index].calendarEventId = null;
   }
 
-  Future<void> _dismissCalendarImportAt(int index) async {
-    final dateKey = _getDateKey(_currentDate);
-    final daySlots = slots;
+  Future<void> _dismissCalendarImportAt(int index, {DateTime? date}) async {
+    final targetDate = date ?? _currentDate;
+    final dateKey = _getDateKey(targetDate);
+    final daySlots = slotsForDate(targetDate);
 
     final label = daySlots[index].label ?? '';
     int start = index;
@@ -1992,6 +2019,8 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> _refreshHomeWidget() async {
+    // 桌面小组件仅 Android 支持，Windows 无实现，直接跳过避免 MissingPluginException
+    if (Platform.isWindows) return;
     try {
       await HomeWidgetService.updateFromDay(
         slots: slots,

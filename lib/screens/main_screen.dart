@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -147,6 +149,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     const ProfileScreen(),
   ];
 
+  static final List<BottomNavigationBarItem> _navItems =
+      <BottomNavigationBarItem>[
+    const BottomNavigationBarItem(icon: Icon(Icons.home), label: '记录'),
+    const BottomNavigationBarItem(
+      icon: Icon(Icons.menu_book_outlined),
+      label: '日记',
+    ),
+    const BottomNavigationBarItem(icon: Icon(Icons.card_travel), label: '出行'),
+    const BottomNavigationBarItem(
+      icon: Icon(Icons.check_circle_outline),
+      label: '打卡',
+    ),
+    const BottomNavigationBarItem(icon: Icon(Icons.flag), label: '目标'),
+    const BottomNavigationBarItem(icon: Icon(Icons.person), label: '我的'),
+  ];
+
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
@@ -156,29 +174,24 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    // Windows 上隐藏"目标"tab，安卓保持完整 6 个 tab
+    final List<Widget> options = List.of(_widgetOptions);
+    final List<BottomNavigationBarItem> items = List.of(_navItems);
+    if (Platform.isWindows) {
+      options.removeAt(4); // 移除 TargetScreen
+      items.removeAt(4); // 移除"目标"tab
+    }
+    final safeIndex = _selectedIndex.clamp(0, options.length - 1);
     return Scaffold(
       body: IndexedStack(
-        index: _selectedIndex,
-        children: _widgetOptions,
+        index: safeIndex,
+        children: options,
       ),
       bottomNavigationBar: BottomNavigationBar(
         type: BottomNavigationBarType.fixed,
         showUnselectedLabels: true,
-        items: const <BottomNavigationBarItem>[
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: '记录'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.menu_book_outlined),
-            label: '日记',
-          ),
-          BottomNavigationBarItem(icon: Icon(Icons.card_travel), label: '出行'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.check_circle_outline),
-            label: '打卡',
-          ),
-          BottomNavigationBarItem(icon: Icon(Icons.flag), label: '目标'),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: '我的'),
-        ],
-        currentIndex: _selectedIndex,
+        items: items,
+        currentIndex: safeIndex,
         selectedItemColor: colorScheme.primary,
         unselectedItemColor: colorScheme.onSurfaceVariant,
         onTap: _onItemTapped,

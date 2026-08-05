@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/time_slot.dart';
 import '../providers/time_provider.dart';
 
 /// 时间网格的渲染与手势层。
@@ -18,6 +19,7 @@ class TimeGrid extends StatelessWidget {
     required this.onPanStart,
     required this.onPanUpdate,
     required this.onRemoveSlot,
+    this.date,
   });
 
   final GlobalKey gridKey;
@@ -28,6 +30,9 @@ class TimeGrid extends StatelessWidget {
   final ValueChanged<Offset> onPanStart;
   final ValueChanged<Offset> onPanUpdate;
   final ValueChanged<int> onRemoveSlot;
+
+  /// 要渲染的日期；为 null 时渲染当前日期（保持原有行为）
+  final DateTime? date;
 
   bool _isHighlighted(int index) {
     if (dragStartIndex == null || dragEndIndex == null) return false;
@@ -89,6 +94,8 @@ class TimeGrid extends StatelessWidget {
     final emptyCellColor = isDark
         ? colorScheme.surfaceContainerHigh
         : const Color.fromARGB(255, 188, 186, 186);
+    final daySlots =
+        date == null ? provider.slots : provider.slotsForDate(date!);
 
     return Container(
       height: 45,
@@ -99,13 +106,13 @@ class TimeGrid extends StatelessWidget {
           var minute = 0;
           while (minute < 6) {
             final index = hour * 6 + minute;
-            final slot = provider.slots[index];
+            final slot = daySlots[index];
             final label = slot.label;
 
             if (label != null && slot.color != null) {
               var span = 1;
               while (minute + span < 6 &&
-                  provider.slots[hour * 6 + minute + span].label == label) {
+                  daySlots[hour * 6 + minute + span].label == label) {
                 span++;
               }
               var highlighted = false;
@@ -122,13 +129,14 @@ class TimeGrid extends StatelessWidget {
                   margin: EdgeInsets.only(
                     top: 1,
                     bottom: 1,
-                    left: _shouldBridgeLeft(provider, index) ? 0 : 1,
-                    right: _shouldBridgeRight(provider, index + span - 1) ? 0 : 1,
+                    left: _shouldBridgeLeft(daySlots, index) ? 0 : 1,
+                    right:
+                        _shouldBridgeRight(daySlots, index + span - 1) ? 0 : 1,
                   ),
                   decoration: BoxDecoration(
                     color: highlighted ? highlightColor : slot.color!,
                     borderRadius: _computeSegmentBorderRadius(
-                        provider, hour, minute, span, highlighted),
+                        daySlots, hour, minute, span, highlighted),
                   ),
                   child: Center(
                     child: Text(
@@ -165,27 +173,27 @@ class TimeGrid extends StatelessWidget {
     );
   }
 
-  bool _shouldBridgeLeft(TimeProvider provider, int index) =>
+  bool _shouldBridgeLeft(List<TimeSlot> daySlots, int index) =>
       index % 6 != 0 &&
-      provider.slots[index].label != null &&
-      provider.slots[index].label == provider.slots[index - 1].label;
+      daySlots[index].label != null &&
+      daySlots[index].label == daySlots[index - 1].label;
 
-  bool _shouldBridgeRight(TimeProvider provider, int index) =>
+  bool _shouldBridgeRight(List<TimeSlot> daySlots, int index) =>
       index % 6 != 5 &&
-      provider.slots[index].label != null &&
-      provider.slots[index].label == provider.slots[index + 1].label;
+      daySlots[index].label != null &&
+      daySlots[index].label == daySlots[index + 1].label;
 
-  BorderRadius _computeSegmentBorderRadius(TimeProvider provider, int hour,
+  BorderRadius _computeSegmentBorderRadius(List<TimeSlot> daySlots, int hour,
       int startMinute, int span, bool isHighlighted) {
     if (isHighlighted) return BorderRadius.circular(4);
     final startIndex = hour * 6 + startMinute;
     final endIndex = startIndex + span - 1;
     final leftRounded = startIndex % 6 == 0 ||
         startIndex == 0 ||
-        provider.slots[startIndex].label != provider.slots[startIndex - 1].label;
+        daySlots[startIndex].label != daySlots[startIndex - 1].label;
     final rightRounded = endIndex % 6 == 5 ||
-        endIndex >= provider.slots.length - 1 ||
-        provider.slots[endIndex].label != provider.slots[endIndex + 1].label;
+        endIndex >= daySlots.length - 1 ||
+        daySlots[endIndex].label != daySlots[endIndex + 1].label;
     return BorderRadius.only(
       topLeft: leftRounded ? const Radius.circular(4) : Radius.zero,
       bottomLeft: leftRounded ? const Radius.circular(4) : Radius.zero,
