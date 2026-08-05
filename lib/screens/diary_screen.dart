@@ -23,6 +23,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   DiaryKind _kind = DiaryKind.g;
+  /// Windows 手动身份（设置中选的角色），用于只读提示
+  DiaryKind? _windowsManualKind;
   DateTime _selectedDate = DateTime.now();
   DateTime? _startedAt;
   String? _token;
@@ -60,9 +62,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   Future<void> _loadInitial() async {
     final token = await DiaryLocalStore.loadToken();
+    final manualKind =
+        Platform.isWindows ? await DiaryLocalStore.loadManualKind() : null;
+    _windowsManualKind = manualKind;
     final kind = Platform.isWindows
-        ? (await DiaryLocalStore.loadManualKind() ??
-            await DiaryLocalStore.loadPreferredKind())
+        ? (manualKind ?? await DiaryLocalStore.loadPreferredKind())
         : await DiaryLocalStore.loadPreferredKind();
     _token = token;
     _kind = kind;
@@ -352,14 +356,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   Future<void> _changeKind(DiaryKind kind) async {
-    if (Platform.isWindows) {
-      final manualKind = await DiaryLocalStore.loadManualKind();
-      if (manualKind != null && manualKind != kind) {
-        _showMessage(
-            'Windows 版本当前身份为${manualKind == DiaryKind.g ? '乖乖' : '晶晶'}，不能切换日记分区');
-        return;
-      }
-    }
+    // Windows 下允许自由切换查看对方分区（与文件树/搜索一致）；
+    // 提交保护由 _pushDiary 校验身份负责，实现"可查看不可修改"。
     if (_kind == kind) return;
     await _switchContext(kind: kind);
   }
@@ -849,6 +847,36 @@ class _DiaryScreenState extends State<DiaryScreen> {
                       ),
                     ],
                   ),
+                  // Windows 只读提示：查看对方日记分区时不可同步
+                  if (Platform.isWindows &&
+                      _windowsManualKind != null &&
+                      _windowsManualKind != _kind) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: colorScheme.secondaryContainer,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.visibility_outlined,
+                              size: 16, color: Colors.orange),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '正在查看${_kind == DiaryKind.g ? '乖乖' : '晶晶'}的日记分区（只读，不可同步）',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colorScheme.onSecondaryContainer,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   Container(
                     padding: const EdgeInsets.all(12),
