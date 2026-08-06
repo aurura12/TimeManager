@@ -8,9 +8,9 @@
 ;
 ; 版本号需与 pubspec.yaml 的 version 保持一致（只取前三段，如 1.84.0+1 → 1.84.0）
 
-#define MyAppName "time_manager"
+#define MyAppName "时间块"
 #define MyAppVersion "1.85.0"
-#define MyAppPublisher "time_manager"
+#define MyAppPublisher "时间块"
 #define MyAppExeName "time_manager.exe"
 ; Flutter Windows release 产物目录
 #define MyReleaseDir "build\windows\x64\runner\Release"
