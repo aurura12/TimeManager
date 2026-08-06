@@ -15,6 +15,8 @@ import '../services/home_widget_service.dart';
 import '../services/diary_local_store.dart';
 import '../services/schedule_day_merge.dart';
 import '../services/schedule_gitee_service.dart';
+import '../services/category_document_merge.dart';
+import '../services/category_gitee_service.dart';
 import '../models/diary_kind.dart';
 import '../models/known_google_users.dart';
 import '../services/app_user_identity_store.dart';
@@ -193,6 +195,7 @@ class TimeProvider with ChangeNotifier {
   void dispose() {
     _debounceTimer?.cancel();
     _scheduleGiteeTimer?.cancel();
+    _categoriesGiteeTimer?.cancel();
     _googleAuthSubscription?.cancel();
     _syncStatusController.close();
     _scheduleGiteeSyncController?.close();
@@ -223,6 +226,8 @@ class TimeProvider with ChangeNotifier {
     await _refreshHomeWidget();
     // 从本地持久化存储直接加载用户身份（不联网，瞬间完成）
     await _loadScheduleUserFromStore();
+    // 拉取当前身份的分类（事件/子事件）到本地（安卓与 Windows 都执行）
+    unawaited(_pullCategoriesFromGitee());
     // Windows 上拉取当前日期自己的日程，补上安卓端推送的数据
     _pullOwnScheduleIfWindows();
     // 后台恢复 Google 日历会话（不阻塞）
@@ -708,6 +713,16 @@ class TimeProvider with ChangeNotifier {
   bool _allScheduleSyncing = false;
   bool _allSchedulePulling = false;
 
+  // --- 分类（事件/子事件）跨端同步 ---
+  Timer? _categoriesGiteeTimer;
+  bool _categoriesGiteeSyncing = false;
+  /// 分类删除墓碑：id → 删除时间戳（毫秒）
+  final Map<String, int> _deletedCategories = {};
+  /// 分类文档最后修改时间（毫秒），用于合并顺序基准与首次同步判断
+  int _categoriesDocUpdatedAt = 0;
+  /// 分类修改发生时归属的身份（捕获当前 scheduleUser.code，避免切身份后错写）
+  String _categoriesUserCode = '';
+
   /// 全量同步所有日期的日程到 Gitee
   Future<void> syncAllSchedulesToGitee() async {
     if (_remoteViewEnabled) {
@@ -871,6 +886,104 @@ class TimeProvider with ChangeNotifier {
     _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
     return true;
+  }
+
+  // --- 分类（事件/子事件）跨端同步 ---
+
+  /// 标记分类已修改：3 秒防抖后自动同步到 Gitee（远程视图下跳过）。
+  void _markCategoriesGiteePending() {
+    if (_remoteViewEnabled) return;
+    // 捕获归属身份，避免随后切换身份导致同步到错误身份的文件
+    _categoriesUserCode = _scheduleUser.code;
+    _categoriesGiteeTimer?.cancel();
+    _categoriesGiteeTimer = Timer(const Duration(seconds: 3), () {
+      unawaited(_syncCategoriesToGitee());
+    });
+  }
+
+  /// 将本地分类同步到 Gitee：拉远端 → 合并 → 推送合并结果 → 写回本地。
+  Future<void> _syncCategoriesToGitee() async {
+    if (_remoteViewEnabled) return;
+    if (!_hasSelectedScheduleUser) return;
+    if (_categoriesGiteeSyncing) return;
+    _categoriesGiteeSyncing = true;
+    try {
+      final token = await DiaryLocalStore.loadToken();
+      if (token == null || token.isEmpty) return;
+      final userCode =
+          _categoriesUserCode.isEmpty ? _scheduleUser.code : _categoriesUserCode;
+
+      final pullResult = await CategoryGiteeService.pullCategories(
+          token: token, userCode: userCode);
+      final localDoc = CategoryDocument(
+        updatedAt: _categoriesDocUpdatedAt,
+        categories: List.from(_categories),
+        deletedCategories: Map.from(_deletedCategories),
+      );
+      final remoteDoc = pullResult.success && pullResult.content != null
+          ? parseCategoryDocument(pullResult.content)
+          : const CategoryDocument();
+      final merged = mergeCategoryDocuments(local: localDoc, remote: remoteDoc);
+
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      await CategoryGiteeService.pushCategories(
+        token: token,
+        userCode: userCode,
+        content: encodeCategoryDocument(merged, nowMs: nowMs),
+        commitMessage: 'categories($userCode): sync',
+      );
+
+      _applyMergedCategories(merged);
+      _addScheduleSyncStatus('分类已同步');
+      Future.delayed(const Duration(seconds: 3), () {
+        _addScheduleSyncStatus('');
+      });
+    } catch (e) {
+      debugPrint('分类同步失败: $e');
+      _addScheduleSyncStatus('分类同步失败: $e');
+    } finally {
+      _categoriesGiteeSyncing = false;
+    }
+  }
+
+  /// 从 Gitee 拉取当前身份的分类并合并到本地（只拉不推）。
+  Future<void> _pullCategoriesFromGitee() async {
+    if (_remoteViewEnabled) return;
+    if (!_hasSelectedScheduleUser) return;
+    if (_categoriesGiteeSyncing) return;
+    _categoriesGiteeSyncing = true;
+    try {
+      final token = await DiaryLocalStore.loadToken();
+      if (token == null || token.isEmpty) return;
+      final userCode = _scheduleUser.code;
+      final pullResult = await CategoryGiteeService.pullCategories(
+          token: token, userCode: userCode);
+      if (!pullResult.success || pullResult.content == null) return;
+      final localDoc = CategoryDocument(
+        updatedAt: _categoriesDocUpdatedAt,
+        categories: List.from(_categories),
+        deletedCategories: Map.from(_deletedCategories),
+      );
+      final remoteDoc = parseCategoryDocument(pullResult.content);
+      final merged = mergeCategoryDocuments(local: localDoc, remote: remoteDoc);
+      _applyMergedCategories(merged);
+    } catch (e) {
+      debugPrint('分类拉取失败: $e');
+    } finally {
+      _categoriesGiteeSyncing = false;
+    }
+  }
+
+  /// 将合并结果写回本地分类状态并持久化。
+  void _applyMergedCategories(CategoryDocument merged) {
+    _categories = merged.categories;
+    _deletedCategories
+      ..clear()
+      ..addAll(merged.deletedCategories);
+    _categoriesDocUpdatedAt = merged.updatedAt;
+    _markCategoriesChanged();
+    _saveData();
+    notifyListeners();
   }
 
   /// 从 Gitee 拉取指定用户日程并合并到指定日期。
@@ -1830,8 +1943,12 @@ class TimeProvider with ChangeNotifier {
   // --- 分类管理方法 (从 HomeScreen 移入) ---
 
   void addCategory(Category category) {
-    _categories.add(category);
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    _categories.add(category.updatedAt <= 0
+        ? category.copyWith(updatedAt: nowMs)
+        : category);
     _markCategoriesChanged();
+    _markCategoriesGiteePending();
     _invalidateLabelCategoryIdCache(); // 清除缓存
     _saveData();
     notifyListeners();
@@ -1860,8 +1977,10 @@ class TimeProvider with ChangeNotifier {
       }
     }
 
-    _categories[index] = updated;
+    _categories[index] = updated.copyWith(
+        updatedAt: DateTime.now().millisecondsSinceEpoch);
     _markCategoriesChanged();
+    _markCategoriesGiteePending();
     _invalidateLabelCategoryIdCache(); // 清除缓存
     _saveData();
     notifyListeners();
@@ -1876,8 +1995,10 @@ class TimeProvider with ChangeNotifier {
     _categories[catIndex] = cat.copyWith(
       subCategories: newSubs,
       hiddenSubCategories: newHidden,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
     _markCategoriesChanged(); // 标记分类为脏
+    _markCategoriesGiteePending();
     _saveData();
     notifyListeners();
   }
@@ -1891,8 +2012,10 @@ class TimeProvider with ChangeNotifier {
     _categories[catIndex] = cat.copyWith(
       subCategories: newSubs,
       hiddenSubCategories: newHidden,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
     _markCategoriesChanged(); // 标记分类为脏
+    _markCategoriesGiteePending();
     _saveData();
     notifyListeners();
   }
@@ -2108,16 +2231,12 @@ class TimeProvider with ChangeNotifier {
     // 1. 保存分类（仅在变化时）
     final categoriesDirtyAtStart = _categoriesDirty;
     if (categoriesDirtyAtStart) {
-      List<String> catList = _categories.map((c) {
-        return json.encode({
-          'id': c.id,
-          'name': c.name,
-          'color': c.color.toARGB32(),
-          'subCategories': c.subCategories,
-          'hiddenSubCategories': c.hiddenSubCategories,
-        });
-      }).toList();
+      List<String> catList = _categories.map((c) => json.encode(c.toJson())).toList();
       await prefs.setStringList('categories', catList);
+      // 分类删除墓碑（id → 删除时间戳）与文档时间戳随分类一并持久化
+      await prefs.setString(
+          'deleted_categories', json.encode(_deletedCategories));
+      await prefs.setInt('categories_doc_updated_at', _categoriesDocUpdatedAt);
       if (_saveRequestRevision == requestRevision) {
         _categoriesDirty = false;
       }
@@ -2356,21 +2475,17 @@ class TimeProvider with ChangeNotifier {
     for (final e in data['categories'] as List) {
       try {
         final map = Map<String, dynamic>.from(e as Map);
-        parsedCategories.add(Category(
-          id: map['id'] as String?,
-          name: map['name'] as String,
-          color: Color(map['color'] as int? ?? 0xFF9E9E9E),
-          subCategories: List<String>.from(map['subCategories'] ?? []),
-          hiddenSubCategories:
-              List<String>.from(map['hiddenSubCategories'] ?? []),
-        ));
+        parsedCategories.add(Category.fromJson(map));
       } catch (err) {
         debugPrint("导入分类数据出错: $err");
       }
     }
     if (!parsedCategories.any((c) => c.name == '临时')) {
-      parsedCategories
-          .add(Category(name: '临时', color: const Color(0xFF9E9E9E)));
+      parsedCategories.add(Category(
+        name: '临时',
+        color: const Color(0xFF9E9E9E),
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ));
     }
 
     final parsedTargets = <Target>[];
@@ -2448,22 +2563,31 @@ class TimeProvider with ChangeNotifier {
 
   void _ensureTempCategory() {
     if (!_categories.any((c) => c.name == '临时')) {
-      _categories.add(Category(name: '临时', color: const Color(0xFF9E9E9E)));
+      _categories.add(Category(
+        name: '临时',
+        color: const Color(0xFF9E9E9E),
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ));
     }
   }
 
-  List<Category> _defaultCategories() => [
-        Category(
-            name: '学习',
-            color: const Color(0xFFD4AF37),
-            subCategories: ['阅读', '编程']),
-        Category(
-            name: '工作',
-            color: const Color(0xFF9CB86A),
-            subCategories: ['会议', '文档']),
-        Category(name: '运动', color: const Color(0xFF4A90E2)),
-        Category(name: '临时', color: const Color(0xFF9E9E9E)),
-      ];
+  List<Category> _defaultCategories() {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    return [
+      Category(
+          name: '学习',
+          color: const Color(0xFFD4AF37),
+          subCategories: ['阅读', '编程'],
+          updatedAt: nowMs),
+      Category(
+          name: '工作',
+          color: const Color(0xFF9CB86A),
+          subCategories: ['会议', '文档'],
+          updatedAt: nowMs),
+      Category(name: '运动', color: const Color(0xFF4A90E2), updatedAt: nowMs),
+      Category(name: '临时', color: const Color(0xFF9E9E9E), updatedAt: nowMs),
+    ];
+  }
 
   void _loadDailySlotsFromJson(
     Map<String, dynamic> slotsJson, {
@@ -2509,25 +2633,44 @@ class TimeProvider with ChangeNotifier {
     List<String>? catList = prefs.getStringList('categories');
     if (catList != null && catList.isNotEmpty) {
       _categories = [];
+      var needMigration = false;
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
       for (final str in catList) {
         try {
           final map = json.decode(str) as Map<String, dynamic>;
-          _categories.add(Category(
-            id: map['id'] as String?,
-            name: map['name'],
-            color: Color(map['color'] as int? ?? 0xFF9E9E9E),
-            subCategories: List<String>.from(map['subCategories'] ?? []),
-            hiddenSubCategories:
-                List<String>.from(map['hiddenSubCategories'] ?? []),
-          ));
+          var cat = Category.fromJson(map);
+          // 旧数据没有时间戳：统一迁移为当前时间，避免首次同步两端同为 0 覆盖
+          if (cat.updatedAt <= 0) {
+            cat = cat.copyWith(updatedAt: nowMs);
+            needMigration = true;
+          }
+          _categories.add(cat);
         } catch (e) {
           debugPrint("加载分类数据出错: $e");
         }
       }
+      if (needMigration) _categoriesDirty = true;
       _ensureTempCategory();
     } else {
       _categories = _defaultCategories();
     }
+
+    // 分类删除墓碑（id → 删除时间戳）与文档时间戳
+    final deletedStr = prefs.getString('deleted_categories');
+    if (deletedStr != null) {
+      try {
+        final decoded = json.decode(deletedStr);
+        if (decoded is Map) {
+          decoded.forEach((k, v) {
+            final ts = (v is num) ? v.toInt() : int.tryParse(v.toString());
+            if (k is String && ts != null && ts > 0) {
+              _deletedCategories[k] = ts;
+            }
+          });
+        }
+      } catch (_) {}
+    }
+    _categoriesDocUpdatedAt = prefs.getInt('categories_doc_updated_at') ?? 0;
 
     // 2. 加载目标
     List<String>? targetList = prefs.getStringList('targets');
@@ -2623,11 +2766,14 @@ class TimeProvider with ChangeNotifier {
     final fromCat = _categories[fromIndex];
     final toCat = _categories[toIndex];
 
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
     _categories[fromIndex] = fromCat.copyWith(
       subCategories: fromCat.subCategories.where((s) => s != subName).toList(),
+      updatedAt: nowMs,
     );
     _categories[toIndex] = toCat.copyWith(
       subCategories: [...toCat.subCategories, subName],
+      updatedAt: nowMs,
     );
 
     // 2. 更新所有相关时间块的 categoryId
@@ -2649,6 +2795,7 @@ class TimeProvider with ChangeNotifier {
 
     // 4. 通知 UI 刷新
     _markCategoriesChanged();
+    _markCategoriesGiteePending();
     _targetsDirty = true;
     _markAllSlotsDirty();
     _invalidateLabelCategoryIdCache();
@@ -2665,15 +2812,21 @@ class TimeProvider with ChangeNotifier {
     final Category item = _categories.removeAt(oldIndex);
     _categories.insert(newIndex, item);
 
+    // 排序不改变分类自身时间戳，但需更新文档时间戳以传播顺序
+    _categoriesDocUpdatedAt = DateTime.now().millisecondsSinceEpoch;
     _markCategoriesChanged(); // 标记分类为脏
+    _markCategoriesGiteePending();
     notifyListeners();
     _saveData();
   }
 
   void deleteCategory(int index) {
     final categoryId = _categories[index].id;
+    // 写入带时间戳的删除墓碑，防止另一端已同步的分支复活
+    _deletedCategories[categoryId] = DateTime.now().millisecondsSinceEpoch;
     _categories.removeAt(index);
     _markCategoriesChanged();
+    _markCategoriesGiteePending();
     _invalidateLabelCategoryIdCache();
 
     // Clean up orphaned slot references
