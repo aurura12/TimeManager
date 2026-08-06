@@ -75,6 +75,10 @@ analysis_benchmark.json
 .pub-cache/
 .pub/
 build/
+installer_output/
+# 设计文档不入库（用户要求）
+iOS_移植计划.md
+网格重构方案.md
 flutter_*.png
 linked_*.ds
 unlinked.ds

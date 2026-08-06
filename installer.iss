@@ -41,7 +41,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#MyAppName}
 
 [Languages]
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+; 本机 Inno Setup 6 未随附 ChineseSimplified.isl，使用英文向导。
+; 如需中文，可将 ChineseSimplified.isl 放入
+; "C:\Program Files (x86)\Inno Setup 6\Languages\" 后恢复下面一行。
+; Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
