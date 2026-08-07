@@ -687,8 +687,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
       _startedAt = startedAt ?? DateTime.now();
       _dirtySinceContextLoaded = false;
       await _saveDraftNow();
-      // 刷新搜索缓存，避免下次读到旧内容
-      DiarySearchService.updateCache(_kind.code, _selectedDate, raw);
+      // 刷新搜索缓存并落盘，避免重启后读到旧内容
+      await DiarySearchService.updateCache(_kind.code, _selectedDate, raw);
       if (!mounted) return;
       _showMessage('拉取成功（已覆盖本地）');
       setState(() => _processing = false);
@@ -742,8 +742,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
     setState(() => _processing = false);
 
     if (result.success) {
-      // 本地更新单文件搜索缓存，立即可搜到（无需重拉全仓库）
-      DiarySearchService.updateCache(_kind.code, _selectedDate, markdown);
+      // 本地更新单文件搜索缓存并落盘，立即可搜到（无需重拉全仓库）
+      await DiarySearchService.updateCache(_kind.code, _selectedDate, markdown);
       _dirtySinceContextLoaded = false;
       _showMessage(result.created ? '同步成功（已新建远端文件）' : '同步成功');
       return;

@@ -17,7 +17,9 @@ class DiarySearchService {
   static bool _loaded = false;
   static bool _loading = false;
   static DateTime? _lastLoadTime;
-  static const Duration _cacheExpiry = Duration(days: 365);
+  // 磁盘缓存有效期 1 天：每天首次启动自动增量同步远程（只下载 sha 变化的文件），
+  // 避免旧的磁盘缓存长期不刷新导致漏掉新增日记（如某位用户的日记）。
+  static const Duration _cacheExpiry = Duration(days: 1);
   static String? _cacheDir;
 
   /// 索引进度（0.0 ~ 1.0），通过 addListener 监听变化
@@ -345,11 +347,21 @@ class DiarySearchService {
     return snippet;
   }
 
-  static void updateCache(String kind, DateTime date, String content) {
+  /// 更新单条缓存并立即落盘。
+  ///
+  /// 搜索与"那年今日"都依赖此缓存；若只改内存不落盘，重启后会被旧的
+  /// 磁盘缓存覆盖，导致刚同步的日记（尤其是另一用户的日记）丢失。
+  static Future<void> updateCache(String kind, DateTime date, String content) async {
     final key = '${kind}_${DateFormat('yyyy-MM-dd').format(date)}';
     _cache[key] = content;
     _cacheSha.remove(key);
     _lowerCache.remove(key);
+    // 本地更新后缓存即视为就绪：getCachedContent/search 都依赖 _loaded，
+    // 否则索引未加载时 push 的日记即使进了内存也搜不到。
+    _loaded = true;
+    // 刷新落盘时间：本次本地更新即视为缓存最新，重启时直接复用无需远程刷新
+    _lastLoadTime = DateTime.now();
+    await _saveToDisk();
   }
 
   static void removeFromCache(String kind, DateTime date) {
