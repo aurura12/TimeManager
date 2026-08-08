@@ -672,8 +672,15 @@ class TimeProvider with ChangeNotifier {
     );
     if (!result.success) return false;
 
-    // 5) 将合并结果写回本地（含远端更新的槽位），保证本地 == 远端
-    _applyScheduleEntriesToSlots(slots, merged);
+    // 5) 将合并结果写回本地（含远端更新的槽位），保证本地 == 远端。
+    //    注意：拉取远端期间用户可能已继续编辑本地，写回前用最新本地
+    //    状态再做一次"后写覆盖"合并，避免把同步期间的新修改覆盖回旧数据。
+    final latestLocal = _serializeRecordedSlots(slots);
+    final finalEntries = mergeScheduleSlots(
+      localEntries: latestLocal,
+      remoteEntries: merged,
+    );
+    _applyScheduleEntriesToSlots(slots, finalEntries);
     _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
     await _saveData();
