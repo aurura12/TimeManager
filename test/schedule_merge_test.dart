@@ -91,5 +91,32 @@ void main() {
       );
       expect(keptRemote.length, 1);
     });
+
+    test('回归：同步期间本地新修改在二次合并中不被远端旧值覆盖', () {
+      // 场景模拟 _pushScheduleDay：
+      // 第一次 merge 用序列化时的旧本地快照（ts=1000），远端该槽位 ts=2000 → 远端胜
+      final staleLocal = [
+        {'i': 0, 'l': '旧本地', 'ts': 1000},
+      ];
+      final remote = [
+        {'i': 0, 'l': '远端', 'ts': 2000},
+      ];
+      final merged = mergeScheduleSlots(
+        localEntries: staleLocal,
+        remoteEntries: remote,
+      );
+      expect(merged.first['l'], '远端');
+
+      // 同步期间用户又编辑了同一槽位（ts=3000），写回前用最新本地再次合并：
+      // 最新本地必须胜出，否则用户的新修改会被覆盖回旧数据
+      final latestLocal = [
+        {'i': 0, 'l': '用户新修改', 'ts': 3000},
+      ];
+      final finalEntries = mergeScheduleSlots(
+        localEntries: latestLocal,
+        remoteEntries: merged,
+      );
+      expect(finalEntries.first['l'], '用户新修改');
+    });
   });
 }
