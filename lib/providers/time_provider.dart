@@ -43,6 +43,9 @@ class BackupPreview {
 class TimeProvider with ChangeNotifier {
   static const int backupVersion = 1;
   static const Color calendarImportColor = Color(0xFF78909C);
+
+  /// 临时事件保留名：首页"临时"按钮分类，也是父事件视图中无归属事件的聚合项名称
+  static const String temporaryCategoryName = '临时';
   Timer? _debounceTimer;
   Future<void>? _ongoingSave;
   int _saveRequestRevision = 0;
@@ -2487,9 +2490,9 @@ class TimeProvider with ChangeNotifier {
         debugPrint("导入分类数据出错: $err");
       }
     }
-    if (!parsedCategories.any((c) => c.name == '临时')) {
+    if (!parsedCategories.any((c) => c.name == temporaryCategoryName)) {
       parsedCategories.add(Category(
-        name: '临时',
+        name: temporaryCategoryName,
         color: const Color(0xFF9E9E9E),
         updatedAt: DateTime.now().millisecondsSinceEpoch,
       ));
@@ -2569,9 +2572,9 @@ class TimeProvider with ChangeNotifier {
   }
 
   void _ensureTempCategory() {
-    if (!_categories.any((c) => c.name == '临时')) {
+    if (!_categories.any((c) => c.name == temporaryCategoryName)) {
       _categories.add(Category(
-        name: '临时',
+        name: temporaryCategoryName,
         color: const Color(0xFF9E9E9E),
         updatedAt: DateTime.now().millisecondsSinceEpoch,
       ));
@@ -2592,7 +2595,7 @@ class TimeProvider with ChangeNotifier {
           subCategories: ['会议', '文档'],
           updatedAt: nowMs),
       Category(name: '运动', color: const Color(0xFF4A90E2), updatedAt: nowMs),
-      Category(name: '临时', color: const Color(0xFF9E9E9E), updatedAt: nowMs),
+      Category(name: temporaryCategoryName, color: const Color(0xFF9E9E9E), updatedAt: nowMs),
     ];
   }
 
@@ -3200,10 +3203,15 @@ class TimeProvider with ChangeNotifier {
     final detailStats = getStatistics(start, end);
     Map<String, double> parentStats = {};
 
-    // 建立子事件到父事件的映射
+    // 建立子事件（含隐藏子事件）到父事件的映射；真正的父事件名集合
     final Map<String, String> childToParent = {};
+    final Set<String> parentNames = {};
     for (final cat in _categories) {
+      parentNames.add(cat.name);
       for (final sub in cat.subCategories) {
+        childToParent[sub] = cat.name;
+      }
+      for (final sub in cat.hiddenSubCategories) {
         childToParent[sub] = cat.name;
       }
     }
@@ -3214,13 +3222,40 @@ class TimeProvider with ChangeNotifier {
       if (parentName != null) {
         // 子事件：累加到父事件
         parentStats[parentName] = (parentStats[parentName] ?? 0) + hours;
-      } else {
-        // 父事件或独立事件：直接添加
+      } else if (parentNames.contains(label) &&
+          label != temporaryCategoryName) {
+        // 父事件本身：直接添加（"临时"保留名除外，统一归入聚合项）
         parentStats[label] = (parentStats[label] ?? 0) + hours;
+      } else {
+        // 临时事件（无归属，含恰好命名为"临时"的标签）：统一归入"临时"聚合项
+        parentStats[temporaryCategoryName] =
+            (parentStats[temporaryCategoryName] ?? 0) + hours;
       }
     });
 
     return parentStats;
+  }
+
+  /// 收集所有不属于任何分类（父事件/子事件/隐藏子事件）的历史标签，
+  /// 即父事件视图中应归入"临时"聚合项的临时事件名。
+  Set<String> getTemporaryLabels() {
+    final known = <String>{};
+    for (final cat in _categories) {
+      // 保留分类名"临时"本身不计入已知，使恰好命名为"临时"的标签也被识别为临时事件
+      if (cat.name == temporaryCategoryName) continue;
+      known.add(cat.name);
+      known.addAll(cat.subCategories);
+      known.addAll(cat.hiddenSubCategories);
+    }
+    final temps = <String>{};
+    for (final slots in _dailySlots.values) {
+      for (final slot in slots) {
+        if (slot.recorded && slot.label != null && !known.contains(slot.label)) {
+          temps.add(slot.label!);
+        }
+      }
+    }
+    return temps;
   }
 
   /// 统计每个事件在日期范围内出现的连续块次数（用于词云权重）
@@ -3298,13 +3333,19 @@ class TimeProvider with ChangeNotifier {
       }
     }
 
-    // 确定有效的 label 集合：如果 eventName 是父分类名，则包含其所有子分类名
-    Set<String> validLabels = {eventName};
-    for (final cat in _categories) {
-      if (cat.name == eventName) {
-        validLabels.addAll(cat.subCategories);
-        validLabels.addAll(cat.hiddenSubCategories);
-        break;
+    // 确定有效的 label 集合：如果 eventName 是父分类名，则包含其所有子分类名；
+    // 若为"临时"聚合项，则展开为所有临时事件名
+    Set<String> validLabels;
+    if (eventName == temporaryCategoryName) {
+      validLabels = getTemporaryLabels();
+    } else {
+      validLabels = {eventName};
+      for (final cat in _categories) {
+        if (cat.name == eventName) {
+          validLabels.addAll(cat.subCategories);
+          validLabels.addAll(cat.hiddenSubCategories);
+          break;
+        }
       }
     }
 

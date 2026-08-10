@@ -479,7 +479,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildCategoryItem(int catIndex, Category cat, TimeProvider provider) {
     bool isExpanded = provider.getCategoryExpandState(cat.id);
-    bool isTemporary = cat.name == '临时';
+    bool isTemporary = cat.name == TimeProvider.temporaryCategoryName;
 
     return Column(
       children: [
