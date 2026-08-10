@@ -49,7 +49,7 @@ flutter:
 
 flutter_launcher_icons:
   android: 'launcher_icon'
-  ios: false
+  ios: true
   image_path: 'assets/images/app_icon.png' # 你设计好的图标路径
   min_sdk_android: 21
   windows:

@@ -92,7 +92,16 @@ class GoogleCalendarService {
     }
 
     final serverClientId = GoogleSignInConfig.serverClientId.trim();
-    await _googleSignIn.initialize(serverClientId: serverClientId);
+    try {
+      await _googleSignIn.initialize(serverClientId: serverClientId);
+    } catch (e) {
+      // iOS 缺少 GoogleService-Info.plist 或客户端 ID 无效时 initialize 会抛异常，
+      // 降级为未登录状态，避免应用启动崩溃
+      _logger.e('Google Sign-In 初始化失败: $e');
+      _lastLoginError = 'Google 登录初始化失败，请检查配置';
+      _initialized = true;
+      return;
+    }
     _googleSignIn.authenticationEvents.listen(
       _handleAuthenticationEvent,
       onError: (error, stack) {

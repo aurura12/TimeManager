@@ -365,7 +365,10 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.sizeOf(context).width * 0.78,
+          // iPad 宽屏下限制聊天气泡宽度
+          maxWidth: MediaQuery.sizeOf(context).width * 0.78 > 560
+              ? 560
+              : MediaQuery.sizeOf(context).width * 0.78,
         ),
         decoration: BoxDecoration(
           color: bg,

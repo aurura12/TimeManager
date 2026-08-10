@@ -8,6 +8,7 @@ import '../providers/time_provider.dart';
 import '../services/diary_local_store.dart';
 import '../services/diary_search_service.dart';
 import '../services/on_this_day_service.dart';
+import '../utils/adaptive.dart';
 import '../widgets/on_this_day_sheet.dart';
 import 'check_in_screen.dart';
 import 'diary_screen.dart';
@@ -99,7 +100,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _onThisDayChecking = true;
     try {
       final provider = _timeProvider;
-      if (!provider.isInitialLoadFinished) return; // 数据未就绪，等 notifyListeners 再触发
+      if (!provider.isInitialLoadFinished)
+        return; // 数据未就绪，等 notifyListeners 再触发
 
       final now = DateTime.now();
       final todayKey = OnThisDayService.dateKeyOf(now);
@@ -182,6 +184,36 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       items.removeAt(4); // 移除"目标"tab
     }
     final safeIndex = _selectedIndex.clamp(0, options.length - 1);
+    // iPad 宽屏使用左侧导航栏，手机/分屏窄栏保持底部导航
+    if (isWideTablet(context)) {
+      return Scaffold(
+        body: Row(
+          children: [
+            NavigationRail(
+              selectedIndex: safeIndex,
+              onDestinationSelected: _onItemTapped,
+              labelType: NavigationRailLabelType.all,
+              leading: const SizedBox(height: 8),
+              destinations: [
+                for (final item in items)
+                  NavigationRailDestination(
+                    icon: item.icon,
+                    selectedIcon: item.activeIcon ?? item.icon,
+                    label: Text(item.label ?? ''),
+                  ),
+              ],
+            ),
+            const VerticalDivider(width: 1, thickness: 1),
+            Expanded(
+              child: IndexedStack(
+                index: safeIndex,
+                children: options,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return Scaffold(
       body: IndexedStack(
         index: safeIndex,
