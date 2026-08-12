@@ -9,6 +9,17 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = "28.2.13676358"
 
+    // Keep the historical Windows debug signing identity on every machine.
+    // The same key previously signed both debug and release APKs.
+    signingConfigs {
+        create("sharedDebug") {
+            storeFile = rootProject.file("keystore/windows-debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_11
@@ -27,10 +38,15 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("sharedDebug")
+        }
+        getByName("profile") {
+            signingConfig = signingConfigs.getByName("sharedDebug")
+        }
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Preserve compatibility with APKs previously built from Windows.
+            signingConfig = signingConfigs.getByName("sharedDebug")
         }
     }
 }
