@@ -1,4 +1,4 @@
-import 'dart:io';
+import '../utils/platform_features.dart';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -179,7 +179,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     // Windows 上隐藏"目标"tab，安卓保持完整 6 个 tab
     final List<Widget> options = List.of(_widgetOptions);
     final List<BottomNavigationBarItem> items = List.of(_navItems);
-    if (Platform.isWindows) {
+    if (isDesktopPlatform) {
       options.removeAt(4); // 移除 TargetScreen
       items.removeAt(4); // 移除"目标"tab
     }

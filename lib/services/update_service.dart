@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../config/diary_gitee_config.dart';
 import '../config/remote_repo_config.dart';
+import '../utils/platform_features.dart';
 
 class UpdateInfo {
   final String version;
@@ -136,7 +137,7 @@ class UpdateService {
         final body = data['body'] as String? ?? '';
         debugPrint('检查更新: 最新版本 tag=$tagName');
 
-        final String assetSuffix = Platform.isWindows ? '.exe' : '.apk';
+        final String assetSuffix = updateAssetSuffix;
         String? installUrl;
         final assets = data['assets'] as List<dynamic>? ?? [];
         debugPrint('检查更新: assets 数量=${assets.length}');
@@ -252,7 +253,7 @@ class UpdateService {
       }
 
       final tempDir = await getTemporaryDirectory();
-      final fileExt = Platform.isWindows ? 'exe' : 'apk';
+      final fileExt = updateAssetSuffix.substring(1);
       final installerFile =
           File('${tempDir.path}/time_manager_v$version.$fileExt');
       sink = installerFile.openWrite();
@@ -328,6 +329,15 @@ class UpdateService {
         if (Platform.isWindows) {
           if (context.mounted) {
             await _launchWindowsInstaller(installerFile.path, context);
+          }
+        } else if (Platform.isMacOS) {
+          final uri = Uri.file(installerFile.path);
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          } else if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('无法打开 macOS 安装包')),
+            );
           }
         } else {
           final channel =

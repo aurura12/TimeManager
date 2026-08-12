@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
-import 'dart:io';
+import '../utils/platform_features.dart';
 
 import '../models/travel_record.dart';
 import '../services/diary_local_store.dart';
@@ -1138,7 +1138,7 @@ class _TravelScreenState extends State<TravelScreen> {
                           child: ConstrainedBox(
                             constraints: BoxConstraints(
                               maxWidth:
-                                  Platform.isWindows ? 360 : double.infinity,
+                                  isDesktopPlatform ? 360 : double.infinity,
                             ),
                             child: _buildCalendarView(),
                           ),

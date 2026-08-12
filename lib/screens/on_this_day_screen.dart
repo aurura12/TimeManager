@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'dart:io';
+import '../utils/platform_features.dart';
 
 import '../models/on_this_day_entry.dart';
 import '../providers/time_provider.dart';
@@ -122,7 +122,7 @@ class _OnThisDayScreenState extends State<OnThisDayScreen> {
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
                     // 仅 Windows 限制宽度，避免宽屏下日历格子等比放大；安卓保持整宽
-                    maxWidth: Platform.isWindows ? 360 : double.infinity,
+                    maxWidth: isDesktopPlatform ? 360 : double.infinity,
                   ),
                   child: DatePickerPanel(
                     initialDate: _selectedDate,

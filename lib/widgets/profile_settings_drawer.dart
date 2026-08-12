@@ -1,4 +1,4 @@
-import 'dart:io';
+import '../utils/platform_features.dart';
 
 import 'package:flutter/material.dart';
 import '../models/google_calendar_user.dart';
@@ -53,7 +53,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                       ),
                     ),
                   ),
-                  if (Platform.isWindows)
+                  if (isDesktopPlatform)
                     ...[
                       _buildWindowsIdentitySection(context, provider),
                       ListTile(

@@ -6,12 +6,12 @@ import 'dart:convert';
 import '../services/google_calendar_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
-import 'dart:io';
 import '../models/target.dart';
 import '../models/schedule_template.dart';
 import '../models/calendar_block.dart';
 import '../models/search_result.dart';
 import '../services/home_widget_service.dart';
+import '../utils/platform_features.dart';
 import '../services/diary_local_store.dart';
 import '../services/schedule_day_merge.dart';
 import '../services/schedule_gitee_service.dart';
@@ -54,11 +54,11 @@ class TimeProvider with ChangeNotifier {
   bool _isSyncing = false; // 添加同步锁标志，防止并发同步导致重复
 
   /// 本地已改、尚未成功同步到日历的日期（dateKey 列表）
-  bool _googleCalendarSyncEnabled = !Platform.isWindows;
+  bool _googleCalendarSyncEnabled = !isDesktopPlatform;
   bool get googleCalendarSyncEnabled =>
-      !Platform.isWindows && _googleCalendarSyncEnabled;
-  bool get isWindows => Platform.isWindows;
-  bool _hasSelectedScheduleUser = !Platform.isWindows;
+      !isDesktopPlatform && _googleCalendarSyncEnabled;
+  bool get isWindows => isDesktopPlatform;
+  bool _hasSelectedScheduleUser = !isDesktopPlatform;
   bool get hasSelectedScheduleUser => _hasSelectedScheduleUser;
 
   /// 是否正在查看对方日程（合并了远端数据）
@@ -84,13 +84,13 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
     // 切换身份后拉取新身份当前日期的日程
     _pullOwnScheduleIfWindows();
-    if (Platform.isWindows && _pendingSyncDates.isNotEmpty) {
+    if (isDesktopPlatform && _pendingSyncDates.isNotEmpty) {
       unawaited(syncAllSchedulesToGitee());
     }
   }
 
   Future<void> setGoogleCalendarSyncEnabled(bool enabled) async {
-    if (Platform.isWindows) return;
+    if (isDesktopPlatform) return;
     if (_googleCalendarSyncEnabled == enabled) return;
     _googleCalendarSyncEnabled = enabled;
     if (!enabled) {
@@ -238,7 +238,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> _loadScheduleUserFromStore() async {
-    if (Platform.isWindows) {
+    if (isDesktopPlatform) {
       final manualKind = await AppUserIdentityStore.loadManualKind();
       if (manualKind != null) {
         _scheduleUser = manualKind;
@@ -358,7 +358,7 @@ class TimeProvider with ChangeNotifier {
   /// 解决安卓端推送后 Windows 本地无数据看不到自己日程的问题。
   /// 拉取失败静默，不打断用户操作。
   void _pullOwnScheduleIfWindows() {
-    if (!Platform.isWindows) return;
+    if (!isDesktopPlatform) return;
     if (!_hasSelectedScheduleUser) return;
     if (_remoteViewEnabled) {
       _pullRemoteViewSchedules();
@@ -1140,7 +1140,7 @@ class TimeProvider with ChangeNotifier {
 
   /// 远程视图覆盖的日期：Windows 三列（选中日 ±1 天），安卓仅选中日。
   List<DateTime> _getRemoteViewDates() {
-    if (!Platform.isWindows) return [_currentDate];
+    if (!isDesktopPlatform) return [_currentDate];
     return [
       _currentDate.subtract(const Duration(days: 1)),
       _currentDate,
@@ -1196,7 +1196,7 @@ class TimeProvider with ChangeNotifier {
   // 合并后的同步方法
   // delay: true 表示自动同步（带防抖），false 表示手动同步（立即执行）
   Future<void> synchronizeCalendar({bool delay = false}) async {
-    if (Platform.isWindows || !_googleCalendarSyncEnabled) {
+    if (isDesktopPlatform || !_googleCalendarSyncEnabled) {
       if (!delay) {
         _syncStatusController.add("Google 鏃ュ巻鍚屾宸插叧闂?");
       }
@@ -1678,14 +1678,14 @@ class TimeProvider with ChangeNotifier {
   // --- Google 日历下拉 ---
 
   Future<void> pullGoogleCalendarForCurrentDate() async {
-    if (Platform.isWindows || !_googleCalendarSyncEnabled) return;
+    if (isDesktopPlatform || !_googleCalendarSyncEnabled) return;
     await pullGoogleCalendarForDate(_currentDate);
   }
 
   /// 从 Google 拉取外部会议并合并到指定日期；未登录 Google 时返回 false
   Future<bool> pullGoogleCalendarForDate(DateTime date,
       {bool notify = true}) async {
-    if (Platform.isWindows || !_googleCalendarSyncEnabled) return false;
+    if (isDesktopPlatform || !_googleCalendarSyncEnabled) return false;
     if (!GoogleCalendarService.isSignedIn) return false;
 
     final blocks = await GoogleCalendarService.fetchExternalEvents(date);
@@ -2371,7 +2371,7 @@ class TimeProvider with ChangeNotifier {
 
   Future<void> _refreshHomeWidget() async {
     // 桌面小组件仅 Android 支持，Windows 无实现，直接跳过避免 MissingPluginException
-    if (Platform.isWindows) return;
+    if (isDesktopPlatform) return;
     try {
       await HomeWidgetService.updateFromDay(
         slots: slots,
@@ -2744,7 +2744,7 @@ class TimeProvider with ChangeNotifier {
       ..clear()
       ..addAll((prefs.getStringList('pending_sync_dates') ?? [])
           .map(_normalizeDateKey));
-    _googleCalendarSyncEnabled = Platform.isWindows
+    _googleCalendarSyncEnabled = isDesktopPlatform
         ? false
         : (prefs.getBool('google_calendar_sync_enabled') ?? true);
     _scheduleUser = DiaryKindX.fromCode(prefs.getString(_scheduleUserKey));

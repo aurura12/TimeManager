@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io';
+import '../utils/platform_features.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -35,7 +35,7 @@ class GoogleCalendarService {
 
   static bool get isConfigured =>
       GoogleSignInConfig.serverClientId.trim().isNotEmpty;
-  static bool get isSupportedPlatform => !Platform.isWindows;
+  static bool get isSupportedPlatform => !isDesktopPlatform;
   static String? get lastLoginError => _lastLoginError;
   static Stream<void> get authStateChanges => _authStateController.stream;
 

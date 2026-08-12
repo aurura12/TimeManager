@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io';
+import '../utils/platform_features.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
@@ -156,7 +156,7 @@ class _HomeScreenState extends State<HomeScreen> {
         surfaceTintColor: Colors.transparent,
         titleSpacing: 8,
         // 仅 Windows：切换日期的按钮居中；安卓保持默认左对齐
-        centerTitle: Platform.isWindows,
+        centerTitle: isDesktopPlatform,
         actionsPadding: const EdgeInsets.only(right: 15),
         title: _buildAppBarDateNav(timeProvider, currentDate),
         actions: _buildAppBarActions(
@@ -183,7 +183,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             child: Column(
                               children: [
                                 // Windows 下与右侧列头对齐的占位
-                                if (Platform.isWindows)
+                                if (isDesktopPlatform)
                                   const SizedBox(height: _kDayHeaderHeight),
                                 Expanded(
                                   child: ListView.builder(
@@ -199,7 +199,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               ],
                             ),
                           ),
-                  if (Platform.isWindows)
+                  if (isDesktopPlatform)
                     Expanded(
                       child: Column(
                         children: [
@@ -359,7 +359,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
                     // 仅 Windows 限制宽度，避免宽屏下日历格子等比放大；安卓保持整宽
-                    maxWidth: Platform.isWindows ? 360 : double.infinity,
+                    maxWidth: isDesktopPlatform ? 360 : double.infinity,
                   ),
                   child: DatePickerPanel(
                     initialDate: currentDate,

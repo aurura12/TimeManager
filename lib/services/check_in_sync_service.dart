@@ -15,6 +15,7 @@ import 'check_in_location_service.dart';
 import 'check_in_photo_cache.dart';
 import 'diary_local_store.dart';
 import 'google_calendar_service.dart';
+import '../utils/platform_features.dart';
 
 class CheckInSyncResult {
   final bool success;
@@ -68,12 +69,12 @@ class CheckInSyncService {
   /// Windows 手动身份派生的打卡用户（仅 Windows 使用）
   GoogleCalendarUser? _manualUser;
 
-  GoogleCalendarUser? get currentUser => Platform.isWindows
+  GoogleCalendarUser? get currentUser => isDesktopPlatform
       ? _manualUser
       : GoogleCalendarService.sessionUser;
 
   /// 是否已识别用户（含曾登录但日历 token 暂时失效）
-  bool get hasIdentity => Platform.isWindows
+  bool get hasIdentity => isDesktopPlatform
       ? _manualUser != null
       : GoogleCalendarService.hasKnownUser;
 
@@ -86,7 +87,7 @@ class CheckInSyncService {
     _lastError = null;
     try {
       // Windows 无 Google 登录，打卡身份来自手动选择的角色
-      if (Platform.isWindows) {
+      if (isDesktopPlatform) {
         _manualUser = await _loadManualUser();
       }
 
@@ -434,7 +435,7 @@ class CheckInSyncService {
   }
 
   Future<GoogleCalendarUser?> _requireUser() async {
-    if (Platform.isWindows) {
+    if (isDesktopPlatform) {
       _manualUser ??= await _loadManualUser();
       return _manualUser;
     }

@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io';
+import '../utils/platform_features.dart';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -63,9 +63,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
   Future<void> _loadInitial() async {
     final token = await DiaryLocalStore.loadToken();
     final manualKind =
-        Platform.isWindows ? await DiaryLocalStore.loadManualKind() : null;
+        isDesktopPlatform ? await DiaryLocalStore.loadManualKind() : null;
     _windowsManualKind = manualKind;
-    final kind = Platform.isWindows
+    final kind = isDesktopPlatform
         ? (manualKind ?? await DiaryLocalStore.loadPreferredKind())
         : await DiaryLocalStore.loadPreferredKind();
     _token = token;
@@ -704,7 +704,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   Future<void> _pushDiary() async {
-    if (Platform.isWindows) {
+    if (isDesktopPlatform) {
       final manualKind = await DiaryLocalStore.loadManualKind();
       if (manualKind == null) {
         _showMessage('请先在设置中选择“乖乖”或“晶晶”身份');
@@ -848,7 +848,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                     ],
                   ),
                   // Windows 只读提示：查看对方日记分区时不可同步
-                  if (Platform.isWindows &&
+                  if (isDesktopPlatform &&
                       _windowsManualKind != null &&
                       _windowsManualKind != _kind) ...[
                     const SizedBox(height: 12),
