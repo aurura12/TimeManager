@@ -97,7 +97,7 @@ class TimeProvider with ChangeNotifier {
       _debounceTimer?.cancel();
       _debounceTimer = null;
       if (!_syncStatusController.isClosed) {
-        _syncStatusController.add("Google 鏃ュ巻鍚屾宸插叧闂?");
+        _syncStatusController.add('Google 日历同步已关闭');
       }
     }
     final prefs = await SharedPreferences.getInstance();
@@ -1198,7 +1198,7 @@ class TimeProvider with ChangeNotifier {
   Future<void> synchronizeCalendar({bool delay = false}) async {
     if (isDesktopPlatform || !_googleCalendarSyncEnabled) {
       if (!delay) {
-        _syncStatusController.add("Google 鏃ュ巻鍚屾宸插叧闂?");
+        _syncStatusController.add('Google 日历同步已关闭');
       }
       return;
     }
@@ -1269,7 +1269,7 @@ class TimeProvider with ChangeNotifier {
   /// 手动同步所有待同步日期（用于个人中心“待同步”按钮）
   Future<void> synchronizeAllPendingCalendars() async {
     if (!_googleCalendarSyncEnabled) {
-      _syncStatusController.add("Google 鏃ュ巻鍚屾宸插叧闂?");
+      _syncStatusController.add('Google 日历同步已关闭');
       return;
     }
     if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
@@ -3236,9 +3236,11 @@ class TimeProvider with ChangeNotifier {
     return parentStats;
   }
 
-  /// 收集所有不属于任何分类（父事件/子事件/隐藏子事件）的历史标签，
-  /// 即父事件视图中应归入"临时"聚合项的临时事件名。
-  Set<String> getTemporaryLabels() {
+  /// 收集日期范围内不属于任何分类（父事件/子事件/隐藏子事件）的历史标签，
+  /// 即统计视图中应归入"临时"聚合项的临时事件名。
+  ///
+  /// 不传日期范围时保留全部历史的行为，供临时事件详情使用。
+  Set<String> getTemporaryLabels([DateTime? start, DateTime? end]) {
     final known = <String>{};
     for (final cat in _categories) {
       // 保留分类名"临时"本身不计入已知，使恰好命名为"临时"的标签也被识别为临时事件
@@ -3248,14 +3250,45 @@ class TimeProvider with ChangeNotifier {
       known.addAll(cat.hiddenSubCategories);
     }
     final temps = <String>{};
-    for (final slots in _dailySlots.values) {
-      for (final slot in slots) {
-        if (slot.recorded && slot.label != null && !known.contains(slot.label)) {
-          temps.add(slot.label!);
+    if (start == null || end == null) {
+      for (final slots in _dailySlots.values) {
+        for (final slot in slots) {
+          if (slot.recorded &&
+              slot.label != null &&
+              !known.contains(slot.label)) {
+            temps.add(slot.label!);
+          }
+        }
+      }
+    } else {
+      for (int i = 0; i <= end.difference(start).inDays; i++) {
+        final dateKey = _getDateKey(start.add(Duration(days: i)));
+        for (final slot in _dailySlots[dateKey] ?? const <TimeSlot>[]) {
+          if (slot.recorded &&
+              slot.label != null &&
+              !known.contains(slot.label)) {
+            temps.add(slot.label!);
+          }
         }
       }
     }
     return temps;
+  }
+
+  /// 获取“全部事件”统计：当前有归属的事件保持独立，无归属历史标签合并为“临时”。
+  Map<String, double> getStatisticsWithTemporaryGrouped(
+      DateTime start, DateTime end) {
+    final stats = Map<String, double>.from(getStatistics(start, end));
+    final temporaryLabels = getTemporaryLabels(start, end);
+    var temporaryHours = 0.0;
+
+    for (final label in temporaryLabels) {
+      temporaryHours += stats.remove(label) ?? 0;
+    }
+    if (temporaryHours > 0) {
+      stats[temporaryCategoryName] = temporaryHours;
+    }
+    return stats;
   }
 
   /// 统计每个事件在日期范围内出现的连续块次数（用于词云权重）
@@ -3368,7 +3401,7 @@ class TimeProvider with ChangeNotifier {
             while (j < daySlots.length &&
                 daySlots[j].recorded &&
                 daySlots[j].label != null &&
-                validLabels.contains(daySlots[j].label)) {
+                daySlots[j].label == blockLabel) {
               j++;
             }
             // 转换索引为时间字符串，例如 "08:00 - 08:30"

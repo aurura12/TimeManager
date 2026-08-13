@@ -15,4 +15,10 @@ void main() {
     expect(updateAssetSuffixFor(windows: false, macos: true), '.dmg');
     expect(updateAssetSuffixFor(windows: false, macos: false), '.apk');
   });
+
+  test('desktop drag interactions start without a long press', () {
+    expect(useImmediateDragFor(windows: true, macos: false), isTrue);
+    expect(useImmediateDragFor(windows: false, macos: true), isTrue);
+    expect(useImmediateDragFor(windows: false, macos: false), isFalse);
+  });
 }

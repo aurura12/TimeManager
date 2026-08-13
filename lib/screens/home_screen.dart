@@ -140,12 +140,12 @@ class _HomeScreenState extends State<HomeScreen> {
     // Windows 三列视图：以选中日为中间，左右各一天
     final prevDate = currentDate.subtract(const Duration(days: 1));
     final nextDate = currentDate.add(const Duration(days: 1));
-    final googleSyncEnabled = context.select<TimeProvider, bool>(
-        (p) => p.googleCalendarSyncEnabled);
-    final isRemoteViewEnabled = context.select<TimeProvider, bool>(
-        (p) => p.isRemoteViewEnabled);
-    final hasPendingSyncForCurrentDate = context.select<TimeProvider, bool>(
-        (p) => p.hasPendingSyncForCurrentDate);
+    final googleSyncEnabled =
+        context.select<TimeProvider, bool>((p) => p.googleCalendarSyncEnabled);
+    final isRemoteViewEnabled =
+        context.select<TimeProvider, bool>((p) => p.isRemoteViewEnabled);
+    final hasPendingSyncForCurrentDate = context
+        .select<TimeProvider, bool>((p) => p.hasPendingSyncForCurrentDate);
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -188,8 +188,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 Expanded(
                                   child: ListView.builder(
                                     controller: _scrollController,
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 8),
+                                    padding:
+                                        const EdgeInsets.symmetric(vertical: 8),
                                     itemCount: 24,
                                     itemExtent: 45,
                                     itemBuilder: (context, h) =>
@@ -199,122 +199,139 @@ class _HomeScreenState extends State<HomeScreen> {
                               ],
                             ),
                           ),
-                  if (isDesktopPlatform)
-                    Expanded(
-                      child: Column(
-                        children: [
-                          // 三列日期头（插入与网格行相同的分割线占位以保持列宽一致）
-                          Row(
-                            children: [
-                              Expanded(child: _DayHeader(date: prevDate)),
-                              const VerticalDivider(
-                                width: 1,
-                                thickness: 1,
-                                color: Color(0x33000000),
+                          if (isDesktopPlatform)
+                            Expanded(
+                              child: Column(
+                                children: [
+                                  // 三列日期头（插入与网格行相同的分割线占位以保持列宽一致）
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                          child: _DayHeader(date: prevDate)),
+                                      const VerticalDivider(
+                                        width: 1,
+                                        thickness: 1,
+                                        color: Color(0x33000000),
+                                      ),
+                                      Expanded(
+                                          child: _DayHeader(date: currentDate)),
+                                      const VerticalDivider(
+                                        width: 1,
+                                        thickness: 1,
+                                        color: Color(0x33000000),
+                                      ),
+                                      Expanded(
+                                          child: _DayHeader(date: nextDate)),
+                                    ],
+                                  ),
+                                  // 三列网格：昨天 / 今天 / 明天
+                                  Expanded(
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                          child: _DayGrid(
+                                            date: prevDate,
+                                            timeAxisController:
+                                                _scrollController,
+                                            onSelectionChanged:
+                                                (date, start, end) {
+                                              setState(() {
+                                                _selectionDate = date;
+                                                _selectionStart = start;
+                                                _selectionEnd = end;
+                                              });
+                                            },
+                                            onRemoveSlot: (date, index) =>
+                                                timeProvider
+                                                    .removeEventFromSlot(index,
+                                                        date: date),
+                                          ),
+                                        ),
+                                        const VerticalDivider(
+                                          width: 1,
+                                          thickness: 1,
+                                          color: Color(0x33000000),
+                                        ),
+                                        Expanded(
+                                          child: _DayGrid(
+                                            date: currentDate,
+                                            timeAxisController:
+                                                _scrollController,
+                                            onSelectionChanged:
+                                                (date, start, end) {
+                                              setState(() {
+                                                _selectionDate = date;
+                                                _selectionStart = start;
+                                                _selectionEnd = end;
+                                              });
+                                            },
+                                            onRemoveSlot: (date, index) =>
+                                                timeProvider
+                                                    .removeEventFromSlot(index,
+                                                        date: date),
+                                          ),
+                                        ),
+                                        const VerticalDivider(
+                                          width: 1,
+                                          thickness: 1,
+                                          color: Color(0x33000000),
+                                        ),
+                                        Expanded(
+                                          child: _DayGrid(
+                                            date: nextDate,
+                                            timeAxisController:
+                                                _scrollController,
+                                            onSelectionChanged:
+                                                (date, start, end) {
+                                              setState(() {
+                                                _selectionDate = date;
+                                                _selectionStart = start;
+                                                _selectionEnd = end;
+                                              });
+                                            },
+                                            onRemoveSlot: (date, index) =>
+                                                timeProvider
+                                                    .removeEventFromSlot(index,
+                                                        date: date),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
-                              Expanded(
-                                  child: _DayHeader(date: currentDate)),
-                              const VerticalDivider(
-                                width: 1,
-                                thickness: 1,
-                                color: Color(0x33000000),
+                            )
+                          else
+                            Expanded(
+                              child: TimeGrid(
+                                gridKey: _gridKey,
+                                controller: _gridScrollController,
+                                dragStartIndex: _selectionStart,
+                                dragEndIndex: _selectionEnd,
+                                onTapDown: (position) => _handleSelect(
+                                    position, currentDate,
+                                    isClick: true),
+                                onPanStart: (position) => _handleSelect(
+                                    position, currentDate,
+                                    isStart: true),
+                                onPanUpdate: (position) =>
+                                    _handleSelect(position, currentDate),
+                                onRemoveSlot: (index) =>
+                                    timeProvider.removeEventFromSlot(index),
                               ),
-                              Expanded(child: _DayHeader(date: nextDate)),
-                            ],
-                          ),
-                          // 三列网格：昨天 / 今天 / 明天
-                          Expanded(
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  child: _DayGrid(
-                                    date: prevDate,
-                                    timeAxisController: _scrollController,
-                                    onSelectionChanged: (date, start, end) {
-                                      setState(() {
-                                        _selectionDate = date;
-                                        _selectionStart = start;
-                                        _selectionEnd = end;
-                                      });
-                                    },
-                                    onRemoveSlot: (date, index) =>
-                                        timeProvider.removeEventFromSlot(
-                                            index,
-                                            date: date),
-                                  ),
-                                ),
-                                const VerticalDivider(
-                                  width: 1,
-                                  thickness: 1,
-                                  color: Color(0x33000000),
-                                ),
-                                Expanded(
-                                  child: _DayGrid(
-                                    date: currentDate,
-                                    timeAxisController: _scrollController,
-                                    onSelectionChanged: (date, start, end) {
-                                      setState(() {
-                                        _selectionDate = date;
-                                        _selectionStart = start;
-                                        _selectionEnd = end;
-                                      });
-                                    },
-                                    onRemoveSlot: (date, index) =>
-                                        timeProvider.removeEventFromSlot(
-                                            index,
-                                            date: date),
-                                  ),
-                                ),
-                                const VerticalDivider(
-                                  width: 1,
-                                  thickness: 1,
-                                  color: Color(0x33000000),
-                                ),
-                                Expanded(
-                                  child: _DayGrid(
-                                    date: nextDate,
-                                    timeAxisController: _scrollController,
-                                    onSelectionChanged: (date, start, end) {
-                                      setState(() {
-                                        _selectionDate = date;
-                                        _selectionStart = start;
-                                        _selectionEnd = end;
-                                      });
-                                    },
-                                    onRemoveSlot: (date, index) =>
-                                        timeProvider.removeEventFromSlot(
-                                            index,
-                                            date: date),
-                                  ),
-                                ),
-                              ],
                             ),
-                          ),
-                        ],
-                      ),
-                    )
-                  else
-                    Expanded(
-                      child: TimeGrid(
-                        gridKey: _gridKey,
-                        controller: _gridScrollController,
-                        dragStartIndex: _selectionStart,
-                        dragEndIndex: _selectionEnd,
-                        onTapDown: (position) => _handleSelect(position,
-                            currentDate, isClick: true),
-                        onPanStart: (position) => _handleSelect(position,
-                            currentDate, isStart: true),
-                        onPanUpdate: (position) =>
-                            _handleSelect(position, currentDate),
-                        onRemoveSlot: (index) =>
-                            timeProvider.removeEventFromSlot(index),
-                      ),
-                    ),
                         ],
                       ),
                     ),
-                    Selector<TimeProvider, ({int categoriesRevision, int templatesRevision, DateTime currentDate})>(
+                    Selector<
+                        TimeProvider,
+                        ({
+                          int categoriesRevision,
+                          int templatesRevision,
+                          DateTime currentDate
+                        })>(
                       selector: (_, p) => (
                         categoriesRevision: p.categoriesRevision,
                         templatesRevision: p.templatesRevision,
@@ -372,8 +389,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         _selectionDate = null;
                       });
                     },
-                    onClose: () =>
-                        setState(() => _isDatePickerVisible = false),
+                    onClose: () => setState(() => _isDatePickerVisible = false),
                   ),
                 ),
               ),
@@ -506,6 +522,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   onTap: () => isTemporary
                       ? _showTemporaryEventDialog(provider)
                       : _assignCategory(cat, provider),
+                  onSecondaryTapDown: isDesktopPlatform
+                      ? (details) => _showCategoryContextMenu(
+                            details.globalPosition,
+                            catIndex,
+                            cat,
+                            provider,
+                          )
+                      : null,
                   child: Container(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
@@ -602,12 +626,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _assignCategory(Category cat, TimeProvider provider) {
     if (_selectionStart != null && _selectionEnd != null) {
-      int s = _selectionStart! < _selectionEnd!
-          ? _selectionStart!
-          : _selectionEnd!;
-      int e = _selectionStart! < _selectionEnd!
-          ? _selectionEnd!
-          : _selectionStart!;
+      int s =
+          _selectionStart! < _selectionEnd! ? _selectionStart! : _selectionEnd!;
+      int e =
+          _selectionStart! < _selectionEnd! ? _selectionEnd! : _selectionStart!;
       Set<int> rangeIndices = {};
       for (int i = s; i <= e; i++) {
         rangeIndices.add(i);
@@ -628,12 +650,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _assignSubCategory(Category cat, String subCat, TimeProvider provider) {
     if (_selectionStart != null && _selectionEnd != null) {
-      int s = _selectionStart! < _selectionEnd!
-          ? _selectionStart!
-          : _selectionEnd!;
-      int e = _selectionStart! < _selectionEnd!
-          ? _selectionEnd!
-          : _selectionStart!;
+      int s =
+          _selectionStart! < _selectionEnd! ? _selectionStart! : _selectionEnd!;
+      int e =
+          _selectionStart! < _selectionEnd! ? _selectionEnd! : _selectionStart!;
       Set<int> rangeIndices = {};
       for (int i = s; i <= e; i++) {
         rangeIndices.add(i);
@@ -943,6 +963,23 @@ class _HomeScreenState extends State<HomeScreen> {
                                 fromCategoryId, toCategoryId, name);
                           },
                         ),
+                        onSecondaryTap: isDesktopPlatform
+                            ? (subCat, subIndex) => _showSubCategoryMenu(
+                                  context: context,
+                                  subCat: subCat,
+                                  subIndex: subIndex,
+                                  setDialogState: setDialogState,
+                                  tempSubCategories: tempSubCategories,
+                                  currentCategoryId: isEdit
+                                      ? provider.categories[index].id
+                                      : '',
+                                  allCategories: provider.categories,
+                                  onMove: (fromCategoryId, toCategoryId, name) {
+                                    provider.moveSubCategory(
+                                        fromCategoryId, toCategoryId, name);
+                                  },
+                                )
+                            : null,
                       ),
 
                     // 隐藏区域
@@ -1041,8 +1078,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       Wrap(
                         spacing: 8.0,
                         runSpacing: 8.0,
-                        children: tempHiddenSubCategories
-                            .map((hiddenSubCat) {
+                        children: tempHiddenSubCategories.map((hiddenSubCat) {
                           return ActionChip(
                             avatar: const Icon(Icons.restore,
                                 size: 14, color: Colors.grey),
@@ -1106,6 +1142,7 @@ class _HomeScreenState extends State<HomeScreen> {
       hexController.dispose();
     });
   }
+
   Widget _buildColorPalette(
       Color currentColor, Function(Color) onColorChanged) {
     // 生成一个颜色矩阵：水平是色调，垂直是亮度
@@ -1278,7 +1315,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     const Positioned(
                       right: -4,
                       top: -4,
-                      child: Icon(Icons.check_circle, size: 12, color: Colors.blue),
+                      child: Icon(Icons.check_circle,
+                          size: 12, color: Colors.blue),
                     ),
                 ],
               ),
@@ -1288,9 +1326,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onPressed: () => provider.toggleRemoteScheduleView(),
       ),
       _appBarIconButton(
-        tooltip: googleSyncEnabled ?
-            '同步到 Gitee 和 Google 日历' :
-            '同步日程到 Gitee',
+        tooltip: googleSyncEnabled ? '同步到 Gitee 和 Google 日历' : '同步日程到 Gitee',
         icon: Icons.sync,
         onPressed: () => provider.syncAll(),
         iconWidget: Stack(
@@ -1649,6 +1685,41 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
+  void _showCategoryContextMenu(
+      Offset position, int index, Category cat, TimeProvider provider) async {
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        MediaQuery.sizeOf(context).width - position.dx,
+        MediaQuery.sizeOf(context).height - position.dy,
+      ),
+      items: [
+        const PopupMenuItem(value: 'edit', child: Text('编辑事件')),
+        PopupMenuItem(
+          value: 'toggle',
+          child:
+              Text(provider.getCategoryExpandState(cat.id) ? '折叠子事件' : '展开子事件'),
+        ),
+        const PopupMenuItem(
+          value: 'delete',
+          child: Text('删除事件', style: TextStyle(color: Colors.red)),
+        ),
+      ],
+    );
+    if (!mounted) return;
+    switch (action) {
+      case 'edit':
+        _showCategoryDialog(context, provider, index: index, existingCat: cat);
+      case 'toggle':
+        provider.setCategoryExpandState(
+            cat.id, !provider.getCategoryExpandState(cat.id));
+      case 'delete':
+        _showDeleteConfirmDialog(context, index, cat, provider);
+    }
+  }
 }
 
 /// Windows 双列布局中单个日期列：自持拖选/高亮状态，并与共享时间轴联动滚动。
@@ -1660,7 +1731,9 @@ class _DayHeader extends StatelessWidget {
 
   bool get _isToday {
     final now = DateTime.now();
-    return now.year == date.year && now.month == date.month && now.day == date.day;
+    return now.year == date.year &&
+        now.month == date.month &&
+        now.day == date.day;
   }
 
   @override
@@ -1886,12 +1959,14 @@ class _ReorderableChipWrap extends StatefulWidget {
   final Color color;
   final Function(int oldIndex, int newIndex) onReorder;
   final Function(String item, int index) onTap;
+  final Function(String item, int index)? onSecondaryTap;
 
   const _ReorderableChipWrap({
     required this.items,
     required this.color,
     required this.onReorder,
     required this.onTap,
+    this.onSecondaryTap,
   });
 
   @override
@@ -1912,53 +1987,34 @@ class _ReorderableChipWrapState extends State<_ReorderableChipWrap> {
         final index = entry.key;
         final item = entry.value;
 
+        final draggableChild = _buildChip(item, index);
+        if (useImmediateDrag) {
+          return Draggable<String>(
+            data: item,
+            dragAnchorStrategy: pointerDragAnchorStrategy,
+            feedback: _buildFeedback(item),
+            childWhenDragging: Opacity(
+              opacity: 0.2,
+              child: draggableChild,
+            ),
+            onDragStarted: () => _onDragStarted(index),
+            onDragUpdate: _onDragUpdate,
+            onDragEnd: _onDragEnd,
+            child: draggableChild,
+          );
+        }
         return LongPressDraggable<String>(
           data: item,
           delay: const Duration(milliseconds: 300),
           dragAnchorStrategy: pointerDragAnchorStrategy,
-          feedback: Material(
-            elevation: 8.0,
-            borderRadius: BorderRadius.circular(8),
-            child: Chip(
-              visualDensity: VisualDensity.compact,
-              backgroundColor: widget.color,
-              label: Text(item,
-                  style: const TextStyle(color: Colors.white, fontSize: 12)),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8)),
-              side: BorderSide.none,
-            ),
-          ),
+          feedback: _buildFeedback(item),
           childWhenDragging: Opacity(
             opacity: 0.2,
             child: _buildChip(item, index),
           ),
-          onDragStarted: () {
-            setState(() {
-              _draggedIndex = index;
-            });
-          },
-          onDragUpdate: (details) {
-            if (_draggedIndex == null ||
-                _draggedIndex! >= widget.items.length) return;
-            final renderBox =
-                _wrapKey.currentContext?.findRenderObject() as RenderBox?;
-            if (renderBox == null) return;
-            final localPos = renderBox.globalToLocal(details.globalPosition);
-            final newIndex = _getItemIndexAtPosition(localPos);
-            if (newIndex != null && newIndex != _draggedIndex) {
-              final oldIndex = _draggedIndex!;
-              widget.onReorder(oldIndex, newIndex);
-              setState(() {
-                _draggedIndex = newIndex;
-              });
-            }
-          },
-          onDragEnd: (details) {
-            setState(() {
-              _draggedIndex = null;
-            });
-          },
+          onDragStarted: () => _onDragStarted(index),
+          onDragUpdate: _onDragUpdate,
+          onDragEnd: _onDragEnd,
           child: _buildChip(item, index),
         );
       }).toList(),
@@ -1968,16 +2024,54 @@ class _ReorderableChipWrapState extends State<_ReorderableChipWrap> {
   Widget _buildChip(String item, int index) {
     return GestureDetector(
       onTap: () => widget.onTap(item, index),
+      onSecondaryTap: widget.onSecondaryTap == null
+          ? null
+          : () => widget.onSecondaryTap!(item, index),
       child: Chip(
         visualDensity: VisualDensity.compact,
         backgroundColor: widget.color.withValues(alpha: 0.8),
         label: Text(item,
             style: const TextStyle(color: Colors.white, fontSize: 12)),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         side: BorderSide.none,
       ),
     );
+  }
+
+  Widget _buildFeedback(String item) {
+    return Material(
+      elevation: 8.0,
+      borderRadius: BorderRadius.circular(8),
+      child: Chip(
+        visualDensity: VisualDensity.compact,
+        backgroundColor: widget.color,
+        label: Text(item,
+            style: const TextStyle(color: Colors.white, fontSize: 12)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        side: BorderSide.none,
+      ),
+    );
+  }
+
+  void _onDragStarted(int index) {
+    setState(() => _draggedIndex = index);
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    if (_draggedIndex == null || _draggedIndex! >= widget.items.length) return;
+    final renderBox = _wrapKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+    final localPos = renderBox.globalToLocal(details.globalPosition);
+    final newIndex = _getItemIndexAtPosition(localPos);
+    if (newIndex != null && newIndex != _draggedIndex) {
+      final oldIndex = _draggedIndex!;
+      widget.onReorder(oldIndex, newIndex);
+      setState(() => _draggedIndex = newIndex);
+    }
+  }
+
+  void _onDragEnd(DraggableDetails details) {
+    setState(() => _draggedIndex = null);
   }
 
   int? _getItemIndexAtPosition(Offset position) {

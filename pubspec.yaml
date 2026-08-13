@@ -1,7 +1,7 @@
 name: time_manager
 description: "A new Flutter project."
 publish_to: "none"
-version: 1.87.0+1
+version: 1.88.0+1
 
 # 添加下面这段环境配置
 environment:
@@ -56,3 +56,6 @@ flutter_launcher_icons:
     generate: true
     image_path: "assets/images/app_icon.png"
     icon_size: 256
+  macos:
+    generate: true
+    image_path: "assets/images/app_icon.png"

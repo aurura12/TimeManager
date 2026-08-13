@@ -470,18 +470,33 @@ class _ProfileScreenState extends State<ProfileScreen>
               PieChartData(
                 pieTouchData: PieTouchData(
                   touchCallback: (FlTouchEvent event, pieTouchResponse) {
+                    final touchedSection =
+                        pieTouchResponse?.touchedSection;
                     setState(() {
                       if (!event.isInterestedForInteractions ||
-                          pieTouchResponse == null ||
-                          pieTouchResponse.touchedSection == null) {
+                          touchedSection == null) {
                         if (event is FlTapUpEvent) {
                           _touchedIndex = -1;
                         }
                         return;
                       }
-                      _touchedIndex =
-                          pieTouchResponse.touchedSection!.touchedSectionIndex;
+                      _touchedIndex = touchedSection.touchedSectionIndex;
                     });
+
+                    if (event is FlTapUpEvent && touchedSection != null) {
+                      final index = touchedSection.touchedSectionIndex;
+                      if (index >= 0 && index < stats.length) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => EventDetailScreen(
+                              eventName: stats[index].key,
+                              tabIndex: tabIndex,
+                            ),
+                          ),
+                        );
+                      }
+                    }
                   },
                 ),
                 sectionsSpace: 2,
@@ -567,7 +582,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     if (_showParentOnly) {
       return provider.getParentStatistics(start, now);
     }
-    return provider.getStatistics(start, now);
+    return provider.getStatisticsWithTemporaryGrouped(start, now);
   }
 
   // 一次遍历最近 30 天，同时得到每日总时长与事件数，

@@ -7,6 +7,12 @@ bool get isDesktopPlatform =>
 bool isDesktopPlatformFor({required bool windows, required bool macos}) =>
     windows || macos;
 
+bool useImmediateDragFor({required bool windows, required bool macos}) =>
+    isDesktopPlatformFor(windows: windows, macos: macos);
+
+bool get useImmediateDrag =>
+    useImmediateDragFor(windows: Platform.isWindows, macos: Platform.isMacOS);
+
 String updateAssetSuffixFor({required bool windows, required bool macos}) {
   if (windows) return '.exe';
   if (macos) return '.dmg';

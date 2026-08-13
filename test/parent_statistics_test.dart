@@ -201,4 +201,55 @@ void main() {
     expect(labels, contains(TimeProvider.temporaryCategoryName));
     expect(labels.contains('做饭'), isFalse);
   });
+
+  test('删除父事件后，原父事件和子事件都归入临时', () async {
+    final provider = await _createProvider();
+    provider.addCategory(Category(
+      name: '项目',
+      color: Colors.red,
+      subCategories: ['开发'],
+      updatedAt: 1,
+    ));
+
+    final yesterday = DateTime.now().subtract(const Duration(days: 1));
+    provider.assignCategoryToSlots(
+        {0}, Category(name: '项目', color: Colors.red), date: yesterday);
+    provider.assignCategoryToSlots(
+        {1}, Category(name: '开发', color: Colors.red), date: yesterday);
+
+    final index = provider.categories.indexWhere((cat) => cat.name == '项目');
+    provider.deleteCategory(index);
+
+    final stats = provider.getParentStatistics(yesterday, yesterday);
+    expect(stats[TimeProvider.temporaryCategoryName], closeTo(1 / 3, 1e-9));
+    expect(stats.length, 1);
+
+    final history = provider.getEventHistory(
+        TimeProvider.temporaryCategoryName, 3);
+    final ranges = history['${yesterday.month}月${yesterday.day}日'];
+    expect(ranges, isNotNull);
+    expect(ranges!.map((range) => range.label), containsAll(['项目', '开发']));
+  });
+
+  test('全部事件统计只将无归属标签合并为临时', () async {
+    final provider = await _createProvider();
+    provider.addCategory(Category(
+      name: '工作',
+      color: Colors.blue,
+      subCategories: ['会议'],
+      updatedAt: 1,
+    ));
+
+    final yesterday = DateTime.now().subtract(const Duration(days: 1));
+    provider.assignCategoryToSlots(
+        {0}, Category(name: '会议', color: Colors.blue), date: yesterday);
+    provider.assignCategoryToSlots(
+        {1}, Category(name: '临时拜访', color: Colors.grey), date: yesterday);
+
+    final stats = provider.getStatisticsWithTemporaryGrouped(yesterday, yesterday);
+
+    expect(stats['会议'], closeTo(1 / 6, 1e-9));
+    expect(stats[TimeProvider.temporaryCategoryName], closeTo(1 / 6, 1e-9));
+    expect(stats.containsKey('临时拜访'), isFalse);
+  });
 }
