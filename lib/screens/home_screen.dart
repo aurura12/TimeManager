@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import '../utils/platform_features.dart';
 
 import 'package:flutter/material.dart';
@@ -11,6 +12,7 @@ import '../providers/time_provider.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/template_bar.dart';
 import '../widgets/time_grid.dart';
+import '../widgets/voice_schedule_sheet.dart';
 import 'daily_review_screen.dart';
 import 'global_search_screen.dart';
 
@@ -1274,6 +1276,16 @@ class _HomeScreenState extends State<HomeScreen> {
         tooltip: '每日复盘',
         onPressed: () => DailyReviewScreen.open(context, date: date),
       ),
+      if (Platform.isAndroid)
+        _appBarIconButton(
+          icon: Icons.mic_none,
+          tooltip: '语音添加日程',
+          onPressed: () => VoiceScheduleSheet.show(
+            context,
+            provider: provider,
+            baseDate: date,
+          ),
+        ),
       _appBarIconButton(
         icon: Icons.search,
         tooltip: '搜索记录',
