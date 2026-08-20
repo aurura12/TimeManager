@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../models/time_slot.dart';
 import '../providers/time_provider.dart';
+import '../utils/time_slot_segment.dart';
 
 /// 时间网格的渲染与手势层。
 ///
@@ -36,8 +37,10 @@ class TimeGrid extends StatelessWidget {
 
   bool _isHighlighted(int index) {
     if (dragStartIndex == null || dragEndIndex == null) return false;
-    final start = dragStartIndex! < dragEndIndex! ? dragStartIndex! : dragEndIndex!;
-    final end = dragStartIndex! < dragEndIndex! ? dragEndIndex! : dragStartIndex!;
+    final start =
+        dragStartIndex! < dragEndIndex! ? dragStartIndex! : dragEndIndex!;
+    final end =
+        dragStartIndex! < dragEndIndex! ? dragEndIndex! : dragStartIndex!;
     return index >= start && index <= end;
   }
 
@@ -57,7 +60,8 @@ class TimeGrid extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 8),
           itemCount: 24,
           itemExtent: 45,
-          itemBuilder: (context, hour) => _buildGridRow(context, hour, provider),
+          itemBuilder: (context, hour) =>
+              _buildGridRow(context, hour, provider),
         );
       },
     );
@@ -112,7 +116,10 @@ class TimeGrid extends StatelessWidget {
             if (label != null && slot.color != null) {
               var span = 1;
               while (minute + span < 6 &&
-                  daySlots[hour * 6 + minute + span].label == label) {
+                  canJoinTimeSlots(
+                    slot,
+                    daySlots[hour * 6 + minute + span],
+                  )) {
                 span++;
               }
               var highlighted = false;
@@ -174,14 +181,10 @@ class TimeGrid extends StatelessWidget {
   }
 
   bool _shouldBridgeLeft(List<TimeSlot> daySlots, int index) =>
-      index % 6 != 0 &&
-      daySlots[index].label != null &&
-      daySlots[index].label == daySlots[index - 1].label;
+      index % 6 != 0 && canJoinTimeSlots(daySlots[index - 1], daySlots[index]);
 
   bool _shouldBridgeRight(List<TimeSlot> daySlots, int index) =>
-      index % 6 != 5 &&
-      daySlots[index].label != null &&
-      daySlots[index].label == daySlots[index + 1].label;
+      index % 6 != 5 && canJoinTimeSlots(daySlots[index], daySlots[index + 1]);
 
   BorderRadius _computeSegmentBorderRadius(List<TimeSlot> daySlots, int hour,
       int startMinute, int span, bool isHighlighted) {
@@ -190,10 +193,10 @@ class TimeGrid extends StatelessWidget {
     final endIndex = startIndex + span - 1;
     final leftRounded = startIndex % 6 == 0 ||
         startIndex == 0 ||
-        daySlots[startIndex].label != daySlots[startIndex - 1].label;
+        !canJoinTimeSlots(daySlots[startIndex - 1], daySlots[startIndex]);
     final rightRounded = endIndex % 6 == 5 ||
         endIndex >= daySlots.length - 1 ||
-        daySlots[endIndex].label != daySlots[endIndex + 1].label;
+        !canJoinTimeSlots(daySlots[endIndex], daySlots[endIndex + 1]);
     return BorderRadius.only(
       topLeft: leftRounded ? const Radius.circular(4) : Radius.zero,
       bottomLeft: leftRounded ? const Radius.circular(4) : Radius.zero,

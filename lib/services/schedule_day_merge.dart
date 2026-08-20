@@ -82,6 +82,21 @@ List<Map<String, dynamic>> mergeScheduleSlots({
   return merged;
 }
 
+/// 生成一次推送应写入远端的槽位。
+///
+/// 非空数据仍采用双向合并，避免不同设备各自新增的槽位互相覆盖；
+/// 空数据表示用户明确清空了当天日程，必须保留为空，不能再把远端旧记录合并回来。
+List<Map<String, dynamic>> scheduleEntriesForPush({
+  required List<Map<String, dynamic>> localEntries,
+  required List<Map<String, dynamic>> remoteEntries,
+}) {
+  if (localEntries.isEmpty) return <Map<String, dynamic>>[];
+  return mergeScheduleSlots(
+    localEntries: localEntries,
+    remoteEntries: remoteEntries,
+  );
+}
+
 int _indexOf(Map<String, dynamic> e) => (e['i'] as num?)?.toInt() ?? -1;
 
 int _tsOf(Map<String, dynamic> e) => (e['ts'] as num?)?.toInt() ?? 0;

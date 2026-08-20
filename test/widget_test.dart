@@ -5,6 +5,7 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
@@ -13,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/main.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
+import 'package:time_manager/screens/home_screen.dart';
 
 /// 测试用的 GoogleSignInPlatform fake：所有方法返回安全默认值，
 /// 避免 TimeProvider 初始化时 GoogleCalendarService.restoreSignIn 抛 UnimplementedError
@@ -103,5 +105,38 @@ void main() {
     await tester.pump();
 
     expect(find.byType(TimeManagerApp), findsOneWidget);
+  });
+
+  testWidgets('首页不显示每日复盘入口', (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({});
+    GoogleSignInPlatform.instance = _FakeGoogleSignInPlatform();
+
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('home_widget'),
+      (call) async => null,
+    );
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+      (call) async => null,
+    );
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('plugins.flutter.io/path_provider'),
+      (call) async => '/tmp/time_manager_test',
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider(create: (_) => TimeProvider()),
+          ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
+        ],
+        child: const MaterialApp(home: HomeScreen()),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byIcon(Icons.auto_awesome), findsNothing);
   });
 }

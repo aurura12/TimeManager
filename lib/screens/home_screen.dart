@@ -13,8 +13,8 @@ import '../widgets/date_picker_panel.dart';
 import '../widgets/template_bar.dart';
 import '../widgets/time_grid.dart';
 import '../widgets/voice_schedule_sheet.dart';
-import 'daily_review_screen.dart';
 import 'global_search_screen.dart';
+import '../utils/desktop_selection.dart';
 
 /// Windows 三列视图下列头高度，与左侧时间标签占位共用，保证对齐。
 const double _kDayHeaderHeight = 40;
@@ -146,8 +146,8 @@ class _HomeScreenState extends State<HomeScreen> {
         context.select<TimeProvider, bool>((p) => p.googleCalendarSyncEnabled);
     final isRemoteViewEnabled =
         context.select<TimeProvider, bool>((p) => p.isRemoteViewEnabled);
-    final hasPendingSyncForCurrentDate = context
-        .select<TimeProvider, bool>((p) => p.hasPendingSyncForCurrentDate);
+    final hasPendingSync =
+        context.select<TimeProvider, bool>((p) => p.hasPendingSync);
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -163,10 +163,9 @@ class _HomeScreenState extends State<HomeScreen> {
         title: _buildAppBarDateNav(timeProvider, currentDate),
         actions: _buildAppBarActions(
           timeProvider,
-          currentDate,
           googleSyncEnabled,
           isRemoteViewEnabled,
-          hasPendingSyncForCurrentDate,
+          hasPendingSync,
         ),
       ),
       body: Stack(
@@ -237,6 +236,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                             date: prevDate,
                                             timeAxisController:
                                                 _scrollController,
+                                            dragStartIndex: _selectionStart,
+                                            dragEndIndex: _selectionEnd,
+                                            selectionDate: _selectionDate,
                                             onSelectionChanged:
                                                 (date, start, end) {
                                               setState(() {
@@ -245,6 +247,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                                 _selectionEnd = end;
                                               });
                                             },
+                                            onSelectionCleared: _clearSelection,
                                             onRemoveSlot: (date, index) =>
                                                 timeProvider
                                                     .removeEventFromSlot(index,
@@ -261,6 +264,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                             date: currentDate,
                                             timeAxisController:
                                                 _scrollController,
+                                            dragStartIndex: _selectionStart,
+                                            dragEndIndex: _selectionEnd,
+                                            selectionDate: _selectionDate,
                                             onSelectionChanged:
                                                 (date, start, end) {
                                               setState(() {
@@ -269,6 +275,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                                 _selectionEnd = end;
                                               });
                                             },
+                                            onSelectionCleared: _clearSelection,
                                             onRemoveSlot: (date, index) =>
                                                 timeProvider
                                                     .removeEventFromSlot(index,
@@ -285,6 +292,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                             date: nextDate,
                                             timeAxisController:
                                                 _scrollController,
+                                            dragStartIndex: _selectionStart,
+                                            dragEndIndex: _selectionEnd,
+                                            selectionDate: _selectionDate,
                                             onSelectionChanged:
                                                 (date, start, end) {
                                               setState(() {
@@ -293,6 +303,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                                 _selectionEnd = end;
                                               });
                                             },
+                                            onSelectionCleared: _clearSelection,
                                             onRemoveSlot: (date, index) =>
                                                 timeProvider
                                                     .removeEventFromSlot(index,
@@ -1272,17 +1283,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   List<Widget> _buildAppBarActions(
     TimeProvider provider,
-    DateTime date,
     bool googleSyncEnabled,
     bool remoteViewEnabled,
-    bool hasPendingSyncForCurrentDate,
+    bool hasPendingSync,
   ) {
     return [
-      _appBarIconButton(
-        icon: Icons.auto_awesome,
-        tooltip: '每日复盘',
-        onPressed: () => DailyReviewScreen.open(context, date: date),
-      ),
       _appBarIconButton(
         icon: Icons.search,
         tooltip: '搜索记录',
@@ -1332,7 +1337,10 @@ class _HomeScreenState extends State<HomeScreen> {
             );
           },
         ),
-        onPressed: () => provider.toggleRemoteScheduleView(),
+        onPressed: () {
+          _clearSelection();
+          provider.toggleRemoteScheduleView();
+        },
       ),
       _appBarIconButton(
         tooltip: googleSyncEnabled ? '同步到 Gitee 和 Google 日历' : '同步日程到 Gitee',
@@ -1342,7 +1350,7 @@ class _HomeScreenState extends State<HomeScreen> {
           clipBehavior: Clip.none,
           children: [
             const Icon(Icons.sync, size: 23),
-            if (hasPendingSyncForCurrentDate)
+            if (hasPendingSync)
               Positioned(
                 right: -1,
                 top: -1,
@@ -1731,7 +1739,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-/// Windows 双列布局中单个日期列：自持拖选/高亮状态，并与共享时间轴联动滚动。
+/// Windows 三列布局中单个日期列：接收父页面统一的拖选/高亮状态，并与共享时间轴联动滚动。
 /// Windows 三列视图下的单列日期头：显示日期 + 星期，今天的列高亮。
 class _DayHeader extends StatelessWidget {
   final DateTime date;
@@ -1778,14 +1786,22 @@ class _DayHeader extends StatelessWidget {
 class _DayGrid extends StatefulWidget {
   final DateTime date;
   final ScrollController timeAxisController;
+  final int? dragStartIndex;
+  final int? dragEndIndex;
+  final DateTime? selectionDate;
   final void Function(DateTime date, int startIndex, int endIndex)
       onSelectionChanged;
+  final VoidCallback onSelectionCleared;
   final void Function(DateTime date, int index) onRemoveSlot;
 
   const _DayGrid({
     required this.date,
     required this.timeAxisController,
+    required this.dragStartIndex,
+    required this.dragEndIndex,
+    required this.selectionDate,
     required this.onSelectionChanged,
+    required this.onSelectionCleared,
     required this.onRemoveSlot,
   });
 
@@ -1796,8 +1812,6 @@ class _DayGrid extends StatefulWidget {
 class _DayGridState extends State<_DayGrid> {
   final GlobalKey _gridKey = GlobalKey();
   final ScrollController _gridScrollController = ScrollController();
-  int? _dragStartIndex;
-  int? _dragEndIndex;
 
   @override
   void initState() {
@@ -1820,11 +1834,7 @@ class _DayGridState extends State<_DayGrid> {
       widget.timeAxisController.addListener(_syncFromTimeAxis);
     }
     if (oldWidget.date != widget.date) {
-      // 日期变化时重置拖选并保持与时间轴对齐
-      setState(() {
-        _dragStartIndex = null;
-        _dragEndIndex = null;
-      });
+      // 选中范围由父页面统一持有；日期变化时只需重新对齐滚动位置。
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_gridScrollController.hasClients) {
           _gridScrollController.jumpTo(widget.timeAxisController.offset);
@@ -1868,28 +1878,26 @@ class _DayGridState extends State<_DayGrid> {
   void _handleSelect(Offset globalPosition,
       {bool isClick = false, bool isStart = false}) {
     final currentIndex = _calculateIndex(globalPosition);
+    final selection = DesktopSelection(
+      start: widget.dragStartIndex,
+      end: widget.dragEndIndex,
+    );
+    final isSelectionForThisDate = widget.selectionDate != null &&
+        selection.appliesTo(widget.selectionDate!, widget.date);
 
-    setState(() {
-      if (isClick) {
-        // 点击已选中的格子则取消选择
-        if (_dragStartIndex == currentIndex && _dragEndIndex == currentIndex) {
-          _dragStartIndex = null;
-          _dragEndIndex = null;
-        } else {
-          _dragStartIndex = currentIndex;
-          _dragEndIndex = currentIndex;
-        }
-      } else {
-        if (isStart) {
-          _dragStartIndex = currentIndex;
-        }
-        _dragEndIndex = currentIndex;
-      }
-    });
-
-    if (_dragStartIndex != null && _dragEndIndex != null) {
-      widget.onSelectionChanged(widget.date, _dragStartIndex!, _dragEndIndex!);
+    if (isClick &&
+        isSelectionForThisDate &&
+        selection.isSingleCellAt(currentIndex)) {
+      widget.onSelectionCleared();
+      return;
     }
+
+    final startIndex = isStart || isClick
+        ? currentIndex
+        : (isSelectionForThisDate && widget.dragStartIndex != null
+            ? widget.dragStartIndex!
+            : currentIndex);
+    widget.onSelectionChanged(widget.date, startIndex, currentIndex);
   }
 
   @override
@@ -1910,12 +1918,27 @@ class _DayGridState extends State<_DayGrid> {
         gridKey: _gridKey,
         date: widget.date,
         controller: _gridScrollController,
-        dragStartIndex: _dragStartIndex,
-        dragEndIndex: _dragEndIndex,
+        dragStartIndex: widget.selectionDate != null &&
+                DesktopSelection(
+                  start: widget.dragStartIndex,
+                  end: widget.dragEndIndex,
+                ).appliesTo(widget.selectionDate!, widget.date)
+            ? widget.dragStartIndex
+            : null,
+        dragEndIndex: widget.selectionDate != null &&
+                DesktopSelection(
+                  start: widget.dragStartIndex,
+                  end: widget.dragEndIndex,
+                ).appliesTo(widget.selectionDate!, widget.date)
+            ? widget.dragEndIndex
+            : null,
         onTapDown: (position) => _handleSelect(position, isClick: true),
         onPanStart: (position) => _handleSelect(position, isStart: true),
         onPanUpdate: (position) => _handleSelect(position),
-        onRemoveSlot: (index) => widget.onRemoveSlot(widget.date, index),
+        onRemoveSlot: (index) {
+          widget.onSelectionCleared();
+          widget.onRemoveSlot(widget.date, index);
+        },
       ),
     );
   }

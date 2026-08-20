@@ -14,7 +14,8 @@ class _FakeGoogleSignInPlatform extends GoogleSignInPlatform {
   @override
   Future<AuthenticationResults?> attemptLightweightAuthentication(
     AttemptLightweightAuthenticationParameters params,
-  ) async => null;
+  ) async =>
+      null;
 
   @override
   bool supportsAuthenticate() => false;
@@ -30,12 +31,14 @@ class _FakeGoogleSignInPlatform extends GoogleSignInPlatform {
   @override
   Future<ClientAuthorizationTokenData?> clientAuthorizationTokensForScopes(
     ClientAuthorizationTokensForScopesParameters params,
-  ) async => null;
+  ) async =>
+      null;
 
   @override
   Future<ServerAuthorizationTokenData?> serverAuthorizationTokensForScopes(
     ServerAuthorizationTokensForScopesParameters params,
-  ) async => null;
+  ) async =>
+      null;
 
   @override
   Future<void> clearAuthorizationToken(
@@ -107,5 +110,42 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 20));
 
     expect(messages, contains('请先选择身份'));
+  });
+
+  test('undo restores the last edited non-current desktop date', () async {
+    final provider = await _createProvider();
+    addTearDown(provider.dispose);
+
+    final targetDate = provider.currentDate.subtract(const Duration(days: 1));
+    provider.assignCategoryToSlots(
+      {0},
+      Category(name: '测试', color: Colors.blue),
+      date: targetDate,
+    );
+    expect(provider.slotsForDate(targetDate)[0].recorded, isTrue);
+
+    provider.undo();
+
+    expect(provider.slotsForDate(targetDate)[0].recorded, isFalse);
+  });
+
+  test('edits to multiple desktop dates all trigger schedule sync attempts',
+      () async {
+    final provider = await _createProvider(
+      scheduleGiteeDebounce: Duration.zero,
+    );
+    addTearDown(provider.dispose);
+    final messages = <String>[];
+    final subscription = provider.scheduleGiteeSyncStream.listen(messages.add);
+    addTearDown(subscription.cancel);
+
+    final previousDate = provider.currentDate.subtract(const Duration(days: 1));
+    final nextDate = provider.currentDate.add(const Duration(days: 1));
+    final category = Category(name: '测试', color: Colors.blue);
+    provider.assignCategoryToSlots({0}, category, date: previousDate);
+    provider.assignCategoryToSlots({1}, category, date: nextDate);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(messages.where((message) => message == '请先选择身份').length, 2);
   });
 }

@@ -69,6 +69,7 @@ class TimeProvider with ChangeNotifier {
   bool _remoteViewEnabled = false;
   bool get isRemoteViewEnabled => _remoteViewEnabled;
   final Map<String, String> _remoteViewBackup = {}; // dateKey → 本地 JSON 快照
+  int _schedulePullRevision = 0;
 
   /// 当前日程用户身份，从本地持久化存储加载（与打卡一致）
   DiaryKind get scheduleUser => _scheduleUser;
@@ -293,7 +294,8 @@ class TimeProvider with ChangeNotifier {
   /// 获取（必要时生成）指定日期的 144 槽位，供双列视图等按日期渲染使用。
   /// 空槽不会被标记为 dirty，不会触发落盘。
   List<TimeSlot> slotsForDate(DateTime date) {
-    return _dailySlots.putIfAbsent(_getDateKey(date), () => _generateInitialSlots());
+    return _dailySlots.putIfAbsent(
+        _getDateKey(date), () => _generateInitialSlots());
   }
 
   // 生成一天 144 个初始槽位对象
@@ -366,25 +368,33 @@ class TimeProvider with ChangeNotifier {
   void _pullOwnScheduleIfWindows() {
     if (!isDesktopPlatform) return;
     if (!_hasSelectedScheduleUser) return;
+    final requestRevision = ++_schedulePullRevision;
     if (_remoteViewEnabled) {
-      _pullRemoteViewSchedules();
+      _pullRemoteViewSchedules(requestRevision: requestRevision);
     } else {
       for (final date in scheduleDatesForView(
         _currentDate,
         desktop: isDesktopPlatform,
       )) {
-        unawaited(pullScheduleFromGitee(date: date));
+        unawaited(pullScheduleFromGitee(
+          date: date,
+          requestRevision: requestRevision,
+        ));
       }
     }
   }
 
   /// 远程视图下：对当前三列日期备份本地（仅首次访问的日期）并拉取对方数据。
   /// 远程视图期间切换日期时，由 [_pullOwnScheduleIfWindows] 调用。
-  void _pullRemoteViewSchedules() {
+  void _pullRemoteViewSchedules({int? requestRevision}) {
     final otherCode = _scheduleUser.code == 'g' ? 'j' : 'g';
     for (final d in _getRemoteViewDates()) {
       _backupAndClearDay(_getDateKey(d));
-      unawaited(pullScheduleFromGitee(userCode: otherCode, date: d));
+      unawaited(pullScheduleFromGitee(
+        userCode: otherCode,
+        date: d,
+        requestRevision: requestRevision,
+      ));
     }
     _markAllSlotsDirty();
     notifyListeners();
@@ -411,6 +421,7 @@ class TimeProvider with ChangeNotifier {
     final dateKey = _getDateKey(_currentDate);
     _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
+    _markPendingSync(dateKey);
     _saveData();
     notifyListeners();
     _targetStatsChangedController.add(null); // 通知目标统计变化
@@ -452,12 +463,14 @@ class TimeProvider with ChangeNotifier {
 
   void _saveSnapshot([String? dateKey]) {
     final key = dateKey ?? _getDateKey(_currentDate);
+    _lastEditedDateKey = key;
     _undoStacks.putIfAbsent(key, () => []);
 
     _cleanupOldUndoStacks();
 
     // 深度拷贝当前的 slots
-    final daySlots = _dailySlots.putIfAbsent(key, () => _generateInitialSlots());
+    final daySlots =
+        _dailySlots.putIfAbsent(key, () => _generateInitialSlots());
     List<TimeSlot> snapshot = daySlots
         .map((s) => TimeSlot(
               hour: s.hour,
@@ -482,15 +495,17 @@ class TimeProvider with ChangeNotifier {
 
   void undo() {
     if (_remoteViewEnabled) return; // 远程视图只读，禁止编辑本地数据
-    String dateKey = _getDateKey(_currentDate);
+    final dateKey = _lastEditedDateKey ?? _getDateKey(_currentDate);
     if (_undoStacks[dateKey] != null && _undoStacks[dateKey]!.isNotEmpty) {
       _dailySlots[dateKey] = _undoStacks[dateKey]!.removeLast();
       _targetStatsCache.invalidateDate(dateKey);
       _markSlotsDirty(dateKey);
-      _markPendingSync();
+      _markPendingSync(dateKey);
       _saveData();
       notifyListeners();
-      _scheduleCalendarSync();
+      if (dateKey == _getDateKey(_currentDate)) {
+        _scheduleCalendarSync();
+      }
     }
   }
 
@@ -619,15 +634,39 @@ class TimeProvider with ChangeNotifier {
 
   Timer? _scheduleGiteeTimer;
   bool _scheduleGiteeSyncing = false;
+  final Set<String> _pendingScheduleGiteeDateKeys = {};
+  final Map<String, int> _scheduleGiteeDateRevisions = {};
+  String? _lastEditedDateKey;
 
   /// 标记当前日期需要同步到 Gitee（带 3 秒防抖）。
   /// [dateKey] 捕获目标日期，避免防抖期间切换日期推错日期。
+  /// 多日期编辑时保留所有待同步日期，避免后一次编辑取消前一次编辑。
   void _markScheduleGiteePending([String? dateKey]) {
-    _scheduleGiteeTimer?.cancel();
     final target = dateKey ?? _getDateKey(_currentDate);
+    _pendingScheduleGiteeDateKeys.add(target);
+    _scheduleGiteeDateRevisions[target] =
+        (_scheduleGiteeDateRevisions[target] ?? 0) + 1;
+    _scheduleGiteeTimer?.cancel();
     _scheduleGiteeTimer = Timer(_scheduleGiteeDebounce, () {
-      syncScheduleToGitee(dateKey: target);
+      _scheduleGiteeTimer = null;
+      unawaited(_flushPendingScheduleGiteeSync());
     });
+  }
+
+  Future<void> _flushPendingScheduleGiteeSync() async {
+    if (_pendingScheduleGiteeDateKeys.isEmpty) return;
+    if (_scheduleGiteeSyncing || _allScheduleSyncing || _allSchedulePulling) {
+      _scheduleGiteeTimer = Timer(const Duration(milliseconds: 100), () {
+        _scheduleGiteeTimer = null;
+        unawaited(_flushPendingScheduleGiteeSync());
+      });
+      return;
+    }
+
+    final targets = List<String>.from(_pendingScheduleGiteeDateKeys);
+    for (final target in targets) {
+      await syncScheduleToGitee(dateKey: target);
+    }
   }
 
   /// 推送指定日期日程到 Gitee（每人独立文件）
@@ -641,6 +680,8 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('请先选择身份');
       return;
     }
+    final effectiveDateKey = dateKey ?? _getDateKey(_currentDate);
+    final syncRevision = _scheduleGiteeDateRevisions[effectiveDateKey] ?? 0;
     if (_scheduleGiteeSyncing || _allScheduleSyncing || _allSchedulePulling)
       return;
     _scheduleGiteeSyncing = true;
@@ -652,18 +693,7 @@ class TimeProvider with ChangeNotifier {
         return;
       }
 
-      final effectiveDateKey = dateKey ?? _getDateKey(_currentDate);
-      final slots = _dailySlots[effectiveDateKey];
-      if (slots == null) {
-        _clearPendingSyncForCurrentDate(effectiveDateKey);
-        return;
-      }
-
-      if (!slots.any((s) => s.recorded)) {
-        _addScheduleSyncStatus('无日程');
-        _clearPendingSyncForCurrentDate(effectiveDateKey);
-        return;
-      }
+      final slots = _dailySlots[effectiveDateKey] ??= _generateInitialSlots();
 
       _addScheduleSyncStatus('同步中...');
       if (!_syncStatusController.isClosed) {
@@ -672,7 +702,11 @@ class TimeProvider with ChangeNotifier {
       final ok = await _pushScheduleDay(effectiveDateKey, slots);
       if (ok) {
         _addScheduleSyncStatus('已同步');
-        _clearPendingSyncForCurrentDate(effectiveDateKey);
+        if ((_scheduleGiteeDateRevisions[effectiveDateKey] ?? 0) ==
+            syncRevision) {
+          _pendingScheduleGiteeDateKeys.remove(effectiveDateKey);
+          _clearPendingSyncForCurrentDate(effectiveDateKey);
+        }
         if (!_syncStatusController.isClosed) {
           _syncStatusController.add("日程同步成功");
         }
@@ -705,7 +739,6 @@ class TimeProvider with ChangeNotifier {
     if (token == null || token.isEmpty) return false;
 
     final localEntries = _serializeRecordedSlots(slots);
-    if (localEntries.isEmpty) return true; // 无数据视为成功
 
     final userLabel = _scheduleUser == DiaryKind.g ? '乖乖' : '晶晶';
 
@@ -719,7 +752,7 @@ class TimeProvider with ChangeNotifier {
 
     // 2) 合并（后写覆盖：同槽 ts 大者胜，仅一侧有则保留）
     final remote = parseScheduleContent(remoteContent);
-    final merged = mergeScheduleSlots(
+    final merged = scheduleEntriesForPush(
       localEntries: localEntries,
       remoteEntries: remote.slots,
     );
@@ -799,10 +832,13 @@ class TimeProvider with ChangeNotifier {
   // --- 分类（事件/子事件）跨端同步 ---
   Timer? _categoriesGiteeTimer;
   bool _categoriesGiteeSyncing = false;
+
   /// 分类删除墓碑：id → 删除时间戳（毫秒）
   final Map<String, int> _deletedCategories = {};
+
   /// 分类文档最后修改时间（毫秒），用于合并顺序基准与首次同步判断
   int _categoriesDocUpdatedAt = 0;
+
   /// 分类修改发生时归属的身份（捕获当前 scheduleUser.code，避免切身份后错写）
   String _categoriesUserCode = '';
 
@@ -828,26 +864,40 @@ class TimeProvider with ChangeNotifier {
       }
 
       // 收集所有有记录的日期
-      final dateKeys = <String>[];
+      final dateKeys = <String>{};
       for (final entry in _dailySlots.entries) {
         if (entry.value.any((s) => s.recorded)) {
           dateKeys.add(entry.key);
         }
       }
+      dateKeys.addAll(_pendingSyncDates);
+      dateKeys.addAll(_pendingScheduleGiteeDateKeys);
 
       if (dateKeys.isEmpty) {
         _addScheduleSyncStatus('无日程');
         return;
       }
 
-      final total = dateKeys.length;
+      final sortedDateKeys = dateKeys.toList()..sort();
+      final total = sortedDateKeys.length;
       var done = 0;
-      for (final dateKey in dateKeys) {
-        final slots = _dailySlots[dateKey]!;
+      for (final dateKey in sortedDateKeys) {
+        final syncRevision = _scheduleGiteeDateRevisions[dateKey] ?? 0;
+        final slots = _dailySlots[dateKey] ?? _generateInitialSlots();
         _addScheduleSyncStatus('同步中 ${done + 1}/$total...');
         final ok = await _pushScheduleDay(dateKey, slots);
-        if (ok) done++;
+        if (ok) {
+          done++;
+          if ((_scheduleGiteeDateRevisions[dateKey] ?? 0) == syncRevision) {
+            _pendingSyncDates.remove(dateKey);
+            _pendingScheduleGiteeDateKeys.remove(dateKey);
+          }
+        }
       }
+
+      _syncDirty = true;
+      await _saveData();
+      notifyListeners();
 
       if (done == total) {
         _addScheduleSyncStatus('全部同步完成 ($total 天)');
@@ -993,8 +1043,9 @@ class TimeProvider with ChangeNotifier {
     try {
       final token = await DiaryLocalStore.loadToken();
       if (token == null || token.isEmpty) return;
-      final userCode =
-          _categoriesUserCode.isEmpty ? _scheduleUser.code : _categoriesUserCode;
+      final userCode = _categoriesUserCode.isEmpty
+          ? _scheduleUser.code
+          : _categoriesUserCode;
 
       final pullResult = await CategoryGiteeService.pullCategories(
           token: token, userCode: userCode);
@@ -1071,7 +1122,11 @@ class TimeProvider with ChangeNotifier {
 
   /// 从 Gitee 拉取指定用户日程并合并到指定日期。
   /// [date] 为 null 时拉取当前选中日期。
-  Future<bool> pullScheduleFromGitee({String? userCode, DateTime? date}) async {
+  Future<bool> pullScheduleFromGitee({
+    String? userCode,
+    DateTime? date,
+    int? requestRevision,
+  }) async {
     if (!_hasSelectedScheduleUser) {
       _addScheduleSyncStatus('请先选择身份');
       return false;
@@ -1102,27 +1157,17 @@ class TimeProvider with ChangeNotifier {
         _addScheduleSyncStatus(result.error ?? '拉取失败');
         return false;
       }
+      if (requestRevision != null && requestRevision != _schedulePullRevision) {
+        return false;
+      }
 
       final remote = parseScheduleContent(result.content);
       final daySlots = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
-      for (final item in remote.slots) {
-        final map = item;
-        final idx = _parseInt(map['i']);
-        if (idx == null) continue;
-        if (idx >= 0 && idx < daySlots.length) {
-          daySlots[idx].recorded = true;
-          daySlots[idx].label = map['l'] as String?;
-          daySlots[idx].categoryId = map['cid'] as String?;
-          if (map['c'] != null) {
-            final colorVal = _parseInt(map['c']);
-            if (colorVal != null) daySlots[idx].color = Color(colorVal);
-          }
-          final ts = _parseInt(map['ts']);
-          if (ts != null && ts > 0) {
-            daySlots[idx].modifiedAt = DateTime.fromMillisecondsSinceEpoch(ts);
-          }
-        }
-      }
+      final merged = mergeScheduleSlots(
+        localEntries: _serializeRecordedSlots(daySlots),
+        remoteEntries: remote.slots,
+      );
+      _applyScheduleEntriesToSlots(daySlots, merged);
       _markAllSlotsDirty();
       if (!_remoteViewEnabled) _saveData();
       notifyListeners();
@@ -1144,6 +1189,7 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('请先选择身份');
       return;
     }
+    final requestRevision = ++_schedulePullRevision;
     if (_remoteViewEnabled) {
       // 关闭：按备份过的日期逐一恢复本地数据
       final backupKeys = _remoteViewBackup.keys.toList();
@@ -1204,7 +1250,11 @@ class TimeProvider with ChangeNotifier {
       // 6) 拉取对方的文件（独立文件，无需过滤）；Windows 逐日拉取三天
       final otherCode = _scheduleUser.code == 'g' ? 'j' : 'g';
       for (final d in dates) {
-        await pullScheduleFromGitee(userCode: otherCode, date: d);
+        await pullScheduleFromGitee(
+          userCode: otherCode,
+          date: d,
+          requestRevision: requestRevision,
+        );
       }
       // 拉取后不保存到本地持久化——由提前设置的 _remoteViewEnabled 保证
     }
@@ -1230,10 +1280,11 @@ class TimeProvider with ChangeNotifier {
   }
 
   /// 本地与云端日历不一致时标记（与是否已登录无关）
-  void _markPendingSync() {
-    _pendingSyncDates.add(_getDateKey(_currentDate));
+  void _markPendingSync([String? dateKey]) {
+    final key = dateKey ?? _getDateKey(_currentDate);
+    _pendingSyncDates.add(key);
     _syncDirty = true;
-    _markScheduleGiteePending();
+    _markScheduleGiteePending(key);
   }
 
   void _clearPendingSyncForCurrentDate([String? dateKey]) {
@@ -1248,11 +1299,20 @@ class TimeProvider with ChangeNotifier {
   Future<void> onAppBackgrounded() async {
     _debounceTimer?.cancel();
     _debounceTimer = null;
+    _scheduleGiteeTimer?.cancel();
+    _scheduleGiteeTimer = null;
+    await _flushPendingScheduleGiteeSync();
     await _saveData();
   }
 
   /// 统一同步：始终同步到 Gitee，若开启 Google 日历同步则同时同步 Google。
   Future<void> syncAll() async {
+    if (isDesktopPlatform) {
+      _scheduleGiteeTimer?.cancel();
+      _scheduleGiteeTimer = null;
+      await syncAllSchedulesToGitee();
+      return;
+    }
     // 先同步日程到 Gitee
     await syncScheduleToGitee();
     // 若开启了 Google 日历同步则同步日历
@@ -1479,10 +1539,15 @@ class TimeProvider with ChangeNotifier {
       end++;
     }
 
-    final rangeStart = _slotIndexToDateTime(start);
-    final rangeEnd = _slotIndexToDateTime(end);
+    final rangeStart = _slotIndexToDateTime(start, targetDate);
+    final rangeEnd = _slotIndexToDateTime(end, targetDate);
     var eventId = daySlots[index].calendarEventId;
-    eventId ??= await _resolveGoogleEventId(label, rangeStart, rangeEnd);
+    eventId ??= await _resolveGoogleEventId(
+      label,
+      rangeStart,
+      rangeEnd,
+      targetDate,
+    );
 
     for (int i = 0; i < daySlots.length; i++) {
       final sameEvent = eventId != null &&
@@ -1518,10 +1583,9 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  Future<String?> _resolveGoogleEventId(
-      String title, DateTime rangeStart, DateTime rangeEnd) async {
-    final blocks =
-        await GoogleCalendarService.fetchExternalEvents(_currentDate);
+  Future<String?> _resolveGoogleEventId(String title, DateTime rangeStart,
+      DateTime rangeEnd, DateTime targetDate) async {
+    final blocks = await GoogleCalendarService.fetchExternalEvents(targetDate);
     if (blocks == null) return null;
 
     for (final block in blocks) {
@@ -1558,8 +1622,8 @@ class TimeProvider with ChangeNotifier {
     ));
   }
 
-  DateTime _slotIndexToDateTime(int index) {
-    final d = _currentDate;
+  DateTime _slotIndexToDateTime(int index, [DateTime? date]) {
+    final d = date ?? _currentDate;
     return DateTime(d.year, d.month, d.day, index ~/ 6, (index % 6) * 10);
   }
 
@@ -2055,8 +2119,8 @@ class TimeProvider with ChangeNotifier {
       }
     }
 
-    _categories[index] = updated.copyWith(
-        updatedAt: DateTime.now().millisecondsSinceEpoch);
+    _categories[index] =
+        updated.copyWith(updatedAt: DateTime.now().millisecondsSinceEpoch);
     _markCategoriesChanged();
     _markCategoriesGiteePending();
     _invalidateLabelCategoryIdCache(); // 清除缓存
@@ -2309,7 +2373,8 @@ class TimeProvider with ChangeNotifier {
     // 1. 保存分类（仅在变化时）
     final categoriesDirtyAtStart = _categoriesDirty;
     if (categoriesDirtyAtStart) {
-      List<String> catList = _categories.map((c) => json.encode(c.toJson())).toList();
+      List<String> catList =
+          _categories.map((c) => json.encode(c.toJson())).toList();
       await prefs.setStringList('categories', catList);
       // 分类删除墓碑（id → 删除时间戳）与文档时间戳随分类一并持久化
       await prefs.setString(
@@ -2663,7 +2728,10 @@ class TimeProvider with ChangeNotifier {
           subCategories: ['会议', '文档'],
           updatedAt: nowMs),
       Category(name: '运动', color: const Color(0xFF4A90E2), updatedAt: nowMs),
-      Category(name: temporaryCategoryName, color: const Color(0xFF9E9E9E), updatedAt: nowMs),
+      Category(
+          name: temporaryCategoryName,
+          color: const Color(0xFF9E9E9E),
+          updatedAt: nowMs),
     ];
   }
 

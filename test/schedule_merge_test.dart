@@ -118,5 +118,18 @@ void main() {
       );
       expect(finalEntries.first['l'], '用户新修改');
     });
+
+    test('本地明确清空日程时，推送内容必须为空而不是合并回远端记录', () {
+      final remote = [
+        {'i': 0, 'l': '旧日程', 'ts': 1000},
+      ];
+
+      final pushed = scheduleEntriesForPush(
+        localEntries: const [],
+        remoteEntries: remote,
+      );
+
+      expect(pushed, isEmpty);
+    });
   });
 }
