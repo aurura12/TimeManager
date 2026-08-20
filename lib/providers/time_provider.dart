@@ -23,6 +23,7 @@ import '../models/diary_kind.dart';
 import '../models/known_google_users.dart';
 import '../services/app_user_identity_store.dart';
 import 'target_stats_cache.dart';
+import '../utils/schedule_view_dates.dart';
 
 enum TimePointStatus { onTime, late, notDone }
 
@@ -54,6 +55,7 @@ class TimeProvider with ChangeNotifier {
 
   DateTime _currentDate = DateTime.now();
   bool _isSyncing = false; // 添加同步锁标志，防止并发同步导致重复
+  final Duration _scheduleGiteeDebounce;
 
   /// 本地已改、尚未成功同步到日历的日期（dateKey 列表）
   bool _googleCalendarSyncEnabled = !isDesktopPlatform;
@@ -208,7 +210,9 @@ class TimeProvider with ChangeNotifier {
     super.dispose();
   }
 
-  TimeProvider() {
+  TimeProvider({
+    Duration scheduleGiteeDebounce = const Duration(seconds: 3),
+  }) : _scheduleGiteeDebounce = scheduleGiteeDebounce {
     _googleAuthSubscription =
         GoogleCalendarService.authStateChanges.listen((_) {
       notifyListeners();
@@ -365,7 +369,12 @@ class TimeProvider with ChangeNotifier {
     if (_remoteViewEnabled) {
       _pullRemoteViewSchedules();
     } else {
-      unawaited(pullScheduleFromGitee());
+      for (final date in scheduleDatesForView(
+        _currentDate,
+        desktop: isDesktopPlatform,
+      )) {
+        unawaited(pullScheduleFromGitee(date: date));
+      }
     }
   }
 
@@ -510,14 +519,14 @@ class TimeProvider with ChangeNotifier {
     }
     _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
-    // 编辑当前日期（含 Windows 双列左列）走完整同步链路；只有编辑其他日期才跳过防抖同步
+    // 编辑当前日期走完整同步链路；三列视图的其他日期也要同步到对应 Gitee 文件。
     if (date == null || dateKey == _getDateKey(_currentDate)) {
       _markPendingSync();
       _scheduleCalendarSync();
     } else {
-      // 双列视图编辑非当前日期：只标记待同步，不触发当前日期的防抖同步
       _pendingSyncDates.add(dateKey);
       _syncDirty = true;
+      _markScheduleGiteePending(dateKey);
     }
     _saveData();
     notifyListeners();
@@ -616,7 +625,7 @@ class TimeProvider with ChangeNotifier {
   void _markScheduleGiteePending([String? dateKey]) {
     _scheduleGiteeTimer?.cancel();
     final target = dateKey ?? _getDateKey(_currentDate);
-    _scheduleGiteeTimer = Timer(const Duration(seconds: 3), () {
+    _scheduleGiteeTimer = Timer(_scheduleGiteeDebounce, () {
       syncScheduleToGitee(dateKey: target);
     });
   }
@@ -1204,12 +1213,7 @@ class TimeProvider with ChangeNotifier {
 
   /// 远程视图覆盖的日期：Windows 三列（选中日 ±1 天），安卓仅选中日。
   List<DateTime> _getRemoteViewDates() {
-    if (!isDesktopPlatform) return [_currentDate];
-    return [
-      _currentDate.subtract(const Duration(days: 1)),
-      _currentDate,
-      _currentDate.add(const Duration(days: 1)),
-    ];
+    return scheduleDatesForView(_currentDate, desktop: isDesktopPlatform);
   }
 
   /// 清空一天的槽位数据（远程视图备份/恢复用）
@@ -1430,14 +1434,14 @@ class TimeProvider with ChangeNotifier {
           _clearSlotAt(daySlots, index);
           _markSlotsDirty(dateKey);
           _targetStatsCache.invalidateDate(dateKey);
-          // 编辑当前日期（含 Windows 双列左列）走完整同步链路；只有编辑其他日期才跳过防抖同步
+          // 编辑当前日期走完整同步链路；三列视图的其他日期也要同步到对应 Gitee 文件。
           if (date == null || dateKey == _getDateKey(_currentDate)) {
             _markPendingSync();
             _scheduleCalendarSync();
           } else {
-            // 双列视图编辑非当前日期：只标记待同步，不触发当前日期的防抖同步
             _pendingSyncDates.add(dateKey);
             _syncDirty = true;
+            _markScheduleGiteePending(dateKey);
           }
           _saveData();
           notifyListeners();

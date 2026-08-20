@@ -428,6 +428,13 @@ class _HomeScreenState extends State<HomeScreen> {
             onTemplateTap: (template) => _onTemplateTap(template, provider),
             onManageTap: () => _showTemplateManageSheet(provider),
             onCopyYesterdayTap: () => _onCopyYesterday(provider),
+            onVoiceTap: Platform.isAndroid
+                ? () => VoiceScheduleSheet.show(
+                      context,
+                      provider: provider,
+                      baseDate: provider.currentDate,
+                    )
+                : null,
           ),
           Expanded(
             child: ReorderableListView.builder(
@@ -1276,16 +1283,6 @@ class _HomeScreenState extends State<HomeScreen> {
         tooltip: '每日复盘',
         onPressed: () => DailyReviewScreen.open(context, date: date),
       ),
-      if (Platform.isAndroid)
-        _appBarIconButton(
-          icon: Icons.mic_none,
-          tooltip: '语音添加日程',
-          onPressed: () => VoiceScheduleSheet.show(
-            context,
-            provider: provider,
-            baseDate: date,
-          ),
-        ),
       _appBarIconButton(
         icon: Icons.search,
         tooltip: '搜索记录',

@@ -7,6 +7,7 @@ class TemplateBar extends StatelessWidget {
   final void Function(ScheduleTemplate template) onTemplateTap;
   final VoidCallback onManageTap;
   final VoidCallback onCopyYesterdayTap;
+  final VoidCallback? onVoiceTap;
 
   const TemplateBar({
     super.key,
@@ -14,6 +15,7 @@ class TemplateBar extends StatelessWidget {
     required this.onTemplateTap,
     required this.onManageTap,
     required this.onCopyYesterdayTap,
+    this.onVoiceTap,
   });
 
   static const double _chipHeight = 30;
@@ -57,9 +59,8 @@ class TemplateBar extends StatelessWidget {
                 icon: Icon(
                   Icons.settings,
                   size: 22,
-                  color: isDark
-                      ? colorScheme.onSurfaceVariant
-                      : Colors.grey[700],
+                  color:
+                      isDark ? colorScheme.onSurfaceVariant : Colors.grey[700],
                 ),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
@@ -67,6 +68,47 @@ class TemplateBar extends StatelessWidget {
               ),
             ],
           ),
+          if (onVoiceTap != null) ...[
+            const SizedBox(height: _chipGap),
+            Semantics(
+              button: true,
+              label: '语音添加日程',
+              child: Material(
+                color: isDark ? colorScheme.secondaryContainer : Colors.white,
+                borderRadius: BorderRadius.circular(6),
+                child: InkWell(
+                  onTap: onVoiceTap,
+                  borderRadius: BorderRadius.circular(6),
+                  child: SizedBox(
+                    height: _chipHeight,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.mic_none,
+                          size: 16,
+                          color: isDark
+                              ? colorScheme.onSecondaryContainer
+                              : colorScheme.primary,
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          '语音添加',
+                          style: TextStyle(
+                            color: isDark
+                                ? colorScheme.onSecondaryContainer
+                                : colorScheme.primary,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 4),
           SizedBox(
             height: templates.isEmpty ? _chipHeight : listHeight,

@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/category.dart';
 import 'package:time_manager/models/voice_schedule_draft.dart';
 import 'package:time_manager/providers/time_provider.dart';
+import 'package:time_manager/widgets/voice_schedule_sheet.dart';
 
 class _FakeGoogleSignInPlatform extends GoogleSignInPlatform {
   @override
@@ -120,5 +121,28 @@ void main() {
     expect(provider.slots[90].label, '去健身房');
     expect(provider.slots[90].categoryId, isNotNull);
     expect(provider.categories.any((c) => c.name == '去健身房'), isFalse);
+  });
+
+  testWidgets('语音添加弹窗聚焦文字框并提示使用系统键盘麦克风', (tester) async {
+    await tester.runAsync(() async {
+      final provider = await _createProvider();
+      addTearDown(provider.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: VoiceScheduleSheet(
+              provider: provider,
+              baseDate: provider.currentDate,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final textField = tester.widget<TextField>(find.byType(TextField));
+      expect(textField.autofocus, isTrue);
+      expect(find.textContaining('系统键盘上的麦克风'), findsOneWidget);
+    });
   });
 }

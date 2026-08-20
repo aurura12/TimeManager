@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../models/voice_schedule_draft.dart';
 import '../providers/time_provider.dart';
-import '../services/speech_recognition_service.dart';
 import '../services/voice_schedule_parser.dart';
 import '../services/voice_schedule_slot_planner.dart';
 
@@ -41,75 +40,27 @@ class VoiceScheduleSheet extends StatefulWidget {
 
 class _VoiceScheduleSheetState extends State<VoiceScheduleSheet> {
   final TextEditingController _textController = TextEditingController();
-  late final SpeechRecognitionService _speechService;
+  final FocusNode _textFocusNode = FocusNode();
 
   VoiceScheduleParseResult? _parseResult;
   VoiceScheduleConflictMode _conflictMode =
       VoiceScheduleConflictMode.fillEmptyOnly;
   String? _error;
-  bool _isListening = false;
   bool _isApplying = false;
 
   @override
   void initState() {
     super.initState();
-    _speechService = SpeechRecognitionService();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _textFocusNode.requestFocus();
+    });
   }
 
   @override
   void dispose() {
-    _speechService.cancel();
     _textController.dispose();
+    _textFocusNode.dispose();
     super.dispose();
-  }
-
-  Future<void> _toggleListening() async {
-    if (_isListening) {
-      await _speechService.stop();
-      if (mounted) setState(() => _isListening = false);
-      return;
-    }
-
-    setState(() {
-      _error = null;
-      _isListening = true;
-    });
-
-    final started = await _speechService.start(
-      onText: (text, isFinal) {
-        if (!mounted) return;
-        _updateTranscript(text);
-        if (isFinal) setState(() => _isListening = false);
-      },
-      onError: (message) {
-        if (!mounted) return;
-        setState(() {
-          _isListening = false;
-          _error = message;
-        });
-      },
-      onStatus: (status) {
-        if (!mounted) return;
-        if (status == 'notListening' || status == 'done') {
-          setState(() => _isListening = false);
-        }
-      },
-    );
-
-    if (mounted && !started) {
-      setState(() {
-        _isListening = false;
-        _error = '无法启动语音识别，请检查安卓麦克风权限';
-      });
-    }
-  }
-
-  void _updateTranscript(String text) {
-    _textController.value = TextEditingValue(
-      text: text,
-      selection: TextSelection.collapsed(offset: text.length),
-    );
-    _parseTranscript(text);
   }
 
   void _onTextChanged(String text) {
@@ -197,25 +148,21 @@ class _VoiceScheduleSheetState extends State<VoiceScheduleSheet> {
             ),
             const SizedBox(height: 4),
             Text(
-              '例如：明天下午三点到四点开会。没有匹配到的事项会作为临时事件。',
+              '请点击系统键盘上的麦克风输入语音，识别结果会自动填入这里。没有匹配到的事项会作为临时事件。',
               style: TextStyle(color: Colors.grey[600], fontSize: 13),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _textController,
+              focusNode: _textFocusNode,
+              autofocus: true,
               onChanged: _onTextChanged,
               maxLines: 2,
               decoration: const InputDecoration(
                 labelText: '识别内容',
-                hintText: '点击下方按钮开始说话，也可以直接修改文字',
+                hintText: '也可以直接输入，例如：明天下午三点到四点开会',
                 border: OutlineInputBorder(),
               ),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _isApplying ? null : _toggleListening,
-              icon: Icon(_isListening ? Icons.stop : Icons.mic),
-              label: Text(_isListening ? '停止识别' : '开始识别'),
             ),
             if (_error != null) ...[
               const SizedBox(height: 8),
@@ -230,8 +177,7 @@ class _VoiceScheduleSheetState extends State<VoiceScheduleSheet> {
             ],
             const SizedBox(height: 12),
             FilledButton(
-              onPressed:
-                  draft == null || _isListening || _isApplying ? null : _apply,
+              onPressed: draft == null || _isApplying ? null : _apply,
               child: Text(_isApplying ? '添加中...' : '确认添加'),
             ),
           ],
