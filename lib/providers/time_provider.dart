@@ -417,6 +417,9 @@ class TimeProvider with ChangeNotifier {
     currentSlots[index].recorded = !currentSlots[index].recorded;
     if (currentSlots[index].recorded) {
       currentSlots[index].modifiedAt = DateTime.now();
+      currentSlots[index].deletedAt = null;
+    } else {
+      currentSlots[index].deletedAt = DateTime.now();
     }
     final dateKey = _getDateKey(_currentDate);
     _markSlotsDirty(dateKey);
@@ -430,8 +433,15 @@ class TimeProvider with ChangeNotifier {
   void clearAll() {
     if (_remoteViewEnabled) return; // 远程视图只读，禁止编辑本地数据
     _saveSnapshot();
-    String dateKey = _getDateKey(_currentDate);
-    _dailySlots[dateKey] = _generateInitialSlots();
+    final dateKey = _getDateKey(_currentDate);
+    final daySlots = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
+    for (int i = 0; i < daySlots.length; i++) {
+      if (daySlots[i].recorded) {
+        // 自记录槽写墓碑，保证整日清空跨设备可传播；
+        // 日历块不写墓碑（其显示由 Google pull + 忽略列表管理）
+        _clearSlotAt(daySlots, i, markDeleted: !daySlots[i].isFromCalendar);
+      }
+    }
     _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
     _markPendingSync();
@@ -482,6 +492,7 @@ class TimeProvider with ChangeNotifier {
               isFromCalendar: s.isFromCalendar,
               calendarEventId: s.calendarEventId,
               modifiedAt: s.modifiedAt,
+              deletedAt: s.deletedAt,
             ))
         .toList();
 
@@ -531,6 +542,7 @@ class TimeProvider with ChangeNotifier {
       daySlots[index].isFromCalendar = false;
       daySlots[index].calendarEventId = null;
       daySlots[index].modifiedAt = now;
+      daySlots[index].deletedAt = null;
     }
     _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
@@ -808,10 +820,20 @@ class TimeProvider with ChangeNotifier {
       s.isFromCalendar = false;
       s.calendarEventId = null;
       s.modifiedAt = null;
+      s.deletedAt = null;
     }
     for (final e in entries) {
       final idx = _parseInt(e['i']);
       if (idx == null || idx < 0 || idx >= slots.length) continue;
+      if (e['del'] == true) {
+        // 删除墓碑：槽位保持清空，仅记录删除时间
+        final delTs = _parseInt(e['ts']);
+        if (delTs != null && delTs > 0) {
+          slots[idx].deletedAt =
+              DateTime.fromMillisecondsSinceEpoch(delTs);
+        }
+        continue;
+      }
       slots[idx].recorded = true;
       slots[idx].label = e['l'] as String?;
       slots[idx].categoryId = e['cid'] as String?;
@@ -1201,6 +1223,15 @@ class TimeProvider with ChangeNotifier {
           final idx = _parseInt(map['i']);
           if (idx == null) continue;
           if (idx >= 0 && idx < slots.length) {
+            if (map['del'] == true) {
+              // 删除墓碑：恢复为删除状态，避免被当成"空 label 的已记录槽"
+              final delTs = _parseInt(map['ts']);
+              if (delTs != null && delTs > 0) {
+                slots[idx].deletedAt =
+                    DateTime.fromMillisecondsSinceEpoch(delTs);
+              }
+              continue;
+            }
             slots[idx].recorded = true;
             slots[idx].label = map['l'] as String?;
             slots[idx].categoryId = map['cid'] as String?;
@@ -1275,6 +1306,7 @@ class TimeProvider with ChangeNotifier {
       s.color = null;
       s.isFromCalendar = false;
       s.calendarEventId = null;
+      s.deletedAt = null;
       if (clearModifiedAt) s.modifiedAt = null;
     }
   }
@@ -1491,7 +1523,7 @@ class TimeProvider with ChangeNotifier {
         if (wasFromCalendar) {
           _dismissCalendarImportAt(index, date: targetDate);
         } else {
-          _clearSlotAt(daySlots, index);
+          _clearSlotAt(daySlots, index, markDeleted: true);
           _markSlotsDirty(dateKey);
           _targetStatsCache.invalidateDate(dateKey);
           // 编辑当前日期走完整同步链路；三列视图的其他日期也要同步到对应 Gitee 文件。
@@ -1511,13 +1543,19 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
-  void _clearSlotAt(List<TimeSlot> daySlots, int index) {
+  void _clearSlotAt(List<TimeSlot> daySlots, int index,
+      {bool markDeleted = false}) {
     daySlots[index].recorded = false;
     daySlots[index].label = null;
     daySlots[index].categoryId = null;
     daySlots[index].color = null;
     daySlots[index].isFromCalendar = false;
     daySlots[index].calendarEventId = null;
+    if (markDeleted) {
+      daySlots[index].deletedAt = DateTime.now();
+    } else {
+      daySlots[index].deletedAt = null;
+    }
   }
 
   Future<void> _dismissCalendarImportAt(int index, {DateTime? date}) async {
@@ -1558,7 +1596,7 @@ class TimeProvider with ChangeNotifier {
           daySlots[i].isFromCalendar &&
           daySlots[i].label == label;
       if (sameEvent || inRange) {
-        _clearSlotAt(daySlots, i);
+        _clearSlotAt(daySlots, i, markDeleted: true);
       }
     }
 
@@ -1699,13 +1737,21 @@ class TimeProvider with ChangeNotifier {
     final modifiedOldLabels = <int, String>{};
 
     for (final idx in newByIndex.keys) {
+      final newEntry = newByIndex[idx]!;
+      if (newEntry['del'] == true) {
+        // 墓碑：旧数据有此槽则视为"删除"，旧数据无则忽略（纯清理）
+        if (oldByIndex.containsKey(idx)) {
+          deletedEntries.add(oldByIndex[idx]!);
+        }
+        continue;
+      }
       if (!oldByIndex.containsKey(idx)) {
-        addedEntries.add(newByIndex[idx]!);
+        addedEntries.add(newEntry);
       } else {
         final oldLabel = oldByIndex[idx]!['l']?.toString() ?? '';
-        final newLabel = newByIndex[idx]!['l']?.toString() ?? '';
+        final newLabel = newEntry['l']?.toString() ?? '';
         if (oldLabel != newLabel) {
-          modifiedEntries.add(newByIndex[idx]!);
+          modifiedEntries.add(newEntry);
           modifiedOldLabels[idx] = oldLabel;
         }
       }
@@ -1797,8 +1843,9 @@ class TimeProvider with ChangeNotifier {
     }
 
     if (parts.isEmpty) {
-      // 无变化：列出当前所有日程
-      final allEvents = _groupConsecutiveSlots(newEntries);
+      // 无变化：列出当前所有日程（墓碑不参与展示）
+      final allEvents =
+          _groupConsecutiveSlots(newEntries.where((e) => e['del'] != true).toList());
       final lines = allEvents.take(5).map(formatEvent).toList();
       final suffix = allEvents.length > 5 ? ' 等${allEvents.length}条' : '';
       return '日程($userLabel): $dateKey\n${lines.join('\n')}$suffix';
@@ -1854,6 +1901,7 @@ class TimeProvider with ChangeNotifier {
         daySlots[index].color = calendarImportColor;
         daySlots[index].isFromCalendar = true;
         daySlots[index].calendarEventId = block.eventId;
+        daySlots[index].deletedAt = null; // 日历块重新拉入，清除可能残留的墓碑
       }
     }
   }
@@ -1887,25 +1935,34 @@ class TimeProvider with ChangeNotifier {
       {bool excludeCalendar = false}) {
     final recorded = <Map<String, dynamic>>[];
     for (int i = 0; i < slotList.length; i++) {
-      if (!slotList[i].recorded) continue;
-      if (excludeCalendar && slotList[i].isFromCalendar) continue;
+      final slot = slotList[i];
+      if (slot.deletedAt != null) {
+        // 删除墓碑：本地已删、远端仍可能有旧数据的槽位，需随同步传播删除
+        recorded.add({
+          'i': i,
+          'del': true,
+          'ts': slot.deletedAt!.millisecondsSinceEpoch,
+        });
+        continue;
+      }
+      if (!slot.recorded) continue;
+      if (excludeCalendar && slot.isFromCalendar) continue;
       final entry = <String, dynamic>{
         'i': i,
-        'l': slotList[i].label,
-        'c': slotList[i].color?.toARGB32(),
+        'l': slot.label,
+        'c': slot.color?.toARGB32(),
       };
-      if (slotList[i].modifiedAt != null) {
-        entry['ts'] = slotList[i].modifiedAt!.millisecondsSinceEpoch;
+      if (slot.modifiedAt != null) {
+        entry['ts'] = slot.modifiedAt!.millisecondsSinceEpoch;
       }
-      if (slotList[i].categoryId != null &&
-          slotList[i].categoryId!.isNotEmpty) {
-        entry['cid'] = slotList[i].categoryId;
+      if (slot.categoryId != null && slot.categoryId!.isNotEmpty) {
+        entry['cid'] = slot.categoryId;
       }
-      if (slotList[i].isFromCalendar) {
+      if (slot.isFromCalendar) {
         entry['fc'] = true;
       }
-      if (slotList[i].calendarEventId != null) {
-        entry['eid'] = slotList[i].calendarEventId;
+      if (slot.calendarEventId != null) {
+        entry['eid'] = slot.calendarEventId;
       }
       recorded.add(entry);
     }
@@ -2751,6 +2808,15 @@ class TimeProvider with ChangeNotifier {
         final idx = _parseInt(map['i']);
         if (idx == null) continue;
         if (idx >= 0 && idx < daySlots.length) {
+          if (map['del'] == true) {
+            // 删除墓碑：槽位保持清空，仅恢复删除时间
+            final delTs = _parseInt(map['ts']);
+            if (delTs != null && delTs > 0) {
+              daySlots[idx].deletedAt =
+                  DateTime.fromMillisecondsSinceEpoch(delTs);
+            }
+            continue;
+          }
           daySlots[idx].recorded = true;
           daySlots[idx].label = map['l'] as String?;
           daySlots[idx].categoryId = map['cid'] as String?;

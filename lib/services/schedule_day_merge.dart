@@ -48,10 +48,10 @@ ScheduleDayMergeResult parseScheduleContent(String? content) {
 /// 合并本地与远端槽位（后写覆盖）。
 ///
 /// - 两侧都有同一槽位：`ts` 大者胜，平局取本地；
-/// - 仅一侧有：保留该侧（union）。不做"缺失推断删除"——因为文件级
-///   时间戳无法区分"另一端删除了该槽"与"另一端从未编辑过该槽"，
-///   用文件时间推断会把对方较早的记录误删。
-///   删除的同步需要槽位级 tombstone，属后续增强。
+/// - 仅一侧有：保留该侧（union）。tombstone（`del: true`）与 live entry
+///   都携带 `ts`，与普通槽位一样参与"大者胜"比较——tombstone 更新则删除
+///   传播到另一端，live 更新则重建生效；
+/// - 若一侧 entry 缺失另一侧不存在，则不产生任何 entry（该槽保持空）。
 List<Map<String, dynamic>> mergeScheduleSlots({
   required List<Map<String, dynamic>> localEntries,
   required List<Map<String, dynamic>> remoteEntries,
@@ -100,6 +100,9 @@ List<Map<String, dynamic>> scheduleEntriesForPush({
 int _indexOf(Map<String, dynamic> e) => (e['i'] as num?)?.toInt() ?? -1;
 
 int _tsOf(Map<String, dynamic> e) => (e['ts'] as num?)?.toInt() ?? 0;
+
+/// 是否为删除墓碑 entry（`{i, del: true, ts}`）
+bool isTombstoneEntry(Map<String, dynamic> e) => e['del'] == true;
 
 int? _toInt(dynamic v) {
   if (v is num) return v.toInt();

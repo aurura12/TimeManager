@@ -132,4 +132,110 @@ void main() {
       expect(pushed, isEmpty);
     });
   });
+
+  group('tombstone（删除墓碑）', () {
+    test('parseScheduleContent 解析 del:true entry', () {
+      const content =
+          '{"updated_at": 2000, "slots": [{"i": 3, "del": true, "ts": 1500}]}';
+      final result = parseScheduleContent(content);
+      expect(result.slots.length, 1);
+      expect(result.slots.first['i'], 3);
+      expect(result.slots.first['del'], true);
+      expect(result.slots.first['ts'], 1500);
+    });
+
+    test('较新的 tombstone 胜过较旧的 live entry（删除传播）', () {
+      // 用户删除了槽位（墓碑 ts=2000），远端还留着旧记录（live ts=1000）
+      final local = [
+        {'i': 0, 'del': true, 'ts': 2000},
+      ];
+      final remote = [
+        {'i': 0, 'l': '跑步', 'ts': 1000},
+      ];
+      final merged = mergeScheduleSlots(
+        localEntries: local,
+        remoteEntries: remote,
+      );
+      expect(merged.length, 1);
+      expect(merged.first['del'], true);
+    });
+
+    test('较新的 live entry 胜过较旧的 tombstone（重建生效）', () {
+      final local = [
+        {'i': 0, 'l': '新跑步', 'ts': 3000},
+      ];
+      final remote = [
+        {'i': 0, 'del': true, 'ts': 2000},
+      ];
+      final merged = mergeScheduleSlots(
+        localEntries: local,
+        remoteEntries: remote,
+      );
+      expect(merged.length, 1);
+      expect(merged.first['l'], '新跑步');
+      expect(merged.first['del'], isNot(true));
+    });
+
+    test('双侧 tombstone 取较新的 ts', () {
+      final local = [
+        {'i': 0, 'del': true, 'ts': 3000},
+      ];
+      final remote = [
+        {'i': 0, 'del': true, 'ts': 2000},
+      ];
+      final merged = mergeScheduleSlots(
+        localEntries: local,
+        remoteEntries: remote,
+      );
+      expect(merged.length, 1);
+      expect(merged.first['del'], true);
+      expect(merged.first['ts'], 3000);
+    });
+
+    test('单侧 tombstone 保留并向另一侧传播', () {
+      // 本地墓碑、远端无 → 保留墓碑
+      final local = [
+        {'i': 1, 'del': true, 'ts': 2000},
+      ];
+      final keptLocal = mergeScheduleSlots(
+        localEntries: local,
+        remoteEntries: const [],
+      );
+      expect(keptLocal.length, 1);
+      expect(keptLocal.first['del'], true);
+
+      // 远端墓碑、本地无 → 保留墓碑
+      final remote = [
+        {'i': 2, 'del': true, 'ts': 2000},
+      ];
+      final keptRemote = mergeScheduleSlots(
+        localEntries: const [],
+        remoteEntries: remote,
+      );
+      expect(keptRemote.length, 1);
+      expect(keptRemote.first['del'], true);
+    });
+
+    test('全天删除后推送内容非空且含墓碑（而非空数组）', () {
+      // 用户把唯一槽位删了：本地序列化为墓碑，不能走"本地空→推空"特例
+      final local = [
+        {'i': 5, 'del': true, 'ts': 2000},
+      ];
+      final remote = [
+        {'i': 5, 'l': '旧日程', 'ts': 1000},
+      ];
+      final pushed = scheduleEntriesForPush(
+        localEntries: local,
+        remoteEntries: remote,
+      );
+      expect(pushed, isNotEmpty);
+      expect(pushed.first['del'], true);
+    });
+
+    test('isTombstoneEntry 识别墓碑', () {
+      expect(isTombstoneEntry({'i': 0, 'del': true, 'ts': 1}), isTrue);
+      expect(isTombstoneEntry({'i': 0, 'l': '跑步', 'ts': 1}), isFalse);
+      expect(isTombstoneEntry({'i': 0}), isFalse);
+    });
+  });
 }

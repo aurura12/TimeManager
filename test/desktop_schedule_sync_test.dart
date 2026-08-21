@@ -148,4 +148,26 @@ void main() {
 
     expect(messages.where((message) => message == '请先选择身份').length, 2);
   });
+
+  test('deleting a slot writes a tombstone so it cannot resurrect', () async {
+    final provider = await _createProvider(
+      scheduleGiteeDebounce: Duration.zero,
+    );
+    addTearDown(provider.dispose);
+    final date = provider.currentDate;
+    final category = Category(name: '测试', color: Colors.blue);
+
+    provider.assignCategoryToSlots({3}, category);
+    expect(provider.slotsForDate(date)[3].recorded, isTrue);
+    expect(provider.slotsForDate(date)[3].deletedAt, isNull);
+
+    provider.removeEventFromSlot(3);
+    expect(provider.slotsForDate(date)[3].recorded, isFalse);
+    expect(provider.slotsForDate(date)[3].deletedAt, isNotNull);
+
+    // 重新记录会清除墓碑
+    provider.assignCategoryToSlots({3}, category);
+    expect(provider.slotsForDate(date)[3].recorded, isTrue);
+    expect(provider.slotsForDate(date)[3].deletedAt, isNull);
+  });
 }
