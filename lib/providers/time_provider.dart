@@ -11,6 +11,7 @@ import '../models/schedule_template.dart';
 import '../models/calendar_block.dart';
 import '../models/search_result.dart';
 import '../models/voice_schedule_draft.dart';
+import '../models/pending_sync_state.dart';
 import '../services/home_widget_service.dart';
 import '../utils/platform_features.dart';
 import '../services/diary_local_store.dart';
@@ -89,7 +90,7 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
     // 切换身份后拉取新身份当前日期的日程
     _pullOwnScheduleIfWindows();
-    if (isDesktopPlatform && _pendingSyncDates.isNotEmpty) {
+    if (isDesktopPlatform && pendingGiteeSyncDates.isNotEmpty) {
       unawaited(syncAllSchedulesToGitee());
     }
   }
@@ -113,11 +114,15 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
-  final Set<String> _pendingSyncDates = {};
-  Set<String> get pendingSyncDates => Set.unmodifiable(_pendingSyncDates);
-  bool get hasPendingSync => _pendingSyncDates.isNotEmpty;
+  final PendingSyncState _pendingSyncState = PendingSyncState();
+  Set<String> get pendingGiteeSyncDates => _pendingSyncState.giteeDates;
+  Set<String> get pendingGoogleSyncDates => _pendingSyncState.googleDates;
+  Set<String> get pendingSyncDates => _pendingSyncState.visibleDates(
+        googleEnabled: googleCalendarSyncEnabled,
+      );
+  bool get hasPendingSync => pendingSyncDates.isNotEmpty;
   bool get hasPendingSyncForCurrentDate =>
-      _pendingSyncDates.contains(_getDateKey(_currentDate));
+      pendingSyncDates.contains(_getDateKey(_currentDate));
 
   // 分类展开状态持久化（以 Category ID 为 key，避免拖动排序时错位）
   Map<String, bool> _categoryExpandStates = {};
@@ -551,9 +556,7 @@ class TimeProvider with ChangeNotifier {
       _markPendingSync();
       _scheduleCalendarSync();
     } else {
-      _pendingSyncDates.add(dateKey);
-      _syncDirty = true;
-      _markScheduleGiteePending(dateKey);
+      _markPendingSync(dateKey);
     }
     _saveData();
     notifyListeners();
@@ -717,7 +720,7 @@ class TimeProvider with ChangeNotifier {
         if ((_scheduleGiteeDateRevisions[effectiveDateKey] ?? 0) ==
             syncRevision) {
           _pendingScheduleGiteeDateKeys.remove(effectiveDateKey);
-          _clearPendingSyncForCurrentDate(effectiveDateKey);
+          _clearPendingGiteeForDate(effectiveDateKey);
         }
         if (!_syncStatusController.isClosed) {
           _syncStatusController.add("日程同步成功");
@@ -829,8 +832,7 @@ class TimeProvider with ChangeNotifier {
         // 删除墓碑：槽位保持清空，仅记录删除时间
         final delTs = _parseInt(e['ts']);
         if (delTs != null && delTs > 0) {
-          slots[idx].deletedAt =
-              DateTime.fromMillisecondsSinceEpoch(delTs);
+          slots[idx].deletedAt = DateTime.fromMillisecondsSinceEpoch(delTs);
         }
         continue;
       }
@@ -892,7 +894,7 @@ class TimeProvider with ChangeNotifier {
           dateKeys.add(entry.key);
         }
       }
-      dateKeys.addAll(_pendingSyncDates);
+      dateKeys.addAll(pendingGiteeSyncDates);
       dateKeys.addAll(_pendingScheduleGiteeDateKeys);
 
       if (dateKeys.isEmpty) {
@@ -911,7 +913,7 @@ class TimeProvider with ChangeNotifier {
         if (ok) {
           done++;
           if ((_scheduleGiteeDateRevisions[dateKey] ?? 0) == syncRevision) {
-            _pendingSyncDates.remove(dateKey);
+            _pendingSyncState.clearGitee(dateKey);
             _pendingScheduleGiteeDateKeys.remove(dateKey);
           }
         }
@@ -1314,14 +1316,29 @@ class TimeProvider with ChangeNotifier {
   /// 本地与云端日历不一致时标记（与是否已登录无关）
   void _markPendingSync([String? dateKey]) {
     final key = dateKey ?? _getDateKey(_currentDate);
-    _pendingSyncDates.add(key);
+    _pendingSyncState.markGitee(key);
+    if (!isDesktopPlatform) {
+      _pendingSyncState.markGoogle(key);
+    }
     _syncDirty = true;
     _markScheduleGiteePending(key);
   }
 
-  void _clearPendingSyncForCurrentDate([String? dateKey]) {
+  void _clearPendingGiteeForDate([String? dateKey]) {
     final key = dateKey ?? _getDateKey(_currentDate);
-    if (_pendingSyncDates.remove(key)) {
+    if (_pendingSyncState.giteeDates.contains(key)) {
+      _pendingSyncState.clearGitee(key);
+      _syncDirty = true;
+      notifyListeners();
+      _saveData();
+    }
+  }
+
+  void _clearPendingGoogleForDate([String? dateKey]) {
+    final key = dateKey ?? _getDateKey(_currentDate);
+    if (_pendingSyncState.googleDates.contains(key)) {
+      _pendingSyncState.clearGoogle(key);
+      _syncDirty = true;
       notifyListeners();
       _saveData();
     }
@@ -1345,11 +1362,21 @@ class TimeProvider with ChangeNotifier {
       await syncAllSchedulesToGitee();
       return;
     }
-    // 先同步日程到 Gitee
-    await syncScheduleToGitee();
-    // 若开启了 Google 日历同步则同步日历
+    // 保持当天优先，随后处理其他待同步日期。
+    _scheduleGiteeTimer?.cancel();
+    _scheduleGiteeTimer = null;
+    final currentKey = _getDateKey(_currentDate);
+    final giteeDates = PendingSyncState.orderDates(
+      {...pendingGiteeSyncDates, currentKey},
+      priorityDate: currentKey,
+    );
+    for (final dateKey in giteeDates) {
+      await syncScheduleToGitee(dateKey: dateKey);
+    }
+
+    // 若开启了 Google 日历同步则同步所有 Google 待同步日期。
     if (_googleCalendarSyncEnabled) {
-      await synchronizeCalendar();
+      await synchronizeAllPendingCalendars();
     }
   }
 
@@ -1392,7 +1419,7 @@ class TimeProvider with ChangeNotifier {
             await GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
 
         if (success) {
-          _clearPendingSyncForCurrentDate();
+          _clearPendingGoogleForDate();
           if (!delay) {
             if (!pullOk) {
               _syncStatusController.add("同步成功（日历拉取失败）");
@@ -1450,11 +1477,10 @@ class TimeProvider with ChangeNotifier {
       return;
     }
 
-    final pendingKeys = _pendingSyncDates.toList();
-    if (pendingKeys.isEmpty) {
-      await synchronizeCalendar();
-      return;
-    }
+    final pendingKeys = PendingSyncState.orderDates(
+      {...pendingGoogleSyncDates, _getDateKey(_currentDate)},
+      priorityDate: _getDateKey(_currentDate),
+    );
 
     _isSyncing = true;
     try {
@@ -1471,7 +1497,8 @@ class TimeProvider with ChangeNotifier {
         final day = int.tryParse(parts[2]);
         if (year == null || month == null || day == null) {
           // 异常 key 直接清掉，避免状态永远卡在“待同步”
-          _pendingSyncDates.remove(rawKey);
+          _pendingSyncState.clearGoogle(rawKey);
+          _syncDirty = true;
           allSuccess = false;
           continue;
         }
@@ -1483,7 +1510,8 @@ class TimeProvider with ChangeNotifier {
             await GoogleCalendarService.syncSlotsToGoogle(slotsForDay, date);
 
         if (pushed) {
-          _pendingSyncDates.remove(dateKey);
+          _pendingSyncState.clearGoogle(dateKey);
+          _syncDirty = true;
         } else {
           allSuccess = false;
         }
@@ -1495,10 +1523,11 @@ class TimeProvider with ChangeNotifier {
 
       await _saveData();
       notifyListeners();
-      if (_pendingSyncDates.isEmpty && allSuccess) {
+      if (pendingGoogleSyncDates.isEmpty && allSuccess) {
         _syncStatusController.add("同步成功");
       } else {
-        _syncStatusController.add("部分同步失败（剩余${_pendingSyncDates.length}天）");
+        _syncStatusController
+            .add("部分同步失败（剩余${pendingGoogleSyncDates.length}天）");
       }
     } finally {
       _isSyncing = false;
@@ -1531,9 +1560,7 @@ class TimeProvider with ChangeNotifier {
             _markPendingSync();
             _scheduleCalendarSync();
           } else {
-            _pendingSyncDates.add(dateKey);
-            _syncDirty = true;
-            _markScheduleGiteePending(dateKey);
+            _markPendingSync(dateKey);
           }
           _saveData();
           notifyListeners();
@@ -1844,8 +1871,8 @@ class TimeProvider with ChangeNotifier {
 
     if (parts.isEmpty) {
       // 无变化：列出当前所有日程（墓碑不参与展示）
-      final allEvents =
-          _groupConsecutiveSlots(newEntries.where((e) => e['del'] != true).toList());
+      final allEvents = _groupConsecutiveSlots(
+          newEntries.where((e) => e['del'] != true).toList());
       final lines = allEvents.take(5).map(formatEvent).toList();
       final suffix = allEvents.length > 5 ? ' 等${allEvents.length}条' : '';
       return '日程($userLabel): $dateKey\n${lines.join('\n')}$suffix';
@@ -2535,8 +2562,13 @@ class TimeProvider with ChangeNotifier {
     // 6. 待同步日期（仅在变化时）
     final syncDirtyAtStart = _syncDirty;
     if (syncDirtyAtStart) {
+      final allPendingDates = _pendingSyncState.allDates.toList()..sort();
+      final giteePendingDates = pendingGiteeSyncDates.toList()..sort();
+      final googlePendingDates = pendingGoogleSyncDates.toList()..sort();
+      await prefs.setStringList('pending_gitee_sync_dates', giteePendingDates);
       await prefs.setStringList(
-          'pending_sync_dates', _pendingSyncDates.toList());
+          'pending_google_sync_dates', googlePendingDates);
+      await prefs.setStringList('pending_sync_dates', allPendingDates);
       if (_saveRequestRevision == requestRevision) {
         _syncDirty = false;
       }
@@ -2605,7 +2637,9 @@ class TimeProvider with ChangeNotifier {
       'dailySlots': slotsJson,
       'scheduleTemplates': _templates.map((t) => t.toJson()).toList(),
       'ignoredCalendarImports': ignoredJson,
-      'pendingSyncDates': _pendingSyncDates.toList(),
+      'pendingSyncDates': _pendingSyncState.allDates.toList(),
+      'pendingGiteeSyncDates': pendingGiteeSyncDates.toList(),
+      'pendingGoogleSyncDates': pendingGoogleSyncDates.toList(),
     };
   }
 
@@ -2743,6 +2777,27 @@ class TimeProvider with ChangeNotifier {
       );
     }
 
+    final parsedGiteePending = <String>{};
+    final giteePending = data['pendingGiteeSyncDates'];
+    if (giteePending is List) {
+      parsedGiteePending.addAll(
+        giteePending.map((e) => _normalizeDateKey(e.toString())),
+      );
+    }
+
+    final parsedGooglePending = <String>{};
+    final googlePending = data['pendingGoogleSyncDates'];
+    if (googlePending is List) {
+      parsedGooglePending.addAll(
+        googlePending.map((e) => _normalizeDateKey(e.toString())),
+      );
+    }
+    final hasSplitPendingState = giteePending is List || googlePending is List;
+    final legacyPendingState = PendingSyncState.fromLegacy(
+      parsedPending,
+      desktop: isDesktopPlatform,
+    );
+
     _categories = parsedCategories;
     _targets
       ..clear()
@@ -2756,9 +2811,14 @@ class TimeProvider with ChangeNotifier {
     _ignoredCalendarImports
       ..clear()
       ..addAll(parsedIgnored);
-    _pendingSyncDates
-      ..clear()
-      ..addAll(parsedPending);
+    _pendingSyncState.replace(
+      giteeDates: hasSplitPendingState
+          ? parsedGiteePending
+          : legacyPendingState.giteeDates,
+      googleDates: hasSplitPendingState
+          ? parsedGooglePending
+          : legacyPendingState.googleDates,
+    );
   }
 
   void _ensureTempCategory() {
@@ -2942,10 +3002,22 @@ class TimeProvider with ChangeNotifier {
     }
 
     // 6. 待同步日期
-    _pendingSyncDates
-      ..clear()
-      ..addAll((prefs.getStringList('pending_sync_dates') ?? [])
-          .map(_normalizeDateKey));
+    final legacyPending = (prefs.getStringList('pending_sync_dates') ?? [])
+        .map(_normalizeDateKey)
+        .toSet();
+    final storedGiteePending = prefs.getStringList('pending_gitee_sync_dates');
+    final storedGooglePending =
+        prefs.getStringList('pending_google_sync_dates');
+    final legacyState = PendingSyncState.fromLegacy(
+      legacyPending,
+      desktop: isDesktopPlatform,
+    );
+    _pendingSyncState.replace(
+      giteeDates:
+          (storedGiteePending ?? legacyState.giteeDates).map(_normalizeDateKey),
+      googleDates: (storedGooglePending ?? legacyState.googleDates)
+          .map(_normalizeDateKey),
+    );
     _googleCalendarSyncEnabled = isDesktopPlatform
         ? false
         : (prefs.getBool('google_calendar_sync_enabled') ?? true);

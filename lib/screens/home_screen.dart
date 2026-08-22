@@ -1343,7 +1343,11 @@ class _HomeScreenState extends State<HomeScreen> {
         },
       ),
       _appBarIconButton(
-        tooltip: googleSyncEnabled ? '同步到 Gitee 和 Google 日历' : '同步日程到 Gitee',
+        tooltip: hasPendingSync
+            ? (googleSyncEnabled
+                ? '同步所有待同步日期到 Gitee 和 Google 日历'
+                : '同步所有待同步日期到 Gitee')
+            : (googleSyncEnabled ? '同步到 Gitee 和 Google 日历' : '同步日程到 Gitee'),
         icon: Icons.sync,
         onPressed: () => provider.syncAll(),
         iconWidget: Stack(

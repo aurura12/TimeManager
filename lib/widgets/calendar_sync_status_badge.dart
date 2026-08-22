@@ -78,8 +78,7 @@ class CalendarSyncStatusBadge extends StatelessWidget {
               ),
               borderRadius: BorderRadius.circular(14),
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                 decoration: BoxDecoration(
                   color: color.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(14),
@@ -138,7 +137,7 @@ class CalendarSyncStatusBadge extends StatelessWidget {
         onNotLoggedIn?.call();
       }
     } else if (hasPending) {
-      provider.synchronizeAllPendingCalendars();
+      provider.syncAll();
     } else {
       provider.synchronizeCalendar();
     }
