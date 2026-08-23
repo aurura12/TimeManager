@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/category.dart';
+import 'package:time_manager/models/target.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/utils/schedule_view_dates.dart';
 
@@ -152,6 +153,24 @@ void main() {
         ...originalNames.skip(3)
       ],
     );
+  });
+
+  test('target reorder accepts the final destination index', () async {
+    final provider = await _createProvider();
+    addTearDown(provider.dispose);
+    for (final name in ['A', 'B', 'C', 'D']) {
+      provider.addTarget(Target(
+        id: name,
+        name: name,
+        type: TargetType.duration,
+        color: Colors.blue,
+        period: '每天',
+      ));
+    }
+
+    provider.reorderTargets(0, 2);
+
+    expect(provider.targets.map((target) => target.name), ['B', 'C', 'A', 'D']);
   });
 
   test('edits to multiple desktop dates all trigger schedule sync attempts',

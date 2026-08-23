@@ -3160,9 +3160,6 @@ class TimeProvider with ChangeNotifier {
   }
 
   void reorderTargets(int oldIndex, int newIndex) {
-    if (oldIndex < newIndex) {
-      newIndex -= 1;
-    }
     final Target item = _targets.removeAt(oldIndex);
     _targets.insert(newIndex, item);
     _targetsDirty = true; // 标记目标为脏

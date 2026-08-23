@@ -51,7 +51,7 @@ class TargetScreen extends StatelessWidget {
 
           return ReorderableListView(
             padding: const EdgeInsets.symmetric(vertical: 12),
-            onReorder: (oldIndex, newIndex) {
+            onReorderItem: (oldIndex, newIndex) {
               timeProvider.reorderTargets(oldIndex, newIndex);
             },
             children: timeProvider.targets.map((target) {
