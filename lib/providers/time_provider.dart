@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart' hide Category;
+import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' hide Category;
 import '../models/time_slot.dart'; // 确保导入了模型
 import '../models/category.dart';
