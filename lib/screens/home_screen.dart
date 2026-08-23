@@ -451,7 +451,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: ReorderableListView.builder(
               // 1. 核心排序逻辑
               itemCount: provider.categories.length,
-              onReorder: (oldIndex, newIndex) {
+              onReorderItem: (oldIndex, newIndex) {
                 provider.reorderCategories(oldIndex, newIndex);
               },
 

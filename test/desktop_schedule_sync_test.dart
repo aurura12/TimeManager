@@ -135,6 +135,25 @@ void main() {
     expect(provider.slotsForDate(targetDate)[0].recorded, isFalse);
   });
 
+  test('category reorder accepts the final destination index', () async {
+    final provider = await _createProvider();
+    addTearDown(provider.dispose);
+    final originalNames =
+        provider.categories.map((category) => category.name).toList();
+
+    provider.reorderCategories(0, 2);
+
+    expect(
+      provider.categories.map((category) => category.name),
+      [
+        originalNames[1],
+        originalNames[2],
+        originalNames[0],
+        ...originalNames.skip(3)
+      ],
+    );
+  });
+
   test('edits to multiple desktop dates all trigger schedule sync attempts',
       () async {
     final provider = await _createProvider(

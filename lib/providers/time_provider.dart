@@ -3094,9 +3094,6 @@ class TimeProvider with ChangeNotifier {
   }
 
   void reorderCategories(int oldIndex, int newIndex) {
-    if (oldIndex < newIndex) {
-      newIndex -= 1;
-    }
     final Category item = _categories.removeAt(oldIndex);
     _categories.insert(newIndex, item);
 
