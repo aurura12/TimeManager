@@ -198,7 +198,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 for (final item in items)
                   NavigationRailDestination(
                     icon: item.icon,
-                    selectedIcon: item.activeIcon ?? item.icon,
+                    selectedIcon: item.activeIcon,
                     label: Text(item.label ?? ''),
                   ),
               ],
