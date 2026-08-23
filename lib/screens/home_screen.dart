@@ -818,19 +818,21 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('移动到...'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: allCategories
-                .where((c) => c.id != currentCategoryId)
-                .map((category) => RadioListTile<String>(
-                      title: Text(category.name),
-                      value: category.id,
-                      groupValue: selectedCategoryId,
-                      onChanged: (value) {
-                        setDialogState(() => selectedCategoryId = value);
-                      },
-                    ))
-                .toList(),
+          content: RadioGroup<String>(
+            groupValue: selectedCategoryId,
+            onChanged: (value) {
+              setDialogState(() => selectedCategoryId = value);
+            },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: allCategories
+                  .where((c) => c.id != currentCategoryId)
+                  .map((category) => RadioListTile<String>(
+                        title: Text(category.name),
+                        value: category.id,
+                      ))
+                  .toList(),
+            ),
           ),
           actions: [
             TextButton(
