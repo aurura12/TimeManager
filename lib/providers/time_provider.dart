@@ -700,8 +700,9 @@ class TimeProvider with ChangeNotifier {
     }
     final effectiveDateKey = dateKey ?? _getDateKey(_currentDate);
     final syncRevision = _scheduleGiteeDateRevisions[effectiveDateKey] ?? 0;
-    if (_scheduleGiteeSyncing || _allScheduleSyncing || _allSchedulePulling)
+    if (_scheduleGiteeSyncing || _allScheduleSyncing || _allSchedulePulling) {
       return;
+    }
     _scheduleGiteeSyncing = true;
     try {
       final token = await DiaryLocalStore.loadToken();
