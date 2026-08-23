@@ -100,8 +100,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _onThisDayChecking = true;
     try {
       final provider = _timeProvider;
-      if (!provider.isInitialLoadFinished)
+      if (!provider.isInitialLoadFinished) {
         return; // 数据未就绪，等 notifyListeners 再触发
+      }
 
       final now = DateTime.now();
       final todayKey = OnThisDayService.dateKeyOf(now);
