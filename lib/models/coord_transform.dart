@@ -9,7 +9,6 @@ import 'dart:math' as math;
 class CoordTransform {
   static const double _a = 6378245.0;
   static const double _ee = 0.00669342162296594323;
-  static const double _xPi = math.pi * 3000.0 / 180.0;
 
   /// 将 WGS-84 (纬度, 经度) 转换为 GCJ-02。
   static (double lat, double lng) wgs84ToGcj02(double lat, double lng) {
