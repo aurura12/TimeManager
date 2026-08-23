@@ -90,7 +90,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
     if (minutes < 60) return '$minutes分钟';
     final h = minutes ~/ 60;
     final m = minutes % 60;
-    if (m == 0) return '${h}小时';
+    if (m == 0) return '$h小时';
     return '${h}小时${m}分钟';
   }
 
