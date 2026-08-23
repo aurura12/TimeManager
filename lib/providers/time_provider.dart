@@ -20,6 +20,7 @@ import '../services/schedule_gitee_service.dart';
 import '../services/category_document_merge.dart';
 import '../services/category_gitee_service.dart';
 import '../services/voice_schedule_slot_planner.dart';
+import '../services/pending_google_day_sync.dart';
 import '../models/diary_kind.dart';
 import '../models/known_google_users.dart';
 import '../services/app_user_identity_store.dart';
@@ -1504,19 +1505,24 @@ class TimeProvider with ChangeNotifier {
         }
 
         final date = DateTime(year, month, day);
-        final slotsForDay = _dailySlots[dateKey] ?? _generateInitialSlots();
-        final pullOk = await pullGoogleCalendarForDate(date, notify: false);
-        final pushed =
-            await GoogleCalendarService.syncSlotsToGoogle(slotsForDay, date);
+        final result = await synchronizePendingGoogleDay(
+          dailySlots: _dailySlots,
+          dateKey: dateKey,
+          explicitlyPending: pendingGoogleSyncDates.contains(dateKey),
+          createSlots: _generateInitialSlots,
+          pull: () => pullGoogleCalendarForDate(date, notify: false),
+          push: (slotsForDay) =>
+              GoogleCalendarService.syncSlotsToGoogle(slotsForDay, date),
+        );
 
-        if (pushed) {
+        if (result.pushSucceeded == true) {
           _pendingSyncState.clearGoogle(dateKey);
           _syncDirty = true;
-        } else {
+        } else if (result.pushSucceeded == false) {
           allSuccess = false;
         }
 
-        if (!pullOk) {
+        if (!result.pullSucceeded) {
           allSuccess = false;
         }
       }
