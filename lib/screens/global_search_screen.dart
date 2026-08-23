@@ -91,7 +91,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
     final h = minutes ~/ 60;
     final m = minutes % 60;
     if (m == 0) return '$h小时';
-    return '${h}小时${m}分钟';
+    return '$h小时${m}分钟';
   }
 
   String _formatDateHeader(DateTime date) {
