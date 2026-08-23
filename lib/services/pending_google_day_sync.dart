@@ -41,7 +41,7 @@ Future<PendingGoogleDaySyncResult> synchronizePendingGoogleDay({
 bool _hasLocalScheduleState(List<TimeSlot>? slots) {
   return slots?.any(
         (slot) =>
-            slot.deletedAt != null || (slot.recorded && !slot.isFromCalendar),
+            !slot.isFromCalendar && (slot.deletedAt != null || slot.recorded),
       ) ??
       false;
 }

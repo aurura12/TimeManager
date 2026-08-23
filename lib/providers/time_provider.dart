@@ -21,6 +21,7 @@ import '../services/category_document_merge.dart';
 import '../services/category_gitee_service.dart';
 import '../services/voice_schedule_slot_planner.dart';
 import '../services/pending_google_day_sync.dart';
+import '../services/calendar_slot_refresh.dart';
 import '../models/diary_kind.dart';
 import '../models/known_google_users.dart';
 import '../services/app_user_identity_store.dart';
@@ -832,6 +833,7 @@ class TimeProvider with ChangeNotifier {
       if (idx == null || idx < 0 || idx >= slots.length) continue;
       if (e['del'] == true) {
         // 删除墓碑：槽位保持清空，仅记录删除时间
+        slots[idx].isFromCalendar = e['fc'] == true;
         final delTs = _parseInt(e['ts']);
         if (delTs != null && delTs > 0) {
           slots[idx].deletedAt = DateTime.fromMillisecondsSinceEpoch(delTs);
@@ -1229,6 +1231,7 @@ class TimeProvider with ChangeNotifier {
           if (idx >= 0 && idx < slots.length) {
             if (map['del'] == true) {
               // 删除墓碑：恢复为删除状态，避免被当成"空 label 的已记录槽"
+              slots[idx].isFromCalendar = map['fc'] == true;
               final delTs = _parseInt(map['ts']);
               if (delTs != null && delTs > 0) {
                 slots[idx].deletedAt =
@@ -1579,11 +1582,13 @@ class TimeProvider with ChangeNotifier {
 
   void _clearSlotAt(List<TimeSlot> daySlots, int index,
       {bool markDeleted = false}) {
+    final wasFromCalendar = daySlots[index].isFromCalendar;
     daySlots[index].recorded = false;
     daySlots[index].label = null;
     daySlots[index].categoryId = null;
     daySlots[index].color = null;
-    daySlots[index].isFromCalendar = false;
+    // Google 导入的墓碑保留来源，合并时只能清理 Google 副本。
+    daySlots[index].isFromCalendar = markDeleted && wasFromCalendar;
     daySlots[index].calendarEventId = null;
     if (markDeleted) {
       daySlots[index].deletedAt = DateTime.now();
@@ -1918,7 +1923,7 @@ class TimeProvider with ChangeNotifier {
         _dailySlots.putIfAbsent(dateKey, () => _generateInitialSlots());
 
     for (int i = 0; i < daySlots.length; i++) {
-      if (daySlots[i].isFromCalendar) {
+      if (shouldClearCalendarSlotForRefresh(daySlots[i])) {
         _clearSlotAt(daySlots, i);
       }
     }
@@ -1954,11 +1959,13 @@ class TimeProvider with ChangeNotifier {
       final slot = slotList[i];
       if (slot.deletedAt != null) {
         // 删除墓碑：本地已删、远端仍可能有旧数据的槽位，需随同步传播删除
-        recorded.add({
+        final entry = <String, dynamic>{
           'i': i,
           'del': true,
           'ts': slot.deletedAt!.millisecondsSinceEpoch,
-        });
+        };
+        if (slot.isFromCalendar) entry['fc'] = true;
+        recorded.add(entry);
         continue;
       }
       if (!slot.recorded) continue;
@@ -2859,6 +2866,7 @@ class TimeProvider with ChangeNotifier {
         if (idx >= 0 && idx < daySlots.length) {
           if (map['del'] == true) {
             // 删除墓碑：槽位保持清空，仅恢复删除时间
+            daySlots[idx].isFromCalendar = map['fc'] == true;
             final delTs = _parseInt(map['ts']);
             if (delTs != null && delTs > 0) {
               daySlots[idx].deletedAt =

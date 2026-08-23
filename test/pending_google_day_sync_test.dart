@@ -115,6 +115,32 @@ void main() {
     expect(result.pushSucceeded, isTrue);
   });
 
+  test('calendar tombstone does not authorize a non-pending Google push',
+      () async {
+    const dateKey = '2026-08-23';
+    final slots = _emptyDay();
+    slots[55]
+      ..deletedAt = DateTime.fromMillisecondsSinceEpoch(1787443200123)
+      ..isFromCalendar = true;
+    final dailySlots = <String, List<TimeSlot>>{dateKey: slots};
+    var pushCalls = 0;
+
+    final result = await synchronizePendingGoogleDay(
+      dailySlots: dailySlots,
+      dateKey: dateKey,
+      explicitlyPending: false,
+      createSlots: _emptyDay,
+      pull: () async => true,
+      push: (_) async {
+        pushCalls++;
+        return true;
+      },
+    );
+
+    expect(pushCalls, 0);
+    expect(result.pushSucceeded, isNull);
+  });
+
   test('pre-pull tombstone still authorizes push if pull replaces the slot',
       () async {
     const dateKey = '2026-08-23';

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -176,6 +177,54 @@ void main() {
     expect(provider.slotsForDate(date)[3].deletedAt, isNull);
   });
 
+  test('deleting a Google import writes a calendar-scoped tombstone', () async {
+    final now = DateTime.now();
+    final dateKey =
+        '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final provider = await _createProvider(
+      initialPreferences: {
+        'daily_slots': json.encode({
+          dateKey: [
+            {
+              'i': 6,
+              'l': '外部会议',
+              'fc': true,
+              'eid': 'google-event-1',
+              'ts': 1787443200123,
+            },
+          ],
+        }),
+      },
+    );
+    addTearDown(provider.dispose);
+
+    final deletionCompleted = Completer<void>();
+    void deletionListener() {
+      if (!deletionCompleted.isCompleted &&
+          provider.slotsForDate(now)[6].deletedAt != null) {
+        deletionCompleted.complete();
+      }
+    }
+
+    provider.addListener(deletionListener);
+    addTearDown(() => provider.removeListener(deletionListener));
+
+    provider.removeEventFromSlot(6);
+
+    final deletedSlot = provider.slotsForDate(now)[6];
+    expect(deletedSlot.recorded, isFalse);
+    expect(deletedSlot.deletedAt, isNotNull);
+    expect(deletedSlot.isFromCalendar, isTrue);
+
+    final dailySlots = provider.toBackupMap()['dailySlots'] as Map;
+    final serializedSlots = dailySlots[dateKey] as List;
+    final tombstone = serializedSlots.single as Map;
+    expect(tombstone['del'], true);
+    expect(tombstone['fc'], true);
+
+    await deletionCompleted.future.timeout(const Duration(seconds: 5));
+  });
+
   test('loading persisted slots restores modifiedAt for the next sync',
       () async {
     const dateKey = '2026-08-23';
@@ -203,6 +252,31 @@ void main() {
     final serializedSlots = dailySlots[dateKey] as List;
     final serializedSlot = serializedSlots.single as Map;
     expect(serializedSlot['ts'], modifiedAtMs);
+  });
+
+  test('loading a calendar-scoped tombstone restores its origin', () async {
+    const dateKey = '2026-08-23';
+    const deletedAtMs = 1787443200123;
+    final provider = await _createProvider(
+      initialPreferences: {
+        'daily_slots': json.encode({
+          dateKey: [
+            {
+              'i': 7,
+              'del': true,
+              'fc': true,
+              'ts': deletedAtMs,
+            },
+          ],
+        }),
+      },
+    );
+    addTearDown(provider.dispose);
+
+    final tombstone = provider.getSlotsForDate(dateKey)![7];
+    expect(tombstone.recorded, isFalse);
+    expect(tombstone.deletedAt?.millisecondsSinceEpoch, deletedAtMs);
+    expect(tombstone.isFromCalendar, isTrue);
   });
 
   test('loading legacy slots without ts keeps modifiedAt unset', () async {

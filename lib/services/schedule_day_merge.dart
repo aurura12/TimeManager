@@ -49,8 +49,10 @@ ScheduleDayMergeResult parseScheduleContent(String? content) {
 ///
 /// - 两侧都有同一槽位：`ts` 大者胜，平局取本地；
 /// - 仅一侧有：保留该侧（union）。tombstone（`del: true`）与 live entry
-///   都携带 `ts`，与普通槽位一样参与"大者胜"比较——tombstone 更新则删除
-///   传播到另一端，live 更新则重建生效；
+///   都携带 `ts`，通常与普通槽位一样参与"大者胜"比较；
+/// - Google 来源墓碑（`del: true, fc: true`）只能删除 Google live entry，
+///   不能覆盖个人 live entry；
+/// - 旧版未携带 `fc` 的墓碑无法可靠判定来源，继续按普通墓碑处理；
 /// - 若一侧 entry 缺失另一侧不存在，则不产生任何 entry（该槽保持空）。
 List<Map<String, dynamic>> mergeScheduleSlots({
   required List<Map<String, dynamic>> localEntries,
@@ -70,8 +72,15 @@ List<Map<String, dynamic>> mergeScheduleSlots({
     final local = localByIndex[idx];
     final remote = remoteByIndex[idx];
     if (local != null && remote != null) {
-      // 冲突：后写者胜
-      merged.add(_tsOf(local) >= _tsOf(remote) ? local : remote);
+      // Google 导入删除只清理 Google 副本，不得覆盖另一端的个人日程。
+      if (_isCalendarTombstone(local) && _isPersonalLiveEntry(remote)) {
+        merged.add(remote);
+      } else if (_isCalendarTombstone(remote) && _isPersonalLiveEntry(local)) {
+        merged.add(local);
+      } else {
+        // 其余冲突：后写者胜
+        merged.add(_tsOf(local) >= _tsOf(remote) ? local : remote);
+      }
     } else if (local != null) {
       merged.add(local);
     } else if (remote != null) {
@@ -100,6 +109,12 @@ List<Map<String, dynamic>> scheduleEntriesForPush({
 int _indexOf(Map<String, dynamic> e) => (e['i'] as num?)?.toInt() ?? -1;
 
 int _tsOf(Map<String, dynamic> e) => (e['ts'] as num?)?.toInt() ?? 0;
+
+bool _isCalendarTombstone(Map<String, dynamic> e) =>
+    e['del'] == true && e['fc'] == true;
+
+bool _isPersonalLiveEntry(Map<String, dynamic> e) =>
+    e['del'] != true && e['fc'] != true;
 
 /// 是否为删除墓碑 entry（`{i, del: true, ts}`）
 bool isTombstoneEntry(Map<String, dynamic> e) => e['del'] == true;

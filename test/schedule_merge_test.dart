@@ -160,6 +160,75 @@ void main() {
       expect(merged.first['del'], true);
     });
 
+    test('Google 墓碑不能删除另一端的个人日程', () {
+      final local = [
+        {'i': 0, 'del': true, 'fc': true, 'ts': 3000},
+      ];
+      final remote = [
+        {'i': 0, 'l': '个人日程', 'ts': 1000},
+      ];
+
+      final merged = mergeScheduleSlots(
+        localEntries: local,
+        remoteEntries: remote,
+      );
+
+      expect(merged.single['l'], '个人日程');
+      expect(merged.single['del'], isNot(true));
+    });
+
+    test('远端 Google 墓碑也不能删除本地个人日程', () {
+      final local = [
+        {'i': 0, 'l': '本地个人日程', 'ts': 1000},
+      ];
+      final remote = [
+        {'i': 0, 'del': true, 'fc': true, 'ts': 3000},
+      ];
+
+      final merged = mergeScheduleSlots(
+        localEntries: local,
+        remoteEntries: remote,
+      );
+
+      expect(merged.single['l'], '本地个人日程');
+      expect(merged.single['del'], isNot(true));
+    });
+
+    test('Google 墓碑仍能删除另一端较旧的 Google 副本', () {
+      final local = [
+        {'i': 0, 'del': true, 'fc': true, 'ts': 3000},
+      ];
+      final remote = [
+        {'i': 0, 'l': '外部会议', 'fc': true, 'ts': 1000},
+      ];
+
+      final merged = mergeScheduleSlots(
+        localEntries: local,
+        remoteEntries: remote,
+      );
+
+      expect(merged.single['del'], true);
+      expect(merged.single['fc'], true);
+    });
+
+    test('较新的 Google 副本能重建被较旧墓碑删除的槽位', () {
+      final local = [
+        {'i': 0, 'del': true, 'fc': true, 'ts': 1000},
+      ];
+      final remote = [
+        {'i': 0, 'l': '新的外部会议', 'fc': true, 'ts': 3000},
+      ];
+
+      final merged = mergeScheduleSlots(
+        localEntries: local,
+        remoteEntries: remote,
+      );
+
+      expect(merged.single['l'], '新的外部会议');
+      expect(merged.single['fc'], true);
+      expect(merged.single['del'], isNot(true));
+    });
+
     test('较新的 live entry 胜过较旧的 tombstone（重建生效）', () {
       final local = [
         {'i': 0, 'l': '新跑步', 'ts': 3000},
