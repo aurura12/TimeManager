@@ -26,6 +26,7 @@ import '../models/known_google_users.dart';
 import '../services/app_user_identity_store.dart';
 import 'target_stats_cache.dart';
 import '../utils/schedule_view_dates.dart';
+import '../utils/calendar_time_range.dart';
 
 enum TimePointStatus { onTime, late, notDone }
 
@@ -1941,25 +1942,7 @@ class TimeProvider with ChangeNotifier {
 
   List<int> _timeRangeToSlotIndices(
       DateTime start, DateTime end, DateTime day) {
-    final dayStart = DateTime(day.year, day.month, day.day);
-    final dayEnd = dayStart.add(const Duration(days: 1));
-
-    var s = start.isBefore(dayStart) ? dayStart : start;
-    var e = end.isAfter(dayEnd) ? dayEnd : end;
-    if (!e.isAfter(s)) return [];
-
-    final startIndex = s.hour * 6 + s.minute ~/ 10;
-    final endIndex = _endSlotIndexExclusive(e);
-    if (endIndex <= startIndex) return [];
-
-    return List.generate(endIndex - startIndex, (i) => startIndex + i);
-  }
-
-  int _endSlotIndexExclusive(DateTime end) {
-    if (end.minute % 10 == 0 && end.second == 0 && end.millisecond == 0) {
-      return end.hour * 6 + end.minute ~/ 10;
-    }
-    return end.hour * 6 + (end.minute + 9) ~/ 10;
+    return calendarTimeRangeToSlotIndices(start, end, day);
   }
 
   // --- 日程模板 ---
