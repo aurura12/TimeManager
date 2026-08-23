@@ -1,10 +1,13 @@
+import 'local_day_range.dart';
+
 List<int> calendarTimeRangeToSlotIndices(
   DateTime start,
   DateTime end,
   DateTime day,
 ) {
-  final dayStart = DateTime(day.year, day.month, day.day);
-  final dayEnd = dayStart.add(const Duration(days: 1));
+  final dayRange = localDayRange(day);
+  final dayStart = dayRange.start;
+  final dayEnd = dayRange.end;
 
   final clippedStart = start.isBefore(dayStart) ? dayStart : start;
   final clippedEnd = end.isAfter(dayEnd) ? dayEnd : end;

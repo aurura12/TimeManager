@@ -12,6 +12,8 @@ import '../models/time_slot.dart';
 import '../models/calendar_block.dart';
 import 'google_session_store.dart';
 import 'app_user_identity_store.dart';
+import 'google_calendar_event_parser.dart';
+import '../utils/local_day_range.dart';
 
 class GoogleCalendarService {
   static const String _appSignature = "乖乖🥰晶晶";
@@ -365,13 +367,12 @@ class GoogleCalendarService {
     if (api == null) return null;
 
     try {
-      final startOfDay = DateTime(date.year, date.month, date.day);
-      final endOfDay = startOfDay.add(const Duration(days: 1));
+      final dayRange = localDayRange(date);
 
       final response = await api.events.list(
         'primary',
-        timeMin: startOfDay.toUtc(),
-        timeMax: endOfDay.toUtc(),
+        timeMin: dayRange.start.toUtc(),
+        timeMax: dayRange.end.toUtc(),
         singleEvents: true,
       );
 
@@ -380,7 +381,7 @@ class GoogleCalendarService {
 
       for (final event in items) {
         if (event.description == _appSignature) continue;
-        final block = _eventToBlock(event, date);
+        final block = calendarEventToBlock(event, date);
         if (block != null) blocks.add(block);
       }
       return blocks;
@@ -388,35 +389,6 @@ class GoogleCalendarService {
       _logger.e("从 Google Calendar 拉取失败: $e");
       return null;
     }
-  }
-
-  static CalendarBlock? _eventToBlock(calendar.Event event, DateTime date) {
-    final startDt = event.start?.dateTime;
-    final endDt = event.end?.dateTime;
-    if (startDt == null || endDt == null) return null;
-
-    final title = event.summary?.trim();
-    if (title == null || title.isEmpty) return null;
-
-    final localStart = startDt.toLocal();
-    final localEnd = endDt.toLocal();
-    final dayStart = DateTime(date.year, date.month, date.day);
-    final dayEnd = dayStart.add(const Duration(days: 1));
-
-    if (!localEnd.isAfter(dayStart) || !localStart.isBefore(dayEnd)) {
-      return null;
-    }
-
-    final clippedStart = localStart.isBefore(dayStart) ? dayStart : localStart;
-    final clippedEnd = localEnd.isAfter(dayEnd) ? dayEnd : localEnd;
-    if (!clippedEnd.isAfter(clippedStart)) return null;
-
-    return CalendarBlock(
-      title: title,
-      start: clippedStart,
-      end: clippedEnd,
-      eventId: event.id,
-    );
   }
 
   /// 删除 Google 日历中的外部事件（非本 App 创建）

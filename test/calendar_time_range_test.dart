@@ -26,6 +26,18 @@ void main() {
     expect(indices, List<int>.generate(144, (index) => index));
   });
 
+  test('夏令时切换日的全天事件仍占用全部时间槽', () {
+    final day = DateTime(2026, 3, 8);
+
+    final indices = calendarTimeRangeToSlotIndices(
+      DateTime(2026, 3, 8),
+      DateTime(2026, 3, 9),
+      day,
+    );
+
+    expect(indices, List<int>.generate(144, (index) => index));
+  });
+
   test('普通整点结束时间保持右开区间', () {
     final day = DateTime(2026, 8, 24);
 
