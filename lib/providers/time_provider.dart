@@ -1248,8 +1248,9 @@ class TimeProvider with ChangeNotifier {
               if (colorVal != null) slots[idx].color = Color(colorVal);
             }
             if (map['fc'] == true) slots[idx].isFromCalendar = true;
-            if (map['eid'] != null)
+            if (map['eid'] != null) {
               slots[idx].calendarEventId = map['eid'] as String?;
+            }
             final ts = _parseInt(map['ts']);
             if (ts != null && ts > 0) {
               slots[idx].modifiedAt = DateTime.fromMillisecondsSinceEpoch(ts);
