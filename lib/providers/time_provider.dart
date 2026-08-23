@@ -3428,8 +3428,9 @@ class TimeProvider with ChangeNotifier {
   int getTargetMonthlyGoal(Target target) {
     final dailyGoal = getTargetDailyGoal(target);
     if (target.period == "每天") return dailyGoal * 30;
-    if (target.period == "每月" || target.period == "本月")
+    if (target.period == "每月" || target.period == "本月") {
       return target.frequencyCount;
+    }
     return dailyGoal * 30;
   }
 
