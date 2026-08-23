@@ -136,8 +136,7 @@ class SiliconFlowAiService {
       messages: [
         {
           'role': 'system',
-          'content':
-              '你是时间管理 App 的每日复盘助手。根据用户数据写「短复盘」。\n'
+          'content': '你是时间管理 App 的每日复盘助手。根据用户数据写「短复盘」。\n'
               '核心：先读懂事项名称——用户实际在做什么（如「编程」是写代码、「练琴」是练乐器、「通勤」是路上），用自然语言说出含义，不要只复读标签。\n'
               '篇幅：全文 120～180 字，最多 2 个自然段，每段 2～3 句。\n'
               '写法：\n'
@@ -221,7 +220,7 @@ class SiliconFlowAiService {
     }
 
     final attemptMatches = RegExp(
-      r'Attempt\s*\d+\s*:\s*["“]?([\u4e00-\u9fff，。！？、；：""' '（）\s\d\.h小时分钟]+)',
+      r'Attempt\s*\d+\s*:\s*["“]?([\u4e00-\u9fff，。！？、；：""' r'（）\s\d.h小时分钟]+)',
       caseSensitive: false,
     ).allMatches(text);
     if (attemptMatches.isNotEmpty) {
