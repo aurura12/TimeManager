@@ -87,7 +87,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
   }
 
   String _formatDuration(int minutes) {
-    if (minutes < 60) return '${minutes}分钟';
+    if (minutes < 60) return '$minutes分钟';
     final h = minutes ~/ 60;
     final m = minutes % 60;
     if (m == 0) return '${h}小时';
