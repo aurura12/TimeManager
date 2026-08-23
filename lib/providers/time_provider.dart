@@ -2892,6 +2892,11 @@ class TimeProvider with ChangeNotifier {
           if (map['eid'] != null) {
             daySlots[idx].calendarEventId = map['eid'] as String?;
           }
+          final modifiedTs = _parseInt(map['ts']);
+          if (modifiedTs != null && modifiedTs > 0) {
+            daySlots[idx].modifiedAt =
+                DateTime.fromMillisecondsSinceEpoch(modifiedTs);
+          }
         }
       }
       target[dateKey] = daySlots;

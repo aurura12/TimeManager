@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -52,8 +54,11 @@ class _FakeGoogleSignInPlatform extends GoogleSignInPlatform {
   Future<void> disconnect(DisconnectParams params) async {}
 }
 
-Future<TimeProvider> _createProvider({Duration? scheduleGiteeDebounce}) async {
-  SharedPreferences.setMockInitialValues({});
+Future<TimeProvider> _createProvider({
+  Duration? scheduleGiteeDebounce,
+  Map<String, Object> initialPreferences = const {},
+}) async {
+  SharedPreferences.setMockInitialValues(initialPreferences);
   GoogleSignInPlatform.instance = _FakeGoogleSignInPlatform();
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -169,5 +174,54 @@ void main() {
     provider.assignCategoryToSlots({3}, category);
     expect(provider.slotsForDate(date)[3].recorded, isTrue);
     expect(provider.slotsForDate(date)[3].deletedAt, isNull);
+  });
+
+  test('loading persisted slots restores modifiedAt for the next sync',
+      () async {
+    const dateKey = '2026-08-23';
+    const modifiedAtMs = 1787443200123;
+    final provider = await _createProvider(
+      initialPreferences: {
+        'daily_slots': json.encode({
+          dateKey: [
+            {
+              'i': 3,
+              'l': '测试',
+              'c': 4280391411,
+              'ts': modifiedAtMs,
+            },
+          ],
+        }),
+      },
+    );
+    addTearDown(provider.dispose);
+
+    final loadedSlot = provider.getSlotsForDate(dateKey)![3];
+    expect(loadedSlot.modifiedAt?.millisecondsSinceEpoch, modifiedAtMs);
+
+    final dailySlots = provider.toBackupMap()['dailySlots'] as Map;
+    final serializedSlots = dailySlots[dateKey] as List;
+    final serializedSlot = serializedSlots.single as Map;
+    expect(serializedSlot['ts'], modifiedAtMs);
+  });
+
+  test('loading legacy slots without ts keeps modifiedAt unset', () async {
+    const dateKey = '2026-08-22';
+    final provider = await _createProvider(
+      initialPreferences: {
+        'daily_slots': json.encode({
+          dateKey: [
+            {
+              'i': 4,
+              'l': '旧数据',
+              'c': 4283215696,
+            },
+          ],
+        }),
+      },
+    );
+    addTearDown(provider.dispose);
+
+    expect(provider.getSlotsForDate(dateKey)![4].modifiedAt, isNull);
   });
 }
