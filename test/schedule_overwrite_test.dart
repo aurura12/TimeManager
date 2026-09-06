@@ -33,6 +33,13 @@ void main() {
       ),
       '2026-09-06',
     );
+    expect(
+      ScheduleOverwriteSnapshot.isCanonicalSchedulePath(
+        'schedule/x/2026-09-06.json',
+        userCode: 'x',
+      ),
+      isFalse,
+    );
   });
 
   test('parses object and legacy array forms and ignores unpadded paths', () {
@@ -89,6 +96,8 @@ void main() {
     'empty required field': '{"slots": [{"i": 1, "l": ""}]}',
     'missing required field': '{"slots": [{"i": 1}]}',
     'wrongly typed required field': '{"slots": [{"i": 1, "l": 123}]}',
+    'wrongly typed force-color field':
+        '{"slots": [{"i": 1, "l": "x", "fc": "false"}]}',
   };
 
   for (final entry in invalidCases.entries) {

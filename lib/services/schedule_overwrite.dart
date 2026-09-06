@@ -17,6 +17,7 @@ class ScheduleOverwriteSnapshot {
     String path, {
     required String userCode,
   }) {
+    if (userCode != 'g' && userCode != 'j') return null;
     final user = RegExp.escape(userCode);
     final match = RegExp('^schedule/$user/(\\d{4}-\\d{2}-\\d{2})\\.json\$')
         .firstMatch(path);
@@ -63,8 +64,10 @@ class ScheduleOverwriteSnapshot {
             throw const FormatException('invalid slot index');
           }
           final deleted = slot['del'];
-          if (slot.containsKey('del') && deleted is! bool) {
-            throw const FormatException('invalid deletion flag');
+          for (final key in const ['fc', 'del']) {
+            if (slot.containsKey(key) && slot[key] is! bool) {
+              throw const FormatException('invalid boolean field');
+            }
           }
           if (slot.containsKey('l') && slot['l'] is! String) {
             throw const FormatException('invalid label');
