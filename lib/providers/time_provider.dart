@@ -66,6 +66,12 @@ class _ScheduleSaveSnapshot {
   final bool Function() isStillValid;
 }
 
+class _SchedulePreferencesSnapshot {
+  const _SchedulePreferencesSnapshot(this.values);
+
+  final Map<String, Object?> values;
+}
+
 class TimeProvider with ChangeNotifier {
   static const int backupVersion = 1;
   static const Color calendarImportColor = Color(0xFF78909C);
@@ -81,6 +87,7 @@ class TimeProvider with ChangeNotifier {
   final Duration _scheduleGiteeDebounce;
   final ScheduleSyncDependencies _scheduleSyncDependencies;
   final Future<bool> Function()? _saveDataOverride;
+  final void Function(String key)? _scheduleSnapshotWriteObserver;
 
   /// 本地已改、尚未成功同步到日历的日期（dateKey 列表）
   bool _googleCalendarSyncEnabled = !isDesktopPlatform;
@@ -244,10 +251,12 @@ class TimeProvider with ChangeNotifier {
     Duration scheduleGiteeDebounce = const Duration(seconds: 3),
     ScheduleSyncDependencies? scheduleSyncDependencies,
     Future<bool> Function()? saveDataOverride,
+    void Function(String key)? scheduleSnapshotWriteObserver,
   })  : _scheduleGiteeDebounce = scheduleGiteeDebounce,
         _scheduleSyncDependencies =
             scheduleSyncDependencies ?? ScheduleSyncDependencies.production(),
-        _saveDataOverride = saveDataOverride {
+        _saveDataOverride = saveDataOverride,
+        _scheduleSnapshotWriteObserver = scheduleSnapshotWriteObserver {
     _googleAuthSubscription =
         GoogleCalendarService.authStateChanges.listen((_) {
       notifyListeners();
@@ -2830,8 +2839,12 @@ class TimeProvider with ChangeNotifier {
   }
 
   /// Persist an overwrite candidate through the same [_ongoingSave] chain as
-  /// normal saves.  Every await is guarded so an edit or identity switch that
+  /// normal saves. Every await is guarded so an edit or identity switch that
   /// occurs while this request waits cannot advance the candidate further.
+  ///
+  /// These four keys describe one schedule snapshot. Unlike ordinary dirty
+  /// saves, a partial overwrite cannot be retained: on any failed write or
+  /// validity check, restore and verify the complete old snapshot.
   Future<bool> _saveScheduleSnapshot(_ScheduleSaveSnapshot snapshot) async {
     if (!snapshot.isStillValid()) return false;
     final prefs = await SharedPreferences.getInstance();
@@ -2850,23 +2863,104 @@ class TimeProvider with ChangeNotifier {
     final giteeDates = snapshot.giteePendingDates.toList()..sort();
     final googleDates = snapshot.googlePendingDates.toList()..sort();
 
-    if (!snapshot.isStillValid() ||
-        !await prefs.setString('daily_slots', json.encode(slotsJson))) {
-      return false;
+    final replacement = <String, Object?>{
+      'daily_slots': json.encode(slotsJson),
+      'pending_gitee_sync_dates': giteeDates,
+      'pending_google_sync_dates': googleDates,
+      'pending_sync_dates': allPendingDates,
+    };
+    final previous = _captureSchedulePreferences(prefs, replacement.keys);
+    var writeAttempted = false;
+    var committed = false;
+
+    try {
+      for (final entry in replacement.entries) {
+        if (!snapshot.isStillValid()) break;
+        // A platform exception can occur after its persistent side effect, so
+        // mark the attempt before awaiting and compensate on every failure.
+        writeAttempted = true;
+        if (!await _writeSchedulePreference(prefs, entry.key, entry.value) ||
+            !snapshot.isStillValid()) {
+          break;
+        }
+      }
+      committed = snapshot.isStillValid() &&
+          replacement.entries.every(
+            (entry) => _schedulePreferenceValuesEqual(
+              prefs.get(entry.key),
+              entry.value,
+            ),
+          );
+    } catch (e) {
+      debugPrint('覆盖快照写入失败: $e');
     }
-    if (!snapshot.isStillValid() ||
-        !await prefs.setStringList('pending_gitee_sync_dates', giteeDates)) {
-      return false;
+
+    if (committed) return true;
+    if (writeAttempted && !await _restoreSchedulePreferences(prefs, previous)) {
+      debugPrint('覆盖快照回滚失败');
     }
-    if (!snapshot.isStillValid() ||
-        !await prefs.setStringList('pending_google_sync_dates', googleDates)) {
-      return false;
+    return false;
+  }
+
+  _SchedulePreferencesSnapshot _captureSchedulePreferences(
+    SharedPreferences prefs,
+    Iterable<String> keys,
+  ) {
+    final values = <String, Object?>{};
+    for (final key in keys) {
+      final value = prefs.get(key);
+      values[key] = value is List ? List<Object?>.from(value) : value;
     }
-    if (!snapshot.isStillValid() ||
-        !await prefs.setStringList('pending_sync_dates', allPendingDates)) {
-      return false;
+    return _SchedulePreferencesSnapshot(values);
+  }
+
+  Future<bool> _writeSchedulePreference(
+    SharedPreferences prefs,
+    String key,
+    Object? value,
+  ) async {
+    final written = switch (value) {
+      String value => await prefs.setString(key, value),
+      List<Object?> value =>
+        await prefs.setStringList(key, value.cast<String>()),
+      _ => false,
+    };
+    if (written) _scheduleSnapshotWriteObserver?.call(key);
+    return written && _schedulePreferenceValuesEqual(prefs.get(key), value);
+  }
+
+  Future<bool> _restoreSchedulePreferences(
+    SharedPreferences prefs,
+    _SchedulePreferencesSnapshot snapshot,
+  ) async {
+    var restored = true;
+    for (final entry in snapshot.values.entries) {
+      try {
+        final didRestore = entry.value == null
+            ? await prefs.remove(entry.key)
+            : await _writeSchedulePreference(prefs, entry.key, entry.value);
+        if (!didRestore ||
+            !_schedulePreferenceValuesEqual(
+                prefs.get(entry.key), entry.value)) {
+          restored = false;
+        }
+      } catch (e) {
+        debugPrint('恢复覆盖快照 ${entry.key} 失败: $e');
+        restored = false;
+      }
     }
-    return snapshot.isStillValid();
+    return restored;
+  }
+
+  bool _schedulePreferenceValuesEqual(Object? left, Object? right) {
+    if (left is List && right is List) {
+      if (left.length != right.length) return false;
+      for (var index = 0; index < left.length; index++) {
+        if (left[index] != right[index]) return false;
+      }
+      return true;
+    }
+    return left == right;
   }
 
   Future<void> _refreshHomeWidget() async {

@@ -70,6 +70,7 @@ Future<TimeProvider> _createProvider({
   Map<String, Object> initialPreferences = _localPreferences,
   ScheduleSyncDependencies? dependencies,
   Future<bool> Function()? saveDataOverride,
+  void Function(String key)? scheduleSnapshotWriteObserver,
 }) async {
   SharedPreferences.setMockInitialValues(initialPreferences);
   final messenger =
@@ -87,6 +88,7 @@ Future<TimeProvider> _createProvider({
     scheduleSyncDependencies:
         dependencies ?? _fakeDependencies(failPull: failPull),
     saveDataOverride: saveDataOverride,
+    scheduleSnapshotWriteObserver: scheduleSnapshotWriteObserver,
   );
   final deadline = DateTime.now().add(const Duration(seconds: 5));
   while (!provider.isInitialLoadFinished && DateTime.now().isBefore(deadline)) {
@@ -495,6 +497,47 @@ void main() {
     expect(await overwrite, isFalse);
     expect(provider.scheduleUser, DiaryKind.j);
     expect(provider.getSlotsForDate('2026-01-01')![0].label, '本地专属');
+  });
+
+  test(
+      'overwrite restores every persisted key when identity changes after first write',
+      () async {
+    late TimeProvider provider;
+    var switchedIdentity = false;
+    provider = await _createProvider(
+      failPull: false,
+      initialPreferences: _localPreferences,
+      scheduleSnapshotWriteObserver: (key) {
+        if (key == 'daily_slots' && !switchedIdentity) {
+          switchedIdentity = true;
+          unawaited(provider.setScheduleUser(DiaryKind.j));
+        }
+      },
+    );
+    addTearDown(provider.dispose);
+
+    final prefs = await SharedPreferences.getInstance();
+    final beforeDailySlots = prefs.getString('daily_slots');
+    final beforeGitee = prefs.getStringList('pending_gitee_sync_dates');
+    final beforeGoogle = prefs.getStringList('pending_google_sync_dates');
+    final beforeVisible = prefs.getStringList('pending_sync_dates');
+    final beforeFirstDay = provider.getSlotsForDate('2026-01-01')![0].label;
+    final beforeOverlapDay = provider.getSlotsForDate('2026-09-06')![0].label;
+    final beforePendingGitee = Set<String>.from(provider.pendingGiteeSyncDates);
+    final beforePendingGoogle =
+        Set<String>.from(provider.pendingGoogleSyncDates);
+
+    expect(await provider.overwriteAllSchedulesFromGitee(), isFalse);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(prefs.getString('daily_slots'), beforeDailySlots);
+    expect(prefs.getStringList('pending_gitee_sync_dates'), beforeGitee);
+    expect(prefs.getStringList('pending_google_sync_dates'), beforeGoogle);
+    expect(prefs.getStringList('pending_sync_dates'), beforeVisible);
+    expect(provider.getSlotsForDate('2026-01-01')![0].label, beforeFirstDay);
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, beforeOverlapDay);
+    expect(provider.pendingGiteeSyncDates, beforePendingGitee);
+    expect(provider.pendingGoogleSyncDates, beforePendingGoogle);
   });
 
   test('overwrite publishes failure and final schedule status', () async {

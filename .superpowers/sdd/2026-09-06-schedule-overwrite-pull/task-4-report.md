@@ -32,3 +32,25 @@ flutter test --timeout 30s test/schedule_overwrite_test.dart test/desktop_schedu
 ## 提交前状态
 
 待提交：`lib/providers/time_provider.dart`、保留的 `test/schedule_overwrite_test.dart`，以及本报告。
+
+## 修复轮次 3
+
+基线：`900ff97 fix(schedule): complete atomic overwrite transaction`
+
+### 修复
+
+- 覆盖快照保存前捕获 `daily_slots`、`pending_gitee_sync_dates`、`pending_google_sync_dates` 和 `pending_sync_dates` 的完整旧值。
+- 四个新值仍经一次 `_saveData()` 请求进入既有 `_ongoingSave` 串行链；每次 `set*` 都检查返回值和写后值，并在每个异步写入边界复查 identity / slots revision。
+- 任一写入返回 `false`、抛异常、写后值不符，或写入中发生 identity / revision 冲突时，尽力恢复并逐个验证全部四个旧值；回滚失败会记录错误，调用始终返回 `false`，不提交内存 replacement、undo 或 pending 状态。
+- 增加窄的写后观察 seam，仅供测试在真实 `SharedPreferences` 写入成功后制造并发身份变化；生产默认不注入，写入仍由统一保存链和原生 `setString` / `setStringList` 执行。
+
+### RED / GREEN
+
+- RED：新回归测试在旧实现上失败，第一项 `daily_slots` 写入成功后身份变化导致其保留为远端快照，原 `2026-01-01` 数据丢失。
+- GREEN：实现回滚后，同一测试通过，四个持久化 key 与覆盖前的内存日程 / pending 集合一致。
+
+### 提交前验证
+
+- `flutter test --timeout 30s test/schedule_overwrite_test.dart test/desktop_schedule_sync_test.dart`：通过，36 项测试。
+- `flutter test --timeout 30s`：通过，138 项测试。输出包含既有地图瓦片 HTTP 400 日志，命令退出码为 0。
+- `git diff --check`：通过。
