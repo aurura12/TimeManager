@@ -20,6 +20,11 @@ const _localPreferences = <String, Object>{
       '{"2026-01-01":[{"i":0,"l":"本地专属","c":2,"cid":"local-category","ts":1000}],"2026-09-06":[{"i":0,"l":"本地重叠","c":3,"cid":"local-category","ts":1000}]}',
   'pending_gitee_sync_dates': <String>['2026-01-01', '2026-09-06'],
   'pending_google_sync_dates': <String>['2026-09-06', '2026-10-01'],
+  'pending_sync_dates': <String>[
+    '2026-01-01',
+    '2026-09-06',
+    '2026-10-01',
+  ],
 };
 
 const _remoteCanonicalContent =
@@ -33,6 +38,8 @@ ScheduleSyncDependencies _fakeDependencies({
   bool Function()? shouldGate,
   void Function()? onListPaths,
   void Function()? onPullDay,
+  void Function()? onGiteeUpload,
+  void Function()? onGoogleUpload,
   String? pullSha,
   Map<String, String>? pathShaMap,
 }) {
@@ -66,6 +73,20 @@ ScheduleSyncDependencies _fakeDependencies({
         pullSha ?? 'remote-sha',
       );
     },
+    pushDay: ({
+      required token,
+      required dateKey,
+      required userCode,
+      required content,
+      required commitMessage,
+    }) async {
+      onGiteeUpload?.call();
+      return ScheduleGiteePushResult.success(created: false);
+    },
+    pushGoogleDay: (slots, date) async {
+      onGoogleUpload?.call();
+      return true;
+    },
   );
 }
 
@@ -75,6 +96,9 @@ Future<TimeProvider> _createProvider({
   ScheduleSyncDependencies? dependencies,
   Future<bool> Function()? saveDataOverride,
   void Function(String key)? scheduleSnapshotWriteObserver,
+  void Function(String phase)? scheduleSnapshotJournalPhaseObserver,
+  Future<bool> Function()? scheduleSnapshotJournalRemoveOverride,
+  Duration scheduleGiteeDebounce = const Duration(seconds: 3),
 }) async {
   SharedPreferences.setMockInitialValues(initialPreferences);
   final messenger =
@@ -89,10 +113,14 @@ Future<TimeProvider> _createProvider({
   );
 
   final provider = TimeProvider(
+    scheduleGiteeDebounce: scheduleGiteeDebounce,
     scheduleSyncDependencies:
         dependencies ?? _fakeDependencies(failPull: failPull),
     saveDataOverride: saveDataOverride,
     scheduleSnapshotWriteObserver: scheduleSnapshotWriteObserver,
+    scheduleSnapshotJournalPhaseObserver: scheduleSnapshotJournalPhaseObserver,
+    scheduleSnapshotJournalRemoveOverride:
+        scheduleSnapshotJournalRemoveOverride,
   );
   final deadline = DateTime.now().add(const Duration(seconds: 5));
   while (!provider.isInitialLoadFinished && DateTime.now().isBefore(deadline)) {
@@ -286,6 +314,69 @@ void main() {
     expect(provider.pendingGoogleSyncDates, isEmpty);
   });
 
+  test('successful overwrite clears every pending queue without uploading',
+      () async {
+    var giteeUploads = 0;
+    var googleUploads = 0;
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: {
+        'daily_slots': _localPreferences['daily_slots']!,
+      },
+      scheduleGiteeDebounce: const Duration(milliseconds: 50),
+      dependencies: _fakeDependencies(
+        failPull: false,
+        onGiteeUpload: () => giteeUploads++,
+        onGoogleUpload: () => googleUploads++,
+      ),
+    );
+    addTearDown(provider.dispose);
+
+    final backup = provider.toBackupMap();
+    backup['dailySlots'] =
+        jsonDecode(_localPreferences['daily_slots']! as String);
+    backup['pendingGiteeSyncDates'] = [
+      '2026-01-01',
+      '2026-09-06',
+    ];
+    backup['pendingGoogleSyncDates'] = [
+      '2026-09-06',
+      '2026-10-01',
+    ];
+    backup['pendingSyncDates'] = [
+      '2026-01-01',
+      '2026-09-06',
+      '2026-10-01',
+    ];
+    await provider.importBackupJson(jsonEncode(backup));
+    provider.assignCategoryToSlots(
+      {1},
+      Category(name: '覆盖前待同步', color: Colors.purple),
+      date: DateTime(2026, 9, 6),
+    );
+    expect(provider.hasPendingScheduleGiteeUpload, isTrue);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('daily_slots'), isNotNull);
+    expect(prefs.getStringList('pending_gitee_sync_dates'), isNotEmpty);
+    expect(prefs.getStringList('pending_google_sync_dates'), isNotEmpty);
+    expect(prefs.getStringList('pending_sync_dates'), isNotEmpty);
+    expect(giteeUploads, 0);
+    expect(googleUploads, 0);
+
+    expect(await provider.overwriteAllSchedulesFromGitee(), isTrue);
+    expect(provider.pendingGiteeSyncDates, isEmpty);
+    expect(provider.pendingGoogleSyncDates, isEmpty);
+    expect(provider.hasPendingScheduleGiteeUpload, isFalse);
+    expect(prefs.getStringList('pending_gitee_sync_dates'), isEmpty);
+    expect(prefs.getStringList('pending_google_sync_dates'), isEmpty);
+    expect(prefs.getStringList('pending_sync_dates'), isEmpty);
+
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    expect(giteeUploads, 0);
+    expect(googleUploads, 0);
+  });
+
   test('startup restores an interrupted overwrite journal before loading slots',
       () async {
     const oldSlots =
@@ -329,6 +420,58 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
     expect(prefs.getString('daily_slots'), oldSlots);
+  });
+
+  test('startup isolates a corrupt overwrite journal from background sync',
+      () async {
+    const oldSlots = '{"2026-01-01":[{"i":0,"l":"必须保留","c":2,"ts":1000}]}';
+    const corruptJournal = '{"phase":"prepared","before":';
+    var pullDayCalls = 0;
+    SharedPreferences.setMockInitialValues({
+      'daily_slots': oldSlots,
+      'pending_gitee_sync_dates': <String>['2026-01-01'],
+      'pending_google_sync_dates': <String>['2026-01-02'],
+      'pending_sync_dates': <String>['2026-01-01', '2026-01-02'],
+      'schedule_overwrite_transaction_journal': corruptJournal,
+    });
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+      (call) async {
+        final arguments = call.arguments;
+        if (call.method == 'read' &&
+            arguments is Map &&
+            arguments['key'] == 'app_user_identity_manual_kind') {
+          return 'g';
+        }
+        return null;
+      },
+    );
+
+    final provider = TimeProvider(
+      scheduleSyncDependencies: _fakeDependencies(
+        failPull: false,
+        onPullDay: () => pullDayCalls++,
+      ),
+    );
+    addTearDown(provider.dispose);
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (
+        !provider.isInitialLoadFinished && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    expect(provider.hasInitializationFailure, isTrue);
+    expect(provider.initializationFailureMessage, contains('恢复'));
+    expect(pullDayCalls, 0);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('daily_slots'), oldSlots);
+    expect(
+      prefs.getString('schedule_overwrite_transaction_journal'),
+      corruptJournal,
+    );
   });
 
   test('overwrite pull failure preserves all local and pending state',
@@ -614,6 +757,64 @@ void main() {
     expect(provider.pendingGoogleSyncDates, beforePendingGoogle);
   });
 
+  test('overwrite rolls back when identity changes before journal cleanup',
+      () async {
+    late TimeProvider provider;
+    var changedIdentity = false;
+    provider = await _createProvider(
+      failPull: false,
+      initialPreferences: {
+        'daily_slots': _localPreferences['daily_slots']!,
+      },
+      scheduleSnapshotJournalPhaseObserver: (phase) {
+        if (phase == 'before_remove' && !changedIdentity) {
+          changedIdentity = true;
+          unawaited(provider.setScheduleUser(DiaryKind.j));
+        }
+      },
+    );
+    addTearDown(provider.dispose);
+
+    final backup = provider.toBackupMap();
+    backup['dailySlots'] =
+        jsonDecode(_localPreferences['daily_slots']! as String);
+    backup['pendingGiteeSyncDates'] = [
+      '2026-01-01',
+      '2026-09-06',
+    ];
+    backup['pendingGoogleSyncDates'] = [
+      '2026-09-06',
+      '2026-10-01',
+    ];
+    backup['pendingSyncDates'] = [
+      '2026-01-01',
+      '2026-09-06',
+      '2026-10-01',
+    ];
+    await provider.importBackupJson(jsonEncode(backup));
+
+    final prefs = await SharedPreferences.getInstance();
+    final beforeDailySlots = prefs.getString('daily_slots');
+    final beforeGitee = prefs.getStringList('pending_gitee_sync_dates');
+    final beforeGoogle = prefs.getStringList('pending_google_sync_dates');
+    final beforeVisible = prefs.getStringList('pending_sync_dates');
+
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '本地重叠');
+    expect(await provider.overwriteAllSchedulesFromGitee(), isFalse);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(provider.scheduleUser, DiaryKind.j);
+    expect(provider.getSlotsForDate('2026-01-01')![0].label, '本地专属');
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '本地重叠');
+    expect(provider.pendingGiteeSyncDates, {'2026-01-01', '2026-09-06'});
+    expect(provider.pendingGoogleSyncDates, {'2026-09-06', '2026-10-01'});
+    expect(prefs.getString('daily_slots'), beforeDailySlots);
+    expect(prefs.getStringList('pending_gitee_sync_dates'), beforeGitee);
+    expect(prefs.getStringList('pending_google_sync_dates'), beforeGoogle);
+    expect(prefs.getStringList('pending_sync_dates'), beforeVisible);
+    expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
+  });
+
   test('overwrite publishes failure and final schedule status', () async {
     final provider = await _createProvider(failPull: true);
     addTearDown(provider.dispose);
@@ -627,6 +828,76 @@ void main() {
     expect(statuses, contains('覆盖拉取中...'));
     expect(statuses, contains('覆盖拉取失败'));
     expect(statuses.last, '');
+  });
+
+  test('failed journal cleanup keeps committed data recoverable on restart',
+      () async {
+    var removeAttempts = 0;
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: {
+        'daily_slots': _localPreferences['daily_slots']!,
+      },
+      scheduleSnapshotJournalRemoveOverride: () async {
+        removeAttempts++;
+        return false;
+      },
+    );
+    addTearDown(provider.dispose);
+
+    expect(await provider.overwriteAllSchedulesFromGitee(), isTrue);
+    expect(removeAttempts, 1);
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '远端');
+    final prefs = await SharedPreferences.getInstance();
+    final journal = jsonDecode(
+      prefs.getString('schedule_overwrite_transaction_journal')!,
+    ) as Map<String, dynamic>;
+    expect(journal['phase'], 'committed');
+
+    final restarted = TimeProvider(
+      scheduleSyncDependencies: _fakeDependencies(failPull: false),
+    );
+    addTearDown(restarted.dispose);
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (
+        !restarted.isInitialLoadFinished && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+
+    expect(restarted.hasInitializationFailure, isFalse);
+    expect(restarted.getSlotsForDate('2026-09-06')![0].label, '远端');
+    expect(
+      prefs.getString('schedule_overwrite_transaction_journal'),
+      isNull,
+    );
+  });
+
+  test('identity change during journal remove cannot report success', () async {
+    late TimeProvider provider;
+    provider = await _createProvider(
+      failPull: false,
+      initialPreferences: {
+        'daily_slots': _localPreferences['daily_slots']!,
+      },
+      scheduleSnapshotJournalRemoveOverride: () async {
+        unawaited(provider.setScheduleUser(DiaryKind.j));
+        return true;
+      },
+    );
+    addTearDown(provider.dispose);
+
+    expect(await provider.overwriteAllSchedulesFromGitee(), isFalse);
+    expect(provider.scheduleUser, DiaryKind.j);
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '远端');
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+      jsonDecode(prefs.getString('daily_slots')!)['2026-09-06'][0]['l'],
+      '远端',
+    );
+    final journal = jsonDecode(
+      prefs.getString('schedule_overwrite_transaction_journal')!,
+    ) as Map<String, dynamic>;
+    expect(journal['phase'], 'committed');
   });
 
   testWidgets(

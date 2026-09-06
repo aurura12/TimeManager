@@ -71,21 +71,20 @@ class _SchedulePreferencesSnapshot {
 
   final Map<String, Object?> values;
 
-  String toJournal() => jsonEncode({
+  Map<String, dynamic> toJournalMap() => {
         for (final entry in values.entries)
           entry.key: {
             'present': entry.value != null,
             if (entry.value != null) 'value': entry.value,
           },
-      });
+      };
 
-  static _SchedulePreferencesSnapshot? fromJournal(String encoded) {
+  static _SchedulePreferencesSnapshot? fromJournalMap(dynamic raw) {
     try {
-      final decoded = jsonDecode(encoded);
-      if (decoded is! Map) return null;
+      if (raw is! Map) return null;
       final values = <String, Object?>{};
       for (final key in TimeProvider._scheduleSnapshotKeys) {
-        final entry = decoded[key];
+        final entry = raw[key];
         if (entry is! Map || entry['present'] is! bool) return null;
         final present = entry['present'] as bool;
         final value = entry['value'];
@@ -98,6 +97,73 @@ class _SchedulePreferencesSnapshot {
             : null;
       }
       return _SchedulePreferencesSnapshot(values);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+class _ScheduleOverwriteJournal {
+  const _ScheduleOverwriteJournal({
+    required this.phase,
+    required this.before,
+    required this.after,
+  });
+
+  static const prepared = 'prepared';
+  static const committed = 'committed';
+
+  final String phase;
+  final _SchedulePreferencesSnapshot before;
+  final _SchedulePreferencesSnapshot after;
+
+  String encode() => jsonEncode({
+        'version': 2,
+        'phase': phase,
+        'before': before.toJournalMap(),
+        'after': after.toJournalMap(),
+      });
+
+  _ScheduleOverwriteJournal withPhase(String nextPhase) {
+    return _ScheduleOverwriteJournal(
+      phase: nextPhase,
+      before: before,
+      after: after,
+    );
+  }
+
+  static _ScheduleOverwriteJournal? fromEncoded(String encoded) {
+    try {
+      final decoded = jsonDecode(encoded);
+      if (decoded is! Map) return null;
+      final phase = decoded['phase'];
+      if (phase is String &&
+          (phase == prepared || phase == committed) &&
+          decoded.containsKey('before') &&
+          decoded.containsKey('after')) {
+        final before = _SchedulePreferencesSnapshot.fromJournalMap(
+          decoded['before'],
+        );
+        final after = _SchedulePreferencesSnapshot.fromJournalMap(
+          decoded['after'],
+        );
+        if (before == null || after == null) return null;
+        return _ScheduleOverwriteJournal(
+          phase: phase,
+          before: before,
+          after: after,
+        );
+      }
+
+      // d240b77 wrote only the old values at the root. Treat such a log as a
+      // prepared transaction so an upgrade still rolls back safely.
+      final legacy = _SchedulePreferencesSnapshot.fromJournalMap(decoded);
+      if (legacy == null) return null;
+      return _ScheduleOverwriteJournal(
+        phase: prepared,
+        before: legacy,
+        after: legacy,
+      );
     } catch (_) {
       return null;
     }
@@ -128,6 +194,8 @@ class TimeProvider with ChangeNotifier {
   final ScheduleSyncDependencies _scheduleSyncDependencies;
   final Future<bool> Function()? _saveDataOverride;
   final void Function(String key)? _scheduleSnapshotWriteObserver;
+  final void Function(String phase)? _scheduleSnapshotJournalPhaseObserver;
+  final Future<bool> Function()? _scheduleSnapshotJournalRemoveOverride;
   String? _lastScheduleOverwriteFailure;
   String? get lastScheduleOverwriteFailure => _lastScheduleOverwriteFailure;
 
@@ -163,7 +231,9 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
     // 切换身份后拉取新身份当前日期的日程
     _pullOwnScheduleIfWindows();
-    if (isDesktopPlatform && pendingGiteeSyncDates.isNotEmpty) {
+    if (!_initializationFailed &&
+        isDesktopPlatform &&
+        pendingGiteeSyncDates.isNotEmpty) {
       unawaited(syncAllSchedulesToGitee());
     }
   }
@@ -219,6 +289,10 @@ class TimeProvider with ChangeNotifier {
   // 本地数据初始加载是否已结束（无论成败都会置位，供依赖数据就绪的特性使用）
   bool _isInitialLoadFinished = false;
   bool get isInitialLoadFinished => _isInitialLoadFinished;
+  bool _initializationFailed = false;
+  String? _initializationFailureMessage;
+  bool get hasInitializationFailure => _initializationFailed;
+  String? get initializationFailureMessage => _initializationFailureMessage;
 
   /// 用户在 App 内删除的 Google 日历导入（按日期），不再自动拉回
   final Map<String, Set<String>> _ignoredCalendarImports = {};
@@ -294,13 +368,20 @@ class TimeProvider with ChangeNotifier {
     ScheduleSyncDependencies? scheduleSyncDependencies,
     Future<bool> Function()? saveDataOverride,
     void Function(String key)? scheduleSnapshotWriteObserver,
+    void Function(String phase)? scheduleSnapshotJournalPhaseObserver,
+    Future<bool> Function()? scheduleSnapshotJournalRemoveOverride,
   })  : _scheduleGiteeDebounce = scheduleGiteeDebounce,
         _scheduleSyncDependencies =
             scheduleSyncDependencies ?? ScheduleSyncDependencies.production(),
         _saveDataOverride = saveDataOverride,
-        _scheduleSnapshotWriteObserver = scheduleSnapshotWriteObserver {
+        _scheduleSnapshotWriteObserver = scheduleSnapshotWriteObserver,
+        _scheduleSnapshotJournalPhaseObserver =
+            scheduleSnapshotJournalPhaseObserver,
+        _scheduleSnapshotJournalRemoveOverride =
+            scheduleSnapshotJournalRemoveOverride {
     _googleAuthSubscription =
         GoogleCalendarService.authStateChanges.listen((_) {
+      if (!_isInitialLoadFinished || _initializationFailed) return;
       notifyListeners();
       unawaited(pullGoogleCalendarForCurrentDate());
     });
@@ -313,11 +394,20 @@ class TimeProvider with ChangeNotifier {
       await _loadData();
     } catch (e) {
       debugPrint('初始数据加载失败: $e');
+      _initializationFailed = true;
+      _initializationFailureMessage = '本地日程恢复失败，请检查本地数据后重试';
+      _debounceTimer?.cancel();
+      _scheduleGiteeTimer?.cancel();
+      _categoriesGiteeTimer?.cancel();
+      _debounceTimer = null;
+      _scheduleGiteeTimer = null;
+      _categoriesGiteeTimer = null;
     } finally {
       // 无论加载成败都标记加载已结束，避免依赖此标志的特性（如那年今日弹窗）被静默跳过
       _isInitialLoadFinished = true;
     }
     notifyListeners();
+    if (_initializationFailed) return;
     await _refreshHomeWidget();
     // 从本地持久化存储直接加载用户身份（不联网，瞬间完成）
     await _loadScheduleUserFromStore();
@@ -351,7 +441,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> _restoreGoogleInBackground() async {
-    if (!_googleCalendarSyncEnabled) return;
+    if (_initializationFailed || !_googleCalendarSyncEnabled) return;
     await GoogleCalendarService.restoreSignIn(background: true);
     if (GoogleCalendarService.isSignedIn) {
       notifyListeners();
@@ -451,7 +541,7 @@ class TimeProvider with ChangeNotifier {
   /// 解决安卓端推送后 Windows 本地无数据看不到自己日程的问题。
   /// 拉取失败静默，不打断用户操作。
   void _pullOwnScheduleIfWindows() {
-    if (!isDesktopPlatform) return;
+    if (_initializationFailed || !isDesktopPlatform) return;
     if (!_hasSelectedScheduleUser) return;
     final requestRevision = ++_schedulePullRevision;
     if (_remoteViewEnabled) {
@@ -735,6 +825,8 @@ class TimeProvider with ChangeNotifier {
   final Set<String> _pendingScheduleGiteeDateKeys = {};
   final Map<String, int> _scheduleGiteeDateRevisions = {};
   String? _lastEditedDateKey;
+  bool get hasPendingScheduleGiteeUpload =>
+      _pendingScheduleGiteeDateKeys.isNotEmpty;
 
   bool get _isAnyScheduleSyncBlocked =>
       _scheduleGiteeSyncing ||
@@ -881,7 +973,9 @@ class TimeProvider with ChangeNotifier {
       'slots': merged,
     });
 
-    final result = await ScheduleGiteeService.pushSchedule(
+    final pushDay =
+        _scheduleSyncDependencies.pushDay ?? ScheduleGiteeService.pushSchedule;
+    final result = await pushDay(
       token: token,
       dateKey: dateKey,
       userCode: _scheduleUser.code,
@@ -1233,6 +1327,23 @@ class TimeProvider with ChangeNotifier {
       if (!persisted ||
           !identityIsUnchanged() ||
           _slotsRevision != startSlotsRevision) {
+        if (persisted) await _rollbackCommittedScheduleOverwrite();
+        return false;
+      }
+
+      // The committed journal is still present.  Give the final identity /
+      // revision guard one last observable phase before publishing memory and
+      // allowing cleanup.  A test can inject a real identity or edit here;
+      // production has no await between this guard and memory publication.
+      try {
+        _scheduleSnapshotJournalPhaseObserver?.call('before_remove');
+      } catch (e) {
+        debugPrint('覆盖快照提交阶段失败: $e');
+        await _rollbackCommittedScheduleOverwrite();
+        return false;
+      }
+      if (!identityIsUnchanged() || _slotsRevision != startSlotsRevision) {
+        await _rollbackCommittedScheduleOverwrite();
         return false;
       }
 
@@ -1251,6 +1362,19 @@ class TimeProvider with ChangeNotifier {
       _syncDirty = false;
       _targetStatsCache.invalidate();
       notifyListeners();
+      // Removal is cleanup only. If the platform reports a failed/ambiguous
+      // remove, _finalize... deliberately retains the committed journal; the
+      // next startup will verify the new snapshot and retry cleanup instead of
+      // rolling it back.
+      final committedSlotsRevision = _slotsRevision;
+      final finalized = await _finalizeScheduleOverwriteJournal(
+        isStillValid: () =>
+            identityIsUnchanged() && _slotsRevision == committedSlotsRevision,
+      );
+      if (!finalized) {
+        _lastScheduleOverwriteFailure = '覆盖拉取提交后状态发生变化，请重新确认';
+        return false;
+      }
       succeeded = true;
       _addScheduleSyncStatus('覆盖拉取完成');
       return true;
@@ -1363,7 +1487,7 @@ class TimeProvider with ChangeNotifier {
 
   /// 从 Gitee 拉取当前身份的分类并合并到本地（只拉不推）。
   Future<void> _pullCategoriesFromGitee() async {
-    if (_remoteViewEnabled) return;
+    if (_initializationFailed || _remoteViewEnabled) return;
     if (!_hasSelectedScheduleUser) return;
     if (_categoriesGiteeSyncing) return;
     _categoriesGiteeSyncing = true;
@@ -1684,8 +1808,9 @@ class TimeProvider with ChangeNotifier {
         // The pull itself is asynchronous.  An overwrite can begin after the
         // debounce check above, so guard immediately before the upload API.
         if (_scheduleOverwriteCompleter != null) return;
-        final success =
-            await GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
+        final pushGoogleDay = _scheduleSyncDependencies.pushGoogleDay ??
+            GoogleCalendarService.syncSlotsToGoogle;
+        final success = await pushGoogleDay(slots, _currentDate);
 
         if (success) {
           _clearPendingGoogleForDate();
@@ -1786,7 +1911,9 @@ class TimeProvider with ChangeNotifier {
           pull: () => pullGoogleCalendarForDate(date, notify: false),
           push: (slotsForDay) {
             if (_scheduleOverwriteCompleter != null) return Future.value(false);
-            return GoogleCalendarService.syncSlotsToGoogle(slotsForDay, date);
+            final pushGoogleDay = _scheduleSyncDependencies.pushGoogleDay ??
+                GoogleCalendarService.syncSlotsToGoogle;
+            return pushGoogleDay(slotsForDay, date);
           },
         );
 
@@ -2699,6 +2826,7 @@ class TimeProvider with ChangeNotifier {
   // --- 数据持久化逻辑 ---
 
   Future<bool> _saveData({_ScheduleSaveSnapshot? snapshot}) async {
+    if (_initializationFailed) return false;
     if (_saveDataOverride != null) return _saveDataOverride!();
     final previous = _ongoingSave;
     final requestRevision = ++_saveRequestRevision;
@@ -2930,59 +3058,178 @@ class TimeProvider with ChangeNotifier {
       'pending_sync_dates': allPendingDates,
     };
     final previous = _captureSchedulePreferences(prefs, replacement.keys);
-    final journal = previous.toJournal();
-    var journalWriteAttempted = false;
-    var committed = false;
+    final replacementSnapshot = _SchedulePreferencesSnapshot(replacement);
+    final preparedJournal = _ScheduleOverwriteJournal(
+      phase: _ScheduleOverwriteJournal.prepared,
+      before: previous,
+      after: replacementSnapshot,
+    );
+    var journalWritten = false;
 
     try {
-      journalWriteAttempted = true;
-      if (!await prefs.setString(_scheduleOverwriteJournalKey, journal) ||
-          prefs.getString(_scheduleOverwriteJournalKey) != journal) {
+      if (!await _writeScheduleOverwriteJournal(prefs, preparedJournal)) {
         return false;
       }
+      journalWritten = true;
       for (final entry in replacement.entries) {
-        if (!snapshot.isStillValid()) break;
+        if (!snapshot.isStillValid()) {
+          await _rollbackScheduleOverwriteJournal(prefs, preparedJournal);
+          return false;
+        }
         // A platform exception can occur after its persistent side effect, so
         // mark the attempt before awaiting and compensate on every failure.
         if (!await _writeSchedulePreference(prefs, entry.key, entry.value) ||
             !snapshot.isStillValid()) {
-          break;
+          await _rollbackScheduleOverwriteJournal(prefs, preparedJournal);
+          return false;
         }
       }
-      committed = snapshot.isStillValid() &&
-          replacement.entries.every(
-            (entry) => _schedulePreferenceValuesEqual(
-              prefs.get(entry.key),
-              entry.value,
-            ),
-          );
-      if (committed &&
-          (!await prefs.remove(_scheduleOverwriteJournalKey) ||
-              prefs.containsKey(_scheduleOverwriteJournalKey))) {
-        committed = false;
+      if (!snapshot.isStillValid() ||
+          !_schedulePreferencesMatch(prefs, replacementSnapshot)) {
+        await _rollbackScheduleOverwriteJournal(prefs, preparedJournal);
+        return false;
       }
+
+      // The committed marker is written before the in-memory replacement.
+      // A process death after this point must keep the new disk snapshot,
+      // rather than let startup restore the old one.
+      final committedJournal = preparedJournal.withPhase(
+        _ScheduleOverwriteJournal.committed,
+      );
+      if (!await _writeScheduleOverwriteJournal(prefs, committedJournal)) {
+        await _rollbackScheduleOverwriteJournal(prefs, preparedJournal);
+        return false;
+      }
+      _scheduleSnapshotJournalPhaseObserver?.call(
+        _ScheduleOverwriteJournal.committed,
+      );
+      if (!snapshot.isStillValid()) {
+        await _rollbackScheduleOverwriteJournal(prefs, committedJournal);
+        return false;
+      }
+
+      // Keep the committed journal until the caller has published the same
+      // replacement into memory.  Cleanup is deliberately a separate phase.
+      return true;
     } catch (e) {
       debugPrint('覆盖快照写入失败: $e');
     }
 
-    if (committed) return true;
-    if (journalWriteAttempted &&
-        prefs.getString(_scheduleOverwriteJournalKey) == journal) {
-      final restored = await _restoreSchedulePreferences(prefs, previous);
-      if (!restored) {
-        debugPrint('覆盖快照回滚失败，保留恢复日志');
-        return false;
-      }
-      try {
-        if (!await prefs.remove(_scheduleOverwriteJournalKey) ||
-            prefs.containsKey(_scheduleOverwriteJournalKey)) {
-          debugPrint('覆盖快照恢复后无法清理恢复日志');
-        }
-      } catch (e) {
-        debugPrint('覆盖快照恢复后清理恢复日志失败: $e');
+    if (journalWritten) {
+      final journal = _ScheduleOverwriteJournal.fromEncoded(
+        prefs.getString(_scheduleOverwriteJournalKey) ?? '',
+      );
+      if (journal != null) {
+        await _rollbackScheduleOverwriteJournal(prefs, journal);
       }
     }
     return false;
+  }
+
+  Future<bool> _writeScheduleOverwriteJournal(
+    SharedPreferences prefs,
+    _ScheduleOverwriteJournal journal,
+  ) async {
+    final encoded = journal.encode();
+    final written = await prefs.setString(
+      _scheduleOverwriteJournalKey,
+      encoded,
+    );
+    return written && prefs.getString(_scheduleOverwriteJournalKey) == encoded;
+  }
+
+  bool _schedulePreferencesMatch(
+    SharedPreferences prefs,
+    _SchedulePreferencesSnapshot snapshot,
+  ) {
+    return snapshot.values.entries.every(
+      (entry) => _schedulePreferenceValuesEqual(
+        prefs.get(entry.key),
+        entry.value,
+      ),
+    );
+  }
+
+  Future<bool> _rollbackScheduleOverwriteJournal(
+    SharedPreferences prefs,
+    _ScheduleOverwriteJournal journal,
+  ) async {
+    final prepared = journal.phase == _ScheduleOverwriteJournal.prepared
+        ? journal
+        : journal.withPhase(_ScheduleOverwriteJournal.prepared);
+    try {
+      // Never restore old values while a committed marker is visible.  If the
+      // process stops during compensation, startup must know to restore old.
+      if (!await _writeScheduleOverwriteJournal(prefs, prepared)) {
+        return false;
+      }
+      if (!await _restoreSchedulePreferences(prefs, prepared.before)) {
+        debugPrint('覆盖快照回滚失败，保留恢复日志');
+        return false;
+      }
+      final removed = await prefs.remove(_scheduleOverwriteJournalKey);
+      if (!removed || prefs.containsKey(_scheduleOverwriteJournalKey)) {
+        debugPrint('覆盖快照恢复后无法清理恢复日志');
+        return false;
+      }
+      return true;
+    } catch (e) {
+      debugPrint('覆盖快照回滚失败: $e');
+      return false;
+    }
+  }
+
+  Future<bool> _rollbackCommittedScheduleOverwrite() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final encoded = prefs.getString(_scheduleOverwriteJournalKey);
+      if (encoded == null) return false;
+      final journal = _ScheduleOverwriteJournal.fromEncoded(encoded);
+      if (journal == null) return false;
+      return _rollbackScheduleOverwriteJournal(prefs, journal);
+    } catch (e) {
+      debugPrint('覆盖快照提交后回滚失败: $e');
+      return false;
+    }
+  }
+
+  Future<bool> _finalizeScheduleOverwriteJournal({
+    bool Function()? isStillValid,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final encoded = prefs.getString(_scheduleOverwriteJournalKey);
+      if (encoded == null) return true;
+      final journal = _ScheduleOverwriteJournal.fromEncoded(encoded);
+      if (journal == null ||
+          journal.phase != _ScheduleOverwriteJournal.committed ||
+          !_schedulePreferencesMatch(prefs, journal.after)) {
+        debugPrint('覆盖快照提交日志无法验证，保留日志供启动恢复');
+        return false;
+      }
+      try {
+        final removed = _scheduleSnapshotJournalRemoveOverride == null
+            ? await prefs.remove(_scheduleOverwriteJournalKey)
+            : await _scheduleSnapshotJournalRemoveOverride!();
+        if (!removed || prefs.containsKey(_scheduleOverwriteJournalKey)) {
+          debugPrint('覆盖快照提交后无法清理日志，保留 committed 日志');
+        }
+      } catch (e) {
+        debugPrint('覆盖快照提交后清理日志失败，保留 committed 日志: $e');
+      }
+      if (isStillValid != null && !isStillValid()) {
+        // The new four-key snapshot is already committed.  If cleanup raced
+        // with a user edit/identity switch, never report success.  A missing
+        // journal is safe here because the committed values are the state to
+        // load; a retained journal is explicitly committed and therefore also
+        // cannot roll back the new snapshot on restart.
+        return false;
+      }
+      return true;
+    } catch (e) {
+      debugPrint('覆盖快照提交后清理日志失败，保留 committed 日志: $e');
+      return true;
+    }
   }
 
   _SchedulePreferencesSnapshot _captureSchedulePreferences(
@@ -3049,11 +3296,18 @@ class TimeProvider with ChangeNotifier {
   Future<void> _recoverScheduleOverwriteJournal(SharedPreferences prefs) async {
     final encoded = prefs.getString(_scheduleOverwriteJournalKey);
     if (encoded == null) return;
-    final snapshot = _SchedulePreferencesSnapshot.fromJournal(encoded);
-    if (snapshot == null) {
+    final journal = _ScheduleOverwriteJournal.fromEncoded(encoded);
+    if (journal == null) {
       throw StateError('覆盖日程恢复日志格式无效');
     }
-    if (!await _restoreSchedulePreferences(prefs, snapshot)) {
+
+    if (journal.phase == _ScheduleOverwriteJournal.committed) {
+      // A committed journal is the source of truth after a crash between
+      // memory publication and cleanup.  Never roll it back to old values.
+      if (!_schedulePreferencesMatch(prefs, journal.after)) {
+        throw StateError('覆盖日程已提交日志与磁盘快照不一致');
+      }
+    } else if (!await _restoreSchedulePreferences(prefs, journal.before)) {
       throw StateError('覆盖日程恢复日志无法恢复');
     }
     if (!await prefs.remove(_scheduleOverwriteJournalKey) ||
