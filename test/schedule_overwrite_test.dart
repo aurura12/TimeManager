@@ -36,8 +36,10 @@ ScheduleSyncDependencies _fakeDependencies({
   int gateOnPullNumber = 1,
   String? gateDateKey,
   bool Function()? shouldGate,
+  Completer<void>? googlePullGate,
   void Function()? onListPaths,
   void Function()? onPullDay,
+  void Function()? onGooglePull,
   void Function()? onGiteeUpload,
   void Function()? onGoogleUpload,
   String? pullSha,
@@ -86,6 +88,11 @@ ScheduleSyncDependencies _fakeDependencies({
     pushGoogleDay: (slots, date) async {
       onGoogleUpload?.call();
       return true;
+    },
+    pullGoogleDay: (date) async {
+      onGooglePull?.call();
+      if (googlePullGate != null) await googlePullGate.future;
+      return const [];
     },
   );
 }
@@ -552,6 +559,143 @@ void main() {
         beforeJournal);
   });
 
+  test('initialization failure during a Gitee pull cannot commit remote memory',
+      () async {
+    const oldSlots =
+        '{"2026-01-01":[{"i":0,"l":"必须保留","c":2,"ts":1000}]}';
+    const corruptJournal = '{"phase":"prepared","before":';
+    final pullStarted = Completer<void>();
+    final releasePull = Completer<void>();
+    SharedPreferences.setMockInitialValues({
+      'daily_slots': oldSlots,
+      'schedule_overwrite_transaction_journal': corruptJournal,
+    });
+
+    final provider = TimeProvider(
+      scheduleSyncDependencies: _fakeDependencies(
+        failPull: false,
+        pullGate: releasePull,
+        onPullDay: () {
+          if (!pullStarted.isCompleted) pullStarted.complete();
+        },
+      ),
+    );
+    addTearDown(provider.dispose);
+
+    // Selecting the identity synchronously opens the public pull entry before
+    // _init() reaches the corrupt journal failure.
+    final selectUser = provider.setScheduleUser(DiaryKind.g);
+    final pull = provider.pullScheduleFromGitee(
+      date: DateTime(2026, 9, 6),
+    );
+    await pullStarted.future;
+
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (!provider.hasInitializationFailure &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(provider.hasInitializationFailure, isTrue);
+
+    releasePull.complete();
+    await selectUser;
+    expect(await pull, isFalse);
+    expect(provider.getSlotsForDate('2026-09-06'), isNull);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('daily_slots'), oldSlots);
+    expect(
+      prefs.getString('schedule_overwrite_transaction_journal'),
+      corruptJournal,
+    );
+  });
+
+  test('initialization failure during a Gitee push cannot upload or create slots',
+      () async {
+    const oldSlots =
+        '{"2026-01-01":[{"i":0,"l":"必须保留","c":2,"ts":1000}]}';
+    const corruptJournal = '{"phase":"prepared","before":';
+    final pullStarted = Completer<void>();
+    final releasePull = Completer<void>();
+    var giteeUploads = 0;
+    SharedPreferences.setMockInitialValues({
+      'daily_slots': oldSlots,
+      'schedule_overwrite_transaction_journal': corruptJournal,
+    });
+
+    final provider = TimeProvider(
+      scheduleSyncDependencies: _fakeDependencies(
+        failPull: false,
+        pullGate: releasePull,
+        onPullDay: () {
+          if (!pullStarted.isCompleted) pullStarted.complete();
+        },
+        onGiteeUpload: () => giteeUploads++,
+      ),
+    );
+    addTearDown(provider.dispose);
+
+    final selectUser = provider.setScheduleUser(DiaryKind.g);
+    final sync = provider.syncScheduleToGitee(
+      dateKey: '2026-09-06',
+    );
+    await pullStarted.future;
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (!provider.hasInitializationFailure &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(provider.hasInitializationFailure, isTrue);
+    releasePull.complete();
+    await selectUser;
+    await sync;
+
+    expect(giteeUploads, 0);
+    expect(provider.getSlotsForDate('2026-09-06'), isNull);
+  });
+
+  test('initialization failure before pending Google push prevents upload',
+      () async {
+    const corruptJournal = '{"phase":"prepared","before":';
+    final googlePullStarted = Completer<void>();
+    final releaseGooglePull = Completer<void>();
+    var googleUploads = 0;
+    SharedPreferences.setMockInitialValues({
+      'daily_slots': _localPreferences['daily_slots']!,
+      'pending_google_sync_dates': <String>['2026-09-06'],
+      'schedule_overwrite_transaction_journal': corruptJournal,
+    });
+
+    final provider = TimeProvider(
+      googleCalendarSyncPlatformOverride: true,
+      googleCalendarSignedInOverride: true,
+      scheduleSyncDependencies: _fakeDependencies(
+        failPull: false,
+        googlePullGate: releaseGooglePull,
+        onGooglePull: () {
+          if (!googlePullStarted.isCompleted) googlePullStarted.complete();
+        },
+        onGoogleUpload: () => googleUploads++,
+      ),
+    );
+    addTearDown(provider.dispose);
+
+    final selectUser = provider.setScheduleUser(DiaryKind.g);
+    provider.toggleSlot(0);
+    final sync = provider.synchronizeAllPendingCalendars();
+    await googlePullStarted.future;
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (!provider.hasInitializationFailure &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(provider.hasInitializationFailure, isTrue);
+    releaseGooglePull.complete();
+    await selectUser;
+    await sync;
+
+    expect(googleUploads, 0);
+  });
+
   test('overwrite pull failure preserves all local and pending state',
       () async {
     final provider = await _createProvider(
@@ -928,7 +1072,7 @@ void main() {
     );
     addTearDown(provider.dispose);
 
-    expect(await provider.overwriteAllSchedulesFromGitee(), isTrue);
+    expect(await provider.overwriteAllSchedulesFromGitee(), isFalse);
     expect(removeAttempts, 1);
     expect(provider.getSlotsForDate('2026-09-06')![0].label, '远端');
     final prefs = await SharedPreferences.getInstance();
@@ -979,22 +1123,31 @@ void main() {
     expect(giteeUploads, 0);
   });
 
-  test('identity change during journal remove cannot report success', () async {
+  test('identity change during real journal remove retains committed journal',
+      () async {
     late TimeProvider provider;
+    final removeStarted = Completer<void>();
+    final releaseRemove = Completer<void>();
     provider = await _createProvider(
       failPull: false,
       initialPreferences: {
         'daily_slots': _localPreferences['daily_slots']!,
       },
       scheduleSnapshotJournalRemoveOverride: () async {
-        await provider.setScheduleUser(DiaryKind.j);
+        removeStarted.complete();
+        await releaseRemove.future;
         final prefs = await SharedPreferences.getInstance();
-        return prefs.remove('schedule_overwrite_transaction_journal');
+        final remove = prefs.remove('schedule_overwrite_transaction_journal');
+        await provider.setScheduleUser(DiaryKind.j);
+        return remove;
       },
     );
     addTearDown(provider.dispose);
 
-    expect(await provider.overwriteAllSchedulesFromGitee(), isFalse);
+    final overwrite = provider.overwriteAllSchedulesFromGitee();
+    await removeStarted.future;
+    releaseRemove.complete();
+    expect(await overwrite, isFalse);
     expect(provider.scheduleUser, DiaryKind.j);
     expect(provider.getSlotsForDate('2026-09-06')![0].label, '远端');
     final prefs = await SharedPreferences.getInstance();
@@ -1002,7 +1155,45 @@ void main() {
       jsonDecode(prefs.getString('daily_slots')!)['2026-09-06'][0]['l'],
       '远端',
     );
-    expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
+    final journal = jsonDecode(
+      prefs.getString('schedule_overwrite_transaction_journal')!,
+    ) as Map<String, dynamic>;
+    expect(journal['phase'], 'committed');
+  });
+
+  test('cleanup failure blocks Google upload after the debounce window',
+      () async {
+    var giteeUploads = 0;
+    var googleUploads = 0;
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: {
+        'daily_slots': _localPreferences['daily_slots']!,
+      },
+      scheduleGiteeDebounce: const Duration(milliseconds: 20),
+      googleCalendarDebounce: const Duration(milliseconds: 20),
+      googleCalendarSyncPlatformOverride: true,
+      googleCalendarSignedInOverride: true,
+      scheduleSnapshotJournalRemoveOverride: () async => false,
+      dependencies: _fakeDependencies(
+        failPull: false,
+        onGiteeUpload: () => giteeUploads++,
+        onGoogleUpload: () => googleUploads++,
+      ),
+    );
+    addTearDown(provider.dispose);
+
+    expect(await provider.overwriteAllSchedulesFromGitee(), isFalse);
+    provider.assignCategoryToSlots(
+      {0},
+      Category(name: '清理失败后不得上传', color: Colors.red),
+      date: DateTime(2026, 9, 6),
+    );
+    await provider.synchronizeCalendar(delay: false);
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+
+    expect(giteeUploads, 0);
+    expect(googleUploads, 0);
   });
 
   test('google debounce callback is invalidated by an overwrite epoch',

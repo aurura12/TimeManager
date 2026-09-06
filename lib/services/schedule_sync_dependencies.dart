@@ -1,4 +1,5 @@
 import 'diary_local_store.dart';
+import '../models/calendar_block.dart';
 import '../models/time_slot.dart';
 import 'google_calendar_service.dart';
 import 'schedule_gitee_service.dart';
@@ -24,6 +25,9 @@ typedef ScheduleGoogleDayPusher = Future<bool> Function(
   List<TimeSlot> slots,
   DateTime date,
 );
+typedef ScheduleGoogleDayLoader = Future<List<CalendarBlock>?> Function(
+  DateTime date,
+);
 
 class ScheduleSyncDependencies {
   const ScheduleSyncDependencies({
@@ -32,6 +36,7 @@ class ScheduleSyncDependencies {
     required this.pullDay,
     this.pushDay,
     this.pushGoogleDay,
+    this.pullGoogleDay,
   });
 
   final ScheduleTokenLoader loadToken;
@@ -39,6 +44,7 @@ class ScheduleSyncDependencies {
   final ScheduleDayLoader pullDay;
   final ScheduleDayPusher? pushDay;
   final ScheduleGoogleDayPusher? pushGoogleDay;
+  final ScheduleGoogleDayLoader? pullGoogleDay;
 
   factory ScheduleSyncDependencies.production() {
     return ScheduleSyncDependencies(
@@ -47,6 +53,7 @@ class ScheduleSyncDependencies {
       pullDay: ScheduleGiteeService.pullSchedule,
       pushDay: ScheduleGiteeService.pushSchedule,
       pushGoogleDay: GoogleCalendarService.syncSlotsToGoogle,
+      pullGoogleDay: GoogleCalendarService.fetchExternalEvents,
     );
   }
 }
