@@ -7,8 +7,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/category.dart';
 import 'package:time_manager/models/diary_kind.dart';
+import 'package:time_manager/models/target.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
+import 'package:time_manager/services/google_calendar_service.dart';
 import 'package:time_manager/services/schedule_gitee_service.dart';
 import 'package:time_manager/services/schedule_overwrite.dart';
 import 'package:time_manager/services/schedule_sync_dependencies.dart';
@@ -531,7 +533,7 @@ void main() {
     final beforeVisible = prefs.getStringList('pending_sync_dates');
     final beforeJournal =
         prefs.getString('schedule_overwrite_transaction_journal');
-    final beforeRecorded = provider.slots[0].recorded;
+    expect(provider.slots, isEmpty);
 
     provider.toggleSlot(0);
     await provider.syncScheduleToGitee();
@@ -546,7 +548,7 @@ void main() {
     await provider.onAppBackgrounded();
     await Future<void>.delayed(const Duration(milliseconds: 100));
 
-    expect(provider.slots[0].recorded, beforeRecorded);
+    expect(provider.slots, isEmpty);
     expect(listCalls, 0);
     expect(pullCalls, 0);
     expect(giteeUploads, 0);
@@ -557,6 +559,180 @@ void main() {
     expect(prefs.getStringList('pending_sync_dates'), beforeVisible);
     expect(prefs.getString('schedule_overwrite_transaction_journal'),
         beforeJournal);
+  });
+
+  test('schedule access and mutation before initialization are isolated',
+      () async {
+    SharedPreferences.setMockInitialValues({
+      'daily_slots': _localPreferences['daily_slots']!,
+    });
+    var saveCalls = 0;
+    final provider = TimeProvider(
+      saveDataOverride: () async {
+        saveCalls++;
+        return true;
+      },
+      scheduleSyncDependencies: _fakeDependencies(failPull: false),
+    );
+    addTearDown(provider.dispose);
+
+    var notificationCount = 0;
+    provider.addListener(() => notificationCount++);
+
+    expect(provider.slots, isEmpty);
+    expect(provider.slotsForDate(DateTime(2099, 1, 1)), isEmpty);
+    expect(provider.getSlotsForDate('2099-01-01'), isNull);
+    provider.toggleSlot(0);
+    provider.assignCategoryToSlots(
+      {0},
+      Category(name: '初始化前编辑', color: Colors.red),
+      date: DateTime(2099, 1, 1),
+    );
+    provider.addCategory(Category(name: '初始化前分类', color: Colors.blue));
+    provider.setCategoryExpandState('initialization', false);
+    final import = provider.importBackupJson(
+      jsonEncode({
+        'version': 1,
+        'categories': <Map<String, Object>>[],
+        'dailySlots': <String, Object>{
+          '2099-01-02': [
+            {'i': 0, 'l': '初始化前导入'},
+          ],
+        },
+      }),
+    );
+    final selectUser = provider.setScheduleUser(DiaryKind.j);
+
+    // These calls all happen before the constructor's first async load turn.
+    // They must not even notify or create a slot that the load can later leak.
+    expect(notificationCount, 0);
+    expect(provider.getSlotsForDate('2099-01-01'), isNull);
+    expect(provider.getSlotsForDate('2099-01-02'), isNull);
+
+    await Future.wait([import, selectUser]);
+    while (!provider.isInitialLoadFinished) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(saveCalls, 0);
+    expect(provider.scheduleUser, DiaryKind.g);
+    expect(provider.getSlotsForDate('2099-01-01'), isNull);
+    expect(provider.getSlotsForDate('2099-01-02'), isNull);
+    expect(
+      provider.categories.any((category) => category.name == '初始化前分类'),
+      isFalse,
+    );
+  });
+
+  test('failed initialization isolates public schedule access and mutation',
+      () async {
+    const corruptJournal = '{"phase":"prepared","before":';
+    SharedPreferences.setMockInitialValues({
+      'daily_slots': _localPreferences['daily_slots']!,
+      'schedule_overwrite_transaction_journal': corruptJournal,
+    });
+    var saveCalls = 0;
+    final provider = TimeProvider(
+      saveDataOverride: () async {
+        saveCalls++;
+        return true;
+      },
+      scheduleSyncDependencies: _fakeDependencies(failPull: false),
+    );
+    addTearDown(provider.dispose);
+    while (!provider.isInitialLoadFinished) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(provider.hasInitializationFailure, isTrue);
+
+    var notificationCount = 0;
+    provider.addListener(() => notificationCount++);
+    final beforeCategories = provider.categories;
+    final prefs = await SharedPreferences.getInstance();
+    final beforeSlots = prefs.getString('daily_slots');
+
+    expect(provider.slots, isEmpty);
+    expect(provider.slotsForDate(DateTime(2099, 2, 1)), isEmpty);
+    expect(provider.getSlotsForDate('2099-02-01'), isNull);
+    provider.toggleSlot(0);
+    provider.clearAll();
+    provider.undo();
+    provider.assignCategoryToSlots(
+      {0},
+      Category(name: '失败后编辑', color: Colors.green),
+      date: DateTime(2099, 2, 1),
+    );
+    provider.removeEventFromSlot(0, date: DateTime(2099, 2, 1));
+    provider.addCategory(Category(name: '失败后分类', color: Colors.orange));
+    provider.setCategoryExpandState('failed', false);
+    provider.addTarget(Target(
+      id: 'failed-target',
+      name: '失败后目标',
+      type: TargetType.duration,
+      color: Colors.purple,
+      period: 'daily',
+    ));
+    await provider.importBackupJson(
+      jsonEncode({
+        'version': 1,
+        'categories': <Map<String, Object>>[],
+        'dailySlots': <String, Object>{
+          '2099-02-02': [
+            {'i': 0, 'l': '失败后导入'},
+          ],
+        },
+      }),
+    );
+    await provider.setScheduleUser(DiaryKind.j);
+    await provider.onAppBackgrounded();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(provider.slots, isEmpty);
+    expect(provider.getSlotsForDate('2099-02-01'), isNull);
+    expect(provider.getSlotsForDate('2099-02-02'), isNull);
+    expect(provider.categories, beforeCategories);
+    expect(saveCalls, 0);
+    expect(notificationCount, 0);
+    expect(prefs.getString('daily_slots'), beforeSlots);
+  });
+
+  test('disposed provider ignores in-flight continuation and auth callback',
+      () async {
+    final pullStarted = Completer<void>();
+    final pullGate = Completer<void>();
+    var saveCalls = 0;
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: {'daily_slots': _localPreferences['daily_slots']!},
+      googleCalendarSyncPlatformOverride: true,
+      googleCalendarSignedInOverride: true,
+      saveDataOverride: () async {
+        saveCalls++;
+        return true;
+      },
+      dependencies: _fakeDependencies(
+        failPull: false,
+        googlePullGate: pullGate,
+        onGooglePull: () {
+          if (!pullStarted.isCompleted) pullStarted.complete();
+        },
+      ),
+    );
+    saveCalls = 0;
+    var notificationCount = 0;
+    provider.addListener(() => notificationCount++);
+
+    final pull = provider.pullGoogleCalendarForDate(DateTime(2099, 3, 1));
+    await pullStarted.future;
+    provider.dispose();
+    pullGate.complete();
+    await pull;
+    await GoogleCalendarService.logout();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(provider.getSlotsForDate('2099-03-01'), isNull);
+    expect(saveCalls, 0);
+    expect(notificationCount, 0);
   });
 
   test('Gitee pull before initialization cannot commit remote memory',
@@ -1100,7 +1276,7 @@ void main() {
     expect(giteeUploads, 0);
   });
 
-  test('identity change after real journal remove keeps committed data clean',
+  test('identity change during real journal remove is rejected safely',
       () async {
     late TimeProvider provider;
     final removeStarted = Completer<void>();
@@ -1114,18 +1290,19 @@ void main() {
         removeStarted.complete();
         await releaseRemove.future;
         final prefs = await SharedPreferences.getInstance();
-        final remove = prefs.remove('schedule_overwrite_transaction_journal');
-        await provider.setScheduleUser(DiaryKind.j);
-        return remove;
+        return prefs.remove('schedule_overwrite_transaction_journal');
       },
     );
     addTearDown(provider.dispose);
 
     final overwrite = provider.overwriteAllSchedulesFromGitee();
     await removeStarted.future;
+    final attemptedIdentity = provider.setScheduleUser(DiaryKind.j);
+    expect(provider.scheduleUser, DiaryKind.g);
     releaseRemove.complete();
-    expect(await overwrite, isTrue);
-    expect(provider.scheduleUser, DiaryKind.j);
+    await attemptedIdentity;
+    expect(await overwrite, isFalse);
+    expect(provider.scheduleUser, DiaryKind.g);
     expect(provider.getSlotsForDate('2026-09-06')![0].label, '远端');
     final prefs = await SharedPreferences.getInstance();
     expect(
@@ -1145,7 +1322,7 @@ void main() {
     expect(restarted.getSlotsForDate('2026-09-06')![0].label, '远端');
   });
 
-  test('slot revision change after real journal remove keeps clean snapshot',
+  test('slot revision change during real journal remove is rejected safely',
       () async {
     late TimeProvider provider;
     final removeStarted = Completer<void>();
@@ -1159,31 +1336,32 @@ void main() {
         removeStarted.complete();
         await releaseRemove.future;
         final prefs = await SharedPreferences.getInstance();
-        final removed =
-            await prefs.remove('schedule_overwrite_transaction_journal');
-        provider.assignCategoryToSlots(
-          {0},
-          Category(name: '清理阶段编辑', color: Colors.purple),
-          date: DateTime(2026, 9, 6),
-        );
-        return removed;
+        return prefs.remove('schedule_overwrite_transaction_journal');
       },
     );
     addTearDown(provider.dispose);
 
     final overwrite = provider.overwriteAllSchedulesFromGitee();
     await removeStarted.future;
+    final revisionAtRemove = provider.slotsRevision;
+    provider.assignCategoryToSlots(
+      {0},
+      Category(name: '清理阶段编辑', color: Colors.purple),
+      date: DateTime(2026, 9, 6),
+    );
+    expect(provider.slotsRevision, revisionAtRemove);
     releaseRemove.complete();
 
-    expect(await overwrite, isTrue);
+    expect(await overwrite, isFalse);
     await Future<void>.delayed(const Duration(milliseconds: 150));
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
     expect(provider.hasInitializationFailure, isFalse);
     expect(
       jsonDecode(prefs.getString('daily_slots')!)['2026-09-06'][0]['l'],
-      '清理阶段编辑',
+      '远端',
     );
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '远端');
   });
 
   test('cleanup failure blocks Google upload after the debounce window',

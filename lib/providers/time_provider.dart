@@ -203,15 +203,38 @@ class TimeProvider with ChangeNotifier {
   String? _lastScheduleOverwriteFailure;
   String? get lastScheduleOverwriteFailure => _lastScheduleOverwriteFailure;
   bool _scheduleOverwriteJournalCleanupPending = false;
+  // Cleanup is the one phase where the committed snapshot must not be
+  // followed by an identity or revision change.  Public mutations reject
+  // during this small window and mark the transaction invalidated; the
+  // journal removal remains cleanup-only and is never rewritten afterwards.
+  bool _scheduleOverwriteCleanupInProgress = false;
+  bool _scheduleOverwriteCleanupInvalidated = false;
   bool _deferredScheduleSaveRequested = false;
   int _googleSyncGeneration = 0;
 
   bool get _isSchedulePersistenceBlocked =>
-      _initializationFailed || _scheduleOverwriteJournalCleanupPending;
+      !_isInitialLoadFinished ||
+      _initializationFailed ||
+      _isDisposed ||
+      _scheduleOverwriteJournalCleanupPending ||
+      _scheduleOverwriteCleanupInProgress;
+
+  bool get _isScheduleReady =>
+      _isInitialLoadFinished && !_initializationFailed && !_isDisposed;
+
+  bool _allowScheduleMutation() {
+    if (!_isScheduleReady) return false;
+    if (_scheduleOverwriteCleanupInProgress) {
+      _scheduleOverwriteCleanupInvalidated = true;
+      return false;
+    }
+    return true;
+  }
 
   bool _canContinueScheduleSync(String selectedUserCode) {
     return _isInitialLoadFinished &&
         !_initializationFailed &&
+        !_isDisposed &&
         !_scheduleOverwriteJournalCleanupPending &&
         !_scheduleOverwriteInProgress &&
         _hasSelectedScheduleUser &&
@@ -245,21 +268,19 @@ class TimeProvider with ChangeNotifier {
   static const String _scheduleUserKey = 'schedule_user_kind';
 
   Future<void> setScheduleUser(DiaryKind kind) async {
-    if (_initializationFailed) {
-      _addScheduleSyncStatus(_initializationFailureMessage ?? '本地日程恢复失败');
-      return;
-    }
+    if (!_allowScheduleMutation()) return;
     if (_scheduleUser == kind && _hasSelectedScheduleUser) return;
     _scheduleUser = kind;
     _hasSelectedScheduleUser = true;
     final prefs = await SharedPreferences.getInstance();
-    if (_initializationFailed) return;
+    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return;
     if (!await prefs.setString(_scheduleUserKey, kind.code) ||
-        _initializationFailed) {
+        !_isScheduleReady ||
+        _scheduleOverwriteCleanupInProgress) {
       return;
     }
     await AppUserIdentityStore.saveManualKind(kind);
-    if (_initializationFailed) return;
+    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return;
     notifyListeners();
     // 切换身份后拉取新身份当前日期的日程
     _pullOwnScheduleIfWindows();
@@ -271,7 +292,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> setGoogleCalendarSyncEnabled(bool enabled) async {
-    if (_initializationFailed || !_supportsGoogleCalendarSync) return;
+    if (!_allowScheduleMutation() || !_supportsGoogleCalendarSync) return;
     if (_googleCalendarSyncEnabled == enabled) return;
     _googleCalendarSyncEnabled = enabled;
     if (!enabled) {
@@ -279,13 +300,14 @@ class TimeProvider with ChangeNotifier {
       _debounceTimer?.cancel();
       _debounceTimer = null;
       if (!_syncStatusController.isClosed) {
-        _syncStatusController.add('Google 日历同步已关闭');
+        _addSyncStatus('Google 日历同步已关闭');
       }
     }
     final prefs = await SharedPreferences.getInstance();
-    if (_initializationFailed) return;
+    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return;
     if (!await prefs.setBool('google_calendar_sync_enabled', enabled) ||
-        _initializationFailed) {
+        !_isScheduleReady ||
+        _scheduleOverwriteCleanupInProgress) {
       return;
     }
     notifyListeners();
@@ -313,6 +335,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void setCategoryExpandState(String categoryId, bool isExpanded) {
+    if (!_allowScheduleMutation()) return;
     _categoryExpandStates[categoryId] = isExpanded;
     _categoryExpandDirty = true;
     _categoriesRevision++;
@@ -402,6 +425,12 @@ class TimeProvider with ChangeNotifier {
     super.dispose();
   }
 
+  @override
+  void notifyListeners() {
+    if (_isDisposed || !_isInitialLoadFinished) return;
+    super.notifyListeners();
+  }
+
   TimeProvider({
     Duration scheduleGiteeDebounce = const Duration(seconds: 3),
     Duration googleCalendarDebounce = const Duration(seconds: 3),
@@ -430,7 +459,9 @@ class TimeProvider with ChangeNotifier {
     }
     _googleAuthSubscription =
         GoogleCalendarService.authStateChanges.listen((_) {
-      if (!_isInitialLoadFinished || _initializationFailed) return;
+      if (!_isInitialLoadFinished || _initializationFailed || _isDisposed) {
+        return;
+      }
       final syncGeneration = _googleSyncGeneration;
       notifyListeners();
       unawaited(pullGoogleCalendarForDate(
@@ -442,6 +473,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void _markInitializationFailed(String message) {
+    if (_isDisposed) return;
     final wasFailed = _initializationFailed;
     _initializationFailed = true;
     _initializationFailureMessage = message;
@@ -462,13 +494,15 @@ class TimeProvider with ChangeNotifier {
       await _loadData();
     } catch (e) {
       debugPrint('初始数据加载失败: $e');
-      _markInitializationFailed('本地日程恢复失败，请检查本地数据后重试');
+      if (!_isDisposed) {
+        _markInitializationFailed('本地日程恢复失败，请检查本地数据后重试');
+      }
     } finally {
       // 无论加载成败都标记加载已结束，避免依赖此标志的特性（如那年今日弹窗）被静默跳过
       _isInitialLoadFinished = true;
+      if (!_isDisposed) notifyListeners();
     }
-    notifyListeners();
-    if (_initializationFailed) return;
+    if (_isDisposed || _initializationFailed) return;
     await _refreshHomeWidget();
     if (_initializationFailed) return;
     // 从本地持久化存储直接加载用户身份（不联网，瞬间完成）
@@ -485,7 +519,7 @@ class TimeProvider with ChangeNotifier {
   Future<void> _loadScheduleUserFromStore() async {
     if (isDesktopPlatform) {
       final manualKind = await AppUserIdentityStore.loadManualKind();
-      if (_initializationFailed) return;
+      if (_initializationFailed || _isDisposed) return;
       if (manualKind != null) {
         _scheduleUser = manualKind;
         _hasSelectedScheduleUser = true;
@@ -494,7 +528,7 @@ class TimeProvider with ChangeNotifier {
       return;
     }
     final identity = await AppUserIdentityStore.load();
-    if (_initializationFailed) return;
+    if (_initializationFailed || _isDisposed) return;
     if (identity != null) {
       final nickname = KnownGoogleUsers.nicknameFor(identity.email);
       if (nickname == '乖乖') {
@@ -506,14 +540,16 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> _restoreGoogleInBackground() async {
-    if (_initializationFailed ||
+    if (_isDisposed ||
+        _initializationFailed ||
         _scheduleOverwriteJournalCleanupPending ||
         !_googleCalendarSyncEnabled) {
       return;
     }
     final syncGeneration = _googleSyncGeneration;
     await GoogleCalendarService.restoreSignIn(background: true);
-    if (_initializationFailed ||
+    if (_isDisposed ||
+        _initializationFailed ||
         _scheduleOverwriteJournalCleanupPending ||
         syncGeneration != _googleSyncGeneration ||
         !_googleCalendarSyncEnabled) {
@@ -521,7 +557,9 @@ class TimeProvider with ChangeNotifier {
     }
     if (_isGoogleCalendarSignedIn) {
       notifyListeners();
-      if (_initializationFailed || syncGeneration != _googleSyncGeneration) {
+      if (_isDisposed ||
+          _initializationFailed ||
+          syncGeneration != _googleSyncGeneration) {
         return;
       }
       await pullGoogleCalendarForCurrentDate();
@@ -536,18 +574,21 @@ class TimeProvider with ChangeNotifier {
   final int _maxStackSize = 20; // 最大支持撤回 20 步
 
   List<TimeSlot> get slots {
+    if (!_isScheduleReady) return const <TimeSlot>[];
     String dateKey = _getDateKey(_currentDate);
     return _dailySlots.putIfAbsent(dateKey, () => _generateInitialSlots());
   }
 
   /// 获取指定日期的时间块列表
   List<TimeSlot>? getSlotsForDate(String dateKey) {
+    if (!_isScheduleReady) return null;
     return _dailySlots[dateKey];
   }
 
   /// 获取（必要时生成）指定日期的 144 槽位，供双列视图等按日期渲染使用。
   /// 空槽不会被标记为 dirty，不会触发落盘。
   List<TimeSlot> slotsForDate(DateTime date) {
+    if (!_isScheduleReady) return const <TimeSlot>[];
     return _dailySlots.putIfAbsent(
         _getDateKey(date), () => _generateInitialSlots());
   }
@@ -592,6 +633,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void previousDay() {
+    if (!_allowScheduleMutation()) return;
     _currentDate = _currentDate.subtract(const Duration(days: 1));
     notifyListeners();
     _refreshHomeWidget();
@@ -600,6 +642,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void nextDay() {
+    if (!_allowScheduleMutation()) return;
     _currentDate = _currentDate.add(const Duration(days: 1));
     notifyListeners();
     _refreshHomeWidget();
@@ -608,6 +651,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void goToDate(DateTime date) {
+    if (!_allowScheduleMutation()) return;
     _currentDate = DateTime(date.year, date.month, date.day);
     notifyListeners();
     _refreshHomeWidget();
@@ -669,7 +713,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void toggleSlot(int index) {
-    if (_initializationFailed || _remoteViewEnabled) {
+    if (!_allowScheduleMutation() || _remoteViewEnabled) {
       return; // 恢复失败或远程视图只读，禁止编辑本地数据
     }
     _saveSnapshot();
@@ -687,11 +731,11 @@ class TimeProvider with ChangeNotifier {
     _markPendingSync(dateKey);
     _saveData();
     notifyListeners();
-    _targetStatsChangedController.add(null); // 通知目标统计变化
+    _addTargetStatsChanged(); // 通知目标统计变化
   }
 
   void clearAll() {
-    if (_initializationFailed || _remoteViewEnabled) return;
+    if (!_allowScheduleMutation() || _remoteViewEnabled) return;
     _saveSnapshot();
     final dateKey = _getDateKey(_currentDate);
     final daySlots = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
@@ -707,7 +751,7 @@ class TimeProvider with ChangeNotifier {
     _markPendingSync();
     _saveData();
     notifyListeners();
-    _targetStatsChangedController.add(null); // 通知目标统计变化
+    _addTargetStatsChanged(); // 通知目标统计变化
     _scheduleCalendarSync();
   }
 
@@ -765,7 +809,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void undo() {
-    if (_initializationFailed || _remoteViewEnabled) return;
+    if (!_allowScheduleMutation() || _remoteViewEnabled) return;
     final dateKey = _lastEditedDateKey ?? _getDateKey(_currentDate);
     if (_undoStacks[dateKey] != null && _undoStacks[dateKey]!.isNotEmpty) {
       _dailySlots[dateKey] = _undoStacks[dateKey]!.removeLast();
@@ -782,7 +826,7 @@ class TimeProvider with ChangeNotifier {
 
   void assignCategoryToSlots(Set<int> indices, Category category,
       {String? subLabel, DateTime? date}) {
-    if (_initializationFailed || _remoteViewEnabled) return;
+    if (!_allowScheduleMutation() || _remoteViewEnabled) return;
     if (indices.isEmpty) return;
 
     // 未指定日期时维持原有行为（操作当前日期，走完整同步链路）
@@ -815,7 +859,7 @@ class TimeProvider with ChangeNotifier {
     }
     _saveData();
     notifyListeners();
-    _targetStatsChangedController.add(null); // 通知目标统计变化
+    _addTargetStatsChanged(); // 通知目标统计变化
   }
 
   /// 应用语音解析出的日程草稿。
@@ -827,7 +871,7 @@ class TimeProvider with ChangeNotifier {
     VoiceScheduleDraft draft, {
     VoiceScheduleConflictMode mode = VoiceScheduleConflictMode.fillEmptyOnly,
   }) {
-    if (_initializationFailed || _remoteViewEnabled) {
+    if (!_allowScheduleMutation() || _remoteViewEnabled) {
       return const VoiceScheduleApplyResult(
         appliedSlotCount: 0,
         conflictCount: 0,
@@ -898,8 +942,19 @@ class TimeProvider with ChangeNotifier {
 
   /// 安全地向 scheduleGiteeSyncController 发送状态消息
   void _addScheduleSyncStatus(String message) {
+    if (_isDisposed) return;
     final c = _scheduleGiteeSyncController;
     if (c != null && !c.isClosed) c.add(message);
+  }
+
+  void _addSyncStatus(String message) {
+    if (_isDisposed || _syncStatusController.isClosed) return;
+    _syncStatusController.add(message);
+  }
+
+  void _addTargetStatsChanged() {
+    if (_isDisposed || _targetStatsChangedController.isClosed) return;
+    _targetStatsChangedController.add(null);
   }
 
   Timer? _scheduleGiteeTimer;
@@ -928,9 +983,10 @@ class TimeProvider with ChangeNotifier {
   /// [dateKey] 捕获目标日期，避免防抖期间切换日期推错日期。
   /// 多日期编辑时保留所有待同步日期，避免后一次编辑取消前一次编辑。
   void _markScheduleGiteePending([String? dateKey]) {
-    if (_initializationFailed ||
+    if (!_isScheduleReady ||
         _scheduleOverwriteJournalCleanupPending ||
-        _scheduleOverwriteInProgress) {
+        _scheduleOverwriteInProgress ||
+        _scheduleOverwriteCleanupInProgress) {
       return;
     }
     final target = dateKey ?? _getDateKey(_currentDate);
@@ -945,7 +1001,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> _flushPendingScheduleGiteeSync() async {
-    if (_initializationFailed) return;
+    if (!_isScheduleReady) return;
     if (_scheduleOverwriteJournalCleanupPending) return;
     if (_pendingScheduleGiteeDateKeys.isEmpty) return;
     if (_isAnyScheduleSyncBlocked) {
@@ -966,6 +1022,7 @@ class TimeProvider with ChangeNotifier {
   Future<void> syncScheduleToGitee({String? dateKey}) async {
     if (!_isInitialLoadFinished ||
         _initializationFailed ||
+        _isDisposed ||
         _scheduleOverwriteJournalCleanupPending) {
       return;
     }
@@ -992,7 +1049,7 @@ class TimeProvider with ChangeNotifier {
           token == null ||
           token.isEmpty) {
         _addScheduleSyncStatus('未配置同步 Token');
-        _syncStatusController.add("未配置同步 Token");
+        _addSyncStatus("未配置同步 Token");
         return;
       }
 
@@ -1000,7 +1057,7 @@ class TimeProvider with ChangeNotifier {
 
       _addScheduleSyncStatus('同步中...');
       if (!_syncStatusController.isClosed) {
-        _syncStatusController.add("SYNCING");
+        _addSyncStatus("SYNCING");
       }
       final ok = await _pushScheduleDay(
         effectiveDateKey,
@@ -1017,7 +1074,7 @@ class TimeProvider with ChangeNotifier {
           _clearPendingGiteeForDate(effectiveDateKey);
         }
         if (!_syncStatusController.isClosed) {
-          _syncStatusController.add("日程同步成功");
+          _addSyncStatus("日程同步成功");
         }
         Future.delayed(const Duration(seconds: 3), () {
           _addScheduleSyncStatus('');
@@ -1025,18 +1082,18 @@ class TimeProvider with ChangeNotifier {
       } else {
         _addScheduleSyncStatus('同步失败');
         if (!_syncStatusController.isClosed) {
-          _syncStatusController.add("日程同步失败");
+          _addSyncStatus("日程同步失败");
         }
       }
     } catch (e) {
       _addScheduleSyncStatus('同步失败: $e');
       if (!_syncStatusController.isClosed) {
-        _syncStatusController.add("日程同步失败: $e");
+        _addSyncStatus("日程同步失败: $e");
       }
     } finally {
       _scheduleGiteeSyncing = false;
       if (!_syncStatusController.isClosed) {
-        _syncStatusController.add("IDLE");
+        _addSyncStatus("IDLE");
       }
     }
   }
@@ -1194,6 +1251,7 @@ class TimeProvider with ChangeNotifier {
   Future<void> syncAllSchedulesToGitee() async {
     if (!_isInitialLoadFinished ||
         _initializationFailed ||
+        _isDisposed ||
         _scheduleOverwriteJournalCleanupPending) {
       return;
     }
@@ -1286,6 +1344,7 @@ class TimeProvider with ChangeNotifier {
   Future<void> pullAllSchedulesFromGitee() async {
     if (!_isInitialLoadFinished ||
         _initializationFailed ||
+        _isDisposed ||
         _scheduleOverwriteJournalCleanupPending) {
       return;
     }
@@ -1385,7 +1444,7 @@ class TimeProvider with ChangeNotifier {
 
   Future<bool> overwriteAllSchedulesFromGitee() async {
     _lastScheduleOverwriteFailure = null;
-    if (!_isInitialLoadFinished) {
+    if (!_isInitialLoadFinished || _isDisposed) {
       return _rejectScheduleOverwrite('覆盖拉取未开始：本地日程仍在加载');
     }
     if (_initializationFailed) {
@@ -1422,8 +1481,10 @@ class TimeProvider with ChangeNotifier {
     final startSlotsRevision = _slotsRevision;
 
     bool overwriteIsStillValid() =>
+        _isScheduleReady &&
         !_initializationFailed &&
         !_scheduleOverwriteJournalCleanupPending &&
+        !_scheduleOverwriteCleanupInvalidated &&
         _hasSelectedScheduleUser &&
         _scheduleUser.code == selectedUserCode;
     var succeeded = false;
@@ -1548,10 +1609,18 @@ class TimeProvider with ChangeNotifier {
       // next startup will verify the new snapshot and retry cleanup instead of
       // rolling it back.
       final committedSlotsRevision = _slotsRevision;
-      final finalized = await _finalizeScheduleOverwriteJournal(
-        isStillValid: () =>
-            overwriteIsStillValid() && _slotsRevision == committedSlotsRevision,
-      );
+      _scheduleOverwriteCleanupInProgress = true;
+      _scheduleOverwriteCleanupInvalidated = false;
+      bool finalized;
+      try {
+        finalized = await _finalizeScheduleOverwriteJournal(
+          isStillValid: () =>
+              overwriteIsStillValid() &&
+              _slotsRevision == committedSlotsRevision,
+        );
+      } finally {
+        _scheduleOverwriteCleanupInProgress = false;
+      }
       if (!finalized) {
         _lastScheduleOverwriteFailure = _scheduleOverwriteJournalCleanupPending
             ? '覆盖拉取已写入，但提交日志清理未完成，请稍后重试'
@@ -1568,6 +1637,8 @@ class TimeProvider with ChangeNotifier {
     } finally {
       if (_scheduleOverwriteInProgress) {
         _scheduleOverwriteInProgress = false;
+        _scheduleOverwriteCleanupInProgress = false;
+        _scheduleOverwriteCleanupInvalidated = false;
         final shouldFlush = _deferredScheduleSaveRequested;
         _deferredScheduleSaveRequested = false;
         if (shouldFlush && !_initializationFailed) {
@@ -1771,6 +1842,7 @@ class TimeProvider with ChangeNotifier {
   }) async {
     if (!_isInitialLoadFinished ||
         _initializationFailed ||
+        _isDisposed ||
         _scheduleOverwriteJournalCleanupPending) {
       return false;
     }
@@ -1852,8 +1924,7 @@ class TimeProvider with ChangeNotifier {
   /// 切换查看对方日程。打开时显示纯远端数据；关闭时恢复本地数据。
   /// Windows 三列视图下覆盖选中日及前后各一天，安卓仅覆盖选中日。
   Future<void> toggleRemoteScheduleView() async {
-    if (!_isInitialLoadFinished ||
-        _initializationFailed ||
+    if (!_allowScheduleMutation() ||
         _scheduleOverwriteJournalCleanupPending) {
       return;
     }
@@ -1975,7 +2046,7 @@ class TimeProvider with ChangeNotifier {
 
   /// 本地与云端日历不一致时标记（与是否已登录无关）
   void _markPendingSync([String? dateKey]) {
-    if (_initializationFailed) return;
+    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return;
     final key = dateKey ?? _getDateKey(_currentDate);
     _pendingSyncState.markGitee(key);
     if (_supportsGoogleCalendarSync) {
@@ -1986,6 +2057,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void _clearPendingGiteeForDate([String? dateKey]) {
+    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return;
     final key = dateKey ?? _getDateKey(_currentDate);
     if (_pendingSyncState.giteeDates.contains(key)) {
       _pendingSyncState.clearGitee(key);
@@ -1996,6 +2068,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void _clearPendingGoogleForDate([String? dateKey]) {
+    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return;
     final key = dateKey ?? _getDateKey(_currentDate);
     if (_pendingSyncState.googleDates.contains(key)) {
       _pendingSyncState.clearGoogle(key);
@@ -2027,6 +2100,7 @@ class TimeProvider with ChangeNotifier {
   Future<void> syncAll() async {
     if (!_isInitialLoadFinished ||
         _initializationFailed ||
+        _isDisposed ||
         _scheduleOverwriteJournalCleanupPending) {
       return;
     }
@@ -2066,7 +2140,7 @@ class TimeProvider with ChangeNotifier {
         !_supportsGoogleCalendarSync ||
         !_googleCalendarSyncEnabled) {
       if (!delay) {
-        _syncStatusController.add('Google 日历同步已关闭');
+        _addSyncStatus('Google 日历同步已关闭');
       }
       return;
     }
@@ -2075,7 +2149,8 @@ class TimeProvider with ChangeNotifier {
     if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
 
     Future<void> executeSync() async {
-      if (_initializationFailed ||
+      if (_isDisposed ||
+          _initializationFailed ||
           _scheduleOverwriteJournalCleanupPending ||
           syncGeneration != _googleSyncGeneration ||
           _isSyncing ||
@@ -2088,16 +2163,17 @@ class TimeProvider with ChangeNotifier {
           final msg = GoogleCalendarService.needsCalendarReconnect
               ? '日历未连接，请在设置中重新连接'
               : '未登录 Google 账号，无法同步';
-          _syncStatusController.add(msg);
+          _addSyncStatus(msg);
         }
         return;
       }
 
       _isSyncing = true;
       try {
-        _syncStatusController.add("开始同步");
+        _addSyncStatus("开始同步");
         if (delay) await Future.delayed(const Duration(milliseconds: 500));
-        if (_initializationFailed ||
+        if (_isDisposed ||
+            _initializationFailed ||
             _scheduleOverwriteJournalCleanupPending ||
             syncGeneration != _googleSyncGeneration ||
             _scheduleOverwriteInProgress) {
@@ -2105,7 +2181,7 @@ class TimeProvider with ChangeNotifier {
         }
 
         if (!_syncStatusController.isClosed) {
-          _syncStatusController.add("SYNCING");
+          _addSyncStatus("SYNCING");
         }
 
         bool pullOk = await pullGoogleCalendarForDate(
@@ -2115,7 +2191,8 @@ class TimeProvider with ChangeNotifier {
         );
         // The pull itself is asynchronous.  An overwrite can begin after the
         // debounce check above, so guard immediately before the upload API.
-        if (_initializationFailed ||
+        if (_isDisposed ||
+            _initializationFailed ||
             _scheduleOverwriteJournalCleanupPending ||
             syncGeneration != _googleSyncGeneration ||
             _scheduleOverwriteInProgress) {
@@ -2125,7 +2202,8 @@ class TimeProvider with ChangeNotifier {
             GoogleCalendarService.syncSlotsToGoogle;
         final success = await pushGoogleDay(slots, _currentDate);
 
-        if (_initializationFailed ||
+        if (_isDisposed ||
+            _initializationFailed ||
             _scheduleOverwriteJournalCleanupPending ||
             syncGeneration != _googleSyncGeneration ||
             _scheduleOverwriteInProgress) {
@@ -2136,23 +2214,23 @@ class TimeProvider with ChangeNotifier {
           _clearPendingGoogleForDate();
           if (!delay) {
             if (!pullOk) {
-              _syncStatusController.add("同步成功（日历拉取失败）");
+              _addSyncStatus("同步成功（日历拉取失败）");
             } else {
-              _syncStatusController.add("同步成功");
+              _addSyncStatus("同步成功");
             }
           }
         } else if (!delay) {
           if (!pullOk) {
-            _syncStatusController.add("从 Google 日历拉取失败");
+            _addSyncStatus("从 Google 日历拉取失败");
           } else {
-            _syncStatusController.add("同步失败，请稍后重试");
+            _addSyncStatus("同步失败，请稍后重试");
           }
         }
 
         // 延迟重置状态
         Future.delayed(const Duration(seconds: 3), () {
           if (!_syncStatusController.isClosed) {
-            _syncStatusController.add("IDLE");
+            _addSyncStatus("IDLE");
           }
         });
       } finally {
@@ -2171,9 +2249,10 @@ class TimeProvider with ChangeNotifier {
   Future<void> synchronizeAllPendingCalendars() async {
     if (!_isInitialLoadFinished ||
         _initializationFailed ||
+        _isDisposed ||
         _scheduleOverwriteJournalCleanupPending ||
         !_googleCalendarSyncEnabled) {
-      _syncStatusController.add('Google 日历同步已关闭');
+      _addSyncStatus('Google 日历同步已关闭');
       return;
     }
     if (_scheduleOverwriteInProgress) return;
@@ -2185,16 +2264,17 @@ class TimeProvider with ChangeNotifier {
       await Future.delayed(const Duration(milliseconds: 200));
       waitedMs += 200;
     }
-    if (_initializationFailed ||
+    if (_isDisposed ||
+        _initializationFailed ||
         _scheduleOverwriteJournalCleanupPending ||
         _isSyncing ||
         _scheduleOverwriteInProgress) {
-      _syncStatusController.add("同步进行中，请稍后重试");
+      _addSyncStatus("同步进行中，请稍后重试");
       return;
     }
 
     if (!_isGoogleCalendarSignedIn) {
-      _syncStatusController.add("未登录 Google 账号，无法同步");
+      _addSyncStatus("未登录 Google 账号，无法同步");
       return;
     }
 
@@ -2205,11 +2285,12 @@ class TimeProvider with ChangeNotifier {
 
     _isSyncing = true;
     try {
-      _syncStatusController.add("SYNCING");
+      _addSyncStatus("SYNCING");
 
       var allSuccess = true;
       for (final rawKey in pendingKeys) {
-        if (_initializationFailed ||
+        if (_isDisposed ||
+            _initializationFailed ||
             _scheduleOverwriteJournalCleanupPending ||
             _scheduleOverwriteInProgress) {
           allSuccess = false;
@@ -2231,7 +2312,8 @@ class TimeProvider with ChangeNotifier {
         }
 
         final date = DateTime(year, month, day);
-        if (_initializationFailed ||
+        if (_isDisposed ||
+            _initializationFailed ||
             _scheduleOverwriteJournalCleanupPending ||
             _scheduleOverwriteInProgress) {
           allSuccess = false;
@@ -2245,11 +2327,13 @@ class TimeProvider with ChangeNotifier {
           pull: () => pullGoogleCalendarForDate(date, notify: false),
           canContinue: () =>
               _isInitialLoadFinished &&
+              !_isDisposed &&
               !_initializationFailed &&
               !_scheduleOverwriteJournalCleanupPending &&
               !_scheduleOverwriteInProgress,
           push: (slotsForDay) {
-            if (_initializationFailed ||
+            if (_isDisposed ||
+                _initializationFailed ||
                 _scheduleOverwriteJournalCleanupPending ||
                 _scheduleOverwriteInProgress) {
               return Future.value(false);
@@ -2260,7 +2344,8 @@ class TimeProvider with ChangeNotifier {
           },
         );
 
-        if (_initializationFailed ||
+        if (_isDisposed ||
+            _initializationFailed ||
             _scheduleOverwriteJournalCleanupPending ||
             _scheduleOverwriteInProgress) {
           allSuccess = false;
@@ -2279,27 +2364,29 @@ class TimeProvider with ChangeNotifier {
         }
       }
 
-      if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) {
+      if (_isDisposed ||
+          _initializationFailed ||
+          _scheduleOverwriteJournalCleanupPending) {
         return;
       }
       final saved = await _saveData();
-      if (_initializationFailed ||
+      if (_isDisposed ||
+          _initializationFailed ||
           _scheduleOverwriteJournalCleanupPending ||
           !saved) {
         return;
       }
       notifyListeners();
       if (pendingGoogleSyncDates.isEmpty && allSuccess) {
-        _syncStatusController.add("同步成功");
+        _addSyncStatus("同步成功");
       } else {
-        _syncStatusController
-            .add("部分同步失败（剩余${pendingGoogleSyncDates.length}天）");
+        _addSyncStatus("部分同步失败（剩余${pendingGoogleSyncDates.length}天）");
       }
     } finally {
       _isSyncing = false;
       Future.delayed(const Duration(seconds: 3), () {
         if (!_syncStatusController.isClosed) {
-          _syncStatusController.add("IDLE");
+          _addSyncStatus("IDLE");
         }
       });
     }
@@ -2307,7 +2394,7 @@ class TimeProvider with ChangeNotifier {
 
   // 移除指定时间块的事件
   void removeEventFromSlot(int index, {DateTime? date}) {
-    if (_initializationFailed || _remoteViewEnabled) return;
+    if (!_allowScheduleMutation() || _remoteViewEnabled) return;
     final targetDate = date ?? _currentDate;
     final dateKey = _getDateKey(targetDate);
     final daySlots = slotsForDate(targetDate);
@@ -2330,7 +2417,7 @@ class TimeProvider with ChangeNotifier {
           }
           _saveData();
           notifyListeners();
-          _targetStatsChangedController.add(null); // 通知目标统计变化
+          _addTargetStatsChanged(); // 通知目标统计变化
         }
       }
     }
@@ -2354,6 +2441,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> _dismissCalendarImportAt(int index, {DateTime? date}) async {
+    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return;
     final targetDate = date ?? _currentDate;
     final dateKey = _getDateKey(targetDate);
     final daySlots = slotsForDate(targetDate);
@@ -2430,7 +2518,7 @@ class TimeProvider with ChangeNotifier {
             .add(resolvedEventId);
         needsSecondSave = true;
         if (!_syncStatusController.isClosed) {
-          _syncStatusController.add("删除 Google 日历事件失败");
+          _addSyncStatus("删除 Google 日历事件失败");
         }
       }
     } else {
@@ -2456,8 +2544,10 @@ class TimeProvider with ChangeNotifier {
 
   Future<String?> _resolveGoogleEventId(String title, DateTime rangeStart,
       DateTime rangeEnd, DateTime targetDate) async {
+    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return null;
     final blocks = await GoogleCalendarService.fetchExternalEvents(targetDate);
     if (blocks == null ||
+        _isDisposed ||
         _initializationFailed ||
         _scheduleOverwriteJournalCleanupPending) {
       return null;
@@ -2709,6 +2799,7 @@ class TimeProvider with ChangeNotifier {
       {bool notify = true, int? syncGeneration}) async {
     if (!_isInitialLoadFinished ||
         _initializationFailed ||
+        _isDisposed ||
         _scheduleOverwriteJournalCleanupPending ||
         !_supportsGoogleCalendarSync ||
         !_googleCalendarSyncEnabled) {
@@ -2726,6 +2817,7 @@ class TimeProvider with ChangeNotifier {
           GoogleCalendarService.fetchExternalEvents;
       final blocks = await pullGoogleDay(date);
       if (blocks == null ||
+          _isDisposed ||
           _initializationFailed ||
           _scheduleOverwriteJournalCleanupPending ||
           (syncGeneration != null && syncGeneration != _googleSyncGeneration) ||
@@ -2737,7 +2829,8 @@ class TimeProvider with ChangeNotifier {
       _markSlotsDirty(dateKey);
       _targetStatsCache.invalidateDate(dateKey); // 失效该日期的缓存
       final saved = await _saveData();
-      if (_initializationFailed ||
+      if (_isDisposed ||
+          _initializationFailed ||
           _scheduleOverwriteJournalCleanupPending ||
           (syncGeneration != null && syncGeneration != _googleSyncGeneration) ||
           _scheduleOverwriteInProgress ||
@@ -2841,6 +2934,7 @@ class TimeProvider with ChangeNotifier {
 
   /// 从当日记录保存模板；无记录时返回 false
   bool saveTemplateFromCurrentDay(String name) {
+    if (!_allowScheduleMutation()) return false;
     final trimmed = name.trim();
     if (trimmed.isEmpty) return false;
 
@@ -2939,7 +3033,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void _applySlotEntries(List<TemplateSlot> entries, ApplyTemplateMode mode) {
-    if (_initializationFailed || _remoteViewEnabled) return;
+    if (!_allowScheduleMutation() || _remoteViewEnabled) return;
     _saveSnapshot();
 
     final dateKey = _getDateKey(_currentDate);
@@ -2974,11 +3068,12 @@ class TimeProvider with ChangeNotifier {
     _markPendingSync();
     _saveData();
     notifyListeners();
-    _targetStatsChangedController.add(null); // 通知目标统计变化
+    _addTargetStatsChanged(); // 通知目标统计变化
     _scheduleCalendarSync();
   }
 
   void renameTemplate(String id, String newName) {
+    if (!_allowScheduleMutation()) return;
     final trimmed = newName.trim();
     if (trimmed.isEmpty) return;
     final index = _templates.indexWhere((t) => t.id == id);
@@ -2990,6 +3085,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void deleteTemplate(String id) {
+    if (!_allowScheduleMutation()) return;
     _templates.removeWhere((t) => t.id == id);
     _markTemplatesChanged(); // 标记模板为脏
     _saveData();
@@ -2999,6 +3095,7 @@ class TimeProvider with ChangeNotifier {
   // --- 分类管理方法 (从 HomeScreen 移入) ---
 
   void addCategory(Category category) {
+    if (!_allowScheduleMutation()) return;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     _categories.add(category.updatedAt <= 0
         ? category.copyWith(updatedAt: nowMs)
@@ -3011,6 +3108,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void updateCategory(int index, Category newCategory) {
+    if (!_allowScheduleMutation()) return;
     if (index < 0 || index >= _categories.length) return;
 
     final oldCategory = _categories[index];
@@ -3043,6 +3141,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void hideSubCategory(int catIndex, String subCategory) {
+    if (!_allowScheduleMutation()) return;
     if (catIndex < 0 || catIndex >= _categories.length) return;
     final cat = _categories[catIndex];
     final newSubs = List<String>.from(cat.subCategories)..remove(subCategory);
@@ -3060,6 +3159,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void restoreSubCategory(int catIndex, String subCategory) {
+    if (!_allowScheduleMutation()) return;
     if (catIndex < 0 || catIndex >= _categories.length) return;
     final cat = _categories[catIndex];
     final newHidden = List<String>.from(cat.hiddenSubCategories)
@@ -3179,7 +3279,7 @@ class TimeProvider with ChangeNotifier {
     _markTemplatesChanged();
     _targetStatsCache.invalidate();
     _invalidateLabelCategoryIdCache();
-    _targetStatsChangedController.add(null); // 通知目标统计变化
+    _addTargetStatsChanged(); // 通知目标统计变化
   }
 
   void _migrateToCategoryIds() {
@@ -3255,7 +3355,7 @@ class TimeProvider with ChangeNotifier {
   // --- 数据持久化逻辑 ---
 
   Future<bool> _saveData({_ScheduleSaveSnapshot? snapshot}) async {
-    if (_initializationFailed) return false;
+    if (!_isScheduleReady) return false;
     if (snapshot == null && _scheduleOverwriteInProgress) {
       _deferredScheduleSaveRequested = true;
       return false;
@@ -3282,7 +3382,7 @@ class TimeProvider with ChangeNotifier {
     int requestRevision,
     _ScheduleSaveSnapshot? snapshot,
   ) async {
-    if (_isSchedulePersistenceBlocked) return false;
+    if (!_isScheduleReady || _isSchedulePersistenceBlocked) return false;
     if (snapshot == null && _scheduleOverwriteInProgress) {
       _deferredScheduleSaveRequested = true;
       return false;
@@ -3301,7 +3401,7 @@ class TimeProvider with ChangeNotifier {
     }
 
     final prefs = await SharedPreferences.getInstance();
-    if (_isSchedulePersistenceBlocked) return false;
+    if (!_isScheduleReady || _isSchedulePersistenceBlocked) return false;
 
     // 1. 保存分类（仅在变化时）
     final categoriesDirtyAtStart = _categoriesDirty;
@@ -3569,6 +3669,7 @@ class TimeProvider with ChangeNotifier {
     );
     var journalWritten = false;
     Future<void> rollbackOrBlock(_ScheduleOverwriteJournal journal) async {
+      if (_isDisposed) return;
       if (!await _rollbackScheduleOverwriteJournal(prefs, journal)) {
         _markInitializationFailed('覆盖日程回滚无法确认本地数据，请重启应用恢复');
       }
@@ -3756,6 +3857,14 @@ class TimeProvider with ChangeNotifier {
         debugPrint('覆盖快照提交后无法清理日志，保留 committed 日志');
         return false;
       }
+      // A mutation request may have been rejected while the real remove was
+      // awaiting.  The key is already gone, so do not recreate the journal;
+      // report failure while leaving the committed snapshot owned by the
+      // original identity and recoverable on restart.
+      if (isStillValid != null && !isStillValid()) {
+        _scheduleOverwriteJournalCleanupPending = false;
+        return false;
+      }
       // The new schedule is already committed in memory and on disk.  Once
       // the remove has been confirmed, cleanup is complete even if the user
       // edits or switches identity while the platform await was in flight.
@@ -3827,10 +3936,12 @@ class TimeProvider with ChangeNotifier {
   ) async {
     var restored = true;
     for (final entry in snapshot.values.entries) {
+      if (_isDisposed) return false;
       try {
         final didRestore = entry.value == null
             ? await prefs.remove(entry.key)
             : await _writeSchedulePreference(prefs, entry.key, entry.value);
+        if (_isDisposed) return false;
         if (!didRestore ||
             !_schedulePreferenceValuesEqual(
                 prefs.get(entry.key), entry.value)) {
@@ -3856,6 +3967,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> _recoverScheduleOverwriteJournal(SharedPreferences prefs) async {
+    if (_isDisposed) return;
     final encoded = prefs.getString(_scheduleOverwriteJournalKey);
     if (encoded == null) return;
     final journal = _ScheduleOverwriteJournal.fromEncoded(encoded);
@@ -3872,6 +3984,7 @@ class TimeProvider with ChangeNotifier {
     } else if (!await _restoreSchedulePreferences(prefs, journal.before)) {
       throw StateError('覆盖日程恢复日志无法恢复');
     }
+    if (_isDisposed) return;
     if (!await prefs.remove(_scheduleOverwriteJournalKey) ||
         prefs.containsKey(_scheduleOverwriteJournalKey)) {
       throw StateError('覆盖日程恢复日志无法清理');
@@ -3880,13 +3993,14 @@ class TimeProvider with ChangeNotifier {
 
   Future<void> _refreshHomeWidget() async {
     // 桌面小组件仅 Android 支持，Windows 无实现，直接跳过避免 MissingPluginException
-    if (isDesktopPlatform) return;
+    if (isDesktopPlatform || !_isScheduleReady) return;
     try {
       await HomeWidgetService.updateFromDay(
         slots: slots,
         date: _currentDate,
         pendingSync: hasPendingSyncForCurrentDate,
       );
+      if (!_isScheduleReady) return;
     } catch (e) {
       debugPrint('更新桌面小组件失败: $e');
     }
@@ -3959,6 +4073,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> importBackupJson(String jsonStr) async {
+    if (!_allowScheduleMutation()) return;
     final data = _parseBackupRoot(jsonStr);
     _applyBackupMap(data);
     _migrateToCategoryIds();
@@ -4193,7 +4308,9 @@ class TimeProvider with ChangeNotifier {
 
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
+    if (_isDisposed) return;
     await _recoverScheduleOverwriteJournal(prefs);
+    if (_isDisposed) return;
 
     // 1. 加载分类
     List<String>? catList = prefs.getStringList('categories');
@@ -4336,6 +4453,7 @@ class TimeProvider with ChangeNotifier {
   /// 移动子分类到另一个分类
   void moveSubCategory(
       String fromCategoryId, String toCategoryId, String subName) {
+    if (!_allowScheduleMutation()) return;
     // 1. 更新分类结构
     final fromIndex = _categories.indexWhere((c) => c.id == fromCategoryId);
     final toIndex = _categories.indexWhere((c) => c.id == toCategoryId);
@@ -4378,12 +4496,13 @@ class TimeProvider with ChangeNotifier {
     _markAllSlotsDirty();
     _invalidateLabelCategoryIdCache();
     _targetStatsCache.invalidate();
-    _targetStatsChangedController.add(null);
+    _addTargetStatsChanged();
     _saveData();
     notifyListeners();
   }
 
   void reorderCategories(int oldIndex, int newIndex) {
+    if (!_allowScheduleMutation()) return;
     final Category item = _categories.removeAt(oldIndex);
     _categories.insert(newIndex, item);
 
@@ -4396,6 +4515,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void deleteCategory(int index) {
+    if (!_allowScheduleMutation()) return;
     final categoryId = _categories[index].id;
     // 写入带时间戳的删除墓碑，防止另一端已同步的分支复活
     _deletedCategories[categoryId] = DateTime.now().millisecondsSinceEpoch;
@@ -4419,37 +4539,41 @@ class TimeProvider with ChangeNotifier {
 
     notifyListeners();
     _saveData();
-    _targetStatsChangedController.add(null);
+    _addTargetStatsChanged();
   }
 
   void addTarget(Target target) {
+    if (!_allowScheduleMutation()) return;
     _targets.add(target);
     _targetsDirty = true;
     _saveData();
     notifyListeners();
-    _targetStatsChangedController.add(null); // 通知目标统计变化
+    _addTargetStatsChanged(); // 通知目标统计变化
   }
 
   void updateTarget(Target newTarget) {
+    if (!_allowScheduleMutation()) return;
     int index = _targets.indexWhere((t) => t.id == newTarget.id);
     if (index != -1) {
       _targets[index] = newTarget;
       _targetsDirty = true;
       _saveData();
       notifyListeners();
-      _targetStatsChangedController.add(null); // 通知目标统计变化
+      _addTargetStatsChanged(); // 通知目标统计变化
     }
   }
 
   void deleteTarget(Target target) {
+    if (!_allowScheduleMutation()) return;
     _targets.remove(target);
     _targetsDirty = true;
     _saveData();
     notifyListeners();
-    _targetStatsChangedController.add(null); // 通知目标统计变化
+    _addTargetStatsChanged(); // 通知目标统计变化
   }
 
   void reorderTargets(int oldIndex, int newIndex) {
+    if (!_allowScheduleMutation()) return;
     final Target item = _targets.removeAt(oldIndex);
     _targets.insert(newIndex, item);
     _targetsDirty = true; // 标记目标为脏
