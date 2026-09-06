@@ -173,4 +173,33 @@ void main() {
     expect(result.pushSucceeded, isTrue);
     expect(identical(pushedSlots, afterPull), isTrue);
   });
+
+  test('continuation guard prevents slot creation after pull invalidation',
+      () async {
+    const dateKey = '2026-08-23';
+    final dailySlots = <String, List<TimeSlot>>{};
+    var canContinue = true;
+    var pushCalls = 0;
+
+    final result = await synchronizePendingGoogleDay(
+      dailySlots: dailySlots,
+      dateKey: dateKey,
+      explicitlyPending: true,
+      createSlots: _emptyDay,
+      pull: () async {
+        canContinue = false;
+        return true;
+      },
+      canContinue: () => canContinue,
+      push: (_) async {
+        pushCalls++;
+        return true;
+      },
+    );
+
+    expect(result.pullSucceeded, isTrue);
+    expect(result.pushSucceeded, isFalse);
+    expect(pushCalls, 0);
+    expect(dailySlots, isEmpty);
+  });
 }

@@ -187,6 +187,7 @@ class TimeProvider with ChangeNotifier {
   Timer? _debounceTimer;
   Future<bool>? _ongoingSave;
   int _saveRequestRevision = 0;
+  bool _isDisposed = false;
 
   DateTime _currentDate = DateTime.now();
   bool _isSyncing = false; // 添加同步锁标志，防止并发同步导致重复
@@ -209,9 +210,10 @@ class TimeProvider with ChangeNotifier {
       _initializationFailed || _scheduleOverwriteJournalCleanupPending;
 
   bool _canContinueScheduleSync(String selectedUserCode) {
-    return !_initializationFailed &&
+    return _isInitialLoadFinished &&
+        !_initializationFailed &&
         !_scheduleOverwriteJournalCleanupPending &&
-        _scheduleOverwriteCompleter == null &&
+        !_scheduleOverwriteInProgress &&
         _hasSelectedScheduleUser &&
         _scheduleUser.code == selectedUserCode;
   }
@@ -388,6 +390,7 @@ class TimeProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    _isDisposed = true;
     _googleSyncGeneration++;
     _debounceTimer?.cancel();
     _scheduleGiteeTimer?.cancel();
@@ -518,8 +521,7 @@ class TimeProvider with ChangeNotifier {
     }
     if (_isGoogleCalendarSignedIn) {
       notifyListeners();
-      if (_initializationFailed ||
-          syncGeneration != _googleSyncGeneration) {
+      if (_initializationFailed || syncGeneration != _googleSyncGeneration) {
         return;
       }
       await pullGoogleCalendarForCurrentDate();
@@ -618,7 +620,11 @@ class TimeProvider with ChangeNotifier {
   /// 解决安卓端推送后 Windows 本地无数据看不到自己日程的问题。
   /// 拉取失败静默，不打断用户操作。
   void _pullOwnScheduleIfWindows() {
-    if (_initializationFailed || !isDesktopPlatform) return;
+    if (!_isInitialLoadFinished ||
+        _initializationFailed ||
+        !isDesktopPlatform) {
+      return;
+    }
     if (!_hasSelectedScheduleUser) return;
     final requestRevision = ++_schedulePullRevision;
     if (_remoteViewEnabled) {
@@ -898,7 +904,7 @@ class TimeProvider with ChangeNotifier {
 
   Timer? _scheduleGiteeTimer;
   bool _scheduleGiteeSyncing = false;
-  Completer<bool>? _scheduleOverwriteCompleter;
+  bool _scheduleOverwriteInProgress = false;
   int _scheduleMergePullsInProgress = 0;
   int _googleCalendarPullsInProgress = 0;
   final Set<String> _pendingScheduleGiteeDateKeys = {};
@@ -914,7 +920,7 @@ class TimeProvider with ChangeNotifier {
       _allScheduleSyncing ||
       _allSchedulePulling ||
       _isSyncing ||
-      _scheduleOverwriteCompleter != null ||
+      _scheduleOverwriteInProgress ||
       _scheduleMergePullsInProgress > 0 ||
       _googleCalendarPullsInProgress > 0;
 
@@ -924,7 +930,7 @@ class TimeProvider with ChangeNotifier {
   void _markScheduleGiteePending([String? dateKey]) {
     if (_initializationFailed ||
         _scheduleOverwriteJournalCleanupPending ||
-        _scheduleOverwriteCompleter != null) {
+        _scheduleOverwriteInProgress) {
       return;
     }
     final target = dateKey ?? _getDateKey(_currentDate);
@@ -958,7 +964,9 @@ class TimeProvider with ChangeNotifier {
 
   /// 推送指定日期日程到 Gitee（每人独立文件）
   Future<void> syncScheduleToGitee({String? dateKey}) async {
-    if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) {
+    if (!_isInitialLoadFinished ||
+        _initializationFailed ||
+        _scheduleOverwriteJournalCleanupPending) {
       return;
     }
     if (_remoteViewEnabled) {
@@ -970,7 +978,7 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('请先选择身份');
       return;
     }
-    if (_scheduleOverwriteCompleter != null) return;
+    if (_scheduleOverwriteInProgress) return;
     final effectiveDateKey = dateKey ?? _getDateKey(_currentDate);
     final syncRevision = _scheduleGiteeDateRevisions[effectiveDateKey] ?? 0;
     final selectedUserCode = _scheduleUser.code;
@@ -1184,7 +1192,11 @@ class TimeProvider with ChangeNotifier {
 
   /// 全量同步所有日期的日程到 Gitee
   Future<void> syncAllSchedulesToGitee() async {
-    if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) return;
+    if (!_isInitialLoadFinished ||
+        _initializationFailed ||
+        _scheduleOverwriteJournalCleanupPending) {
+      return;
+    }
     if (_remoteViewEnabled) {
       _addScheduleSyncStatus('远程视图下不推送');
       return;
@@ -1193,7 +1205,7 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('请先选择身份');
       return;
     }
-    if (_scheduleOverwriteCompleter != null ||
+    if (_scheduleOverwriteInProgress ||
         _allScheduleSyncing ||
         _allSchedulePulling) {
       return;
@@ -1272,7 +1284,11 @@ class TimeProvider with ChangeNotifier {
 
   /// 从 Gitee 拉取当前用户所有日期的日程，逐日双向合并后统一落盘。
   Future<void> pullAllSchedulesFromGitee() async {
-    if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) return;
+    if (!_isInitialLoadFinished ||
+        _initializationFailed ||
+        _scheduleOverwriteJournalCleanupPending) {
+      return;
+    }
     if (_remoteViewEnabled) {
       _addScheduleSyncStatus('远程视图下不拉取');
       return;
@@ -1281,7 +1297,7 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('请先选择身份');
       return;
     }
-    if (_scheduleOverwriteCompleter != null ||
+    if (_scheduleOverwriteInProgress ||
         _allSchedulePulling ||
         _allScheduleSyncing) {
       return;
@@ -1304,8 +1320,7 @@ class TimeProvider with ChangeNotifier {
         token: token,
         userCode: selectedUserCode,
       );
-      if (!_canContinueScheduleSync(selectedUserCode) ||
-          !listResult.success) {
+      if (!_canContinueScheduleSync(selectedUserCode) || !listResult.success) {
         _addScheduleSyncStatus(listResult.error ?? '读取远端日程列表失败');
         return;
       }
@@ -1370,6 +1385,9 @@ class TimeProvider with ChangeNotifier {
 
   Future<bool> overwriteAllSchedulesFromGitee() async {
     _lastScheduleOverwriteFailure = null;
+    if (!_isInitialLoadFinished) {
+      return _rejectScheduleOverwrite('覆盖拉取未开始：本地日程仍在加载');
+    }
     if (_initializationFailed) {
       return _rejectScheduleOverwrite(
         _initializationFailureMessage ?? '覆盖拉取未开始：本地日程恢复失败',
@@ -1384,7 +1402,7 @@ class TimeProvider with ChangeNotifier {
     if (!_hasSelectedScheduleUser) {
       return _rejectScheduleOverwrite('覆盖拉取未开始：请先选择身份');
     }
-    if (_scheduleOverwriteCompleter != null ||
+    if (_scheduleOverwriteInProgress ||
         _scheduleGiteeSyncing ||
         _allScheduleSyncing ||
         _allSchedulePulling ||
@@ -1395,8 +1413,7 @@ class TimeProvider with ChangeNotifier {
     }
 
     final selectedUserCode = _scheduleUser.code;
-    final overwriteCompleter = Completer<bool>();
-    _scheduleOverwriteCompleter = overwriteCompleter;
+    _scheduleOverwriteInProgress = true;
     _googleSyncGeneration++;
     _scheduleGiteeTimer?.cancel();
     _scheduleGiteeTimer = null;
@@ -1482,8 +1499,7 @@ class TimeProvider with ChangeNotifier {
           giteePendingDates: const {},
           googlePendingDates: const {},
           isStillValid: () =>
-              overwriteIsStillValid() &&
-              _slotsRevision == startSlotsRevision,
+              overwriteIsStillValid() && _slotsRevision == startSlotsRevision,
         ),
       );
       // _saveData may have waited behind an earlier save.  The state that
@@ -1534,14 +1550,12 @@ class TimeProvider with ChangeNotifier {
       final committedSlotsRevision = _slotsRevision;
       final finalized = await _finalizeScheduleOverwriteJournal(
         isStillValid: () =>
-            overwriteIsStillValid() &&
-            _slotsRevision == committedSlotsRevision,
+            overwriteIsStillValid() && _slotsRevision == committedSlotsRevision,
       );
       if (!finalized) {
-        _lastScheduleOverwriteFailure =
-            _scheduleOverwriteJournalCleanupPending
-                ? '覆盖拉取已写入，但提交日志清理未完成，请稍后重试'
-                : '覆盖拉取提交后状态发生变化，请重新确认';
+        _lastScheduleOverwriteFailure = _scheduleOverwriteJournalCleanupPending
+            ? '覆盖拉取已写入，但提交日志清理未完成，请稍后重试'
+            : '覆盖拉取提交后状态发生变化，请重新确认';
         return false;
       }
       succeeded = true;
@@ -1552,8 +1566,8 @@ class TimeProvider with ChangeNotifier {
       _lastScheduleOverwriteFailure = '覆盖拉取未开始或失败，请稍后重试';
       return false;
     } finally {
-      if (_scheduleOverwriteCompleter == overwriteCompleter) {
-        _scheduleOverwriteCompleter = null;
+      if (_scheduleOverwriteInProgress) {
+        _scheduleOverwriteInProgress = false;
         final shouldFlush = _deferredScheduleSaveRequested;
         _deferredScheduleSaveRequested = false;
         if (shouldFlush && !_initializationFailed) {
@@ -1625,14 +1639,15 @@ class TimeProvider with ChangeNotifier {
 
   /// 将本地分类同步到 Gitee：拉远端 → 合并 → 推送合并结果 → 写回本地。
   Future<void> _syncCategoriesToGitee() async {
-    if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) return;
+    if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) {
+      return;
+    }
     if (_remoteViewEnabled) return;
     if (!_hasSelectedScheduleUser) return;
     if (_categoriesGiteeSyncing) return;
     _categoriesGiteeSyncing = true;
-    final userCode = _categoriesUserCode.isEmpty
-        ? _scheduleUser.code
-        : _categoriesUserCode;
+    final userCode =
+        _categoriesUserCode.isEmpty ? _scheduleUser.code : _categoriesUserCode;
     try {
       final token = await DiaryLocalStore.loadToken();
       if (_initializationFailed ||
@@ -1754,10 +1769,12 @@ class TimeProvider with ChangeNotifier {
     DateTime? date,
     int? requestRevision,
   }) async {
-    if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) {
+    if (!_isInitialLoadFinished ||
+        _initializationFailed ||
+        _scheduleOverwriteJournalCleanupPending) {
       return false;
     }
-    if (_scheduleOverwriteCompleter != null) return false;
+    if (_scheduleOverwriteInProgress) return false;
     if (!_hasSelectedScheduleUser) {
       _addScheduleSyncStatus('请先选择身份');
       return false;
@@ -1769,7 +1786,7 @@ class TimeProvider with ChangeNotifier {
     try {
       final token = await _scheduleSyncDependencies.loadToken();
       if (!_canContinueScheduleSync(selectedUserCode) ||
-          _scheduleOverwriteCompleter != null ||
+          _scheduleOverwriteInProgress ||
           token == null ||
           token.isEmpty) {
         _addScheduleSyncStatus('未配置同步 Token');
@@ -1782,7 +1799,7 @@ class TimeProvider with ChangeNotifier {
         userCode: code,
       );
       if (!_canContinueScheduleSync(selectedUserCode) ||
-          _scheduleOverwriteCompleter != null) {
+          _scheduleOverwriteInProgress) {
         return false;
       }
       if (result.notFound) {
@@ -1835,7 +1852,11 @@ class TimeProvider with ChangeNotifier {
   /// 切换查看对方日程。打开时显示纯远端数据；关闭时恢复本地数据。
   /// Windows 三列视图下覆盖选中日及前后各一天，安卓仅覆盖选中日。
   Future<void> toggleRemoteScheduleView() async {
-    if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) return;
+    if (!_isInitialLoadFinished ||
+        _initializationFailed ||
+        _scheduleOverwriteJournalCleanupPending) {
+      return;
+    }
     if (!_hasSelectedScheduleUser) {
       _addScheduleSyncStatus('请先选择身份');
       return;
@@ -1916,8 +1937,7 @@ class TimeProvider with ChangeNotifier {
       // 6) 拉取对方的文件（独立文件，无需过滤）；Windows 逐日拉取三天
       final otherCode = _scheduleUser.code == 'g' ? 'j' : 'g';
       for (final d in dates) {
-        if (_initializationFailed ||
-            _scheduleOverwriteJournalCleanupPending) {
+        if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) {
           return;
         }
         await pullScheduleFromGitee(
@@ -1925,8 +1945,7 @@ class TimeProvider with ChangeNotifier {
           date: d,
           requestRevision: requestRevision,
         );
-        if (_initializationFailed ||
-            _scheduleOverwriteJournalCleanupPending) {
+        if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) {
           return;
         }
       }
@@ -1988,7 +2007,9 @@ class TimeProvider with ChangeNotifier {
 
   /// 应用切到后台：取消防抖计时、立即把本地数据与待同步标记写入磁盘
   Future<void> onAppBackgrounded() async {
-    if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) {
+    if (!_isInitialLoadFinished ||
+        _initializationFailed ||
+        _scheduleOverwriteJournalCleanupPending) {
       return;
     }
     _debounceTimer?.cancel();
@@ -2004,7 +2025,9 @@ class TimeProvider with ChangeNotifier {
 
   /// 统一同步：始终同步到 Gitee，若开启 Google 日历同步则同时同步 Google。
   Future<void> syncAll() async {
-    if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) {
+    if (!_isInitialLoadFinished ||
+        _initializationFailed ||
+        _scheduleOverwriteJournalCleanupPending) {
       return;
     }
     if (isDesktopPlatform) {
@@ -2037,7 +2060,8 @@ class TimeProvider with ChangeNotifier {
   // 合并后的同步方法
   // delay: true 表示自动同步（带防抖），false 表示手动同步（立即执行）
   Future<void> synchronizeCalendar({bool delay = false}) async {
-    if (_initializationFailed ||
+    if (!_isInitialLoadFinished ||
+        _initializationFailed ||
         _scheduleOverwriteJournalCleanupPending ||
         !_supportsGoogleCalendarSync ||
         !_googleCalendarSyncEnabled) {
@@ -2046,7 +2070,7 @@ class TimeProvider with ChangeNotifier {
       }
       return;
     }
-    if (_scheduleOverwriteCompleter != null) return;
+    if (_scheduleOverwriteInProgress) return;
     final syncGeneration = _googleSyncGeneration;
     if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
 
@@ -2055,7 +2079,7 @@ class TimeProvider with ChangeNotifier {
           _scheduleOverwriteJournalCleanupPending ||
           syncGeneration != _googleSyncGeneration ||
           _isSyncing ||
-          _scheduleOverwriteCompleter != null) {
+          _scheduleOverwriteInProgress) {
         return;
       }
 
@@ -2076,7 +2100,7 @@ class TimeProvider with ChangeNotifier {
         if (_initializationFailed ||
             _scheduleOverwriteJournalCleanupPending ||
             syncGeneration != _googleSyncGeneration ||
-            _scheduleOverwriteCompleter != null) {
+            _scheduleOverwriteInProgress) {
           return;
         }
 
@@ -2094,7 +2118,7 @@ class TimeProvider with ChangeNotifier {
         if (_initializationFailed ||
             _scheduleOverwriteJournalCleanupPending ||
             syncGeneration != _googleSyncGeneration ||
-            _scheduleOverwriteCompleter != null) {
+            _scheduleOverwriteInProgress) {
           return;
         }
         final pushGoogleDay = _scheduleSyncDependencies.pushGoogleDay ??
@@ -2104,7 +2128,7 @@ class TimeProvider with ChangeNotifier {
         if (_initializationFailed ||
             _scheduleOverwriteJournalCleanupPending ||
             syncGeneration != _googleSyncGeneration ||
-            _scheduleOverwriteCompleter != null) {
+            _scheduleOverwriteInProgress) {
           return;
         }
 
@@ -2145,13 +2169,14 @@ class TimeProvider with ChangeNotifier {
 
   /// 手动同步所有待同步日期（用于个人中心“待同步”按钮）
   Future<void> synchronizeAllPendingCalendars() async {
-    if (_initializationFailed ||
+    if (!_isInitialLoadFinished ||
+        _initializationFailed ||
         _scheduleOverwriteJournalCleanupPending ||
         !_googleCalendarSyncEnabled) {
       _syncStatusController.add('Google 日历同步已关闭');
       return;
     }
-    if (_scheduleOverwriteCompleter != null) return;
+    if (_scheduleOverwriteInProgress) return;
     if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
 
     // 可能与自动同步并发：等待当前同步完成，避免手动点击被无声忽略
@@ -2163,7 +2188,7 @@ class TimeProvider with ChangeNotifier {
     if (_initializationFailed ||
         _scheduleOverwriteJournalCleanupPending ||
         _isSyncing ||
-        _scheduleOverwriteCompleter != null) {
+        _scheduleOverwriteInProgress) {
       _syncStatusController.add("同步进行中，请稍后重试");
       return;
     }
@@ -2186,7 +2211,7 @@ class TimeProvider with ChangeNotifier {
       for (final rawKey in pendingKeys) {
         if (_initializationFailed ||
             _scheduleOverwriteJournalCleanupPending ||
-            _scheduleOverwriteCompleter != null) {
+            _scheduleOverwriteInProgress) {
           allSuccess = false;
           break;
         }
@@ -2208,7 +2233,7 @@ class TimeProvider with ChangeNotifier {
         final date = DateTime(year, month, day);
         if (_initializationFailed ||
             _scheduleOverwriteJournalCleanupPending ||
-            _scheduleOverwriteCompleter != null) {
+            _scheduleOverwriteInProgress) {
           allSuccess = false;
           break;
         }
@@ -2218,10 +2243,15 @@ class TimeProvider with ChangeNotifier {
           explicitlyPending: pendingGoogleSyncDates.contains(dateKey),
           createSlots: _generateInitialSlots,
           pull: () => pullGoogleCalendarForDate(date, notify: false),
+          canContinue: () =>
+              _isInitialLoadFinished &&
+              !_initializationFailed &&
+              !_scheduleOverwriteJournalCleanupPending &&
+              !_scheduleOverwriteInProgress,
           push: (slotsForDay) {
             if (_initializationFailed ||
                 _scheduleOverwriteJournalCleanupPending ||
-                _scheduleOverwriteCompleter != null) {
+                _scheduleOverwriteInProgress) {
               return Future.value(false);
             }
             final pushGoogleDay = _scheduleSyncDependencies.pushGoogleDay ??
@@ -2232,7 +2262,7 @@ class TimeProvider with ChangeNotifier {
 
         if (_initializationFailed ||
             _scheduleOverwriteJournalCleanupPending ||
-            _scheduleOverwriteCompleter != null) {
+            _scheduleOverwriteInProgress) {
           allSuccess = false;
           break;
         }
@@ -2344,34 +2374,7 @@ class TimeProvider with ChangeNotifier {
 
     final rangeStart = _slotIndexToDateTime(start, targetDate);
     final rangeEnd = _slotIndexToDateTime(end, targetDate);
-    var eventId = daySlots[index].calendarEventId;
-    eventId ??= await _resolveGoogleEventId(
-      label,
-      rangeStart,
-      rangeEnd,
-      targetDate,
-    );
-    if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) {
-      return;
-    }
-
-    if (eventId != null && eventId.isNotEmpty) {
-      final deleted = await GoogleCalendarService.deleteExternalEvent(eventId);
-      if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) {
-        return;
-      }
-      if (!deleted) {
-        _ignoredCalendarImports.putIfAbsent(dateKey, () => {}).add(eventId);
-        if (!_syncStatusController.isClosed) {
-          _syncStatusController.add("删除 Google 日历事件失败");
-        }
-      }
-    } else {
-      _ignoredCalendarImports.putIfAbsent(dateKey, () => {}).add(
-            _calendarBlockFingerprint(label, rangeStart, rangeEnd),
-          );
-    }
-
+    final eventId = daySlots[index].calendarEventId;
     for (int i = 0; i < daySlots.length; i++) {
       final sameEvent = eventId != null &&
           eventId.isNotEmpty &&
@@ -2388,14 +2391,67 @@ class TimeProvider with ChangeNotifier {
     _markSlotsDirty(dateKey); // 标记当前日期为脏
     _calendarDirty = true; // 忽略列表也变了
     _targetStatsCache.invalidateDate(dateKey); // 失效该日期的缓存
-    if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) {
+    if (!_isDisposed) {
+      notifyListeners();
+    }
+
+    // Publish the tombstone immediately so callers see a synchronous local
+    // deletion.  The network deletion and any ignore marker are persisted in
+    // the continuation below.
+    final initialSave = _saveData();
+    var resolvedEventId = eventId;
+    if (resolvedEventId == null || resolvedEventId.isEmpty) {
+      resolvedEventId = await _resolveGoogleEventId(
+        label,
+        rangeStart,
+        rangeEnd,
+        targetDate,
+      );
+    }
+    if (_isDisposed ||
+        _initializationFailed ||
+        _scheduleOverwriteJournalCleanupPending) {
       return;
     }
-    final saved = await _saveData();
-    if (!saved || _initializationFailed || _scheduleOverwriteJournalCleanupPending) {
+
+    var needsSecondSave = false;
+    if (resolvedEventId != null && resolvedEventId.isNotEmpty) {
+      final deleted = await GoogleCalendarService.deleteExternalEvent(
+        resolvedEventId,
+      );
+      if (_isDisposed ||
+          _initializationFailed ||
+          _scheduleOverwriteJournalCleanupPending) {
+        return;
+      }
+      if (!deleted) {
+        _ignoredCalendarImports
+            .putIfAbsent(dateKey, () => {})
+            .add(resolvedEventId);
+        needsSecondSave = true;
+        if (!_syncStatusController.isClosed) {
+          _syncStatusController.add("删除 Google 日历事件失败");
+        }
+      }
+    } else {
+      _ignoredCalendarImports.putIfAbsent(dateKey, () => {}).add(
+            _calendarBlockFingerprint(label, rangeStart, rangeEnd),
+          );
+      needsSecondSave = true;
+    }
+
+    final saved = await initialSave;
+    if (!saved ||
+        _isDisposed ||
+        _initializationFailed ||
+        _scheduleOverwriteJournalCleanupPending) {
       return;
     }
-    notifyListeners();
+    if (needsSecondSave) {
+      final ignoredSaved = await _saveData();
+      if (!ignoredSaved || _isDisposed) return;
+      notifyListeners();
+    }
   }
 
   Future<String?> _resolveGoogleEventId(String title, DateTime rangeStart,
@@ -2638,7 +2694,8 @@ class TimeProvider with ChangeNotifier {
   // --- Google 日历下拉 ---
 
   Future<void> pullGoogleCalendarForCurrentDate() async {
-    if (_initializationFailed ||
+    if (!_isInitialLoadFinished ||
+        _initializationFailed ||
         _scheduleOverwriteJournalCleanupPending ||
         !_supportsGoogleCalendarSync ||
         !_googleCalendarSyncEnabled) {
@@ -2650,7 +2707,8 @@ class TimeProvider with ChangeNotifier {
   /// 从 Google 拉取外部会议并合并到指定日期；未登录 Google 时返回 false
   Future<bool> pullGoogleCalendarForDate(DateTime date,
       {bool notify = true, int? syncGeneration}) async {
-    if (_initializationFailed ||
+    if (!_isInitialLoadFinished ||
+        _initializationFailed ||
         _scheduleOverwriteJournalCleanupPending ||
         !_supportsGoogleCalendarSync ||
         !_googleCalendarSyncEnabled) {
@@ -2660,7 +2718,7 @@ class TimeProvider with ChangeNotifier {
       return false;
     }
     if (!_isGoogleCalendarSignedIn) return false;
-    if (_scheduleOverwriteCompleter != null) return false;
+    if (_scheduleOverwriteInProgress) return false;
 
     _googleCalendarPullsInProgress++;
     try {
@@ -2671,7 +2729,7 @@ class TimeProvider with ChangeNotifier {
           _initializationFailed ||
           _scheduleOverwriteJournalCleanupPending ||
           (syncGeneration != null && syncGeneration != _googleSyncGeneration) ||
-          _scheduleOverwriteCompleter != null) {
+          _scheduleOverwriteInProgress) {
         return false;
       }
       final dateKey = _getDateKey(date);
@@ -2682,7 +2740,7 @@ class TimeProvider with ChangeNotifier {
       if (_initializationFailed ||
           _scheduleOverwriteJournalCleanupPending ||
           (syncGeneration != null && syncGeneration != _googleSyncGeneration) ||
-          _scheduleOverwriteCompleter != null ||
+          _scheduleOverwriteInProgress ||
           !saved) {
         return false;
       }
@@ -3198,7 +3256,7 @@ class TimeProvider with ChangeNotifier {
 
   Future<bool> _saveData({_ScheduleSaveSnapshot? snapshot}) async {
     if (_initializationFailed) return false;
-    if (snapshot == null && _scheduleOverwriteCompleter != null) {
+    if (snapshot == null && _scheduleOverwriteInProgress) {
       _deferredScheduleSaveRequested = true;
       return false;
     }
@@ -3225,7 +3283,7 @@ class TimeProvider with ChangeNotifier {
     _ScheduleSaveSnapshot? snapshot,
   ) async {
     if (_isSchedulePersistenceBlocked) return false;
-    if (snapshot == null && _scheduleOverwriteCompleter != null) {
+    if (snapshot == null && _scheduleOverwriteInProgress) {
       _deferredScheduleSaveRequested = true;
       return false;
     }
@@ -3698,16 +3756,11 @@ class TimeProvider with ChangeNotifier {
         debugPrint('覆盖快照提交后无法清理日志，保留 committed 日志');
         return false;
       }
-      if (isStillValid != null && !isStillValid()) {
-        // Removal is an ambiguous transaction boundary.  Re-create the
-        // committed marker before returning so a later edit cannot leave the
-        // replacement on disk without a recoverable journal.
-        _scheduleOverwriteJournalCleanupPending = true;
-        if (!await _retainCommittedScheduleOverwriteJournal(prefs, journal)) {
-          _markInitializationFailed('覆盖日程提交日志无法保留，请重启应用恢复');
-        }
-        return false;
-      }
+      // The new schedule is already committed in memory and on disk.  Once
+      // the remove has been confirmed, cleanup is complete even if the user
+      // edits or switches identity while the platform await was in flight.
+      // Never recreate a journal after a successful remove: doing so could
+      // fail after the key has been deleted and leave an unrecoverable state.
       _scheduleOverwriteJournalCleanupPending = false;
       return true;
     } catch (e) {

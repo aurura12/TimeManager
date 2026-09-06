@@ -17,9 +17,16 @@ Future<PendingGoogleDaySyncResult> synchronizePendingGoogleDay({
   required List<TimeSlot> Function() createSlots,
   required Future<bool> Function() pull,
   required Future<bool> Function(List<TimeSlot> slots) push,
+  bool Function()? canContinue,
 }) async {
   final hadLocalScheduleState = _hasLocalScheduleState(dailySlots[dateKey]);
   final pullSucceeded = await pull();
+  if (canContinue != null && !canContinue()) {
+    return PendingGoogleDaySyncResult(
+      pullSucceeded: pullSucceeded,
+      pushSucceeded: false,
+    );
+  }
   final pulledSlots = dailySlots[dateKey];
   final hasLocalScheduleState = _hasLocalScheduleState(pulledSlots);
 
