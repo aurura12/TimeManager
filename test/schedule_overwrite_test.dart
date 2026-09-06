@@ -444,4 +444,71 @@ void main() {
     expect((await SharedPreferences.getInstance()).getString('daily_slots'),
         beforeStorage);
   });
+
+  test('overwrite aborts when a local edit changes revision during save',
+      () async {
+    final saveStarted = Completer<void>();
+    final releaseSave = Completer<void>();
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: {'daily_slots': _localPreferences['daily_slots']!},
+      saveDataOverride: () async {
+        if (!saveStarted.isCompleted) saveStarted.complete();
+        await releaseSave.future;
+        return true;
+      },
+    );
+    addTearDown(provider.dispose);
+
+    final overwrite = provider.overwriteAllSchedulesFromGitee();
+    await saveStarted.future;
+    provider.assignCategoryToSlots(
+      {0},
+      Category(name: '保存期间编辑', color: Colors.orange),
+      date: DateTime(2026, 9, 6),
+    );
+    releaseSave.complete();
+
+    expect(await overwrite, isFalse);
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '保存期间编辑');
+  });
+
+  test('overwrite aborts when identity changes during save', () async {
+    final saveStarted = Completer<void>();
+    final releaseSave = Completer<void>();
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: {'daily_slots': _localPreferences['daily_slots']!},
+      saveDataOverride: () async {
+        if (!saveStarted.isCompleted) saveStarted.complete();
+        await releaseSave.future;
+        return true;
+      },
+    );
+    addTearDown(provider.dispose);
+
+    final overwrite = provider.overwriteAllSchedulesFromGitee();
+    await saveStarted.future;
+    await provider.setScheduleUser(DiaryKind.j);
+    releaseSave.complete();
+
+    expect(await overwrite, isFalse);
+    expect(provider.scheduleUser, DiaryKind.j);
+    expect(provider.getSlotsForDate('2026-01-01')![0].label, '本地专属');
+  });
+
+  test('overwrite publishes failure and final schedule status', () async {
+    final provider = await _createProvider(failPull: true);
+    addTearDown(provider.dispose);
+    final statuses = <String>[];
+    final subscription = provider.scheduleGiteeSyncStream.listen(statuses.add);
+    addTearDown(subscription.cancel);
+
+    expect(await provider.overwriteAllSchedulesFromGitee(), isFalse);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(statuses, contains('覆盖拉取中...'));
+    expect(statuses, contains('覆盖拉取失败'));
+    expect(statuses.last, '');
+  });
 }

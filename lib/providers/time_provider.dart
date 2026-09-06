@@ -49,6 +49,23 @@ class BackupPreview {
   });
 }
 
+/// An immutable full replacement used by the serialized save queue.
+/// It keeps an overwrite candidate invisible to listeners until the save and
+/// its final identity/revision guard both succeed.
+class _ScheduleSaveSnapshot {
+  const _ScheduleSaveSnapshot({
+    required this.dailySlots,
+    required this.giteePendingDates,
+    required this.googlePendingDates,
+    required this.isStillValid,
+  });
+
+  final Map<String, List<TimeSlot>> dailySlots;
+  final Set<String> giteePendingDates;
+  final Set<String> googlePendingDates;
+  final bool Function() isStillValid;
+}
+
 class TimeProvider with ChangeNotifier {
   static const int backupVersion = 1;
   static const Color calendarImportColor = Color(0xFF78909C);
@@ -1078,8 +1095,10 @@ class TimeProvider with ChangeNotifier {
 
     bool identityIsUnchanged() =>
         _hasSelectedScheduleUser && _scheduleUser.code == selectedUserCode;
+    var succeeded = false;
 
     try {
+      _addScheduleSyncStatus('覆盖拉取中...');
       final token = await _scheduleSyncDependencies.loadToken();
       if (!identityIsUnchanged() || token == null || token.isEmpty) {
         return false;
@@ -1141,11 +1160,23 @@ class TimeProvider with ChangeNotifier {
 
       // 持久化先于内存提交。SharedPreferences 的 set* 会返回 false，
       // 因此这里失败时尚未碰触 slots、撤销栈或待同步状态。
-      final persisted = await _persistScheduleOverwriteSnapshot(
-        nextDailySlots,
-        identityIsUnchanged,
+      final persisted = await _saveData(
+        snapshot: _ScheduleSaveSnapshot(
+          dailySlots: nextDailySlots,
+          giteePendingDates: const {},
+          googlePendingDates: const {},
+          isStillValid: () =>
+              identityIsUnchanged() && _slotsRevision == startSlotsRevision,
+        ),
       );
-      if (!persisted) return false;
+      // _saveData may have waited behind an earlier save.  The state that
+      // made this snapshot valid must therefore be checked again after its
+      // final asynchronous write and before changing provider memory.
+      if (!persisted ||
+          !identityIsUnchanged() ||
+          _slotsRevision != startSlotsRevision) {
+        return false;
+      }
 
       _dailySlots
         ..clear()
@@ -1162,6 +1193,8 @@ class TimeProvider with ChangeNotifier {
       _syncDirty = false;
       _targetStatsCache.invalidate();
       notifyListeners();
+      succeeded = true;
+      _addScheduleSyncStatus('覆盖拉取完成');
       return true;
     } catch (e) {
       debugPrint('覆盖拉取失败: $e');
@@ -1170,69 +1203,9 @@ class TimeProvider with ChangeNotifier {
       if (_scheduleOverwriteCompleter == overwriteCompleter) {
         _scheduleOverwriteCompleter = null;
       }
+      if (!succeeded) _addScheduleSyncStatus('覆盖拉取失败');
+      _addScheduleSyncStatus('');
     }
-  }
-
-  Future<bool> _persistScheduleOverwriteSnapshot(
-      Map<String, List<TimeSlot>> replacement,
-      bool Function() identityIsUnchanged) async {
-    if (_saveDataOverride != null) return _saveDataOverride!();
-    final prefs = await SharedPreferences.getInstance();
-    final previousDailySlots = prefs.getString('daily_slots');
-    final previousGiteePending =
-        prefs.getStringList('pending_gitee_sync_dates');
-    final previousGooglePending =
-        prefs.getStringList('pending_google_sync_dates');
-    final previousPending = prefs.getStringList('pending_sync_dates');
-    final slotsJson = <String, dynamic>{};
-    replacement.forEach((dateKey, daySlots) {
-      final recorded = _serializeRecordedSlots(daySlots);
-      if (recorded.isNotEmpty) slotsJson[dateKey] = recorded;
-    });
-
-    Future<void> restore() async {
-      Future<void> restoreString(String key, String? value) async {
-        if (value == null) {
-          await prefs.remove(key);
-        } else {
-          await prefs.setString(key, value);
-        }
-      }
-
-      Future<void> restoreList(String key, List<String>? value) async {
-        if (value == null) {
-          await prefs.remove(key);
-        } else {
-          await prefs.setStringList(key, value);
-        }
-      }
-
-      await restoreString('daily_slots', previousDailySlots);
-      await restoreList('pending_gitee_sync_dates', previousGiteePending);
-      await restoreList('pending_google_sync_dates', previousGooglePending);
-      await restoreList('pending_sync_dates', previousPending);
-    }
-
-    try {
-      final dailyOk = identityIsUnchanged() &&
-          await prefs.setString('daily_slots', json.encode(slotsJson));
-      final giteeOk = dailyOk &&
-          identityIsUnchanged() &&
-          await prefs.setStringList('pending_gitee_sync_dates', const []);
-      final googleOk = giteeOk &&
-          identityIsUnchanged() &&
-          await prefs.setStringList('pending_google_sync_dates', const []);
-      final pendingOk = googleOk &&
-          identityIsUnchanged() &&
-          await prefs.setStringList('pending_sync_dates', const []);
-      if (pendingOk && identityIsUnchanged()) return true;
-    } catch (_) {
-      // 回滚仍会在下方执行；保存失败绝不能被报告为成功。
-    }
-    try {
-      await restore();
-    } catch (_) {}
-    return false;
   }
 
   /// 拉取单日日程并与本地双向合并，返回是否成功。
@@ -1639,6 +1612,9 @@ class TimeProvider with ChangeNotifier {
 
         bool pullOk =
             await pullGoogleCalendarForDate(_currentDate, notify: false);
+        // The pull itself is asynchronous.  An overwrite can begin after the
+        // debounce check above, so guard immediately before the upload API.
+        if (_scheduleOverwriteCompleter != null) return;
         final success =
             await GoogleCalendarService.syncSlotsToGoogle(slots, _currentDate);
 
@@ -1729,14 +1705,20 @@ class TimeProvider with ChangeNotifier {
         }
 
         final date = DateTime(year, month, day);
+        if (_scheduleOverwriteCompleter != null) {
+          allSuccess = false;
+          break;
+        }
         final result = await synchronizePendingGoogleDay(
           dailySlots: _dailySlots,
           dateKey: dateKey,
           explicitlyPending: pendingGoogleSyncDates.contains(dateKey),
           createSlots: _generateInitialSlots,
           pull: () => pullGoogleCalendarForDate(date, notify: false),
-          push: (slotsForDay) =>
-              GoogleCalendarService.syncSlotsToGoogle(slotsForDay, date),
+          push: (slotsForDay) {
+            if (_scheduleOverwriteCompleter != null) return Future.value(false);
+            return GoogleCalendarService.syncSlotsToGoogle(slotsForDay, date);
+          },
         );
 
         if (result.pushSucceeded == true) {
@@ -2647,7 +2629,7 @@ class TimeProvider with ChangeNotifier {
 
   // --- 数据持久化逻辑 ---
 
-  Future<bool> _saveData() async {
+  Future<bool> _saveData({_ScheduleSaveSnapshot? snapshot}) async {
     if (_saveDataOverride != null) return _saveDataOverride!();
     final previous = _ongoingSave;
     final requestRevision = ++_saveRequestRevision;
@@ -2655,7 +2637,7 @@ class TimeProvider with ChangeNotifier {
     // 避免并发读写导致整包写回时互相覆盖丢数据。
     final save = (previous ?? Future<bool>.value(true))
         .catchError((_) => false) // 上一个保存失败不阻断本次
-        .then((_) => _saveDataImpl(requestRevision));
+        .then((_) => _saveDataImpl(requestRevision, snapshot));
     _ongoingSave = save;
     try {
       return await save;
@@ -2664,7 +2646,12 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
-  Future<bool> _saveDataImpl(int requestRevision) async {
+  Future<bool> _saveDataImpl(
+    int requestRevision,
+    _ScheduleSaveSnapshot? snapshot,
+  ) async {
+    if (snapshot != null) return _saveScheduleSnapshot(snapshot);
+
     // Invalidate stats cache on any data change (包括分类/目标结构变化)
     if (_slotsDirty.isNotEmpty ||
         _allSlotsDirty ||
@@ -2840,6 +2827,46 @@ class TimeProvider with ChangeNotifier {
       await _refreshHomeWidget();
     }
     return true;
+  }
+
+  /// Persist an overwrite candidate through the same [_ongoingSave] chain as
+  /// normal saves.  Every await is guarded so an edit or identity switch that
+  /// occurs while this request waits cannot advance the candidate further.
+  Future<bool> _saveScheduleSnapshot(_ScheduleSaveSnapshot snapshot) async {
+    if (!snapshot.isStillValid()) return false;
+    final prefs = await SharedPreferences.getInstance();
+    if (!snapshot.isStillValid()) return false;
+
+    final slotsJson = <String, dynamic>{};
+    snapshot.dailySlots.forEach((dateKey, daySlots) {
+      final recorded = _serializeRecordedSlots(daySlots);
+      if (recorded.isNotEmpty) slotsJson[dateKey] = recorded;
+    });
+    final allPendingDates = {
+      ...snapshot.giteePendingDates,
+      ...snapshot.googlePendingDates,
+    }.toList()
+      ..sort();
+    final giteeDates = snapshot.giteePendingDates.toList()..sort();
+    final googleDates = snapshot.googlePendingDates.toList()..sort();
+
+    if (!snapshot.isStillValid() ||
+        !await prefs.setString('daily_slots', json.encode(slotsJson))) {
+      return false;
+    }
+    if (!snapshot.isStillValid() ||
+        !await prefs.setStringList('pending_gitee_sync_dates', giteeDates)) {
+      return false;
+    }
+    if (!snapshot.isStillValid() ||
+        !await prefs.setStringList('pending_google_sync_dates', googleDates)) {
+      return false;
+    }
+    if (!snapshot.isStillValid() ||
+        !await prefs.setStringList('pending_sync_dates', allPendingDates)) {
+      return false;
+    }
+    return snapshot.isStillValid();
   }
 
   Future<void> _refreshHomeWidget() async {
