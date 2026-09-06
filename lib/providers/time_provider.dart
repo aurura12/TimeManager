@@ -70,11 +70,51 @@ class _SchedulePreferencesSnapshot {
   const _SchedulePreferencesSnapshot(this.values);
 
   final Map<String, Object?> values;
+
+  String toJournal() => jsonEncode({
+        for (final entry in values.entries)
+          entry.key: {
+            'present': entry.value != null,
+            if (entry.value != null) 'value': entry.value,
+          },
+      });
+
+  static _SchedulePreferencesSnapshot? fromJournal(String encoded) {
+    try {
+      final decoded = jsonDecode(encoded);
+      if (decoded is! Map) return null;
+      final values = <String, Object?>{};
+      for (final key in TimeProvider._scheduleSnapshotKeys) {
+        final entry = decoded[key];
+        if (entry is! Map || entry['present'] is! bool) return null;
+        final present = entry['present'] as bool;
+        final value = entry['value'];
+        if (present && value is! String && value is! List) return null;
+        if (value is List && !value.every((item) => item is String)) {
+          return null;
+        }
+        values[key] = present
+            ? (value is List ? List<Object?>.from(value) : value)
+            : null;
+      }
+      return _SchedulePreferencesSnapshot(values);
+    } catch (_) {
+      return null;
+    }
+  }
 }
 
 class TimeProvider with ChangeNotifier {
   static const int backupVersion = 1;
   static const Color calendarImportColor = Color(0xFF78909C);
+  static const String _scheduleOverwriteJournalKey =
+      'schedule_overwrite_transaction_journal';
+  static const Set<String> _scheduleSnapshotKeys = {
+    'daily_slots',
+    'pending_gitee_sync_dates',
+    'pending_google_sync_dates',
+    'pending_sync_dates',
+  };
 
   /// 临时事件保留名：首页"临时"按钮分类，也是父事件视图中无归属事件的聚合项名称
   static const String temporaryCategoryName = '临时';
@@ -88,6 +128,8 @@ class TimeProvider with ChangeNotifier {
   final ScheduleSyncDependencies _scheduleSyncDependencies;
   final Future<bool> Function()? _saveDataOverride;
   final void Function(String key)? _scheduleSnapshotWriteObserver;
+  String? _lastScheduleOverwriteFailure;
+  String? get lastScheduleOverwriteFailure => _lastScheduleOverwriteFailure;
 
   /// 本地已改、尚未成功同步到日历的日期（dateKey 列表）
   bool _googleCalendarSyncEnabled = !isDesktopPlatform;
@@ -1082,7 +1124,13 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<bool> overwriteAllSchedulesFromGitee() async {
-    if (_remoteViewEnabled || !_hasSelectedScheduleUser) return false;
+    _lastScheduleOverwriteFailure = null;
+    if (_remoteViewEnabled) {
+      return _rejectScheduleOverwrite('覆盖拉取未开始：当前正在查看对方日程');
+    }
+    if (!_hasSelectedScheduleUser) {
+      return _rejectScheduleOverwrite('覆盖拉取未开始：请先选择身份');
+    }
     if (_scheduleOverwriteCompleter != null ||
         _scheduleGiteeSyncing ||
         _allScheduleSyncing ||
@@ -1090,7 +1138,7 @@ class TimeProvider with ChangeNotifier {
         _isSyncing ||
         _scheduleMergePullsInProgress > 0 ||
         _googleCalendarPullsInProgress > 0) {
-      return false;
+      return _rejectScheduleOverwrite('覆盖拉取未开始：已有日程同步任务');
     }
 
     final selectedUserCode = _scheduleUser.code;
@@ -1110,6 +1158,7 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('覆盖拉取中...');
       final token = await _scheduleSyncDependencies.loadToken();
       if (!identityIsUnchanged() || token == null || token.isEmpty) {
+        _lastScheduleOverwriteFailure = '覆盖拉取未开始或失败，请稍后重试';
         return false;
       }
 
@@ -1207,14 +1256,25 @@ class TimeProvider with ChangeNotifier {
       return true;
     } catch (e) {
       debugPrint('覆盖拉取失败: $e');
+      _lastScheduleOverwriteFailure = '覆盖拉取未开始或失败，请稍后重试';
       return false;
     } finally {
       if (_scheduleOverwriteCompleter == overwriteCompleter) {
         _scheduleOverwriteCompleter = null;
       }
-      if (!succeeded) _addScheduleSyncStatus('覆盖拉取失败');
+      if (!succeeded) {
+        _lastScheduleOverwriteFailure ??= '覆盖拉取未开始或失败，请稍后重试';
+        _addScheduleSyncStatus('覆盖拉取失败');
+      }
       _addScheduleSyncStatus('');
     }
+  }
+
+  Future<bool> _rejectScheduleOverwrite(String message) async {
+    _lastScheduleOverwriteFailure = message;
+    _addScheduleSyncStatus(message);
+    _addScheduleSyncStatus('');
+    return false;
   }
 
   /// 拉取单日日程并与本地双向合并，返回是否成功。
@@ -2870,15 +2930,20 @@ class TimeProvider with ChangeNotifier {
       'pending_sync_dates': allPendingDates,
     };
     final previous = _captureSchedulePreferences(prefs, replacement.keys);
-    var writeAttempted = false;
+    final journal = previous.toJournal();
+    var journalWriteAttempted = false;
     var committed = false;
 
     try {
+      journalWriteAttempted = true;
+      if (!await prefs.setString(_scheduleOverwriteJournalKey, journal) ||
+          prefs.getString(_scheduleOverwriteJournalKey) != journal) {
+        return false;
+      }
       for (final entry in replacement.entries) {
         if (!snapshot.isStillValid()) break;
         // A platform exception can occur after its persistent side effect, so
         // mark the attempt before awaiting and compensate on every failure.
-        writeAttempted = true;
         if (!await _writeSchedulePreference(prefs, entry.key, entry.value) ||
             !snapshot.isStillValid()) {
           break;
@@ -2891,13 +2956,31 @@ class TimeProvider with ChangeNotifier {
               entry.value,
             ),
           );
+      if (committed &&
+          (!await prefs.remove(_scheduleOverwriteJournalKey) ||
+              prefs.containsKey(_scheduleOverwriteJournalKey))) {
+        committed = false;
+      }
     } catch (e) {
       debugPrint('覆盖快照写入失败: $e');
     }
 
     if (committed) return true;
-    if (writeAttempted && !await _restoreSchedulePreferences(prefs, previous)) {
-      debugPrint('覆盖快照回滚失败');
+    if (journalWriteAttempted &&
+        prefs.getString(_scheduleOverwriteJournalKey) == journal) {
+      final restored = await _restoreSchedulePreferences(prefs, previous);
+      if (!restored) {
+        debugPrint('覆盖快照回滚失败，保留恢复日志');
+        return false;
+      }
+      try {
+        if (!await prefs.remove(_scheduleOverwriteJournalKey) ||
+            prefs.containsKey(_scheduleOverwriteJournalKey)) {
+          debugPrint('覆盖快照恢复后无法清理恢复日志');
+        }
+      } catch (e) {
+        debugPrint('覆盖快照恢复后清理恢复日志失败: $e');
+      }
     }
     return false;
   }
@@ -2961,6 +3044,22 @@ class TimeProvider with ChangeNotifier {
       return true;
     }
     return left == right;
+  }
+
+  Future<void> _recoverScheduleOverwriteJournal(SharedPreferences prefs) async {
+    final encoded = prefs.getString(_scheduleOverwriteJournalKey);
+    if (encoded == null) return;
+    final snapshot = _SchedulePreferencesSnapshot.fromJournal(encoded);
+    if (snapshot == null) {
+      throw StateError('覆盖日程恢复日志格式无效');
+    }
+    if (!await _restoreSchedulePreferences(prefs, snapshot)) {
+      throw StateError('覆盖日程恢复日志无法恢复');
+    }
+    if (!await prefs.remove(_scheduleOverwriteJournalKey) ||
+        prefs.containsKey(_scheduleOverwriteJournalKey)) {
+      throw StateError('覆盖日程恢复日志无法清理');
+    }
   }
 
   Future<void> _refreshHomeWidget() async {
@@ -3278,6 +3377,7 @@ class TimeProvider with ChangeNotifier {
 
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
+    await _recoverScheduleOverwriteJournal(prefs);
 
     // 1. 加载分类
     List<String>? catList = prefs.getStringList('categories');

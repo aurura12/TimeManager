@@ -34,6 +34,7 @@ ScheduleSyncDependencies _fakeDependencies({
   void Function()? onListPaths,
   void Function()? onPullDay,
   String? pullSha,
+  Map<String, String>? pathShaMap,
 }) {
   var pullCount = 0;
   return ScheduleSyncDependencies(
@@ -43,9 +44,9 @@ ScheduleSyncDependencies _fakeDependencies({
       if (token != 'fake-token' || userCode != 'g') {
         return ScheduleGiteeListWithShaResult.error('参数错误');
       }
-      return ScheduleGiteeListWithShaResult.success({
-        'schedule/g/2026-09-06.json': 'remote-sha',
-      });
+      return ScheduleGiteeListWithShaResult.success(
+        pathShaMap ?? {'schedule/g/2026-09-06.json': 'remote-sha'},
+      );
     },
     pullDay: ({required token, required dateKey, required userCode}) async {
       onPullDay?.call();
@@ -244,9 +245,7 @@ void main() {
       () async {
     final provider = await _createProvider(
       failPull: false,
-      initialPreferences: {
-        'daily_slots': _localPreferences['daily_slots']!,
-      },
+      initialPreferences: _localPreferences,
     );
     addTearDown(provider.dispose);
 
@@ -260,6 +259,76 @@ void main() {
     expect(replaced[0].color?.toARGB32(), 1);
     expect(provider.pendingGiteeSyncDates, isEmpty);
     expect(provider.pendingGoogleSyncDates, isEmpty);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('daily_slots'), isNotNull);
+    expect(prefs.getStringList('pending_gitee_sync_dates'), isEmpty);
+    expect(prefs.getStringList('pending_google_sync_dates'), isEmpty);
+    expect(prefs.getStringList('pending_sync_dates'), isEmpty);
+    expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
+  });
+
+  test('overwrite with an empty canonical remote clears every local day',
+      () async {
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: _localPreferences,
+      dependencies: _fakeDependencies(
+        failPull: false,
+        pathShaMap: const {},
+      ),
+    );
+    addTearDown(provider.dispose);
+
+    expect(await provider.overwriteAllSchedulesFromGitee(), isTrue);
+    expect(provider.getSlotsForDate('2026-01-01'), isNull);
+    expect(provider.getSlotsForDate('2026-09-06'), isNull);
+    expect(provider.pendingGiteeSyncDates, isEmpty);
+    expect(provider.pendingGoogleSyncDates, isEmpty);
+  });
+
+  test('startup restores an interrupted overwrite journal before loading slots',
+      () async {
+    const oldSlots =
+        '{"2026-01-01":[{"i":0,"l":"恢复的本地日程","c":2,"cid":"local-category","ts":1000}]}';
+    final journal = jsonEncode({
+      'daily_slots': {'present': true, 'value': oldSlots},
+      'pending_gitee_sync_dates': {
+        'present': true,
+        'value': ['2026-01-01'],
+      },
+      'pending_google_sync_dates': {
+        'present': true,
+        'value': ['2026-01-02'],
+      },
+      'pending_sync_dates': {
+        'present': true,
+        'value': ['2026-01-01', '2026-01-02'],
+      },
+    });
+    SharedPreferences.setMockInitialValues({
+      'daily_slots': '{"2026-09-06":[]}',
+      'pending_gitee_sync_dates': <String>['2026-09-06'],
+      'pending_google_sync_dates': <String>['2026-09-06'],
+      'pending_sync_dates': <String>['2026-09-06'],
+      'schedule_overwrite_transaction_journal': journal,
+    });
+
+    final provider = TimeProvider(
+      scheduleSyncDependencies: _fakeDependencies(failPull: false),
+    );
+    addTearDown(provider.dispose);
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (
+        !provider.isInitialLoadFinished && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+
+    expect(provider.getSlotsForDate('2026-01-01')![0].label, '恢复的本地日程');
+    expect(provider.pendingGiteeSyncDates, {'2026-01-01'});
+    expect(provider.pendingGoogleSyncDates, {'2026-01-02'});
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
+    expect(prefs.getString('daily_slots'), oldSlots);
   });
 
   test('overwrite pull failure preserves all local and pending state',
@@ -345,6 +414,7 @@ void main() {
     final secondCall = provider.overwriteAllSchedulesFromGitee();
 
     expect(await secondCall.timeout(const Duration(seconds: 1)), isFalse);
+    expect(provider.lastScheduleOverwriteFailure, '覆盖拉取未开始：已有日程同步任务');
     expect(listPathsCalls, 1);
     expect(pullDayCalls, greaterThanOrEqualTo(1));
 
@@ -537,6 +607,7 @@ void main() {
     expect(prefs.getStringList('pending_gitee_sync_dates'), beforeGitee);
     expect(prefs.getStringList('pending_google_sync_dates'), beforeGoogle);
     expect(prefs.getStringList('pending_sync_dates'), beforeVisible);
+    expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
     expect(provider.getSlotsForDate('2026-01-01')![0].label, beforeFirstDay);
     expect(provider.getSlotsForDate('2026-09-06')![0].label, beforeOverlapDay);
     expect(provider.pendingGiteeSyncDates, beforePendingGitee);
@@ -600,8 +671,48 @@ void main() {
 
     await tester.tap(find.text('覆盖拉取日程'));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.text('正在后台覆盖拉取日程...'), findsOneWidget);
+    expect(find.text('覆盖拉取未开始：请先选择身份'), findsOneWidget);
+    expect(scaffoldKey.currentState!.isDrawerOpen, isFalse);
+  });
+
+  testWidgets(
+      'mobile drawer exposes overwrite pull and reports rejection after closing',
+      (tester) async {
+    final provider = TimeProvider();
+    addTearDown(provider.dispose);
+    final scaffoldKey = GlobalKey<ScaffoldState>();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            key: scaffoldKey,
+            drawer: ProfileSettingsDrawer(
+              onChanged: () {},
+              desktopPlatformOverride: false,
+            ),
+          ),
+        ),
+      ),
+    );
+    scaffoldKey.currentState!.openDrawer();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('拉取所有日程'), findsNothing);
+    expect(find.text('覆盖拉取日程'), findsOneWidget);
+
+    await tester.tap(find.text('覆盖拉取日程'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('覆盖拉取未开始：请先选择身份'), findsOneWidget);
     expect(scaffoldKey.currentState!.isDrawerOpen, isFalse);
   });
 }

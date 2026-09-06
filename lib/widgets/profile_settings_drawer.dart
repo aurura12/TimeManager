@@ -15,8 +15,13 @@ import '../models/diary_kind.dart';
 
 class ProfileSettingsDrawer extends StatefulWidget {
   final VoidCallback onChanged;
+  final bool? desktopPlatformOverride;
 
-  const ProfileSettingsDrawer({super.key, required this.onChanged});
+  const ProfileSettingsDrawer({
+    super.key,
+    required this.onChanged,
+    this.desktopPlatformOverride,
+  });
 
   @override
   State<ProfileSettingsDrawer> createState() => _ProfileSettingsDrawerState();
@@ -53,7 +58,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                       ),
                     ),
                   ),
-                  if (isDesktopPlatform) ...[
+                  if (widget.desktopPlatformOverride ?? isDesktopPlatform) ...[
                     _buildWindowsIdentitySection(context, provider),
                     ListTile(
                       leading: const Icon(Icons.cloud_download_outlined),
@@ -202,12 +207,19 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       leading: const Icon(Icons.cloud_download_outlined),
       title: const Text('覆盖拉取日程'),
       subtitle: const Text('以远端补零路径为准，清空本地旧日程，不合并'),
-      onTap: () {
-        provider.overwriteAllSchedulesFromGitee();
+      onTap: () async {
         final messenger = ScaffoldMessenger.of(context);
         Navigator.pop(context);
+        final succeeded = await provider.overwriteAllSchedulesFromGitee();
         messenger.showSnackBar(
-          const SnackBar(content: Text('正在后台覆盖拉取日程...')),
+          SnackBar(
+            content: Text(
+              succeeded
+                  ? '覆盖拉取完成'
+                  : (provider.lastScheduleOverwriteFailure ??
+                      '覆盖拉取未开始或失败，请稍后重试'),
+            ),
+          ),
         );
       },
     );
