@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
@@ -19,10 +20,16 @@ const _localPreferences = <String, Object>{
 const _remoteCanonicalContent =
     '{"updated_at":2000,"slots":[{"i":0,"l":"远端","c":1,"cid":"g-category","ts":2000}]}';
 
-ScheduleSyncDependencies _fakeDependencies({required bool failPull}) {
+ScheduleSyncDependencies _fakeDependencies({
+  required bool failPull,
+  Completer<void>? pullGate,
+  void Function()? onListPaths,
+  void Function()? onPullDay,
+}) {
   return ScheduleSyncDependencies(
     loadToken: () async => 'fake-token',
     listPaths: ({required token, required userCode}) async {
+      onListPaths?.call();
       if (token != 'fake-token' || userCode != 'g') {
         return ScheduleGiteeListWithShaResult.error('参数错误');
       }
@@ -31,6 +38,10 @@ ScheduleSyncDependencies _fakeDependencies({required bool failPull}) {
       });
     },
     pullDay: ({required token, required dateKey, required userCode}) async {
+      onPullDay?.call();
+      if (pullGate != null) {
+        await pullGate.future;
+      }
       if (token != 'fake-token' || dateKey != '2026-09-06' || userCode != 'g') {
         return ScheduleGiteePullResult.error('参数错误');
       }
@@ -43,8 +54,11 @@ ScheduleSyncDependencies _fakeDependencies({required bool failPull}) {
   );
 }
 
-Future<TimeProvider> _createProvider({required bool failPull}) async {
-  SharedPreferences.setMockInitialValues(_localPreferences);
+Future<TimeProvider> _createProvider({
+  required bool failPull,
+  Map<String, Object> initialPreferences = _localPreferences,
+}) async {
+  SharedPreferences.setMockInitialValues(initialPreferences);
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   messenger.setMockMethodCallHandler(
@@ -207,7 +221,12 @@ void main() {
 
   test('overwrite replaces local days and clears both pending sync sets',
       () async {
-    final provider = await _createProvider(failPull: false);
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: {
+        'daily_slots': _localPreferences['daily_slots']!,
+      },
+    );
     addTearDown(provider.dispose);
 
     final overwritten = await provider.overwriteAllSchedulesFromGitee();
@@ -224,8 +243,29 @@ void main() {
 
   test('overwrite pull failure preserves all local and pending state',
       () async {
-    final provider = await _createProvider(failPull: true);
+    final provider = await _createProvider(
+      failPull: true,
+      initialPreferences: {
+        'daily_slots': _localPreferences['daily_slots']!,
+      },
+    );
     addTearDown(provider.dispose);
+
+    final seededBackup = Map<String, dynamic>.from(provider.toBackupMap());
+    seededBackup['pendingGiteeSyncDates'] = [
+      '2026-01-01',
+      '2026-09-06',
+    ];
+    seededBackup['pendingGoogleSyncDates'] = [
+      '2026-09-06',
+      '2026-10-01',
+    ];
+    seededBackup['pendingSyncDates'] = [
+      '2026-01-01',
+      '2026-09-06',
+      '2026-10-01',
+    ];
+    await provider.importBackupJson(jsonEncode(seededBackup));
 
     final overwritten = await provider.overwriteAllSchedulesFromGitee();
 
@@ -240,5 +280,49 @@ void main() {
       provider.pendingGoogleSyncDates,
       {'2026-09-06', '2026-10-01'},
     );
+  });
+
+  test('overwrite pull rejects concurrent reentry while the first pull runs',
+      () async {
+    final pullGate = Completer<void>();
+    var listPathsCalls = 0;
+    var pullDayCalls = 0;
+    SharedPreferences.setMockInitialValues({
+      'daily_slots': _localPreferences['daily_slots']!,
+    });
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('home_widget'),
+      (call) async => null,
+    );
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+      (call) async => null,
+    );
+    final provider = TimeProvider(
+      scheduleSyncDependencies: _fakeDependencies(
+        failPull: false,
+        pullGate: pullGate,
+        onListPaths: () => listPathsCalls++,
+        onPullDay: () => pullDayCalls++,
+      ),
+    );
+    while (!provider.isInitialLoadFinished) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    await provider.setScheduleUser(DiaryKind.g);
+    addTearDown(provider.dispose);
+
+    final firstCall = provider.overwriteAllSchedulesFromGitee();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    final secondCall = provider.overwriteAllSchedulesFromGitee();
+
+    expect(await secondCall.timeout(const Duration(seconds: 1)), isFalse);
+    expect(listPathsCalls, 1);
+    expect(pullDayCalls, 1);
+
+    pullGate.complete();
+    expect(await firstCall, isTrue);
   });
 }

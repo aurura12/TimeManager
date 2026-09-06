@@ -17,6 +17,7 @@ import '../utils/platform_features.dart';
 import '../services/diary_local_store.dart';
 import '../services/schedule_day_merge.dart';
 import '../services/schedule_gitee_service.dart';
+import '../services/schedule_overwrite.dart';
 import '../services/schedule_sync_dependencies.dart';
 import '../services/category_document_merge.dart';
 import '../services/category_gitee_service.dart';
@@ -657,9 +658,17 @@ class TimeProvider with ChangeNotifier {
 
   Timer? _scheduleGiteeTimer;
   bool _scheduleGiteeSyncing = false;
+  Completer<bool>? _scheduleOverwriteCompleter;
   final Set<String> _pendingScheduleGiteeDateKeys = {};
   final Map<String, int> _scheduleGiteeDateRevisions = {};
   String? _lastEditedDateKey;
+
+  bool get _isAnyScheduleSyncBlocked =>
+      _scheduleGiteeSyncing ||
+      _allScheduleSyncing ||
+      _allSchedulePulling ||
+      _isSyncing ||
+      _scheduleOverwriteCompleter != null;
 
   /// 标记当前日期需要同步到 Gitee（带 3 秒防抖）。
   /// [dateKey] 捕获目标日期，避免防抖期间切换日期推错日期。
@@ -703,9 +712,10 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('请先选择身份');
       return;
     }
+    if (_scheduleOverwriteCompleter != null) return;
     final effectiveDateKey = dateKey ?? _getDateKey(_currentDate);
     final syncRevision = _scheduleGiteeDateRevisions[effectiveDateKey] ?? 0;
-    if (_scheduleGiteeSyncing || _allScheduleSyncing || _allSchedulePulling) {
+    if (_isAnyScheduleSyncBlocked) {
       return;
     }
     _scheduleGiteeSyncing = true;
@@ -886,7 +896,11 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('请先选择身份');
       return;
     }
-    if (_allScheduleSyncing || _allSchedulePulling) return;
+    if (_scheduleOverwriteCompleter != null ||
+        _allScheduleSyncing ||
+        _allSchedulePulling) {
+      return;
+    }
     _allScheduleSyncing = true;
     // 取消可能正在等待的当日自动同步
     _scheduleGiteeTimer?.cancel();
@@ -958,7 +972,11 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('请先选择身份');
       return;
     }
-    if (_allSchedulePulling || _allScheduleSyncing) return;
+    if (_scheduleOverwriteCompleter != null ||
+        _allSchedulePulling ||
+        _allScheduleSyncing) {
+      return;
+    }
     _allSchedulePulling = true;
     // 取消等待中的当日自动推送，避免与全量拉取并发
     _scheduleGiteeTimer?.cancel();
@@ -1027,6 +1045,104 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('全量拉取失败: $e');
     } finally {
       _allSchedulePulling = false;
+    }
+  }
+
+  Future<bool> overwriteAllSchedulesFromGitee() async {
+    if (_remoteViewEnabled || !_hasSelectedScheduleUser) return false;
+    if (_scheduleOverwriteCompleter != null ||
+        _scheduleGiteeSyncing ||
+        _allScheduleSyncing ||
+        _allSchedulePulling ||
+        _isSyncing) {
+      return false;
+    }
+
+    final overwriteCompleter = Completer<bool>();
+    _scheduleOverwriteCompleter = overwriteCompleter;
+    _scheduleGiteeTimer?.cancel();
+    _scheduleGiteeTimer = null;
+    _debounceTimer?.cancel();
+    _debounceTimer = null;
+    final startSlotsRevision = _slotsRevision;
+
+    try {
+      final token = await _scheduleSyncDependencies.loadToken();
+      if (token == null || token.isEmpty) return false;
+
+      final listResult = await _scheduleSyncDependencies.listPaths(
+        token: token,
+        userCode: _scheduleUser.code,
+      );
+      if (!listResult.success) return false;
+
+      final canonicalPaths = listResult.pathShaMap.keys.where((path) {
+        return ScheduleOverwriteSnapshot.isCanonicalSchedulePath(
+          path,
+          userCode: _scheduleUser.code,
+        );
+      }).toList()
+        ..sort();
+
+      final contentsByPath = <String, String>{};
+      for (final path in canonicalPaths) {
+        final dateKey = ScheduleOverwriteSnapshot.dateKeyFromCanonicalPath(
+          path,
+          userCode: _scheduleUser.code,
+        );
+        if (dateKey == null) continue;
+        final pullResult = await _scheduleSyncDependencies.pullDay(
+          token: token,
+          dateKey: dateKey,
+          userCode: _scheduleUser.code,
+        );
+        if (!pullResult.success ||
+            pullResult.content == null ||
+            pullResult.content!.trim().isEmpty) {
+          return false;
+        }
+        contentsByPath[path] = pullResult.content!;
+      }
+
+      final snapshot = ScheduleOverwriteSnapshot.fromRemoteFiles(
+        userCode: _scheduleUser.code,
+        contentsByPath: contentsByPath,
+      );
+      if (!snapshot.isValid) return false;
+
+      if (_slotsRevision != startSlotsRevision) return false;
+
+      final nextDailySlots = <String, List<TimeSlot>>{};
+      for (final entry in snapshot.entriesByDate.entries) {
+        final daySlots = _generateInitialSlots();
+        _applyScheduleEntriesToSlots(daySlots, entry.value);
+        nextDailySlots[entry.key] = daySlots;
+      }
+
+      _dailySlots
+        ..clear()
+        ..addAll(nextDailySlots);
+      _undoStacks.clear();
+      _pendingSyncState.replace();
+      _pendingScheduleGiteeDateKeys.clear();
+      _scheduleGiteeDateRevisions.clear();
+      _lastEditedDateKey = null;
+      _allSlotsDirty = true;
+      _slotsDirty.clear();
+      _slotsRevision++;
+      _targetsDirty = true;
+      _syncDirty = true;
+      _targetStatsCache.invalidate();
+      await _saveData();
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('覆盖拉取失败: $e');
+      return false;
+    } finally {
+      if (_scheduleOverwriteCompleter == overwriteCompleter) {
+        _scheduleOverwriteCompleter = null;
+      }
     }
   }
 
@@ -1161,6 +1277,7 @@ class TimeProvider with ChangeNotifier {
     DateTime? date,
     int? requestRevision,
   }) async {
+    if (_scheduleOverwriteCompleter != null) return false;
     if (!_hasSelectedScheduleUser) {
       _addScheduleSyncStatus('请先选择身份');
       return false;
@@ -1404,7 +1521,7 @@ class TimeProvider with ChangeNotifier {
     if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
 
     Future<void> executeSync() async {
-      if (_isSyncing) return;
+      if (_isSyncing || _scheduleOverwriteCompleter != null) return;
 
       if (!GoogleCalendarService.isSignedIn) {
         if (!delay) {
@@ -1420,6 +1537,7 @@ class TimeProvider with ChangeNotifier {
       try {
         _syncStatusController.add("开始同步");
         if (delay) await Future.delayed(const Duration(milliseconds: 500));
+        if (_scheduleOverwriteCompleter != null) return;
 
         if (!_syncStatusController.isClosed) {
           _syncStatusController.add("SYNCING");
@@ -1471,6 +1589,7 @@ class TimeProvider with ChangeNotifier {
       _syncStatusController.add('Google 日历同步已关闭');
       return;
     }
+    if (_scheduleOverwriteCompleter != null) return;
     if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
 
     // 可能与自动同步并发：等待当前同步完成，避免手动点击被无声忽略
@@ -1479,7 +1598,7 @@ class TimeProvider with ChangeNotifier {
       await Future.delayed(const Duration(milliseconds: 200));
       waitedMs += 200;
     }
-    if (_isSyncing) {
+    if (_isSyncing || _scheduleOverwriteCompleter != null) {
       _syncStatusController.add("同步进行中，请稍后重试");
       return;
     }
