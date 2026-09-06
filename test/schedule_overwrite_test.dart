@@ -7,10 +7,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/category.dart';
 import 'package:time_manager/models/diary_kind.dart';
+import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/services/schedule_gitee_service.dart';
 import 'package:time_manager/services/schedule_overwrite.dart';
 import 'package:time_manager/services/schedule_sync_dependencies.dart';
+import 'package:time_manager/widgets/profile_settings_drawer.dart';
+import 'package:provider/provider.dart';
 
 const _localPreferences = <String, Object>{
   'daily_slots':
@@ -553,5 +556,52 @@ void main() {
     expect(statuses, contains('覆盖拉取中...'));
     expect(statuses, contains('覆盖拉取失败'));
     expect(statuses.last, '');
+  });
+
+  testWidgets(
+      'desktop drawer exposes overwrite pull separately and acknowledges it after closing',
+      (tester) async {
+    final provider = TimeProvider();
+    addTearDown(provider.dispose);
+    final scaffoldKey = GlobalKey<ScaffoldState>();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            key: scaffoldKey,
+            drawer: ProfileSettingsDrawer(onChanged: () {}),
+          ),
+        ),
+      ),
+    );
+    scaffoldKey.currentState!.openDrawer();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('拉取所有日程'), findsOneWidget);
+    expect(find.text('覆盖拉取日程'), findsOneWidget);
+    expect(find.text('以远端补零路径为准，清空本地旧日程，不合并'), findsOneWidget);
+    final overwriteTile = find.ancestor(
+      of: find.text('覆盖拉取日程'),
+      matching: find.byType(ListTile),
+    );
+    expect(
+      find.descendant(
+        of: overwriteTile,
+        matching: find.byIcon(Icons.cloud_download_outlined),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('覆盖拉取日程'));
+    await tester.pump();
+
+    expect(find.text('正在后台覆盖拉取日程...'), findsOneWidget);
+    expect(scaffoldKey.currentState!.isDrawerOpen, isFalse);
   });
 }

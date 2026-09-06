@@ -68,6 +68,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                         );
                       },
                     ),
+                    _buildOverwriteScheduleTile(context, provider),
                     ListTile(
                       leading: const Icon(Icons.cloud_upload_outlined),
                       title: const Text('推送所有日程'),
@@ -188,7 +189,27 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           },
         ),
         _buildGiteeSyncTile(context, provider),
+        _buildOverwriteScheduleTile(context, provider),
       ],
+    );
+  }
+
+  Widget _buildOverwriteScheduleTile(
+    BuildContext context,
+    TimeProvider provider,
+  ) {
+    return ListTile(
+      leading: const Icon(Icons.cloud_download_outlined),
+      title: const Text('覆盖拉取日程'),
+      subtitle: const Text('以远端补零路径为准，清空本地旧日程，不合并'),
+      onTap: () {
+        provider.overwriteAllSchedulesFromGitee();
+        final messenger = ScaffoldMessenger.of(context);
+        Navigator.pop(context);
+        messenger.showSnackBar(
+          const SnackBar(content: Text('正在后台覆盖拉取日程...')),
+        );
+      },
     );
   }
 
