@@ -99,6 +99,9 @@ Future<TimeProvider> _createProvider({
   void Function(String phase)? scheduleSnapshotJournalPhaseObserver,
   Future<bool> Function()? scheduleSnapshotJournalRemoveOverride,
   Duration scheduleGiteeDebounce = const Duration(seconds: 3),
+  Duration googleCalendarDebounce = const Duration(seconds: 3),
+  bool? googleCalendarSyncPlatformOverride,
+  bool? googleCalendarSignedInOverride,
 }) async {
   SharedPreferences.setMockInitialValues(initialPreferences);
   final messenger =
@@ -114,6 +117,9 @@ Future<TimeProvider> _createProvider({
 
   final provider = TimeProvider(
     scheduleGiteeDebounce: scheduleGiteeDebounce,
+    googleCalendarDebounce: googleCalendarDebounce,
+    googleCalendarSyncPlatformOverride: googleCalendarSyncPlatformOverride,
+    googleCalendarSignedInOverride: googleCalendarSignedInOverride,
     scheduleSyncDependencies:
         dependencies ?? _fakeDependencies(failPull: failPull),
     saveDataOverride: saveDataOverride,
@@ -472,6 +478,78 @@ void main() {
       prefs.getString('schedule_overwrite_transaction_journal'),
       corruptJournal,
     );
+  });
+
+  test('initialization failure isolates every schedule sync and save entry',
+      () async {
+    const corruptJournal = '{"phase":"prepared","before":';
+    var listCalls = 0;
+    var pullCalls = 0;
+    var giteeUploads = 0;
+    var googleUploads = 0;
+    SharedPreferences.setMockInitialValues({
+      'daily_slots': _localPreferences['daily_slots']!,
+      'pending_gitee_sync_dates':
+          _localPreferences['pending_gitee_sync_dates']!,
+      'pending_google_sync_dates':
+          _localPreferences['pending_google_sync_dates']!,
+      'pending_sync_dates': _localPreferences['pending_sync_dates']!,
+      'schedule_overwrite_transaction_journal': corruptJournal,
+    });
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+      (call) async => null,
+    );
+
+    final provider = TimeProvider(
+      scheduleSyncDependencies: _fakeDependencies(
+        failPull: false,
+        onListPaths: () => listCalls++,
+        onPullDay: () => pullCalls++,
+        onGiteeUpload: () => giteeUploads++,
+        onGoogleUpload: () => googleUploads++,
+      ),
+    );
+    addTearDown(provider.dispose);
+    while (!provider.isInitialLoadFinished) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(provider.hasInitializationFailure, isTrue);
+    final prefs = await SharedPreferences.getInstance();
+    final beforeSlots = prefs.getString('daily_slots');
+    final beforeGitee = prefs.getStringList('pending_gitee_sync_dates');
+    final beforeGoogle = prefs.getStringList('pending_google_sync_dates');
+    final beforeVisible = prefs.getStringList('pending_sync_dates');
+    final beforeJournal =
+        prefs.getString('schedule_overwrite_transaction_journal');
+    final beforeRecorded = provider.slots[0].recorded;
+
+    provider.toggleSlot(0);
+    await provider.syncScheduleToGitee();
+    await provider.syncAllSchedulesToGitee();
+    await provider.pullScheduleFromGitee();
+    await provider.pullAllSchedulesFromGitee();
+    await provider.syncAll();
+    await provider.synchronizeCalendar(delay: true);
+    await provider.synchronizeAllPendingCalendars();
+    await provider.pullGoogleCalendarForCurrentDate();
+    await provider.pullGoogleCalendarForDate(DateTime(2026, 9, 6));
+    await provider.onAppBackgrounded();
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    expect(provider.slots[0].recorded, beforeRecorded);
+    expect(listCalls, 0);
+    expect(pullCalls, 0);
+    expect(giteeUploads, 0);
+    expect(googleUploads, 0);
+    expect(prefs.getString('daily_slots'), beforeSlots);
+    expect(prefs.getStringList('pending_gitee_sync_dates'), beforeGitee);
+    expect(prefs.getStringList('pending_google_sync_dates'), beforeGoogle);
+    expect(prefs.getStringList('pending_sync_dates'), beforeVisible);
+    expect(prefs.getString('schedule_overwrite_transaction_journal'),
+        beforeJournal);
   });
 
   test('overwrite pull failure preserves all local and pending state',
@@ -833,6 +911,7 @@ void main() {
   test('failed journal cleanup keeps committed data recoverable on restart',
       () async {
     var removeAttempts = 0;
+    var giteeUploads = 0;
     final provider = await _createProvider(
       failPull: false,
       initialPreferences: {
@@ -842,6 +921,10 @@ void main() {
         removeAttempts++;
         return false;
       },
+      dependencies: _fakeDependencies(
+        failPull: false,
+        onGiteeUpload: () => giteeUploads++,
+      ),
     );
     addTearDown(provider.dispose);
 
@@ -854,8 +937,31 @@ void main() {
     ) as Map<String, dynamic>;
     expect(journal['phase'], 'committed');
 
+    // A committed journal with failed cleanup blocks the ordinary save.  The
+    // in-memory edit is allowed for UI continuity, but it must not overwrite
+    // the journal's `after` snapshot on disk.
+    provider.assignCategoryToSlots(
+      {0},
+      Category(name: '清理失败后的编辑', color: Colors.red),
+      date: DateTime(2026, 9, 6),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(giteeUploads, 0);
+    expect(
+      jsonDecode(prefs.getString('daily_slots')!)['2026-09-06'][0]['l'],
+      '远端',
+    );
+    expect(
+      jsonDecode(
+          prefs.getString('schedule_overwrite_transaction_journal')!)['phase'],
+      'committed',
+    );
+
     final restarted = TimeProvider(
-      scheduleSyncDependencies: _fakeDependencies(failPull: false),
+      scheduleSyncDependencies: _fakeDependencies(
+        failPull: false,
+        onGiteeUpload: () => giteeUploads++,
+      ),
     );
     addTearDown(restarted.dispose);
     final deadline = DateTime.now().add(const Duration(seconds: 5));
@@ -870,6 +976,7 @@ void main() {
       prefs.getString('schedule_overwrite_transaction_journal'),
       isNull,
     );
+    expect(giteeUploads, 0);
   });
 
   test('identity change during journal remove cannot report success', () async {
@@ -880,8 +987,9 @@ void main() {
         'daily_slots': _localPreferences['daily_slots']!,
       },
       scheduleSnapshotJournalRemoveOverride: () async {
-        unawaited(provider.setScheduleUser(DiaryKind.j));
-        return true;
+        await provider.setScheduleUser(DiaryKind.j);
+        final prefs = await SharedPreferences.getInstance();
+        return prefs.remove('schedule_overwrite_transaction_journal');
       },
     );
     addTearDown(provider.dispose);
@@ -894,10 +1002,33 @@ void main() {
       jsonDecode(prefs.getString('daily_slots')!)['2026-09-06'][0]['l'],
       '远端',
     );
-    final journal = jsonDecode(
-      prefs.getString('schedule_overwrite_transaction_journal')!,
-    ) as Map<String, dynamic>;
-    expect(journal['phase'], 'committed');
+    expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
+  });
+
+  test('google debounce callback is invalidated by an overwrite epoch',
+      () async {
+    var googleUploads = 0;
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: {
+        'daily_slots': _localPreferences['daily_slots']!,
+      },
+      googleCalendarDebounce: const Duration(milliseconds: 20),
+      googleCalendarSyncPlatformOverride: true,
+      googleCalendarSignedInOverride: true,
+      dependencies: _fakeDependencies(
+        failPull: false,
+        onGoogleUpload: () => googleUploads++,
+      ),
+    );
+    addTearDown(provider.dispose);
+
+    await provider.synchronizeCalendar(delay: true);
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    expect(await provider.overwriteAllSchedulesFromGitee(), isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+
+    expect(googleUploads, 0);
   });
 
   testWidgets(
