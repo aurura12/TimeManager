@@ -56,13 +56,14 @@ class TimeProvider with ChangeNotifier {
   /// 临时事件保留名：首页"临时"按钮分类，也是父事件视图中无归属事件的聚合项名称
   static const String temporaryCategoryName = '临时';
   Timer? _debounceTimer;
-  Future<void>? _ongoingSave;
+  Future<bool>? _ongoingSave;
   int _saveRequestRevision = 0;
 
   DateTime _currentDate = DateTime.now();
   bool _isSyncing = false; // 添加同步锁标志，防止并发同步导致重复
   final Duration _scheduleGiteeDebounce;
   final ScheduleSyncDependencies _scheduleSyncDependencies;
+  final Future<bool> Function()? _saveDataOverride;
 
   /// 本地已改、尚未成功同步到日历的日期（dateKey 列表）
   bool _googleCalendarSyncEnabled = !isDesktopPlatform;
@@ -225,9 +226,11 @@ class TimeProvider with ChangeNotifier {
   TimeProvider({
     Duration scheduleGiteeDebounce = const Duration(seconds: 3),
     ScheduleSyncDependencies? scheduleSyncDependencies,
+    Future<bool> Function()? saveDataOverride,
   })  : _scheduleGiteeDebounce = scheduleGiteeDebounce,
         _scheduleSyncDependencies =
-            scheduleSyncDependencies ?? ScheduleSyncDependencies.production() {
+            scheduleSyncDependencies ?? ScheduleSyncDependencies.production(),
+        _saveDataOverride = saveDataOverride {
     _googleAuthSubscription =
         GoogleCalendarService.authStateChanges.listen((_) {
       notifyListeners();
@@ -659,6 +662,8 @@ class TimeProvider with ChangeNotifier {
   Timer? _scheduleGiteeTimer;
   bool _scheduleGiteeSyncing = false;
   Completer<bool>? _scheduleOverwriteCompleter;
+  int _scheduleMergePullsInProgress = 0;
+  int _googleCalendarPullsInProgress = 0;
   final Set<String> _pendingScheduleGiteeDateKeys = {};
   final Map<String, int> _scheduleGiteeDateRevisions = {};
   String? _lastEditedDateKey;
@@ -668,7 +673,9 @@ class TimeProvider with ChangeNotifier {
       _allScheduleSyncing ||
       _allSchedulePulling ||
       _isSyncing ||
-      _scheduleOverwriteCompleter != null;
+      _scheduleOverwriteCompleter != null ||
+      _scheduleMergePullsInProgress > 0 ||
+      _googleCalendarPullsInProgress > 0;
 
   /// 标记当前日期需要同步到 Gitee（带 3 秒防抖）。
   /// [dateKey] 捕获目标日期，避免防抖期间切换日期推错日期。
@@ -687,7 +694,7 @@ class TimeProvider with ChangeNotifier {
 
   Future<void> _flushPendingScheduleGiteeSync() async {
     if (_pendingScheduleGiteeDateKeys.isEmpty) return;
-    if (_scheduleGiteeSyncing || _allScheduleSyncing || _allSchedulePulling) {
+    if (_isAnyScheduleSyncBlocked) {
       _scheduleGiteeTimer = Timer(const Duration(milliseconds: 100), () {
         _scheduleGiteeTimer = null;
         unawaited(_flushPendingScheduleGiteeSync());
@@ -1054,10 +1061,13 @@ class TimeProvider with ChangeNotifier {
         _scheduleGiteeSyncing ||
         _allScheduleSyncing ||
         _allSchedulePulling ||
-        _isSyncing) {
+        _isSyncing ||
+        _scheduleMergePullsInProgress > 0 ||
+        _googleCalendarPullsInProgress > 0) {
       return false;
     }
 
+    final selectedUserCode = _scheduleUser.code;
     final overwriteCompleter = Completer<bool>();
     _scheduleOverwriteCompleter = overwriteCompleter;
     _scheduleGiteeTimer?.cancel();
@@ -1066,20 +1076,25 @@ class TimeProvider with ChangeNotifier {
     _debounceTimer = null;
     final startSlotsRevision = _slotsRevision;
 
+    bool identityIsUnchanged() =>
+        _hasSelectedScheduleUser && _scheduleUser.code == selectedUserCode;
+
     try {
       final token = await _scheduleSyncDependencies.loadToken();
-      if (token == null || token.isEmpty) return false;
+      if (!identityIsUnchanged() || token == null || token.isEmpty) {
+        return false;
+      }
 
       final listResult = await _scheduleSyncDependencies.listPaths(
         token: token,
-        userCode: _scheduleUser.code,
+        userCode: selectedUserCode,
       );
-      if (!listResult.success) return false;
+      if (!identityIsUnchanged() || !listResult.success) return false;
 
       final canonicalPaths = listResult.pathShaMap.keys.where((path) {
         return ScheduleOverwriteSnapshot.isCanonicalSchedulePath(
           path,
-          userCode: _scheduleUser.code,
+          userCode: selectedUserCode,
         );
       }).toList()
         ..sort();
@@ -1088,29 +1103,34 @@ class TimeProvider with ChangeNotifier {
       for (final path in canonicalPaths) {
         final dateKey = ScheduleOverwriteSnapshot.dateKeyFromCanonicalPath(
           path,
-          userCode: _scheduleUser.code,
+          userCode: selectedUserCode,
         );
         if (dateKey == null) continue;
         final pullResult = await _scheduleSyncDependencies.pullDay(
           token: token,
           dateKey: dateKey,
-          userCode: _scheduleUser.code,
+          userCode: selectedUserCode,
         );
-        if (!pullResult.success ||
+        if (!identityIsUnchanged() ||
+            !pullResult.success ||
             pullResult.content == null ||
-            pullResult.content!.trim().isEmpty) {
+            pullResult.content!.trim().isEmpty ||
+            pullResult.sha == null ||
+            pullResult.sha != listResult.pathShaMap[path]) {
           return false;
         }
         contentsByPath[path] = pullResult.content!;
       }
 
       final snapshot = ScheduleOverwriteSnapshot.fromRemoteFiles(
-        userCode: _scheduleUser.code,
+        userCode: selectedUserCode,
         contentsByPath: contentsByPath,
       );
       if (!snapshot.isValid) return false;
 
-      if (_slotsRevision != startSlotsRevision) return false;
+      if (!identityIsUnchanged() || _slotsRevision != startSlotsRevision) {
+        return false;
+      }
 
       final nextDailySlots = <String, List<TimeSlot>>{};
       for (final entry in snapshot.entriesByDate.entries) {
@@ -1118,6 +1138,14 @@ class TimeProvider with ChangeNotifier {
         _applyScheduleEntriesToSlots(daySlots, entry.value);
         nextDailySlots[entry.key] = daySlots;
       }
+
+      // 持久化先于内存提交。SharedPreferences 的 set* 会返回 false，
+      // 因此这里失败时尚未碰触 slots、撤销栈或待同步状态。
+      final persisted = await _persistScheduleOverwriteSnapshot(
+        nextDailySlots,
+        identityIsUnchanged,
+      );
+      if (!persisted) return false;
 
       _dailySlots
         ..clear()
@@ -1127,13 +1155,12 @@ class TimeProvider with ChangeNotifier {
       _pendingScheduleGiteeDateKeys.clear();
       _scheduleGiteeDateRevisions.clear();
       _lastEditedDateKey = null;
-      _allSlotsDirty = true;
+      // 快照已一次性持久化；状态保持为干净，避免后续保存覆写它。
+      _allSlotsDirty = false;
       _slotsDirty.clear();
       _slotsRevision++;
-      _targetsDirty = true;
-      _syncDirty = true;
+      _syncDirty = false;
       _targetStatsCache.invalidate();
-      await _saveData();
       notifyListeners();
       return true;
     } catch (e) {
@@ -1144,6 +1171,68 @@ class TimeProvider with ChangeNotifier {
         _scheduleOverwriteCompleter = null;
       }
     }
+  }
+
+  Future<bool> _persistScheduleOverwriteSnapshot(
+      Map<String, List<TimeSlot>> replacement,
+      bool Function() identityIsUnchanged) async {
+    if (_saveDataOverride != null) return _saveDataOverride!();
+    final prefs = await SharedPreferences.getInstance();
+    final previousDailySlots = prefs.getString('daily_slots');
+    final previousGiteePending =
+        prefs.getStringList('pending_gitee_sync_dates');
+    final previousGooglePending =
+        prefs.getStringList('pending_google_sync_dates');
+    final previousPending = prefs.getStringList('pending_sync_dates');
+    final slotsJson = <String, dynamic>{};
+    replacement.forEach((dateKey, daySlots) {
+      final recorded = _serializeRecordedSlots(daySlots);
+      if (recorded.isNotEmpty) slotsJson[dateKey] = recorded;
+    });
+
+    Future<void> restore() async {
+      Future<void> restoreString(String key, String? value) async {
+        if (value == null) {
+          await prefs.remove(key);
+        } else {
+          await prefs.setString(key, value);
+        }
+      }
+
+      Future<void> restoreList(String key, List<String>? value) async {
+        if (value == null) {
+          await prefs.remove(key);
+        } else {
+          await prefs.setStringList(key, value);
+        }
+      }
+
+      await restoreString('daily_slots', previousDailySlots);
+      await restoreList('pending_gitee_sync_dates', previousGiteePending);
+      await restoreList('pending_google_sync_dates', previousGooglePending);
+      await restoreList('pending_sync_dates', previousPending);
+    }
+
+    try {
+      final dailyOk = identityIsUnchanged() &&
+          await prefs.setString('daily_slots', json.encode(slotsJson));
+      final giteeOk = dailyOk &&
+          identityIsUnchanged() &&
+          await prefs.setStringList('pending_gitee_sync_dates', const []);
+      final googleOk = giteeOk &&
+          identityIsUnchanged() &&
+          await prefs.setStringList('pending_google_sync_dates', const []);
+      final pendingOk = googleOk &&
+          identityIsUnchanged() &&
+          await prefs.setStringList('pending_sync_dates', const []);
+      if (pendingOk && identityIsUnchanged()) return true;
+    } catch (_) {
+      // 回滚仍会在下方执行；保存失败绝不能被报告为成功。
+    }
+    try {
+      await restore();
+    } catch (_) {}
+    return false;
   }
 
   /// 拉取单日日程并与本地双向合并，返回是否成功。
@@ -1282,21 +1371,24 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('请先选择身份');
       return false;
     }
-    final token = await DiaryLocalStore.loadToken();
-    if (token == null || token.isEmpty) {
-      _addScheduleSyncStatus('未配置同步 Token');
-      return false;
-    }
-
     final dateKey = _getDateKey(date ?? _currentDate);
     final code = userCode ?? _scheduleUser.code;
+    _scheduleMergePullsInProgress++;
     try {
+      final token = await _scheduleSyncDependencies.loadToken();
+      if (_scheduleOverwriteCompleter != null ||
+          token == null ||
+          token.isEmpty) {
+        _addScheduleSyncStatus('未配置同步 Token');
+        return false;
+      }
       _addScheduleSyncStatus('拉取中...');
-      final result = await ScheduleGiteeService.pullSchedule(
+      final result = await _scheduleSyncDependencies.pullDay(
         token: token,
         dateKey: dateKey,
         userCode: code,
       );
+      if (_scheduleOverwriteCompleter != null) return false;
       if (result.notFound) {
         _addScheduleSyncStatus('远端无数据');
         Future.delayed(const Duration(seconds: 3), () {
@@ -1330,6 +1422,8 @@ class TimeProvider with ChangeNotifier {
     } catch (e) {
       _addScheduleSyncStatus('拉取失败: $e');
       return false;
+    } finally {
+      _scheduleMergePullsInProgress--;
     }
   }
 
@@ -2031,16 +2125,23 @@ class TimeProvider with ChangeNotifier {
       {bool notify = true}) async {
     if (isDesktopPlatform || !_googleCalendarSyncEnabled) return false;
     if (!GoogleCalendarService.isSignedIn) return false;
+    if (_scheduleOverwriteCompleter != null) return false;
 
-    final blocks = await GoogleCalendarService.fetchExternalEvents(date);
-    if (blocks == null) return false;
-    final dateKey = _getDateKey(date);
-    _mergeCalendarBlocks(dateKey, blocks, date);
-    _markSlotsDirty(dateKey);
-    _targetStatsCache.invalidateDate(dateKey); // 失效该日期的缓存
-    await _saveData();
-    if (notify) notifyListeners();
-    return true;
+    _googleCalendarPullsInProgress++;
+    try {
+      final blocks = await GoogleCalendarService.fetchExternalEvents(date);
+      if (blocks == null || _scheduleOverwriteCompleter != null) return false;
+      final dateKey = _getDateKey(date);
+      _mergeCalendarBlocks(dateKey, blocks, date);
+      _markSlotsDirty(dateKey);
+      _targetStatsCache.invalidateDate(dateKey); // 失效该日期的缓存
+      await _saveData();
+      if (_scheduleOverwriteCompleter != null) return false;
+      if (notify) notifyListeners();
+      return true;
+    } finally {
+      _googleCalendarPullsInProgress--;
+    }
   }
 
   void _mergeCalendarBlocks(
@@ -2546,23 +2647,24 @@ class TimeProvider with ChangeNotifier {
 
   // --- 数据持久化逻辑 ---
 
-  Future<void> _saveData() async {
+  Future<bool> _saveData() async {
+    if (_saveDataOverride != null) return _saveDataOverride!();
     final previous = _ongoingSave;
     final requestRevision = ++_saveRequestRevision;
     // 串行化保存：等待上一个保存完成后再启动本次，
     // 避免并发读写导致整包写回时互相覆盖丢数据。
-    final save = (previous ?? Future<void>.value())
-        .catchError((_) {}) // 上一个保存失败不阻断本次
+    final save = (previous ?? Future<bool>.value(true))
+        .catchError((_) => false) // 上一个保存失败不阻断本次
         .then((_) => _saveDataImpl(requestRevision));
     _ongoingSave = save;
     try {
-      await save;
+      return await save;
     } finally {
       if (_ongoingSave == save) _ongoingSave = null;
     }
   }
 
-  Future<void> _saveDataImpl(int requestRevision) async {
+  Future<bool> _saveDataImpl(int requestRevision) async {
     // Invalidate stats cache on any data change (包括分类/目标结构变化)
     if (_slotsDirty.isNotEmpty ||
         _allSlotsDirty ||
@@ -2581,11 +2683,18 @@ class TimeProvider with ChangeNotifier {
     if (categoriesDirtyAtStart) {
       List<String> catList =
           _categories.map((c) => json.encode(c.toJson())).toList();
-      await prefs.setStringList('categories', catList);
+      if (!await prefs.setStringList('categories', catList)) {
+        return false;
+      }
       // 分类删除墓碑（id → 删除时间戳）与文档时间戳随分类一并持久化
-      await prefs.setString(
-          'deleted_categories', json.encode(_deletedCategories));
-      await prefs.setInt('categories_doc_updated_at', _categoriesDocUpdatedAt);
+      if (!await prefs.setString(
+          'deleted_categories', json.encode(_deletedCategories))) {
+        return false;
+      }
+      if (!await prefs.setInt(
+          'categories_doc_updated_at', _categoriesDocUpdatedAt)) {
+        return false;
+      }
       if (_saveRequestRevision == requestRevision) {
         _categoriesDirty = false;
       }
@@ -2596,7 +2705,9 @@ class TimeProvider with ChangeNotifier {
     if (targetsDirtyAtStart) {
       List<String> targetList =
           _targets.map((t) => json.encode(t.toJson())).toList();
-      await prefs.setStringList('targets', targetList);
+      if (!await prefs.setStringList('targets', targetList)) {
+        return false;
+      }
       if (_saveRequestRevision == requestRevision) {
         _targetsDirty = false;
       }
@@ -2617,7 +2728,9 @@ class TimeProvider with ChangeNotifier {
       });
       // 大 JSON 编码移入后台 isolate，避免主线程阻塞
       final encoded = await compute(_encodeSlotsJson, slotsJson);
-      await prefs.setString('daily_slots', encoded);
+      if (!await prefs.setString('daily_slots', encoded)) {
+        return false;
+      }
       slotsChanged = true;
       if (_saveRequestRevision == requestRevision) {
         _allSlotsDirty = false;
@@ -2648,7 +2761,9 @@ class TimeProvider with ChangeNotifier {
           slotsJson.remove(dateKey);
         }
       }
-      await prefs.setString('daily_slots', json.encode(slotsJson));
+      if (!await prefs.setString('daily_slots', json.encode(slotsJson))) {
+        return false;
+      }
       slotsChanged = true;
       if (_saveRequestRevision == requestRevision) {
         _slotsDirty.removeAll(dirtyDatesAtStart);
@@ -2658,10 +2773,12 @@ class TimeProvider with ChangeNotifier {
     // 4. 日程模板（仅在变化时）
     final templatesDirtyAtStart = _templatesDirty;
     if (templatesDirtyAtStart) {
-      await prefs.setString(
+      if (!await prefs.setString(
         'schedule_templates',
         json.encode(_templates.map((t) => t.toJson()).toList()),
-      );
+      )) {
+        return false;
+      }
       if (_saveRequestRevision == requestRevision) {
         _templatesDirty = false;
       }
@@ -2674,8 +2791,10 @@ class TimeProvider with ChangeNotifier {
       _ignoredCalendarImports.forEach((dateKey, ids) {
         if (ids.isNotEmpty) ignoredJson[dateKey] = ids.toList();
       });
-      await prefs.setString(
-          'ignored_calendar_imports', json.encode(ignoredJson));
+      if (!await prefs.setString(
+          'ignored_calendar_imports', json.encode(ignoredJson))) {
+        return false;
+      }
       if (_saveRequestRevision == requestRevision) {
         _calendarDirty = false;
       }
@@ -2687,10 +2806,17 @@ class TimeProvider with ChangeNotifier {
       final allPendingDates = _pendingSyncState.allDates.toList()..sort();
       final giteePendingDates = pendingGiteeSyncDates.toList()..sort();
       final googlePendingDates = pendingGoogleSyncDates.toList()..sort();
-      await prefs.setStringList('pending_gitee_sync_dates', giteePendingDates);
-      await prefs.setStringList(
-          'pending_google_sync_dates', googlePendingDates);
-      await prefs.setStringList('pending_sync_dates', allPendingDates);
+      if (!await prefs.setStringList(
+          'pending_gitee_sync_dates', giteePendingDates)) {
+        return false;
+      }
+      if (!await prefs.setStringList(
+          'pending_google_sync_dates', googlePendingDates)) {
+        return false;
+      }
+      if (!await prefs.setStringList('pending_sync_dates', allPendingDates)) {
+        return false;
+      }
       if (_saveRequestRevision == requestRevision) {
         _syncDirty = false;
       }
@@ -2699,8 +2825,10 @@ class TimeProvider with ChangeNotifier {
     // 7. 分类展开状态（仅变化时写，体积小）
     final expandChanged = _categoryExpandDirty;
     if (expandChanged) {
-      await prefs.setString(
-          'category_expand_states', json.encode(_categoryExpandStates));
+      if (!await prefs.setString(
+          'category_expand_states', json.encode(_categoryExpandStates))) {
+        return false;
+      }
       if (_saveRequestRevision == requestRevision) {
         _categoryExpandDirty = false;
       }
@@ -2711,6 +2839,7 @@ class TimeProvider with ChangeNotifier {
     if (slotsChanged || expandChanged) {
       await _refreshHomeWidget();
     }
+    return true;
   }
 
   Future<void> _refreshHomeWidget() async {

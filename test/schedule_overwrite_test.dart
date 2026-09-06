@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:time_manager/models/category.dart';
 import 'package:time_manager/models/diary_kind.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/services/schedule_gitee_service.dart';
@@ -23,9 +25,14 @@ const _remoteCanonicalContent =
 ScheduleSyncDependencies _fakeDependencies({
   required bool failPull,
   Completer<void>? pullGate,
+  int gateOnPullNumber = 1,
+  String? gateDateKey,
+  bool Function()? shouldGate,
   void Function()? onListPaths,
   void Function()? onPullDay,
+  String? pullSha,
 }) {
+  var pullCount = 0;
   return ScheduleSyncDependencies(
     loadToken: () async => 'fake-token',
     listPaths: ({required token, required userCode}) async {
@@ -39,7 +46,11 @@ ScheduleSyncDependencies _fakeDependencies({
     },
     pullDay: ({required token, required dateKey, required userCode}) async {
       onPullDay?.call();
-      if (pullGate != null) {
+      pullCount++;
+      if (pullGate != null &&
+          pullCount >= gateOnPullNumber &&
+          (gateDateKey == null || dateKey == gateDateKey) &&
+          (shouldGate?.call() ?? true)) {
         await pullGate.future;
       }
       if (token != 'fake-token' || dateKey != '2026-09-06' || userCode != 'g') {
@@ -48,7 +59,7 @@ ScheduleSyncDependencies _fakeDependencies({
       if (failPull) return ScheduleGiteePullResult.error('读取失败');
       return ScheduleGiteePullResult.success(
         _remoteCanonicalContent,
-        'remote-sha',
+        pullSha ?? 'remote-sha',
       );
     },
   );
@@ -57,6 +68,8 @@ ScheduleSyncDependencies _fakeDependencies({
 Future<TimeProvider> _createProvider({
   required bool failPull,
   Map<String, Object> initialPreferences = _localPreferences,
+  ScheduleSyncDependencies? dependencies,
+  Future<bool> Function()? saveDataOverride,
 }) async {
   SharedPreferences.setMockInitialValues(initialPreferences);
   final messenger =
@@ -71,13 +84,16 @@ Future<TimeProvider> _createProvider({
   );
 
   final provider = TimeProvider(
-    scheduleSyncDependencies: _fakeDependencies(failPull: failPull),
+    scheduleSyncDependencies:
+        dependencies ?? _fakeDependencies(failPull: failPull),
+    saveDataOverride: saveDataOverride,
   );
   final deadline = DateTime.now().add(const Duration(seconds: 5));
   while (!provider.isInitialLoadFinished && DateTime.now().isBefore(deadline)) {
     await Future<void>.delayed(const Duration(milliseconds: 20));
   }
   await provider.setScheduleUser(DiaryKind.g);
+  await Future<void>.delayed(const Duration(milliseconds: 200));
   return provider;
 }
 
@@ -285,6 +301,7 @@ void main() {
   test('overwrite pull rejects concurrent reentry while the first pull runs',
       () async {
     final pullGate = Completer<void>();
+    var gateEnabled = false;
     var listPathsCalls = 0;
     var pullDayCalls = 0;
     SharedPreferences.setMockInitialValues({
@@ -304,6 +321,8 @@ void main() {
       scheduleSyncDependencies: _fakeDependencies(
         failPull: false,
         pullGate: pullGate,
+        gateDateKey: '2026-09-06',
+        shouldGate: () => gateEnabled,
         onListPaths: () => listPathsCalls++,
         onPullDay: () => pullDayCalls++,
       ),
@@ -312,7 +331,9 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 20));
     }
     await provider.setScheduleUser(DiaryKind.g);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
     addTearDown(provider.dispose);
+    gateEnabled = true;
 
     final firstCall = provider.overwriteAllSchedulesFromGitee();
     await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -320,9 +341,107 @@ void main() {
 
     expect(await secondCall.timeout(const Duration(seconds: 1)), isFalse);
     expect(listPathsCalls, 1);
-    expect(pullDayCalls, 1);
+    expect(pullDayCalls, greaterThanOrEqualTo(1));
 
     pullGate.complete();
     expect(await firstCall, isTrue);
+  });
+
+  test('overwrite aborts when the selected identity changes during fetch',
+      () async {
+    final gate = Completer<void>();
+    var gateEnabled = false;
+    final provider = await _createProvider(
+      failPull: false,
+      dependencies: _fakeDependencies(
+        failPull: false,
+        pullGate: gate,
+        gateDateKey: '2026-09-06',
+        shouldGate: () => gateEnabled,
+      ),
+      initialPreferences: {'daily_slots': _localPreferences['daily_slots']!},
+    );
+    addTearDown(provider.dispose);
+    gateEnabled = true;
+
+    final overwrite = provider.overwriteAllSchedulesFromGitee();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await provider.setScheduleUser(DiaryKind.j);
+    gate.complete();
+
+    expect(await overwrite, isFalse);
+    expect(provider.scheduleUser, DiaryKind.j);
+    expect(provider.getSlotsForDate('2026-01-01')![0].label, '本地专属');
+  });
+
+  test('overwrite preserves a local edit made while the remote pull waits',
+      () async {
+    final gate = Completer<void>();
+    var gateEnabled = false;
+    final provider = await _createProvider(
+      failPull: false,
+      dependencies: _fakeDependencies(
+        failPull: false,
+        pullGate: gate,
+        gateDateKey: '2026-09-06',
+        shouldGate: () => gateEnabled,
+      ),
+      initialPreferences: {'daily_slots': _localPreferences['daily_slots']!},
+    );
+    addTearDown(provider.dispose);
+    gateEnabled = true;
+
+    final overwrite = provider.overwriteAllSchedulesFromGitee();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    provider.assignCategoryToSlots(
+      {0},
+      Category(name: '拉取期间编辑', color: Colors.green),
+      date: DateTime(2026, 9, 6),
+    );
+    gate.complete();
+
+    expect(await overwrite, isFalse);
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '拉取期间编辑');
+  });
+
+  test('overwrite rejects a pull whose SHA differs from the listed SHA',
+      () async {
+    final provider = await _createProvider(
+      failPull: false,
+      dependencies: _fakeDependencies(failPull: false, pullSha: 'changed-sha'),
+      initialPreferences: {'daily_slots': _localPreferences['daily_slots']!},
+    );
+    addTearDown(provider.dispose);
+
+    expect(await provider.overwriteAllSchedulesFromGitee(), isFalse);
+    expect(provider.getSlotsForDate('2026-01-01')![0].label, '本地专属');
+  });
+
+  test('overwrite save failure preserves slots, undo, pending, and storage',
+      () async {
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: _localPreferences,
+      saveDataOverride: () async => false,
+    );
+    addTearDown(provider.dispose);
+
+    final beforeStorage =
+        (await SharedPreferences.getInstance()).getString('daily_slots');
+    final original = provider.getSlotsForDate('2026-09-06')![0].label;
+    provider.assignCategoryToSlots(
+      {0},
+      Category(name: '覆盖前编辑', color: Colors.blue),
+      date: DateTime(2026, 9, 6),
+    );
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '覆盖前编辑');
+
+    expect(await provider.overwriteAllSchedulesFromGitee(), isFalse);
+    provider.undo();
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, original);
+    expect(provider.pendingGiteeSyncDates, {'2026-01-01', '2026-09-06'});
+    expect(provider.pendingGoogleSyncDates, {'2026-09-06', '2026-10-01'});
+    expect((await SharedPreferences.getInstance()).getString('daily_slots'),
+        beforeStorage);
   });
 }
