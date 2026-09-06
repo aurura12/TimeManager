@@ -1,9 +1,75 @@
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:time_manager/models/diary_kind.dart';
+import 'package:time_manager/providers/time_provider.dart';
+import 'package:time_manager/services/schedule_gitee_service.dart';
 import 'package:time_manager/services/schedule_overwrite.dart';
+import 'package:time_manager/services/schedule_sync_dependencies.dart';
+
+const _localPreferences = <String, Object>{
+  'daily_slots':
+      '{"2026-01-01":[{"i":0,"l":"本地专属","c":2,"cid":"local-category","ts":1000}],"2026-09-06":[{"i":0,"l":"本地重叠","c":3,"cid":"local-category","ts":1000}]}',
+  'pending_gitee_sync_dates': <String>['2026-01-01', '2026-09-06'],
+  'pending_google_sync_dates': <String>['2026-09-06', '2026-10-01'],
+};
+
+const _remoteCanonicalContent =
+    '{"updated_at":2000,"slots":[{"i":0,"l":"远端","c":1,"cid":"g-category","ts":2000}]}';
+
+ScheduleSyncDependencies _fakeDependencies({required bool failPull}) {
+  return ScheduleSyncDependencies(
+    loadToken: () async => 'fake-token',
+    listPaths: ({required token, required userCode}) async {
+      if (token != 'fake-token' || userCode != 'g') {
+        return ScheduleGiteeListWithShaResult.error('参数错误');
+      }
+      return ScheduleGiteeListWithShaResult.success({
+        'schedule/g/2026-09-06.json': 'remote-sha',
+      });
+    },
+    pullDay: ({required token, required dateKey, required userCode}) async {
+      if (token != 'fake-token' || dateKey != '2026-09-06' || userCode != 'g') {
+        return ScheduleGiteePullResult.error('参数错误');
+      }
+      if (failPull) return ScheduleGiteePullResult.error('读取失败');
+      return ScheduleGiteePullResult.success(
+        _remoteCanonicalContent,
+        'remote-sha',
+      );
+    },
+  );
+}
+
+Future<TimeProvider> _createProvider({required bool failPull}) async {
+  SharedPreferences.setMockInitialValues(_localPreferences);
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  messenger.setMockMethodCallHandler(
+    const MethodChannel('home_widget'),
+    (call) async => null,
+  );
+  messenger.setMockMethodCallHandler(
+    const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+    (call) async => null,
+  );
+
+  final provider = TimeProvider(
+    scheduleSyncDependencies: _fakeDependencies(failPull: failPull),
+  );
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!provider.isInitialLoadFinished && DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+  await provider.setScheduleUser(DiaryKind.g);
+  return provider;
+}
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('accepts only padded canonical paths for the selected user', () {
     expect(
       ScheduleOverwriteSnapshot.isCanonicalSchedulePath(
@@ -137,5 +203,42 @@ void main() {
       'del': true,
       'ts': 4,
     });
+  });
+
+  test('overwrite replaces local days and clears both pending sync sets',
+      () async {
+    final provider = await _createProvider(failPull: false);
+    addTearDown(provider.dispose);
+
+    final overwritten = await provider.overwriteAllSchedulesFromGitee();
+
+    expect(overwritten, isTrue);
+    expect(provider.getSlotsForDate('2026-01-01'), isNull);
+    final replaced = provider.getSlotsForDate('2026-09-06');
+    expect(replaced, isNotNull);
+    expect(replaced![0].label, '远端');
+    expect(replaced[0].color?.toARGB32(), 1);
+    expect(provider.pendingGiteeSyncDates, isEmpty);
+    expect(provider.pendingGoogleSyncDates, isEmpty);
+  });
+
+  test('overwrite pull failure preserves all local and pending state',
+      () async {
+    final provider = await _createProvider(failPull: true);
+    addTearDown(provider.dispose);
+
+    final overwritten = await provider.overwriteAllSchedulesFromGitee();
+
+    expect(overwritten, isFalse);
+    expect(provider.getSlotsForDate('2026-01-01')![0].label, '本地专属');
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '本地重叠');
+    expect(
+      provider.pendingGiteeSyncDates,
+      {'2026-01-01', '2026-09-06'},
+    );
+    expect(
+      provider.pendingGoogleSyncDates,
+      {'2026-09-06', '2026-10-01'},
+    );
   });
 }

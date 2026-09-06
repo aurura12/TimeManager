@@ -17,6 +17,7 @@ import '../utils/platform_features.dart';
 import '../services/diary_local_store.dart';
 import '../services/schedule_day_merge.dart';
 import '../services/schedule_gitee_service.dart';
+import '../services/schedule_sync_dependencies.dart';
 import '../services/category_document_merge.dart';
 import '../services/category_gitee_service.dart';
 import '../services/voice_schedule_slot_planner.dart';
@@ -60,6 +61,7 @@ class TimeProvider with ChangeNotifier {
   DateTime _currentDate = DateTime.now();
   bool _isSyncing = false; // 添加同步锁标志，防止并发同步导致重复
   final Duration _scheduleGiteeDebounce;
+  final ScheduleSyncDependencies _scheduleSyncDependencies;
 
   /// 本地已改、尚未成功同步到日历的日期（dateKey 列表）
   bool _googleCalendarSyncEnabled = !isDesktopPlatform;
@@ -221,7 +223,10 @@ class TimeProvider with ChangeNotifier {
 
   TimeProvider({
     Duration scheduleGiteeDebounce = const Duration(seconds: 3),
-  }) : _scheduleGiteeDebounce = scheduleGiteeDebounce {
+    ScheduleSyncDependencies? scheduleSyncDependencies,
+  })  : _scheduleGiteeDebounce = scheduleGiteeDebounce,
+        _scheduleSyncDependencies =
+            scheduleSyncDependencies ?? ScheduleSyncDependencies.production() {
     _googleAuthSubscription =
         GoogleCalendarService.authStateChanges.listen((_) {
       notifyListeners();
