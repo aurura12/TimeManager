@@ -47,6 +47,7 @@ ScheduleSyncDependencies _fakeDependencies({
   void Function()? onGoogleUpload,
   String? pullSha,
   Map<String, String>? pathShaMap,
+  bool Function()? shouldPull,
 }) {
   var pullCount = 0;
   return ScheduleSyncDependencies(
@@ -69,6 +70,9 @@ ScheduleSyncDependencies _fakeDependencies({
           (gateDateKey == null || dateKey == gateDateKey) &&
           (shouldGate?.call() ?? true)) {
         await pullGate.future;
+      }
+      if (!(shouldPull?.call() ?? true)) {
+        return ScheduleGiteePullResult.error('测试禁止读取');
       }
       if (token != 'fake-token' || dateKey != '2026-09-06' || userCode != 'g') {
         return ScheduleGiteePullResult.error('参数错误');
@@ -113,6 +117,7 @@ Future<TimeProvider> _createProvider({
   Duration googleCalendarDebounce = const Duration(seconds: 3),
   bool? googleCalendarSyncPlatformOverride,
   bool? googleCalendarSignedInOverride,
+  Future<Object?> Function(MethodCall call)? secureStorageHandler,
 }) async {
   SharedPreferences.setMockInitialValues(initialPreferences);
   final messenger =
@@ -123,7 +128,7 @@ Future<TimeProvider> _createProvider({
   );
   messenger.setMockMethodCallHandler(
     const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
-    (call) async => null,
+    secureStorageHandler ?? (call) async => null,
   );
 
   final provider = TimeProvider(
@@ -1035,6 +1040,150 @@ void main() {
     expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
   });
 
+  test('identity persistence claims the namespace before overwrite can start',
+      () async {
+    final manualWriteStarted = Completer<void>();
+    final releaseManualWrite = Completer<void>();
+    var blockManualWrite = false;
+    var listPathsCalls = 0;
+    var pullDayCalls = 0;
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: {
+        ..._localPreferences,
+        'schedule_user_kind': 'g',
+      },
+      dependencies: _fakeDependencies(
+        failPull: false,
+        onListPaths: () => listPathsCalls++,
+        onPullDay: () => pullDayCalls++,
+        shouldPull: () => false,
+      ),
+      secureStorageHandler: (call) async {
+        final arguments = call.arguments;
+        final isManualKind = arguments is Map &&
+            arguments['key'] == 'app_user_identity_manual_kind';
+        if (call.method == 'read' && isManualKind) return 'g';
+        if (call.method == 'write' && isManualKind && blockManualWrite) {
+          if (!manualWriteStarted.isCompleted) {
+            manualWriteStarted.complete();
+          }
+          await releaseManualWrite.future;
+        }
+        return null;
+      },
+    );
+    addTearDown(provider.dispose);
+    listPathsCalls = 0;
+    pullDayCalls = 0;
+
+    final prefs = await SharedPreferences.getInstance();
+    final beforeSlots = prefs.getString('daily_slots');
+    blockManualWrite = true;
+    final setter = provider.setScheduleUser(DiaryKind.j);
+    await manualWriteStarted.future;
+
+    final overwrite = provider.overwriteAllSchedulesFromGitee();
+    expect(await overwrite, isFalse);
+    expect(provider.scheduleUser, DiaryKind.g);
+    expect(prefs.getString('schedule_user_kind'), 'g');
+    expect(prefs.getString('daily_slots'), beforeSlots);
+    expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
+    expect(listPathsCalls, 0);
+    expect(pullDayCalls, 0);
+    expect(provider.getSlotsForDate('2026-01-01')![0].label, '本地专属');
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '本地重叠');
+
+    releaseManualWrite.complete();
+    await setter;
+    expect(provider.scheduleUser, DiaryKind.j);
+    expect(prefs.getString('schedule_user_kind'), 'j');
+    expect(prefs.getString('daily_slots'), beforeSlots);
+    expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
+  });
+
+  test('waits for identity loading before schedule sync and overwrite',
+      () async {
+    final identityLoadStarted = Completer<void>();
+    final releaseIdentityLoad = Completer<void>();
+    var listPathsCalls = 0;
+    var pullDayCalls = 0;
+    SharedPreferences.setMockInitialValues({
+      ..._localPreferences,
+      'schedule_user_kind': 'g',
+    });
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('home_widget'),
+      (call) async => null,
+    );
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+      (call) async {
+        final arguments = call.arguments;
+        final isManualKind = arguments is Map &&
+            arguments['key'] == 'app_user_identity_manual_kind';
+        if (call.method == 'read' && isManualKind) {
+          if (!identityLoadStarted.isCompleted) {
+            identityLoadStarted.complete();
+          }
+          await releaseIdentityLoad.future;
+          return 'g';
+        }
+        return null;
+      },
+    );
+    final provider = TimeProvider(
+      scheduleSyncDependencies: _fakeDependencies(
+        failPull: false,
+        onListPaths: () => listPathsCalls++,
+        onPullDay: () => pullDayCalls++,
+      ),
+    );
+    addTearDown(() {
+      if (!releaseIdentityLoad.isCompleted) releaseIdentityLoad.complete();
+      provider.dispose();
+    });
+
+    await identityLoadStarted.future;
+    while (!provider.isInitialLoadFinished) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final beforeSlots = prefs.getString('daily_slots');
+
+    await provider.setScheduleUser(DiaryKind.g);
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    await provider.syncScheduleToGitee(dateKey: '2026-09-06');
+    expect(await provider.overwriteAllSchedulesFromGitee(), isFalse);
+
+    expect(listPathsCalls, 0);
+    expect(pullDayCalls, 0);
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '本地重叠');
+    expect(prefs.getString('daily_slots'), beforeSlots);
+    expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
+
+    releaseIdentityLoad.complete();
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (!provider.hasSelectedScheduleUser &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    expect(provider.scheduleUser, DiaryKind.g);
+    expect(await provider.overwriteAllSchedulesFromGitee(), isTrue);
+    expect(listPathsCalls, greaterThan(0));
+    expect(pullDayCalls, greaterThan(0));
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '远端');
+    expect(
+      jsonDecode(prefs.getString('daily_slots')!)['2026-09-06'][0]['l'],
+      '远端',
+    );
+    expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
+  });
+
   test('overwrite rejects a local edit made while the remote pull waits',
       () async {
     final gate = Completer<void>();
@@ -1440,8 +1589,7 @@ void main() {
     expect(restarted.getSlotsForDate('2026-09-06')![0].label, '远端');
   });
 
-  test('slot edit during real journal remove is rejected safely',
-      () async {
+  test('slot edit during real journal remove is rejected safely', () async {
     late TimeProvider provider;
     final removeStarted = Completer<void>();
     final releaseRemove = Completer<void>();
