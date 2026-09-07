@@ -1027,6 +1027,9 @@ void main() {
     var pauseNextSave = false;
     var listPathsCalls = 0;
     var overwriteStarted = false;
+    var giteeUploads = 0;
+    var googlePulls = 0;
+    var googleUploads = 0;
 
     final dependencies = ScheduleSyncDependencies(
       loadToken: () async => 'fake-token',
@@ -1055,10 +1058,17 @@ void main() {
         required content,
         required commitMessage,
       }) async {
+        giteeUploads++;
         return ScheduleGiteePushResult.success(created: false);
       },
-      pushGoogleDay: (slots, date) async => true,
-      pullGoogleDay: (date) async => const [],
+      pushGoogleDay: (slots, date) async {
+        googleUploads++;
+        return true;
+      },
+      pullGoogleDay: (date) async {
+        googlePulls++;
+        return const [];
+      },
     );
 
     final provider = await _createProvider(
@@ -1096,6 +1106,21 @@ void main() {
     expect(listPathsCalls, 0);
     expect(provider.isRemoteViewEnabled, isFalse);
 
+    provider.assignCategoryToSlots(
+      {0},
+      Category(name: '切换期间编辑', color: Colors.red),
+      date: DateTime(2026, 9, 6),
+    );
+    await provider.onAppBackgrounded();
+    await provider.syncScheduleToGitee(dateKey: '2026-09-06');
+    await provider.pullGoogleCalendarForDate(DateTime(2026, 9, 6));
+    await provider.setScheduleUser(DiaryKind.j);
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '本地重叠');
+    expect(provider.scheduleUser, DiaryKind.g);
+    expect(giteeUploads, 0);
+    expect(googlePulls, 0);
+    expect(googleUploads, 0);
+
     releaseSave.complete();
     await remoteView;
 
@@ -1108,6 +1133,136 @@ void main() {
     expect(prefs.getStringList('pending_sync_dates'), beforePending);
     expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
     expect(provider.slots.any((slot) => slot.label == '远端'), isTrue);
+  });
+
+  test('remote view blocks ordinary persistence, sync, identity, and overwrite',
+      () async {
+    var giteeUploads = 0;
+    var googlePulls = 0;
+    var googleUploads = 0;
+    var saveCalls = 0;
+    final dependencies = ScheduleSyncDependencies(
+      loadToken: () async => 'fake-token',
+      listPaths: ({required token, required userCode}) async =>
+          ScheduleGiteeListWithShaResult.success(
+        {'schedule/g/2026-09-06.json': 'remote-sha'},
+      ),
+      pullDay: ({required token, required dateKey, required userCode}) async {
+        if (userCode != 'j') return ScheduleGiteePullResult.error('禁止读取');
+        return ScheduleGiteePullResult.success(
+          _remoteCanonicalContent,
+          'remote-sha',
+        );
+      },
+      pushDay: ({
+        required token,
+        required dateKey,
+        required userCode,
+        required content,
+        required commitMessage,
+      }) async {
+        giteeUploads++;
+        return ScheduleGiteePushResult.success(created: false);
+      },
+      pullGoogleDay: (date) async {
+        googlePulls++;
+        return const [];
+      },
+      pushGoogleDay: (slots, date) async {
+        googleUploads++;
+        return true;
+      },
+    );
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: _localPreferences,
+      dependencies: dependencies,
+      saveDataOverride: () async {
+        saveCalls++;
+        return true;
+      },
+      googleCalendarSyncPlatformOverride: true,
+      googleCalendarSignedInOverride: true,
+    );
+    addTearDown(provider.dispose);
+    provider.goToDate(DateTime(2026, 9, 6));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    final prefs = await SharedPreferences.getInstance();
+    final diskBefore = prefs.getString('daily_slots');
+
+    await provider.toggleRemoteScheduleView();
+    expect(provider.isRemoteViewEnabled, isTrue);
+    final savesAfterOpen = saveCalls;
+    final googlePullsAfterOpen = googlePulls;
+
+    provider.assignCategoryToSlots(
+      {0},
+      Category(name: '远程视图编辑', color: Colors.red),
+      date: DateTime(2026, 9, 6),
+    );
+    await provider.onAppBackgrounded();
+    await provider.syncScheduleToGitee(dateKey: '2026-09-06');
+    await provider.syncAllSchedulesToGitee();
+    await provider.pullAllSchedulesFromGitee();
+    expect(await provider.pullScheduleFromGitee(), isFalse);
+    await provider.pullGoogleCalendarForDate(DateTime(2026, 9, 6));
+    await provider.synchronizeCalendar(delay: false);
+    await provider.synchronizeAllPendingCalendars();
+    await provider.setScheduleUser(DiaryKind.j);
+    expect(await provider.overwriteAllSchedulesFromGitee(), isFalse);
+
+    expect(provider.scheduleUser, DiaryKind.g);
+    expect(saveCalls, savesAfterOpen);
+    expect(googlePulls, googlePullsAfterOpen);
+    expect(giteeUploads, 0);
+    expect(googleUploads, 0);
+    expect(prefs.getString('daily_slots'), diskBefore);
+    expect(provider.slots.any((slot) => slot.label == '远程视图编辑'), isFalse);
+  });
+
+  test('remote view close save failure keeps backup and remote memory',
+      () async {
+    var failSave = false;
+    final dependencies = ScheduleSyncDependencies(
+      loadToken: () async => 'fake-token',
+      listPaths: ({required token, required userCode}) async =>
+          ScheduleGiteeListWithShaResult.success(const {}),
+      pullDay: ({required token, required dateKey, required userCode}) async {
+        if (userCode != 'j') return ScheduleGiteePullResult.error('禁止读取');
+        return ScheduleGiteePullResult.success(
+          _remoteCanonicalContent,
+          'remote-sha',
+        );
+      },
+    );
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: _localPreferences,
+      dependencies: dependencies,
+      saveDataOverride: () async => !failSave,
+    );
+    addTearDown(provider.dispose);
+    provider.goToDate(DateTime(2026, 9, 6));
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    final prefs = await SharedPreferences.getInstance();
+    final localDisk = prefs.getString('daily_slots');
+
+    await provider.toggleRemoteScheduleView();
+    expect(provider.isRemoteViewEnabled, isTrue);
+    expect(provider.slots[0].label, '远端');
+
+    failSave = true;
+    await provider.toggleRemoteScheduleView();
+    expect(provider.isRemoteViewEnabled, isTrue);
+    expect(provider.slots[0].label, '远端');
+    expect(prefs.getString('daily_slots'), localDisk);
+
+    failSave = false;
+    await provider.toggleRemoteScheduleView();
+    expect(provider.isRemoteViewEnabled, isFalse);
+    expect(provider.slots[0].label, '本地重叠');
+    expect(jsonDecode(prefs.getString('daily_slots')!)['2026-09-06'][0]['l'],
+        '本地重叠');
   });
 
   test('rejects identity change during overwrite fetch', () async {

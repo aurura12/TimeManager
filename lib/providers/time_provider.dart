@@ -66,6 +66,8 @@ class _ScheduleSaveSnapshot {
   final bool Function() isStillValid;
 }
 
+enum _ScheduleSaveMode { normal, remoteViewTransition }
+
 class _SchedulePreferencesSnapshot {
   const _SchedulePreferencesSnapshot(this.values);
 
@@ -216,7 +218,9 @@ class TimeProvider with ChangeNotifier {
       _initializationFailed ||
       _isDisposed ||
       _scheduleOverwriteJournalCleanupPending ||
-      _scheduleOverwriteCleanupInProgress;
+      _scheduleOverwriteCleanupInProgress ||
+      _remoteViewTransitionInProgress ||
+      _remoteViewEnabled;
 
   bool get _isScheduleReady =>
       _isInitialLoadFinished && !_initializationFailed && !_isDisposed;
@@ -230,13 +234,16 @@ class TimeProvider with ChangeNotifier {
         _scheduleOverwriteInProgress ||
         _scheduleOverwriteCleanupInProgress ||
         _scheduleOverwriteJournalCleanupPending ||
-        _remoteViewTransitionInProgress) {
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled) {
       _addScheduleSyncStatus(
         _scheduleOverwriteJournalCleanupPending
             ? '覆盖日程清理未完成，修改已忽略'
             : _remoteViewTransitionInProgress
                 ? '远程视图切换进行中，修改已忽略'
-                : '覆盖拉取进行中，修改已忽略',
+                : _remoteViewEnabled
+                    ? '远程视图只读，修改已忽略'
+                    : '覆盖拉取进行中，修改已忽略',
       );
       return false;
     }
@@ -273,9 +280,38 @@ class TimeProvider with ChangeNotifier {
         !_scheduleOverwriteJournalCleanupPending &&
         !_scheduleOverwriteInProgress &&
         !_scheduleIdentityMutationInProgress &&
-        (allowRemoteViewTransition || !_remoteViewTransitionInProgress) &&
+        (allowRemoteViewTransition ||
+            (!_remoteViewTransitionInProgress && !_remoteViewEnabled)) &&
         _hasSelectedScheduleUser &&
         _scheduleUser.code == selectedUserCode;
+  }
+
+  bool _allowScheduleNavigation() {
+    return _isScheduleReady &&
+        !_scheduleIdentityMutationInProgress &&
+        !_scheduleOverwriteInProgress &&
+        !_scheduleOverwriteCleanupInProgress &&
+        !_scheduleOverwriteJournalCleanupPending &&
+        !_remoteViewTransitionInProgress;
+  }
+
+  bool get _hasScheduleSyncInFlight =>
+      _scheduleGiteeSyncing ||
+      _allScheduleSyncing ||
+      _allSchedulePulling ||
+      _isSyncing ||
+      _scheduleMergePullsInProgress > 0 ||
+      _googleCalendarPullsInProgress > 0 ||
+      _categoriesGiteeSyncing;
+
+  bool _canContinueRemoteViewPersistence(int epoch) {
+    return _isScheduleReady &&
+        _remoteViewTransitionInProgress &&
+        _remoteViewTransitionEpoch == epoch &&
+        !_scheduleOverwriteInProgress &&
+        !_scheduleOverwriteCleanupInProgress &&
+        !_scheduleOverwriteJournalCleanupPending &&
+        !_scheduleIdentityMutationInProgress;
   }
 
   /// 本地已改、尚未成功同步到日历的日期（dateKey 列表）
@@ -743,7 +779,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void previousDay() {
-    if (!_allowScheduleMutation()) return;
+    if (!_allowScheduleNavigation()) return;
     _currentDate = _currentDate.subtract(const Duration(days: 1));
     notifyListeners();
     _refreshHomeWidget();
@@ -752,7 +788,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void nextDay() {
-    if (!_allowScheduleMutation()) return;
+    if (!_allowScheduleNavigation()) return;
     _currentDate = _currentDate.add(const Duration(days: 1));
     notifyListeners();
     _refreshHomeWidget();
@@ -761,7 +797,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   void goToDate(DateTime date) {
-    if (!_allowScheduleMutation()) return;
+    if (!_allowScheduleNavigation()) return;
     _currentDate = DateTime(date.year, date.month, date.day);
     notifyListeners();
     _refreshHomeWidget();
@@ -807,6 +843,7 @@ class TimeProvider with ChangeNotifier {
         userCode: otherCode,
         date: d,
         requestRevision: requestRevision,
+        allowRemoteViewTransition: true,
       ));
     }
     _markAllSlotsDirty();
@@ -1090,8 +1127,10 @@ class TimeProvider with ChangeNotifier {
       _isSyncing ||
       _scheduleOverwriteInProgress ||
       _remoteViewTransitionInProgress ||
+      _remoteViewEnabled ||
       _scheduleMergePullsInProgress > 0 ||
-      _googleCalendarPullsInProgress > 0;
+      _googleCalendarPullsInProgress > 0 ||
+      _categoriesGiteeSyncing;
 
   /// 标记当前日期需要同步到 Gitee（带 3 秒防抖）。
   /// [dateKey] 捕获目标日期，避免防抖期间切换日期推错日期。
@@ -1101,7 +1140,8 @@ class TimeProvider with ChangeNotifier {
         _scheduleOverwriteJournalCleanupPending ||
         _scheduleOverwriteInProgress ||
         _scheduleOverwriteCleanupInProgress ||
-        _remoteViewTransitionInProgress) {
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled) {
       return;
     }
     final target = dateKey ?? _getDateKey(_currentDate);
@@ -1139,7 +1179,8 @@ class TimeProvider with ChangeNotifier {
         !_scheduleUserLoadFinished ||
         _initializationFailed ||
         _isDisposed ||
-        _scheduleOverwriteJournalCleanupPending) {
+        _scheduleOverwriteJournalCleanupPending ||
+        _remoteViewTransitionInProgress) {
       return;
     }
     if (_remoteViewEnabled) {
@@ -1151,7 +1192,7 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('请先选择身份');
       return;
     }
-    if (_scheduleOverwriteInProgress) return;
+    if (_scheduleOverwriteInProgress || _remoteViewTransitionInProgress) return;
     final effectiveDateKey = dateKey ?? _getDateKey(_currentDate);
     final syncRevision = _scheduleGiteeDateRevisions[effectiveDateKey] ?? 0;
     final selectedUserCode = _scheduleUser.code;
@@ -1370,7 +1411,8 @@ class TimeProvider with ChangeNotifier {
         _initializationFailed ||
         _isDisposed ||
         _scheduleIdentityMutationInProgress ||
-        _scheduleOverwriteJournalCleanupPending) {
+        _scheduleOverwriteJournalCleanupPending ||
+        _remoteViewTransitionInProgress) {
       return;
     }
     if (_remoteViewEnabled) {
@@ -1465,7 +1507,8 @@ class TimeProvider with ChangeNotifier {
         _initializationFailed ||
         _isDisposed ||
         _scheduleIdentityMutationInProgress ||
-        _scheduleOverwriteJournalCleanupPending) {
+        _scheduleOverwriteJournalCleanupPending ||
+        _remoteViewTransitionInProgress) {
       return;
     }
     if (_remoteViewEnabled) {
@@ -1913,7 +1956,8 @@ class TimeProvider with ChangeNotifier {
   Future<void> _pullCategoriesFromGitee() async {
     if (!_isScheduleReady ||
         _scheduleOverwriteJournalCleanupPending ||
-        _remoteViewEnabled) {
+        _remoteViewEnabled ||
+        _remoteViewTransitionInProgress) {
       return;
     }
     if (!_hasSelectedScheduleUser) return;
@@ -1924,6 +1968,8 @@ class TimeProvider with ChangeNotifier {
       final token = await DiaryLocalStore.loadToken();
       if (!_isScheduleReady ||
           _scheduleOverwriteJournalCleanupPending ||
+          _remoteViewEnabled ||
+          _remoteViewTransitionInProgress ||
           !_hasSelectedScheduleUser ||
           _scheduleUser.code != userCode ||
           token == null ||
@@ -1934,6 +1980,8 @@ class TimeProvider with ChangeNotifier {
           token: token, userCode: userCode);
       if (!_isScheduleReady ||
           _scheduleOverwriteJournalCleanupPending ||
+          _remoteViewEnabled ||
+          _remoteViewTransitionInProgress ||
           !_hasSelectedScheduleUser ||
           _scheduleUser.code != userCode ||
           !pullResult.success ||
@@ -1957,7 +2005,12 @@ class TimeProvider with ChangeNotifier {
 
   /// 将合并结果写回本地分类状态并持久化。
   void _applyMergedCategories(CategoryDocument merged) {
-    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return;
+    if (!_isScheduleReady ||
+        _scheduleOverwriteCleanupInProgress ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled) {
+      return;
+    }
     _categories = merged.categories;
     _deletedCategories
       ..clear()
@@ -1982,7 +2035,8 @@ class TimeProvider with ChangeNotifier {
         _isDisposed ||
         _scheduleIdentityMutationInProgress ||
         _scheduleOverwriteJournalCleanupPending ||
-        (_remoteViewTransitionInProgress && !allowRemoteViewTransition)) {
+        ((_remoteViewTransitionInProgress || _remoteViewEnabled) &&
+            !allowRemoteViewTransition)) {
       return false;
     }
     if (_scheduleOverwriteInProgress) return false;
@@ -2078,21 +2132,18 @@ class TimeProvider with ChangeNotifier {
   /// 切换查看对方日程。打开时显示纯远端数据；关闭时恢复本地数据。
   /// Windows 三列视图下覆盖选中日及前后各一天，安卓仅覆盖选中日。
   Future<void> toggleRemoteScheduleView() async {
-    if (_remoteViewTransitionInProgress ||
-        !_allowScheduleMutation() ||
-        _scheduleOverwriteJournalCleanupPending) {
+    if (!_canStartRemoteViewTransition()) {
       return;
     }
-    if (!_hasSelectedScheduleUser) {
-      _addScheduleSyncStatus('请先选择身份');
-      return;
-    }
+    final selectedUserCode = _scheduleUser.code;
     final transitionEpoch = ++_remoteViewTransitionEpoch;
     _remoteViewTransitionInProgress = true;
     bool transitionIsStillValid() =>
         !_isDisposed &&
         _remoteViewTransitionInProgress &&
         _remoteViewTransitionEpoch == transitionEpoch &&
+        _hasSelectedScheduleUser &&
+        _scheduleUser.code == selectedUserCode &&
         !_scheduleOverwriteInProgress &&
         !_scheduleOverwriteCleanupInProgress &&
         !_scheduleOverwriteJournalCleanupPending;
@@ -2102,9 +2153,17 @@ class TimeProvider with ChangeNotifier {
       if (_remoteViewEnabled) {
         // 关闭：按备份过的日期逐一恢复本地数据
         final backupKeys = _remoteViewBackup.keys.toList();
+        final remoteSlotsBeforeRestore = <String, List<TimeSlot>>{};
+        final remoteSlotKeys = <String>{};
+        for (final dk in backupKeys) {
+          final existing = _dailySlots[dk];
+          if (existing == null) continue;
+          remoteSlotKeys.add(dk);
+          remoteSlotsBeforeRestore[dk] = _cloneSlots(existing);
+        }
         for (final dk in backupKeys) {
           final slots = _dailySlots[dk] ?? _generateInitialSlots();
-          final backup = parseScheduleContent(_remoteViewBackup.remove(dk));
+          final backup = parseScheduleContent(_remoteViewBackup[dk]);
           _clearDaySlots(slots, clearModifiedAt: true);
           for (final map in backup.slots) {
             final idx = _parseInt(map['i']);
@@ -2140,10 +2199,19 @@ class TimeProvider with ChangeNotifier {
         }
         if (backupKeys.isNotEmpty) {
           _markAllSlotsDirty();
-          final saved = await _saveData();
-          if (!transitionIsStillValid() || !saved) return;
+          final saved = await _saveDataForRemoteViewTransition(transitionEpoch);
+          if (!transitionIsStillValid() || !saved) {
+            _restoreRemoteViewSlots(
+              backupKeys,
+              remoteSlotsBeforeRestore,
+              remoteSlotKeys,
+            );
+            if (!_isDisposed) notifyListeners();
+            return;
+          }
         }
         if (!transitionIsStillValid()) return;
+        _remoteViewBackup.clear();
         _remoteViewEnabled = false;
       } else {
         // 打开：备份本地，清空日期，拉取纯远端数据
@@ -2156,7 +2224,7 @@ class TimeProvider with ChangeNotifier {
         _debounceTimer = null;
 
         // 2) 先持久化当前用户的最新编辑，确保不丢失
-        final saved = await _saveData();
+        final saved = await _saveDataForRemoteViewTransition(transitionEpoch);
         if (!transitionIsStillValid() ||
             !saved ||
             _initializationFailed ||
@@ -2206,6 +2274,63 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
+  bool _canStartRemoteViewTransition() {
+    if (!_isScheduleIdentityReady ||
+        _remoteViewTransitionInProgress ||
+        _scheduleOverwriteInProgress ||
+        _scheduleOverwriteCleanupInProgress ||
+        _scheduleOverwriteJournalCleanupPending ||
+        _scheduleIdentityMutationInProgress) {
+      return false;
+    }
+    if (!_hasSelectedScheduleUser) {
+      _addScheduleSyncStatus('请先选择身份');
+      return false;
+    }
+    if (_hasScheduleSyncInFlight) {
+      _addScheduleSyncStatus('已有日程同步任务，远程视图切换已忽略');
+      return false;
+    }
+    return true;
+  }
+
+  List<TimeSlot> _cloneSlots(List<TimeSlot> source) {
+    return source
+        .map(
+          (slot) => TimeSlot(
+            hour: slot.hour,
+            minute10: slot.minute10,
+            recorded: slot.recorded,
+            label: slot.label,
+            categoryId: slot.categoryId,
+            color: slot.color,
+            isFromCalendar: slot.isFromCalendar,
+            calendarEventId: slot.calendarEventId,
+            modifiedAt: slot.modifiedAt,
+            deletedAt: slot.deletedAt,
+          ),
+        )
+        .toList();
+  }
+
+  void _restoreRemoteViewSlots(
+    List<String> backupKeys,
+    Map<String, List<TimeSlot>> snapshots,
+    Set<String> existingKeys,
+  ) {
+    for (final dk in backupKeys) {
+      final snapshot = snapshots[dk];
+      if (snapshot != null) {
+        _dailySlots[dk] = _cloneSlots(snapshot);
+      } else if (!existingKeys.contains(dk)) {
+        _dailySlots.remove(dk);
+      }
+    }
+    // The local restore has not been persisted. Keep the next close attempt
+    // responsible for writing it, while the remote view remains read-only.
+    _allSlotsDirty = true;
+  }
+
   /// 远程视图覆盖的日期：Windows 三列（选中日 ±1 天），安卓仅选中日。
   List<DateTime> _getRemoteViewDates() {
     return scheduleDatesForView(_currentDate, desktop: isDesktopPlatform);
@@ -2227,7 +2352,12 @@ class TimeProvider with ChangeNotifier {
 
   /// 本地与云端日历不一致时标记（与是否已登录无关）
   void _markPendingSync([String? dateKey]) {
-    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return;
+    if (!_isScheduleReady ||
+        _scheduleOverwriteCleanupInProgress ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled) {
+      return;
+    }
     final key = dateKey ?? _getDateKey(_currentDate);
     _pendingSyncState.markGitee(key);
     if (_supportsGoogleCalendarSync) {
@@ -2238,7 +2368,12 @@ class TimeProvider with ChangeNotifier {
   }
 
   void _clearPendingGiteeForDate([String? dateKey]) {
-    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return;
+    if (!_isScheduleReady ||
+        _scheduleOverwriteCleanupInProgress ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled) {
+      return;
+    }
     final key = dateKey ?? _getDateKey(_currentDate);
     if (_pendingSyncState.giteeDates.contains(key)) {
       _pendingSyncState.clearGitee(key);
@@ -2249,7 +2384,12 @@ class TimeProvider with ChangeNotifier {
   }
 
   void _clearPendingGoogleForDate([String? dateKey]) {
-    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return;
+    if (!_isScheduleReady ||
+        _scheduleOverwriteCleanupInProgress ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled) {
+      return;
+    }
     final key = dateKey ?? _getDateKey(_currentDate);
     if (_pendingSyncState.googleDates.contains(key)) {
       _pendingSyncState.clearGoogle(key);
@@ -2264,7 +2404,9 @@ class TimeProvider with ChangeNotifier {
     if (!_isInitialLoadFinished ||
         !_scheduleUserLoadFinished ||
         _initializationFailed ||
-        _scheduleOverwriteJournalCleanupPending) {
+        _scheduleOverwriteJournalCleanupPending ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled) {
       return;
     }
     _debounceTimer?.cancel();
@@ -2285,7 +2427,9 @@ class TimeProvider with ChangeNotifier {
         _initializationFailed ||
         _isDisposed ||
         _scheduleIdentityMutationInProgress ||
-        _scheduleOverwriteJournalCleanupPending) {
+        _scheduleOverwriteJournalCleanupPending ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled) {
       return;
     }
     if (isDesktopPlatform) {
@@ -2303,7 +2447,10 @@ class TimeProvider with ChangeNotifier {
       priorityDate: currentKey,
     );
     for (final dateKey in giteeDates) {
-      if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) {
+      if (_initializationFailed ||
+          _scheduleOverwriteJournalCleanupPending ||
+          _remoteViewTransitionInProgress ||
+          _remoteViewEnabled) {
         return;
       }
       await syncScheduleToGitee(dateKey: dateKey);
@@ -2323,6 +2470,8 @@ class TimeProvider with ChangeNotifier {
         _initializationFailed ||
         _scheduleIdentityMutationInProgress ||
         _scheduleOverwriteJournalCleanupPending ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled ||
         !_supportsGoogleCalendarSync ||
         !_googleCalendarSyncEnabled) {
       if (!delay) {
@@ -2339,6 +2488,8 @@ class TimeProvider with ChangeNotifier {
           _initializationFailed ||
           _scheduleIdentityMutationInProgress ||
           _scheduleOverwriteJournalCleanupPending ||
+          _remoteViewTransitionInProgress ||
+          _remoteViewEnabled ||
           syncGeneration != _googleSyncGeneration ||
           _isSyncing ||
           _scheduleOverwriteInProgress) {
@@ -2363,6 +2514,8 @@ class TimeProvider with ChangeNotifier {
             _initializationFailed ||
             _scheduleIdentityMutationInProgress ||
             _scheduleOverwriteJournalCleanupPending ||
+            _remoteViewTransitionInProgress ||
+            _remoteViewEnabled ||
             syncGeneration != _googleSyncGeneration ||
             _scheduleOverwriteInProgress) {
           return;
@@ -2383,6 +2536,8 @@ class TimeProvider with ChangeNotifier {
             _initializationFailed ||
             _scheduleIdentityMutationInProgress ||
             _scheduleOverwriteJournalCleanupPending ||
+            _remoteViewTransitionInProgress ||
+            _remoteViewEnabled ||
             syncGeneration != _googleSyncGeneration ||
             _scheduleOverwriteInProgress) {
           return;
@@ -2394,6 +2549,8 @@ class TimeProvider with ChangeNotifier {
         if (_isDisposed ||
             _initializationFailed ||
             _scheduleOverwriteJournalCleanupPending ||
+            _remoteViewTransitionInProgress ||
+            _remoteViewEnabled ||
             syncGeneration != _googleSyncGeneration ||
             _scheduleOverwriteInProgress) {
           return;
@@ -2442,6 +2599,8 @@ class TimeProvider with ChangeNotifier {
         _isDisposed ||
         _scheduleIdentityMutationInProgress ||
         _scheduleOverwriteJournalCleanupPending ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled ||
         !_googleCalendarSyncEnabled) {
       _addSyncStatus('Google 日历同步已关闭');
       return;
@@ -2459,6 +2618,8 @@ class TimeProvider with ChangeNotifier {
         _initializationFailed ||
         _scheduleIdentityMutationInProgress ||
         _scheduleOverwriteJournalCleanupPending ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled ||
         _isSyncing ||
         _scheduleOverwriteInProgress) {
       _addSyncStatus("同步进行中，请稍后重试");
@@ -2485,6 +2646,8 @@ class TimeProvider with ChangeNotifier {
             _initializationFailed ||
             _scheduleIdentityMutationInProgress ||
             _scheduleOverwriteJournalCleanupPending ||
+            _remoteViewTransitionInProgress ||
+            _remoteViewEnabled ||
             _scheduleOverwriteInProgress) {
           allSuccess = false;
           break;
@@ -2525,12 +2688,16 @@ class TimeProvider with ChangeNotifier {
               !_initializationFailed &&
               !_scheduleIdentityMutationInProgress &&
               !_scheduleOverwriteJournalCleanupPending &&
+              !_remoteViewTransitionInProgress &&
+              !_remoteViewEnabled &&
               !_scheduleOverwriteInProgress,
           push: (slotsForDay) {
             if (_isDisposed ||
                 _initializationFailed ||
                 _scheduleIdentityMutationInProgress ||
                 _scheduleOverwriteJournalCleanupPending ||
+                _remoteViewTransitionInProgress ||
+                _remoteViewEnabled ||
                 _scheduleOverwriteInProgress) {
               return Future.value(false);
             }
@@ -2544,6 +2711,8 @@ class TimeProvider with ChangeNotifier {
             _initializationFailed ||
             _scheduleIdentityMutationInProgress ||
             _scheduleOverwriteJournalCleanupPending ||
+            _remoteViewTransitionInProgress ||
+            _remoteViewEnabled ||
             _scheduleOverwriteInProgress) {
           allSuccess = false;
           break;
@@ -2564,7 +2733,9 @@ class TimeProvider with ChangeNotifier {
       if (_isDisposed ||
           _initializationFailed ||
           _scheduleIdentityMutationInProgress ||
-          _scheduleOverwriteJournalCleanupPending) {
+          _scheduleOverwriteJournalCleanupPending ||
+          _remoteViewTransitionInProgress ||
+          _remoteViewEnabled) {
         return;
       }
       final saved = await _saveData();
@@ -2572,6 +2743,8 @@ class TimeProvider with ChangeNotifier {
           _initializationFailed ||
           _scheduleIdentityMutationInProgress ||
           _scheduleOverwriteJournalCleanupPending ||
+          _remoteViewTransitionInProgress ||
+          _remoteViewEnabled ||
           !saved) {
         return;
       }
@@ -2987,6 +3160,8 @@ class TimeProvider with ChangeNotifier {
         !_scheduleUserLoadFinished ||
         _initializationFailed ||
         _scheduleOverwriteJournalCleanupPending ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled ||
         !_supportsGoogleCalendarSync ||
         !_googleCalendarSyncEnabled) {
       return;
@@ -3002,6 +3177,8 @@ class TimeProvider with ChangeNotifier {
         _initializationFailed ||
         _isDisposed ||
         _scheduleOverwriteJournalCleanupPending ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled ||
         !_supportsGoogleCalendarSync ||
         !_googleCalendarSyncEnabled) {
       return false;
@@ -3010,7 +3187,10 @@ class TimeProvider with ChangeNotifier {
       return false;
     }
     if (!_isGoogleCalendarSignedIn) return false;
-    if (_scheduleIdentityMutationInProgress || _scheduleOverwriteInProgress) {
+    if (_scheduleIdentityMutationInProgress ||
+        _scheduleOverwriteInProgress ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled) {
       return false;
     }
 
@@ -3024,6 +3204,8 @@ class TimeProvider with ChangeNotifier {
           _initializationFailed ||
           _scheduleIdentityMutationInProgress ||
           _scheduleOverwriteJournalCleanupPending ||
+          _remoteViewTransitionInProgress ||
+          _remoteViewEnabled ||
           (syncGeneration != null && syncGeneration != _googleSyncGeneration) ||
           _scheduleOverwriteInProgress) {
         return false;
@@ -3037,6 +3219,8 @@ class TimeProvider with ChangeNotifier {
           _initializationFailed ||
           _scheduleIdentityMutationInProgress ||
           _scheduleOverwriteJournalCleanupPending ||
+          _remoteViewTransitionInProgress ||
+          _remoteViewEnabled ||
           (syncGeneration != null && syncGeneration != _googleSyncGeneration) ||
           _scheduleOverwriteInProgress ||
           !saved) {
@@ -3559,22 +3743,58 @@ class TimeProvider with ChangeNotifier {
 
   // --- 数据持久化逻辑 ---
 
-  Future<bool> _saveData({_ScheduleSaveSnapshot? snapshot}) async {
+  Future<bool> _saveDataForRemoteViewTransition(int epoch) {
+    return _saveData(
+      mode: _ScheduleSaveMode.remoteViewTransition,
+      remoteViewTransitionEpoch: epoch,
+    );
+  }
+
+  Future<bool> _saveData({
+    _ScheduleSaveSnapshot? snapshot,
+    _ScheduleSaveMode mode = _ScheduleSaveMode.normal,
+    int? remoteViewTransitionEpoch,
+  }) async {
+    bool canPersist() {
+      if (mode == _ScheduleSaveMode.remoteViewTransition) {
+        return remoteViewTransitionEpoch != null &&
+            _canContinueRemoteViewPersistence(remoteViewTransitionEpoch);
+      }
+      return !_isSchedulePersistenceBlocked;
+    }
+
     if (!_isScheduleReady) return false;
-    if (snapshot == null && _scheduleOverwriteInProgress) {
+    if (mode == _ScheduleSaveMode.normal &&
+        snapshot == null &&
+        _scheduleOverwriteInProgress) {
       _deferredScheduleSaveRequested = true;
       return false;
     }
-    if (snapshot == null && !await _prepareSchedulePersistence()) return false;
-    if (_isSchedulePersistenceBlocked) return false;
-    if (_saveDataOverride != null) return _saveDataOverride!();
+    if (!canPersist()) return false;
+    if (mode == _ScheduleSaveMode.normal &&
+        snapshot == null &&
+        !await _prepareSchedulePersistence()) {
+      return false;
+    }
+    if (!canPersist()) return false;
+    if (_saveDataOverride != null) {
+      final saved = await _saveDataOverride!();
+      return saved && canPersist();
+    }
     final previous = _ongoingSave;
     final requestRevision = ++_saveRequestRevision;
     // 串行化保存：等待上一个保存完成后再启动本次，
     // 避免并发读写导致整包写回时互相覆盖丢数据。
     final save = (previous ?? Future<bool>.value(true))
         .catchError((_) => false) // 上一个保存失败不阻断本次
-        .then((_) => _saveDataImpl(requestRevision, snapshot));
+        .then(
+          (_) => _saveDataImpl(
+            requestRevision,
+            snapshot,
+            mode: mode,
+            remoteViewTransitionEpoch: remoteViewTransitionEpoch,
+          ),
+        );
     _ongoingSave = save;
     try {
       return await save;
@@ -3585,10 +3805,22 @@ class TimeProvider with ChangeNotifier {
 
   Future<bool> _saveDataImpl(
     int requestRevision,
-    _ScheduleSaveSnapshot? snapshot,
-  ) async {
-    if (!_isScheduleReady || _isSchedulePersistenceBlocked) return false;
-    if (snapshot == null && _scheduleOverwriteInProgress) {
+    _ScheduleSaveSnapshot? snapshot, {
+    required _ScheduleSaveMode mode,
+    int? remoteViewTransitionEpoch,
+  }) async {
+    bool canPersist() {
+      if (mode == _ScheduleSaveMode.remoteViewTransition) {
+        return remoteViewTransitionEpoch != null &&
+            _canContinueRemoteViewPersistence(remoteViewTransitionEpoch);
+      }
+      return !_isSchedulePersistenceBlocked;
+    }
+
+    if (!_isScheduleReady || !canPersist()) return false;
+    if (mode == _ScheduleSaveMode.normal &&
+        snapshot == null &&
+        _scheduleOverwriteInProgress) {
       _deferredScheduleSaveRequested = true;
       return false;
     }
@@ -3606,29 +3838,29 @@ class TimeProvider with ChangeNotifier {
     }
 
     final prefs = await SharedPreferences.getInstance();
-    if (!_isScheduleReady || _isSchedulePersistenceBlocked) return false;
+    if (!_isScheduleReady || !canPersist()) return false;
 
     // 1. 保存分类（仅在变化时）
     final categoriesDirtyAtStart = _categoriesDirty;
     if (categoriesDirtyAtStart) {
       List<String> catList =
           _categories.map((c) => json.encode(c.toJson())).toList();
-      if (_isSchedulePersistenceBlocked ||
+      if (!canPersist() ||
           !await prefs.setStringList('categories', catList) ||
-          _isSchedulePersistenceBlocked) {
+          !canPersist()) {
         return false;
       }
       // 分类删除墓碑（id → 删除时间戳）与文档时间戳随分类一并持久化
-      if (_isSchedulePersistenceBlocked ||
+      if (!canPersist() ||
           !await prefs.setString(
               'deleted_categories', json.encode(_deletedCategories)) ||
-          _isSchedulePersistenceBlocked) {
+          !canPersist()) {
         return false;
       }
-      if (_isSchedulePersistenceBlocked ||
+      if (!canPersist() ||
           !await prefs.setInt(
               'categories_doc_updated_at', _categoriesDocUpdatedAt) ||
-          _isSchedulePersistenceBlocked) {
+          !canPersist()) {
         return false;
       }
       if (_saveRequestRevision == requestRevision) {
@@ -3641,9 +3873,9 @@ class TimeProvider with ChangeNotifier {
     if (targetsDirtyAtStart) {
       List<String> targetList =
           _targets.map((t) => json.encode(t.toJson())).toList();
-      if (_isSchedulePersistenceBlocked ||
+      if (!canPersist() ||
           !await prefs.setStringList('targets', targetList) ||
-          _isSchedulePersistenceBlocked) {
+          !canPersist()) {
         return false;
       }
       if (_saveRequestRevision == requestRevision) {
@@ -3666,10 +3898,10 @@ class TimeProvider with ChangeNotifier {
       });
       // 大 JSON 编码移入后台 isolate，避免主线程阻塞
       final encoded = await compute(_encodeSlotsJson, slotsJson);
-      if (_isSchedulePersistenceBlocked) return false;
-      if (_isSchedulePersistenceBlocked ||
+      if (!canPersist()) return false;
+      if (!canPersist() ||
           !await prefs.setString('daily_slots', encoded) ||
-          _isSchedulePersistenceBlocked) {
+          !canPersist()) {
         return false;
       }
       slotsChanged = true;
@@ -3702,9 +3934,9 @@ class TimeProvider with ChangeNotifier {
           slotsJson.remove(dateKey);
         }
       }
-      if (_isSchedulePersistenceBlocked ||
+      if (!canPersist() ||
           !await prefs.setString('daily_slots', json.encode(slotsJson)) ||
-          _isSchedulePersistenceBlocked) {
+          !canPersist()) {
         return false;
       }
       slotsChanged = true;
@@ -3716,12 +3948,12 @@ class TimeProvider with ChangeNotifier {
     // 4. 日程模板（仅在变化时）
     final templatesDirtyAtStart = _templatesDirty;
     if (templatesDirtyAtStart) {
-      if (_isSchedulePersistenceBlocked ||
+      if (!canPersist() ||
           !await prefs.setString(
             'schedule_templates',
             json.encode(_templates.map((t) => t.toJson()).toList()),
           ) ||
-          _isSchedulePersistenceBlocked) {
+          !canPersist()) {
         return false;
       }
       if (_saveRequestRevision == requestRevision) {
@@ -3736,10 +3968,10 @@ class TimeProvider with ChangeNotifier {
       _ignoredCalendarImports.forEach((dateKey, ids) {
         if (ids.isNotEmpty) ignoredJson[dateKey] = ids.toList();
       });
-      if (_isSchedulePersistenceBlocked ||
+      if (!canPersist() ||
           !await prefs.setString(
               'ignored_calendar_imports', json.encode(ignoredJson)) ||
-          _isSchedulePersistenceBlocked) {
+          !canPersist()) {
         return false;
       }
       if (_saveRequestRevision == requestRevision) {
@@ -3753,21 +3985,21 @@ class TimeProvider with ChangeNotifier {
       final allPendingDates = _pendingSyncState.allDates.toList()..sort();
       final giteePendingDates = pendingGiteeSyncDates.toList()..sort();
       final googlePendingDates = pendingGoogleSyncDates.toList()..sort();
-      if (_isSchedulePersistenceBlocked ||
+      if (!canPersist() ||
           !await prefs.setStringList(
               'pending_gitee_sync_dates', giteePendingDates) ||
-          _isSchedulePersistenceBlocked) {
+          !canPersist()) {
         return false;
       }
-      if (_isSchedulePersistenceBlocked ||
+      if (!canPersist() ||
           !await prefs.setStringList(
               'pending_google_sync_dates', googlePendingDates) ||
-          _isSchedulePersistenceBlocked) {
+          !canPersist()) {
         return false;
       }
-      if (_isSchedulePersistenceBlocked ||
+      if (!canPersist() ||
           !await prefs.setStringList('pending_sync_dates', allPendingDates) ||
-          _isSchedulePersistenceBlocked) {
+          !canPersist()) {
         return false;
       }
       if (_saveRequestRevision == requestRevision) {
@@ -3778,10 +4010,10 @@ class TimeProvider with ChangeNotifier {
     // 7. 分类展开状态（仅变化时写，体积小）
     final expandChanged = _categoryExpandDirty;
     if (expandChanged) {
-      if (_isSchedulePersistenceBlocked ||
+      if (!canPersist() ||
           !await prefs.setString(
               'category_expand_states', json.encode(_categoryExpandStates)) ||
-          _isSchedulePersistenceBlocked) {
+          !canPersist()) {
         return false;
       }
       if (_saveRequestRevision == requestRevision) {
@@ -3793,7 +4025,7 @@ class TimeProvider with ChangeNotifier {
     // 避免每次保存（含无变化调用）都走平台通道
     if (slotsChanged || expandChanged) {
       await _refreshHomeWidget();
-      if (_isSchedulePersistenceBlocked) return false;
+      if (!canPersist()) return false;
     }
     return true;
   }
