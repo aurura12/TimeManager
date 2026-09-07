@@ -561,7 +561,7 @@ void main() {
         beforeJournal);
   });
 
-  test('schedule access and mutation before initialization are isolated',
+  test('schedule access is safe while initialization runs and import waits',
       () async {
     SharedPreferences.setMockInitialValues({
       'daily_slots': _localPreferences['daily_slots']!,
@@ -579,8 +579,15 @@ void main() {
     var notificationCount = 0;
     provider.addListener(() => notificationCount++);
 
-    expect(provider.slots, isEmpty);
-    expect(provider.slotsForDate(DateTime(2099, 1, 1)), isEmpty);
+    expect(provider.slots, hasLength(144));
+    expect(provider.slots.every((slot) => !slot.recorded), isTrue);
+    expect(provider.slotsForDate(DateTime(2099, 1, 1)), hasLength(144));
+    expect(
+      provider
+          .slotsForDate(DateTime(2099, 1, 1))
+          .every((slot) => !slot.recorded),
+      isTrue,
+    );
     expect(provider.getSlotsForDate('2099-01-01'), isNull);
     provider.toggleSlot(0);
     provider.assignCategoryToSlots(
@@ -604,7 +611,7 @@ void main() {
     final selectUser = provider.setScheduleUser(DiaryKind.j);
 
     // These calls all happen before the constructor's first async load turn.
-    // They must not even notify or create a slot that the load can later leak.
+    // Temporary render slots must not create a persisted day or allow edits.
     expect(notificationCount, 0);
     expect(provider.getSlotsForDate('2099-01-01'), isNull);
     expect(provider.getSlotsForDate('2099-01-02'), isNull);
@@ -614,10 +621,10 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
 
-    expect(saveCalls, 0);
+    expect(saveCalls, 1);
     expect(provider.scheduleUser, DiaryKind.g);
     expect(provider.getSlotsForDate('2099-01-01'), isNull);
-    expect(provider.getSlotsForDate('2099-01-02'), isNull);
+    expect(provider.getSlotsForDate('2099-01-02')![0].label, '初始化前导入');
     expect(
       provider.categories.any((category) => category.name == '初始化前分类'),
       isFalse,
@@ -732,6 +739,54 @@ void main() {
 
     expect(provider.getSlotsForDate('2099-03-01'), isNull);
     expect(saveCalls, 0);
+    expect(notificationCount, 0);
+  });
+
+  test('disposed provider ignores in-flight Gitee pull continuation', () async {
+    final pullStarted = Completer<void>();
+    final pullGate = Completer<void>();
+    var gateEnabled = false;
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: {
+        'daily_slots': _localPreferences['daily_slots']!,
+      },
+      dependencies: _fakeDependencies(
+        failPull: false,
+        pullGate: pullGate,
+        gateDateKey: '2026-09-06',
+        shouldGate: () => gateEnabled,
+        onPullDay: () {
+          if (gateEnabled && !pullStarted.isCompleted) pullStarted.complete();
+        },
+      ),
+    );
+    var disposed = false;
+    addTearDown(() {
+      if (!disposed) provider.dispose();
+    });
+    final backup = provider.toBackupMap();
+    backup['dailySlots'] =
+        jsonDecode(_localPreferences['daily_slots']! as String);
+    await provider.importBackupJson(jsonEncode(backup));
+    final beforeLabel =
+        (provider.toBackupMap()['dailySlots'] as Map)['2026-09-06'][0]['l'];
+    gateEnabled = true;
+    var notificationCount = 0;
+    provider.addListener(() => notificationCount++);
+
+    final pull = provider.pullScheduleFromGitee(
+      date: DateTime(2026, 9, 6),
+    );
+    await pullStarted.future;
+    provider.dispose();
+    disposed = true;
+    pullGate.complete();
+    await pull;
+
+    final slotsAfterDispose =
+        (provider.toBackupMap()['dailySlots'] as Map)['2026-09-06'] as List;
+    expect((slotsAfterDispose.first as Map)['l'], beforeLabel);
     expect(notificationCount, 0);
   });
 
@@ -1310,6 +1365,14 @@ void main() {
       '远端',
     );
     expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
+
+    // The rejected switch did not persist an identity while the committed
+    // snapshot was being cleaned up.  It becomes retryable after the
+    // transaction has finished.
+    expect(prefs.getString('schedule_user_kind'), 'g');
+    await provider.setScheduleUser(DiaryKind.j);
+    expect(provider.scheduleUser, DiaryKind.j);
+    expect(prefs.getString('schedule_user_kind'), 'j');
 
     final restarted = TimeProvider(
       scheduleSyncDependencies: _fakeDependencies(failPull: false),
