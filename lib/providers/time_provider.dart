@@ -229,11 +229,14 @@ class TimeProvider with ChangeNotifier {
     if (_scheduleIdentityMutationInProgress ||
         _scheduleOverwriteInProgress ||
         _scheduleOverwriteCleanupInProgress ||
-        _scheduleOverwriteJournalCleanupPending) {
+        _scheduleOverwriteJournalCleanupPending ||
+        _remoteViewTransitionInProgress) {
       _addScheduleSyncStatus(
         _scheduleOverwriteJournalCleanupPending
             ? '覆盖日程清理未完成，修改已忽略'
-            : '覆盖拉取进行中，修改已忽略',
+            : _remoteViewTransitionInProgress
+                ? '远程视图切换进行中，修改已忽略'
+                : '覆盖拉取进行中，修改已忽略',
       );
       return false;
     }
@@ -260,13 +263,17 @@ class TimeProvider with ChangeNotifier {
     return _allowScheduleMutation();
   }
 
-  bool _canContinueScheduleSync(String selectedUserCode) {
+  bool _canContinueScheduleSync(
+    String selectedUserCode, {
+    bool allowRemoteViewTransition = false,
+  }) {
     return _isScheduleIdentityReady &&
         !_initializationFailed &&
         !_isDisposed &&
         !_scheduleOverwriteJournalCleanupPending &&
         !_scheduleOverwriteInProgress &&
         !_scheduleIdentityMutationInProgress &&
+        (allowRemoteViewTransition || !_remoteViewTransitionInProgress) &&
         _hasSelectedScheduleUser &&
         _scheduleUser.code == selectedUserCode;
   }
@@ -288,6 +295,11 @@ class TimeProvider with ChangeNotifier {
   bool get isRemoteViewEnabled => _remoteViewEnabled;
   final Map<String, String> _remoteViewBackup = {}; // dateKey → 本地 JSON 快照
   int _schedulePullRevision = 0;
+  // Remote view has asynchronous save/pull phases. Claim this lock before
+  // the first await so overwrite cannot pass its entry check while a toggle
+  // is paused and later clear/restore the schedule behind the overwrite.
+  bool _remoteViewTransitionInProgress = false;
+  int _remoteViewTransitionEpoch = 0;
 
   /// 当前日程用户身份，从本地持久化存储加载（与打卡一致）
   DiaryKind get scheduleUser => _scheduleUser;
@@ -354,6 +366,12 @@ class TimeProvider with ChangeNotifier {
             await AppUserIdentityStore.saveManualKind(previousKind);
           } catch (e) {
             debugPrint('恢复安全存储中的日程身份失败: $e');
+          }
+        } else {
+          try {
+            await AppUserIdentityStore.clearManualKind();
+          } catch (e) {
+            debugPrint('清除未提交的日程身份失败: $e');
           }
         }
       }
@@ -1071,6 +1089,7 @@ class TimeProvider with ChangeNotifier {
       _allSchedulePulling ||
       _isSyncing ||
       _scheduleOverwriteInProgress ||
+      _remoteViewTransitionInProgress ||
       _scheduleMergePullsInProgress > 0 ||
       _googleCalendarPullsInProgress > 0;
 
@@ -1081,7 +1100,8 @@ class TimeProvider with ChangeNotifier {
     if (!_isScheduleReady ||
         _scheduleOverwriteJournalCleanupPending ||
         _scheduleOverwriteInProgress ||
-        _scheduleOverwriteCleanupInProgress) {
+        _scheduleOverwriteCleanupInProgress ||
+        _remoteViewTransitionInProgress) {
       return;
     }
     final target = dateKey ?? _getDateKey(_currentDate);
@@ -1562,6 +1582,9 @@ class TimeProvider with ChangeNotifier {
     if (_remoteViewEnabled) {
       return _rejectScheduleOverwrite('覆盖拉取未开始：当前正在查看对方日程');
     }
+    if (_remoteViewTransitionInProgress) {
+      return _rejectScheduleOverwrite('覆盖拉取未开始：远程视图切换进行中');
+    }
     if (!_hasSelectedScheduleUser) {
       return _rejectScheduleOverwrite('覆盖拉取未开始：请先选择身份');
     }
@@ -1592,6 +1615,7 @@ class TimeProvider with ChangeNotifier {
         !_initializationFailed &&
         !_scheduleOverwriteJournalCleanupPending &&
         !_scheduleIdentityMutationInProgress &&
+        !_remoteViewTransitionInProgress &&
         _hasSelectedScheduleUser &&
         _scheduleUser.code == selectedUserCode;
     var succeeded = false;
@@ -1950,13 +1974,15 @@ class TimeProvider with ChangeNotifier {
     String? userCode,
     DateTime? date,
     int? requestRevision,
+    bool allowRemoteViewTransition = false,
   }) async {
     if (!_isInitialLoadFinished ||
         !_scheduleUserLoadFinished ||
         _initializationFailed ||
         _isDisposed ||
         _scheduleIdentityMutationInProgress ||
-        _scheduleOverwriteJournalCleanupPending) {
+        _scheduleOverwriteJournalCleanupPending ||
+        (_remoteViewTransitionInProgress && !allowRemoteViewTransition)) {
       return false;
     }
     if (_scheduleOverwriteInProgress) return false;
@@ -1970,7 +1996,10 @@ class TimeProvider with ChangeNotifier {
     _scheduleMergePullsInProgress++;
     try {
       final token = await _scheduleSyncDependencies.loadToken();
-      if (!_canContinueScheduleSync(selectedUserCode) ||
+      if (!_canContinueScheduleSync(
+            selectedUserCode,
+            allowRemoteViewTransition: allowRemoteViewTransition,
+          ) ||
           _scheduleOverwriteInProgress ||
           token == null ||
           token.isEmpty) {
@@ -1983,7 +2012,10 @@ class TimeProvider with ChangeNotifier {
         dateKey: dateKey,
         userCode: code,
       );
-      if (!_canContinueScheduleSync(selectedUserCode) ||
+      if (!_canContinueScheduleSync(
+            selectedUserCode,
+            allowRemoteViewTransition: allowRemoteViewTransition,
+          ) ||
           _scheduleOverwriteInProgress) {
         return false;
       }
@@ -2015,11 +2047,20 @@ class TimeProvider with ChangeNotifier {
       _markAllSlotsDirty();
       if (!_remoteViewEnabled) {
         final saved = await _saveData();
-        if (!_canContinueScheduleSync(selectedUserCode) || !saved) {
+        if (!_canContinueScheduleSync(
+              selectedUserCode,
+              allowRemoteViewTransition: allowRemoteViewTransition,
+            ) ||
+            !saved) {
           return false;
         }
       }
-      if (!_canContinueScheduleSync(selectedUserCode)) return false;
+      if (!_canContinueScheduleSync(
+        selectedUserCode,
+        allowRemoteViewTransition: allowRemoteViewTransition,
+      )) {
+        return false;
+      }
       notifyListeners();
       _addScheduleSyncStatus('已同步');
       Future.delayed(const Duration(seconds: 3), () {
@@ -2037,104 +2078,132 @@ class TimeProvider with ChangeNotifier {
   /// 切换查看对方日程。打开时显示纯远端数据；关闭时恢复本地数据。
   /// Windows 三列视图下覆盖选中日及前后各一天，安卓仅覆盖选中日。
   Future<void> toggleRemoteScheduleView() async {
-    if (!_allowScheduleMutation() || _scheduleOverwriteJournalCleanupPending) {
+    if (_remoteViewTransitionInProgress ||
+        !_allowScheduleMutation() ||
+        _scheduleOverwriteJournalCleanupPending) {
       return;
     }
     if (!_hasSelectedScheduleUser) {
       _addScheduleSyncStatus('请先选择身份');
       return;
     }
-    final requestRevision = ++_schedulePullRevision;
-    if (_remoteViewEnabled) {
-      // 关闭：按备份过的日期逐一恢复本地数据
-      final backupKeys = _remoteViewBackup.keys.toList();
-      for (final dk in backupKeys) {
-        final slots = _dailySlots[dk] ?? _generateInitialSlots();
-        final backup = parseScheduleContent(_remoteViewBackup.remove(dk));
-        _clearDaySlots(slots, clearModifiedAt: true);
-        for (final map in backup.slots) {
-          final idx = _parseInt(map['i']);
-          if (idx == null) continue;
-          if (idx >= 0 && idx < slots.length) {
-            if (map['del'] == true) {
-              // 删除墓碑：恢复为删除状态，避免被当成"空 label 的已记录槽"
-              slots[idx].isFromCalendar = map['fc'] == true;
-              final delTs = _parseInt(map['ts']);
-              if (delTs != null && delTs > 0) {
-                slots[idx].deletedAt =
-                    DateTime.fromMillisecondsSinceEpoch(delTs);
+    final transitionEpoch = ++_remoteViewTransitionEpoch;
+    _remoteViewTransitionInProgress = true;
+    bool transitionIsStillValid() =>
+        !_isDisposed &&
+        _remoteViewTransitionInProgress &&
+        _remoteViewTransitionEpoch == transitionEpoch &&
+        !_scheduleOverwriteInProgress &&
+        !_scheduleOverwriteCleanupInProgress &&
+        !_scheduleOverwriteJournalCleanupPending;
+
+    try {
+      final requestRevision = ++_schedulePullRevision;
+      if (_remoteViewEnabled) {
+        // 关闭：按备份过的日期逐一恢复本地数据
+        final backupKeys = _remoteViewBackup.keys.toList();
+        for (final dk in backupKeys) {
+          final slots = _dailySlots[dk] ?? _generateInitialSlots();
+          final backup = parseScheduleContent(_remoteViewBackup.remove(dk));
+          _clearDaySlots(slots, clearModifiedAt: true);
+          for (final map in backup.slots) {
+            final idx = _parseInt(map['i']);
+            if (idx == null) continue;
+            if (idx >= 0 && idx < slots.length) {
+              if (map['del'] == true) {
+                // 删除墓碑：恢复为删除状态，避免被当成"空 label 的已记录槽"
+                slots[idx].isFromCalendar = map['fc'] == true;
+                final delTs = _parseInt(map['ts']);
+                if (delTs != null && delTs > 0) {
+                  slots[idx].deletedAt =
+                      DateTime.fromMillisecondsSinceEpoch(delTs);
+                }
+                continue;
               }
-              continue;
-            }
-            slots[idx].recorded = true;
-            slots[idx].label = map['l'] as String?;
-            slots[idx].categoryId = map['cid'] as String?;
-            if (map['c'] != null) {
-              final colorVal = _parseInt(map['c']);
-              if (colorVal != null) slots[idx].color = Color(colorVal);
-            }
-            if (map['fc'] == true) slots[idx].isFromCalendar = true;
-            if (map['eid'] != null) {
-              slots[idx].calendarEventId = map['eid'] as String?;
-            }
-            final ts = _parseInt(map['ts']);
-            if (ts != null && ts > 0) {
-              slots[idx].modifiedAt = DateTime.fromMillisecondsSinceEpoch(ts);
+              slots[idx].recorded = true;
+              slots[idx].label = map['l'] as String?;
+              slots[idx].categoryId = map['cid'] as String?;
+              if (map['c'] != null) {
+                final colorVal = _parseInt(map['c']);
+                if (colorVal != null) slots[idx].color = Color(colorVal);
+              }
+              if (map['fc'] == true) slots[idx].isFromCalendar = true;
+              if (map['eid'] != null) {
+                slots[idx].calendarEventId = map['eid'] as String?;
+              }
+              final ts = _parseInt(map['ts']);
+              if (ts != null && ts > 0) {
+                slots[idx].modifiedAt = DateTime.fromMillisecondsSinceEpoch(ts);
+              }
             }
           }
         }
-      }
-      if (backupKeys.isNotEmpty) {
+        if (backupKeys.isNotEmpty) {
+          _markAllSlotsDirty();
+          final saved = await _saveData();
+          if (!transitionIsStillValid() || !saved) return;
+        }
+        if (!transitionIsStillValid()) return;
+        _remoteViewEnabled = false;
+      } else {
+        // 打开：备份本地，清空日期，拉取纯远端数据
+        // 注意顺序很重要：先取消待处理同步 → 保存当前数据 → 再切换视图
+
+        // 1) 取消待处理的自动同步定时器，防止 3 秒后将对方数据推送到当前用户文件
+        _scheduleGiteeTimer?.cancel();
+        _scheduleGiteeTimer = null;
+        _debounceTimer?.cancel();
+        _debounceTimer = null;
+
+        // 2) 先持久化当前用户的最新编辑，确保不丢失
+        final saved = await _saveData();
+        if (!transitionIsStillValid() ||
+            !saved ||
+            _initializationFailed ||
+            _scheduleOverwriteJournalCleanupPending) {
+          return;
+        }
+
+        // 3) 备份并清空（Windows 三天 / 安卓一天）
+        final dates = _getRemoteViewDates();
+        for (final d in dates) {
+          _backupAndClearDay(_getDateKey(d));
+        }
         _markAllSlotsDirty();
-        _saveData();
-      }
-      _remoteViewEnabled = false;
-    } else {
-      // 打开：备份本地，清空日期，拉取纯远端数据
-      // 注意顺序很重要：先取消待处理同步 → 保存当前数据 → 再切换视图
+        if (!transitionIsStillValid()) return;
 
-      // 1) 取消待处理的自动同步定时器，防止 3 秒后将对方数据推送到当前用户文件
-      _scheduleGiteeTimer?.cancel();
-      _scheduleGiteeTimer = null;
-      _debounceTimer?.cancel();
-      _debounceTimer = null;
+        // 5) 提前标记远程视图状态，这样 pullScheduleFromGitee 内部的
+        //    `if (!_remoteViewEnabled) _saveData()` 不会错误地保存到本地缓存
+        _remoteViewEnabled = true;
 
-      // 2) 先持久化当前用户的最新编辑，确保不丢失
-      if (!await _saveData() ||
-          _initializationFailed ||
-          _scheduleOverwriteJournalCleanupPending) {
-        return;
-      }
-
-      // 3) 备份并清空（Windows 三天 / 安卓一天）
-      final dates = _getRemoteViewDates();
-      for (final d in dates) {
-        _backupAndClearDay(_getDateKey(d));
-      }
-      _markAllSlotsDirty();
-
-      // 5) 提前标记远程视图状态，这样 pullScheduleFromGitee 内部的
-      //    `if (!_remoteViewEnabled) _saveData()` 不会错误地保存到本地缓存
-      _remoteViewEnabled = true;
-
-      // 6) 拉取对方的文件（独立文件，无需过滤）；Windows 逐日拉取三天
-      final otherCode = _scheduleUser.code == 'g' ? 'j' : 'g';
-      for (final d in dates) {
-        if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) {
-          return;
+        // 6) 拉取对方的文件（独立文件，无需过滤）；Windows 逐日拉取三天
+        final otherCode = _scheduleUser.code == 'g' ? 'j' : 'g';
+        for (final d in dates) {
+          if (!transitionIsStillValid() ||
+              _initializationFailed ||
+              _scheduleOverwriteJournalCleanupPending) {
+            return;
+          }
+          await pullScheduleFromGitee(
+            userCode: otherCode,
+            date: d,
+            requestRevision: requestRevision,
+            allowRemoteViewTransition: true,
+          );
+          if (!transitionIsStillValid() ||
+              _initializationFailed ||
+              _scheduleOverwriteJournalCleanupPending) {
+            return;
+          }
         }
-        await pullScheduleFromGitee(
-          userCode: otherCode,
-          date: d,
-          requestRevision: requestRevision,
-        );
-        if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) {
-          return;
-        }
+        // 拉取后不保存到本地持久化——由提前设置的 _remoteViewEnabled 保证
       }
-      // 拉取后不保存到本地持久化——由提前设置的 _remoteViewEnabled 保证
+      if (transitionIsStillValid()) notifyListeners();
+    } finally {
+      if (_remoteViewTransitionEpoch == transitionEpoch) {
+        _remoteViewTransitionInProgress = false;
+      }
     }
-    notifyListeners();
   }
 
   /// 远程视图覆盖的日期：Windows 三列（选中日 ±1 天），安卓仅选中日。

@@ -64,4 +64,11 @@ class AppUserIdentityStore {
   static Future<void> saveManualKind(DiaryKind kind) async {
     await _storage.write(key: _manualKindKey, value: kind.code);
   }
+
+  /// Removes the manual schedule identity without clearing the Google
+  /// identity fields. Used when a first-time manual selection cannot be
+  /// committed to the matching local preferences namespace.
+  static Future<void> clearManualKind() async {
+    await _storage.delete(key: _manualKindKey);
+  }
 }

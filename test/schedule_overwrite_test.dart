@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:time_manager/models/category.dart';
 import 'package:time_manager/models/diary_kind.dart';
 import 'package:time_manager/models/target.dart';
@@ -151,6 +152,23 @@ Future<TimeProvider> _createProvider({
   await provider.setScheduleUser(DiaryKind.g);
   await Future<void>.delayed(const Duration(milliseconds: 200));
   return provider;
+}
+
+class _RejectScheduleUserPreferenceStore
+    extends InMemorySharedPreferencesStore {
+  // The superclass exposes only a named constructor, so this cannot use a
+  // Dart super-parameter without changing the test store's construction.
+  // ignore: use_super_parameters
+  _RejectScheduleUserPreferenceStore(Map<String, Object> data)
+      : super.withData(data);
+
+  @override
+  Future<bool> setValue(String valueType, String key, Object value) {
+    if (key == 'flutter.schedule_user_kind') {
+      return Future<bool>.value(false);
+    }
+    return super.setValue(valueType, key, value);
+  }
 }
 
 void main() {
@@ -1002,6 +1020,96 @@ void main() {
     expect(await firstCall, isTrue);
   });
 
+  test('remote view transition owns its save window and rejects overwrite pull',
+      () async {
+    final saveStarted = Completer<void>();
+    final releaseSave = Completer<void>();
+    var pauseNextSave = false;
+    var listPathsCalls = 0;
+    var overwriteStarted = false;
+
+    final dependencies = ScheduleSyncDependencies(
+      loadToken: () async => 'fake-token',
+      listPaths: ({required token, required userCode}) async {
+        listPathsCalls++;
+        overwriteStarted = true;
+        return ScheduleGiteeListWithShaResult.success(
+          {'schedule/g/2026-09-06.json': 'remote-sha'},
+        );
+      },
+      pullDay: ({required token, required dateKey, required userCode}) async {
+        // Suppress the desktop startup pull.  The overwrite pull is enabled
+        // only after listPaths, while the remote-view pull always uses J.
+        if (userCode != 'j' && !overwriteStarted) {
+          return ScheduleGiteePullResult.error('测试禁止读取');
+        }
+        return ScheduleGiteePullResult.success(
+          _remoteCanonicalContent,
+          'remote-sha',
+        );
+      },
+      pushDay: ({
+        required token,
+        required dateKey,
+        required userCode,
+        required content,
+        required commitMessage,
+      }) async {
+        return ScheduleGiteePushResult.success(created: false);
+      },
+      pushGoogleDay: (slots, date) async => true,
+      pullGoogleDay: (date) async => const [],
+    );
+
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: _localPreferences,
+      dependencies: dependencies,
+      saveDataOverride: () async {
+        if (pauseNextSave) {
+          pauseNextSave = false;
+          saveStarted.complete();
+          await releaseSave.future;
+        }
+        return true;
+      },
+    );
+    addTearDown(provider.dispose);
+
+    final prefs = await SharedPreferences.getInstance();
+    final beforeSlots = prefs.getString('daily_slots');
+    final beforeGiteePending = prefs.getStringList('pending_gitee_sync_dates');
+    final beforeGooglePending =
+        prefs.getStringList('pending_google_sync_dates');
+    final beforePending = prefs.getStringList('pending_sync_dates');
+    pauseNextSave = true;
+
+    final remoteView = provider.toggleRemoteScheduleView();
+    await saveStarted.future;
+
+    final overwrite = provider.overwriteAllSchedulesFromGitee();
+    expect(await overwrite, isFalse);
+    expect(
+      provider.lastScheduleOverwriteFailure,
+      '覆盖拉取未开始：远程视图切换进行中',
+    );
+    expect(listPathsCalls, 0);
+    expect(provider.isRemoteViewEnabled, isFalse);
+
+    releaseSave.complete();
+    await remoteView;
+
+    expect(provider.isRemoteViewEnabled, isTrue);
+    expect(listPathsCalls, 0);
+    expect(prefs.getString('daily_slots'), beforeSlots);
+    expect(prefs.getStringList('pending_gitee_sync_dates'), beforeGiteePending);
+    expect(
+        prefs.getStringList('pending_google_sync_dates'), beforeGooglePending);
+    expect(prefs.getStringList('pending_sync_dates'), beforePending);
+    expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
+    expect(provider.slots.any((slot) => slot.label == '远端'), isTrue);
+  });
+
   test('rejects identity change during overwrite fetch', () async {
     final gate = Completer<void>();
     var gateEnabled = false;
@@ -1100,6 +1208,81 @@ void main() {
     expect(prefs.getString('schedule_user_kind'), 'j');
     expect(prefs.getString('daily_slots'), beforeSlots);
     expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
+  });
+
+  test(
+      'first identity selection clears secure manual kind when preferences reject it',
+      () async {
+    final store = _RejectScheduleUserPreferenceStore({
+      'flutter.daily_slots': _localPreferences['daily_slots']!,
+    });
+    SharedPreferencesStorePlatform.instance = store;
+    SharedPreferences.resetStatic();
+
+    String? secureManualKind;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final secureStorageChannel = const MethodChannel(
+      'plugins.it_nomads.com/flutter_secure_storage',
+    );
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('home_widget'),
+      (call) async => null,
+    );
+    messenger.setMockMethodCallHandler(
+      secureStorageChannel,
+      (call) async {
+        final arguments = call.arguments;
+        final isManualKind = arguments is Map &&
+            arguments['key'] == 'app_user_identity_manual_kind';
+        if (!isManualKind) return null;
+        if (call.method == 'read') return secureManualKind;
+        if (call.method == 'write') {
+          secureManualKind = arguments['value'] as String;
+        } else if (call.method == 'delete') {
+          secureManualKind = null;
+        }
+        return null;
+      },
+    );
+
+    final provider = TimeProvider(
+      scheduleSyncDependencies: _fakeDependencies(failPull: false),
+    );
+    TimeProvider? restarted;
+    addTearDown(() {
+      provider.dispose();
+      restarted?.dispose();
+      messenger.setMockMethodCallHandler(secureStorageChannel, null);
+      SharedPreferences.resetStatic();
+    });
+
+    while (!provider.isInitialLoadFinished) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(provider.hasSelectedScheduleUser, isFalse);
+
+    await provider.setScheduleUser(DiaryKind.j);
+
+    expect(provider.scheduleUser, DiaryKind.g);
+    expect(provider.hasSelectedScheduleUser, isFalse);
+    expect(secureManualKind, isNull);
+    final prefsAfterFailure = await SharedPreferences.getInstance();
+    expect(prefsAfterFailure.getString('schedule_user_kind'), isNull);
+
+    // Recreate both provider and SharedPreferences facade.  The failed first
+    // selection must not reappear from secure storage on the next load.
+    SharedPreferences.resetStatic();
+    restarted = TimeProvider(
+      scheduleSyncDependencies: _fakeDependencies(failPull: false),
+    );
+    while (!restarted.isInitialLoadFinished) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(restarted.scheduleUser, DiaryKind.g);
+    expect(restarted.hasSelectedScheduleUser, isFalse);
+    expect(secureManualKind, isNull);
   });
 
   test('waits for identity loading before schedule sync and overwrite',
