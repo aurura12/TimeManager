@@ -2121,8 +2121,7 @@ void main() {
     expect(scaffoldKey.currentState!.isDrawerOpen, isFalse);
   });
 
-  testWidgets(
-      'mobile drawer exposes overwrite pull and reports rejection after closing',
+  testWidgets('mobile drawer hides bulk schedule sync actions',
       (tester) async {
     final provider = TimeProvider();
     addTearDown(provider.dispose);
@@ -2150,13 +2149,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.text('拉取所有日程'), findsNothing);
-    expect(find.text('覆盖拉取日程'), findsOneWidget);
-
-    await tester.tap(find.text('覆盖拉取日程'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
-
-    expect(find.text('覆盖拉取未开始：请先选择身份'), findsOneWidget);
-    expect(scaffoldKey.currentState!.isDrawerOpen, isFalse);
+    expect(find.text('同步全部日程到 Gitee'), findsNothing);
+    expect(find.text('覆盖拉取日程'), findsNothing);
   });
 }

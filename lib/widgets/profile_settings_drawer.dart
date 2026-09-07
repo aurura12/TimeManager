@@ -193,8 +193,6 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
             widget.onChanged();
           },
         ),
-        _buildGiteeSyncTile(context, provider),
-        _buildOverwriteScheduleTile(context, provider),
       ],
     );
   }
@@ -220,22 +218,6 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                       '覆盖拉取未开始或失败，请稍后重试'),
             ),
           ),
-        );
-      },
-    );
-  }
-
-  Widget _buildGiteeSyncTile(BuildContext context, TimeProvider provider) {
-    return ListTile(
-      leading: const Icon(Icons.cloud_sync_outlined),
-      title: const Text('同步全部日程到 Gitee'),
-      subtitle: const Text('将所有日期的日程增量推送到远端'),
-      onTap: () {
-        provider.syncAllSchedulesToGitee();
-        final messenger = ScaffoldMessenger.of(context);
-        Navigator.pop(context);
-        messenger.showSnackBar(
-          const SnackBar(content: Text('正在后台同步全部日程...')),
         );
       },
     );
