@@ -1269,32 +1269,76 @@ void main() {
         beforeStorage);
   });
 
-  test('overwrite aborts when a local edit changes revision during save',
+  test('overwrite rejects a local edit during save and commits remote snapshot',
       () async {
-    final saveStarted = Completer<void>();
-    final releaseSave = Completer<void>();
-    final provider = await _createProvider(
+    late TimeProvider provider;
+    var editAttempted = false;
+    late SharedPreferences prefs;
+
+    provider = await _createProvider(
       failPull: false,
-      initialPreferences: {'daily_slots': _localPreferences['daily_slots']!},
-      saveDataOverride: () async {
-        if (!saveStarted.isCompleted) saveStarted.complete();
-        await releaseSave.future;
-        return true;
+      initialPreferences: _localPreferences,
+      scheduleSnapshotWriteObserver: (key) {
+        if (key != 'daily_slots' || editAttempted) return;
+        editAttempted = true;
+
+        // The real overwrite save has reached its first snapshot write.  The
+        // provider must still reject a local mutation while the transaction is
+        // active, without changing either state from the moment of the edit
+        // attempt.  (The overwrite may have already persisted its candidate
+        // before publishing it to memory.)
+        final memoryBeforeEdit =
+            provider.getSlotsForDate('2026-09-06')![0].label;
+        final revisionBeforeEdit = provider.slotsRevision;
+        final diskSlotsBeforeEdit = prefs.getString('daily_slots');
+        final diskGiteePendingBeforeEdit =
+            prefs.getStringList('pending_gitee_sync_dates');
+        final diskGooglePendingBeforeEdit =
+            prefs.getStringList('pending_google_sync_dates');
+        final diskPendingBeforeEdit = prefs.getStringList('pending_sync_dates');
+        final giteePendingBeforeEdit = {...provider.pendingGiteeSyncDates};
+        final googlePendingBeforeEdit = {...provider.pendingGoogleSyncDates};
+
+        provider.assignCategoryToSlots(
+          {0},
+          Category(name: '保存期间编辑', color: Colors.orange),
+          date: DateTime(2026, 9, 6),
+        );
+
+        expect(
+            provider.getSlotsForDate('2026-09-06')![0].label, memoryBeforeEdit);
+        expect(provider.slotsRevision, revisionBeforeEdit);
+        expect(prefs.getString('daily_slots'), diskSlotsBeforeEdit);
+        expect(prefs.getStringList('pending_gitee_sync_dates'),
+            diskGiteePendingBeforeEdit);
+        expect(prefs.getStringList('pending_google_sync_dates'),
+            diskGooglePendingBeforeEdit);
+        expect(
+            prefs.getStringList('pending_sync_dates'), diskPendingBeforeEdit);
+        expect(provider.pendingGiteeSyncDates, giteePendingBeforeEdit);
+        expect(provider.pendingGoogleSyncDates, googlePendingBeforeEdit);
       },
     );
     addTearDown(provider.dispose);
+    prefs = await SharedPreferences.getInstance();
 
-    final overwrite = provider.overwriteAllSchedulesFromGitee();
-    await saveStarted.future;
-    provider.assignCategoryToSlots(
-      {0},
-      Category(name: '保存期间编辑', color: Colors.orange),
-      date: DateTime(2026, 9, 6),
-    );
-    releaseSave.complete();
+    final overwritten = await provider.overwriteAllSchedulesFromGitee();
 
-    expect(await overwrite, isFalse);
-    expect(provider.getSlotsForDate('2026-09-06')![0].label, '保存期间编辑');
+    expect(editAttempted, isTrue);
+    expect(overwritten, isTrue);
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '远端');
+    expect(provider.getSlotsForDate('2026-01-01'), isNull);
+
+    final diskSlots = jsonDecode(prefs.getString('daily_slots')!);
+    expect(diskSlots['2026-09-06'][0]['l'], '远端');
+    expect(diskSlots.containsKey('2026-01-01'), isFalse);
+    expect(provider.pendingGiteeSyncDates, isEmpty);
+    expect(provider.pendingGoogleSyncDates, isEmpty);
+    expect(provider.pendingSyncDates, isEmpty);
+    expect(prefs.getStringList('pending_gitee_sync_dates'), isEmpty);
+    expect(prefs.getStringList('pending_google_sync_dates'), isEmpty);
+    expect(prefs.getStringList('pending_sync_dates'), isEmpty);
+    expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
   });
 
   test('rejects identity change during overwrite save', () async {

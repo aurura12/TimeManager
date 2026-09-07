@@ -343,7 +343,7 @@ class TimeProvider with ChangeNotifier {
             if (previousStoredKind == null) {
               await prefs.remove(_scheduleUserKey);
             } else {
-              await prefs.setString(_scheduleUserKey, previousStoredKind!);
+              await prefs.setString(_scheduleUserKey, previousStoredKind);
             }
           } catch (e) {
             debugPrint('恢复日程身份偏好失败: $e');
