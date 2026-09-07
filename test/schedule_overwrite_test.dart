@@ -40,6 +40,7 @@ ScheduleSyncDependencies _fakeDependencies({
   bool Function()? shouldGate,
   Completer<void>? googlePullGate,
   void Function()? onListPaths,
+  Completer<void>? listPathsGate,
   void Function()? onPullDay,
   void Function()? onGooglePull,
   void Function()? onGiteeUpload,
@@ -52,6 +53,7 @@ ScheduleSyncDependencies _fakeDependencies({
     loadToken: () async => 'fake-token',
     listPaths: ({required token, required userCode}) async {
       onListPaths?.call();
+      if (listPathsGate != null) await listPathsGate.future;
       if (token != 'fake-token' || userCode != 'g') {
         return ScheduleGiteeListWithShaResult.error('参数错误');
       }
@@ -995,8 +997,7 @@ void main() {
     expect(await firstCall, isTrue);
   });
 
-  test('overwrite aborts when the selected identity changes during fetch',
-      () async {
+  test('rejects identity change during overwrite fetch', () async {
     final gate = Completer<void>();
     var gateEnabled = false;
     final provider = await _createProvider(
@@ -1010,26 +1011,44 @@ void main() {
       initialPreferences: {'daily_slots': _localPreferences['daily_slots']!},
     );
     addTearDown(provider.dispose);
+    provider.assignCategoryToSlots(
+      {0},
+      Category(name: '覆盖前本地', color: Colors.blue),
+      date: DateTime(2026, 9, 6),
+    );
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '覆盖前本地');
     gateEnabled = true;
 
     final overwrite = provider.overwriteAllSchedulesFromGitee();
     await Future<void>.delayed(const Duration(milliseconds: 20));
-    await provider.setScheduleUser(DiaryKind.j);
+    final attemptedIdentity = provider.setScheduleUser(DiaryKind.j);
+    await attemptedIdentity;
+    expect(provider.scheduleUser, DiaryKind.g);
     gate.complete();
 
-    expect(await overwrite, isFalse);
-    expect(provider.scheduleUser, DiaryKind.j);
-    expect(provider.getSlotsForDate('2026-01-01')![0].label, '本地专属');
+    expect(await overwrite, isTrue);
+    expect(provider.scheduleUser, DiaryKind.g);
+    expect(provider.getSlotsForDate('2026-01-01'), isNull);
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '远端');
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('schedule_user_kind'), 'g');
+    expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
   });
 
-  test('overwrite preserves a local edit made while the remote pull waits',
+  test('overwrite rejects a local edit made while the remote pull waits',
       () async {
     final gate = Completer<void>();
+    final listPathsGate = Completer<void>();
+    final overwriteListed = Completer<void>();
     var gateEnabled = false;
     final provider = await _createProvider(
       failPull: false,
       dependencies: _fakeDependencies(
         failPull: false,
+        onListPaths: () {
+          if (!overwriteListed.isCompleted) overwriteListed.complete();
+        },
+        listPathsGate: listPathsGate,
         pullGate: gate,
         gateDateKey: '2026-09-06',
         shouldGate: () => gateEnabled,
@@ -1037,19 +1056,27 @@ void main() {
       initialPreferences: {'daily_slots': _localPreferences['daily_slots']!},
     );
     addTearDown(provider.dispose);
+    provider.assignCategoryToSlots(
+      {0},
+      Category(name: '覆盖前本地', color: Colors.blue),
+      date: DateTime(2026, 9, 6),
+    );
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '覆盖前本地');
     gateEnabled = true;
 
     final overwrite = provider.overwriteAllSchedulesFromGitee();
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await overwriteListed.future;
     provider.assignCategoryToSlots(
       {0},
       Category(name: '拉取期间编辑', color: Colors.green),
       date: DateTime(2026, 9, 6),
     );
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '覆盖前本地');
+    listPathsGate.complete();
     gate.complete();
 
-    expect(await overwrite, isFalse);
-    expect(provider.getSlotsForDate('2026-09-06')![0].label, '拉取期间编辑');
+    expect(await overwrite, isTrue);
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '远端');
   });
 
   test('overwrite rejects a pull whose SHA differs from the listed SHA',
@@ -1121,13 +1148,16 @@ void main() {
     expect(provider.getSlotsForDate('2026-09-06')![0].label, '保存期间编辑');
   });
 
-  test('overwrite aborts when identity changes during save', () async {
+  test('rejects identity change during overwrite save', () async {
     final saveStarted = Completer<void>();
     final releaseSave = Completer<void>();
-    final provider = await _createProvider(
+    var overwriteStarted = false;
+    late TimeProvider provider;
+    provider = await _createProvider(
       failPull: false,
       initialPreferences: {'daily_slots': _localPreferences['daily_slots']!},
       saveDataOverride: () async {
+        if (!overwriteStarted) return true;
         if (!saveStarted.isCompleted) saveStarted.complete();
         await releaseSave.future;
         return true;
@@ -1135,14 +1165,46 @@ void main() {
     );
     addTearDown(provider.dispose);
 
+    overwriteStarted = true;
     final overwrite = provider.overwriteAllSchedulesFromGitee();
     await saveStarted.future;
-    await provider.setScheduleUser(DiaryKind.j);
+    final attemptedIdentity = provider.setScheduleUser(DiaryKind.j);
+    await attemptedIdentity;
+    final prefs = await SharedPreferences.getInstance();
+    expect(provider.scheduleUser, DiaryKind.g);
+    expect(prefs.getString('schedule_user_kind'), 'g');
     releaseSave.complete();
 
-    expect(await overwrite, isFalse);
-    expect(provider.scheduleUser, DiaryKind.j);
-    expect(provider.getSlotsForDate('2026-01-01')![0].label, '本地专属');
+    expect(await overwrite, isTrue);
+    expect(provider.scheduleUser, DiaryKind.g);
+    expect(provider.getSlotsForDate('2026-01-01'), isNull);
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '远端');
+    expect(prefs.getString('schedule_user_kind'), 'g');
+    expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
+  });
+
+  test('rejects identity change from overwrite notify listener', () async {
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: {'daily_slots': _localPreferences['daily_slots']!},
+    );
+    addTearDown(provider.dispose);
+    var attemptedIdentity = false;
+    provider.addListener(() {
+      if (attemptedIdentity) return;
+      attemptedIdentity = true;
+      unawaited(provider.setScheduleUser(DiaryKind.j));
+    });
+
+    expect(await provider.overwriteAllSchedulesFromGitee(), isTrue);
+    await Future<void>.delayed(Duration.zero);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(attemptedIdentity, isTrue);
+    expect(provider.scheduleUser, DiaryKind.g);
+    expect(prefs.getString('schedule_user_kind'), 'g');
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '远端');
+    expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
   });
 
   test(
@@ -1162,33 +1224,27 @@ void main() {
     );
     addTearDown(provider.dispose);
 
-    final prefs = await SharedPreferences.getInstance();
-    final beforeDailySlots = prefs.getString('daily_slots');
-    final beforeGitee = prefs.getStringList('pending_gitee_sync_dates');
-    final beforeGoogle = prefs.getStringList('pending_google_sync_dates');
-    final beforeVisible = prefs.getStringList('pending_sync_dates');
-    final beforeFirstDay = provider.getSlotsForDate('2026-01-01')![0].label;
-    final beforeOverlapDay = provider.getSlotsForDate('2026-09-06')![0].label;
-    final beforePendingGitee = Set<String>.from(provider.pendingGiteeSyncDates);
-    final beforePendingGoogle =
-        Set<String>.from(provider.pendingGoogleSyncDates);
-
-    expect(await provider.overwriteAllSchedulesFromGitee(), isFalse);
+    expect(await provider.overwriteAllSchedulesFromGitee(), isTrue);
     await Future<void>.delayed(Duration.zero);
 
-    expect(prefs.getString('daily_slots'), beforeDailySlots);
-    expect(prefs.getStringList('pending_gitee_sync_dates'), beforeGitee);
-    expect(prefs.getStringList('pending_google_sync_dates'), beforeGoogle);
-    expect(prefs.getStringList('pending_sync_dates'), beforeVisible);
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+      jsonDecode(prefs.getString('daily_slots')!)['2026-09-06'][0]['l'],
+      '远端',
+    );
+    expect(prefs.getStringList('pending_gitee_sync_dates'), isEmpty);
+    expect(prefs.getStringList('pending_google_sync_dates'), isEmpty);
+    expect(prefs.getStringList('pending_sync_dates'), isEmpty);
     expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
-    expect(provider.getSlotsForDate('2026-01-01')![0].label, beforeFirstDay);
-    expect(provider.getSlotsForDate('2026-09-06')![0].label, beforeOverlapDay);
-    expect(provider.pendingGiteeSyncDates, beforePendingGitee);
-    expect(provider.pendingGoogleSyncDates, beforePendingGoogle);
+    expect(provider.getSlotsForDate('2026-01-01'), isNull);
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '远端');
+    expect(provider.pendingGiteeSyncDates, isEmpty);
+    expect(provider.pendingGoogleSyncDates, isEmpty);
+    expect(provider.scheduleUser, DiaryKind.g);
+    expect(prefs.getString('schedule_user_kind'), 'g');
   });
 
-  test('overwrite rolls back when identity changes before journal cleanup',
-      () async {
+  test('rejects identity change before journal cleanup', () async {
     late TimeProvider provider;
     var changedIdentity = false;
     provider = await _createProvider(
@@ -1223,25 +1279,24 @@ void main() {
     ];
     await provider.importBackupJson(jsonEncode(backup));
 
-    final prefs = await SharedPreferences.getInstance();
-    final beforeDailySlots = prefs.getString('daily_slots');
-    final beforeGitee = prefs.getStringList('pending_gitee_sync_dates');
-    final beforeGoogle = prefs.getStringList('pending_google_sync_dates');
-    final beforeVisible = prefs.getStringList('pending_sync_dates');
-
     expect(provider.getSlotsForDate('2026-09-06')![0].label, '本地重叠');
-    expect(await provider.overwriteAllSchedulesFromGitee(), isFalse);
+    expect(await provider.overwriteAllSchedulesFromGitee(), isTrue);
     await Future<void>.delayed(Duration.zero);
 
-    expect(provider.scheduleUser, DiaryKind.j);
-    expect(provider.getSlotsForDate('2026-01-01')![0].label, '本地专属');
-    expect(provider.getSlotsForDate('2026-09-06')![0].label, '本地重叠');
-    expect(provider.pendingGiteeSyncDates, {'2026-01-01', '2026-09-06'});
-    expect(provider.pendingGoogleSyncDates, {'2026-09-06', '2026-10-01'});
-    expect(prefs.getString('daily_slots'), beforeDailySlots);
-    expect(prefs.getStringList('pending_gitee_sync_dates'), beforeGitee);
-    expect(prefs.getStringList('pending_google_sync_dates'), beforeGoogle);
-    expect(prefs.getStringList('pending_sync_dates'), beforeVisible);
+    final prefs = await SharedPreferences.getInstance();
+    expect(provider.scheduleUser, DiaryKind.g);
+    expect(provider.getSlotsForDate('2026-01-01'), isNull);
+    expect(provider.getSlotsForDate('2026-09-06')![0].label, '远端');
+    expect(provider.pendingGiteeSyncDates, isEmpty);
+    expect(provider.pendingGoogleSyncDates, isEmpty);
+    expect(
+      jsonDecode(prefs.getString('daily_slots')!)['2026-09-06'][0]['l'],
+      '远端',
+    );
+    expect(prefs.getStringList('pending_gitee_sync_dates'), isEmpty);
+    expect(prefs.getStringList('pending_google_sync_dates'), isEmpty);
+    expect(prefs.getStringList('pending_sync_dates'), isEmpty);
+    expect(prefs.getString('schedule_user_kind'), 'g');
     expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
   });
 
@@ -1356,7 +1411,7 @@ void main() {
     expect(provider.scheduleUser, DiaryKind.g);
     releaseRemove.complete();
     await attemptedIdentity;
-    expect(await overwrite, isFalse);
+    expect(await overwrite, isTrue);
     expect(provider.scheduleUser, DiaryKind.g);
     expect(provider.getSlotsForDate('2026-09-06')![0].label, '远端');
     final prefs = await SharedPreferences.getInstance();
@@ -1385,7 +1440,7 @@ void main() {
     expect(restarted.getSlotsForDate('2026-09-06')![0].label, '远端');
   });
 
-  test('slot revision change during real journal remove is rejected safely',
+  test('slot edit during real journal remove is rejected safely',
       () async {
     late TimeProvider provider;
     final removeStarted = Completer<void>();
@@ -1415,7 +1470,7 @@ void main() {
     expect(provider.slotsRevision, revisionAtRemove);
     releaseRemove.complete();
 
-    expect(await overwrite, isFalse);
+    expect(await overwrite, isTrue);
     await Future<void>.delayed(const Duration(milliseconds: 150));
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);

@@ -204,11 +204,9 @@ class TimeProvider with ChangeNotifier {
   String? get lastScheduleOverwriteFailure => _lastScheduleOverwriteFailure;
   bool _scheduleOverwriteJournalCleanupPending = false;
   // Cleanup is the one phase where the committed snapshot must not be
-  // followed by an identity or revision change.  Public mutations reject
-  // during this small window and mark the transaction invalidated; the
-  // journal removal remains cleanup-only and is never rewritten afterwards.
+  // followed by an identity or revision change. Public mutations reject for
+  // the whole overwrite transaction; journal removal remains cleanup-only.
   bool _scheduleOverwriteCleanupInProgress = false;
-  bool _scheduleOverwriteCleanupInvalidated = false;
   bool _deferredScheduleSaveRequested = false;
   int _googleSyncGeneration = 0;
 
@@ -224,11 +222,34 @@ class TimeProvider with ChangeNotifier {
 
   bool _allowScheduleMutation() {
     if (!_isScheduleReady) return false;
-    if (_scheduleOverwriteCleanupInProgress) {
-      _scheduleOverwriteCleanupInvalidated = true;
+    if (_scheduleOverwriteInProgress ||
+        _scheduleOverwriteCleanupInProgress ||
+        _scheduleOverwriteJournalCleanupPending) {
+      _addScheduleSyncStatus(
+        _scheduleOverwriteJournalCleanupPending
+            ? '覆盖日程清理未完成，修改已忽略'
+            : '覆盖拉取进行中，修改已忽略',
+      );
       return false;
     }
     return true;
+  }
+
+  bool _allowScheduleIdentityMutation() {
+    // The overwrite owns the selected namespace for its whole transaction.
+    // Do not let an identity request mutate memory first and then race the
+    // snapshot writes, publication, or journal cleanup.
+    if (_scheduleOverwriteInProgress ||
+        _scheduleOverwriteCleanupInProgress ||
+        _scheduleOverwriteJournalCleanupPending) {
+      _addScheduleSyncStatus(
+        _scheduleOverwriteJournalCleanupPending
+            ? '覆盖日程清理未完成，身份切换已忽略'
+            : '覆盖拉取进行中，身份切换已忽略',
+      );
+      return false;
+    }
+    return _allowScheduleMutation();
   }
 
   bool _canContinueScheduleSync(String selectedUserCode) {
@@ -268,19 +289,31 @@ class TimeProvider with ChangeNotifier {
   static const String _scheduleUserKey = 'schedule_user_kind';
 
   Future<void> setScheduleUser(DiaryKind kind) async {
-    if (!_allowScheduleMutation()) return;
+    if (!_allowScheduleIdentityMutation()) return;
     if (_scheduleUser == kind && _hasSelectedScheduleUser) return;
     _scheduleUser = kind;
     _hasSelectedScheduleUser = true;
     final prefs = await SharedPreferences.getInstance();
-    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return;
+    if (!_isScheduleReady ||
+        _scheduleOverwriteInProgress ||
+        _scheduleOverwriteCleanupInProgress ||
+        _scheduleOverwriteJournalCleanupPending) {
+      return;
+    }
     if (!await prefs.setString(_scheduleUserKey, kind.code) ||
         !_isScheduleReady ||
-        _scheduleOverwriteCleanupInProgress) {
+        _scheduleOverwriteInProgress ||
+        _scheduleOverwriteCleanupInProgress ||
+        _scheduleOverwriteJournalCleanupPending) {
       return;
     }
     await AppUserIdentityStore.saveManualKind(kind);
-    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return;
+    if (!_isScheduleReady ||
+        _scheduleOverwriteInProgress ||
+        _scheduleOverwriteCleanupInProgress ||
+        _scheduleOverwriteJournalCleanupPending) {
+      return;
+    }
     notifyListeners();
     // 切换身份后拉取新身份当前日期的日程
     _pullOwnScheduleIfWindows();
@@ -1493,7 +1526,6 @@ class TimeProvider with ChangeNotifier {
         _isScheduleReady &&
         !_initializationFailed &&
         !_scheduleOverwriteJournalCleanupPending &&
-        !_scheduleOverwriteCleanupInvalidated &&
         _hasSelectedScheduleUser &&
         _scheduleUser.code == selectedUserCode;
     var succeeded = false;
@@ -1598,6 +1630,10 @@ class TimeProvider with ChangeNotifier {
         return false;
       }
 
+      // Cleanup is part of the overwrite transaction.  Set its lock before
+      // publishing memory so synchronous listeners cannot start a mutation
+      // between the commit and journal removal.
+      _scheduleOverwriteCleanupInProgress = true;
       _dailySlots
         ..clear()
         ..addAll(nextDailySlots);
@@ -1618,8 +1654,6 @@ class TimeProvider with ChangeNotifier {
       // next startup will verify the new snapshot and retry cleanup instead of
       // rolling it back.
       final committedSlotsRevision = _slotsRevision;
-      _scheduleOverwriteCleanupInProgress = true;
-      _scheduleOverwriteCleanupInvalidated = false;
       bool finalized;
       try {
         finalized = await _finalizeScheduleOverwriteJournal(
@@ -1648,7 +1682,6 @@ class TimeProvider with ChangeNotifier {
       if (_scheduleOverwriteInProgress) {
         _scheduleOverwriteInProgress = false;
         _scheduleOverwriteCleanupInProgress = false;
-        _scheduleOverwriteCleanupInvalidated = false;
         final shouldFlush = _deferredScheduleSaveRequested;
         _deferredScheduleSaveRequested = false;
         if (!_isDisposed && shouldFlush && !_initializationFailed) {
