@@ -76,6 +76,7 @@ analysis_benchmark.json
 .pub/
 build/
 installer_output/
+dist/
 # 设计文档不入库（用户要求）
 docs/
 iOS_移植计划.md
