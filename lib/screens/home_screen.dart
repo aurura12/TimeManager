@@ -8,7 +8,6 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:provider/provider.dart';
 import '../models/category.dart';
 import '../models/schedule_template.dart';
-import '../models/schedule_sync_progress.dart';
 import '../providers/time_provider.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/template_bar.dart';
@@ -16,7 +15,6 @@ import '../widgets/time_grid.dart';
 import '../widgets/voice_schedule_sheet.dart';
 import 'global_search_screen.dart';
 import '../utils/desktop_selection.dart';
-import '../widgets/schedule_sync_progress_banner.dart';
 
 /// Windows 三列视图下列头高度，与左侧时间标签占位共用，保证对齐。
 const double _kDayHeaderHeight = 40;
@@ -150,9 +148,6 @@ class _HomeScreenState extends State<HomeScreen> {
         context.select<TimeProvider, bool>((p) => p.isRemoteViewEnabled);
     final hasPendingSync =
         context.select<TimeProvider, bool>((p) => p.hasPendingSync);
-    final scheduleSyncProgress =
-        context.select<TimeProvider, ScheduleSyncProgress?>(
-            (p) => p.scheduleSyncProgress);
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -378,15 +373,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
-          if (scheduleSyncProgress != null)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: ScheduleSyncProgressBanner(
-                progress: scheduleSyncProgress,
-              ),
-            ),
           if (_isDatePickerVisible) ...[
             Positioned.fill(
               child: GestureDetector(

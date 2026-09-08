@@ -4,12 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/screens/profile_screen.dart';
+import '../models/schedule_sync_progress.dart';
 import '../providers/time_provider.dart';
 import '../services/diary_local_store.dart';
 import '../services/diary_search_service.dart';
 import '../services/on_this_day_service.dart';
 import '../utils/adaptive.dart';
 import '../widgets/on_this_day_sheet.dart';
+import '../widgets/schedule_sync_progress_banner.dart';
 import 'check_in_screen.dart';
 import 'diary_screen.dart';
 import 'home_screen.dart';
@@ -185,6 +187,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       items.removeAt(4); // 移除"目标"tab
     }
     final safeIndex = _selectedIndex.clamp(0, options.length - 1);
+    final scheduleSyncProgress =
+        context.select<TimeProvider, ScheduleSyncProgress?>(
+            (p) => p.scheduleSyncProgress);
     // iPad 宽屏使用左侧导航栏，手机/分屏窄栏保持底部导航
     if (isWideTablet(context)) {
       return Scaffold(
@@ -206,9 +211,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             ),
             const VerticalDivider(width: 1, thickness: 1),
             Expanded(
-              child: IndexedStack(
-                index: safeIndex,
-                children: options,
+              child: _buildContentStack(
+                options: options,
+                safeIndex: safeIndex,
+                progress: scheduleSyncProgress,
               ),
             ),
           ],
@@ -216,9 +222,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       );
     }
     return Scaffold(
-      body: IndexedStack(
-        index: safeIndex,
-        children: options,
+      body: _buildContentStack(
+        options: options,
+        safeIndex: safeIndex,
+        progress: scheduleSyncProgress,
       ),
       bottomNavigationBar: BottomNavigationBar(
         type: BottomNavigationBarType.fixed,
@@ -229,6 +236,28 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         unselectedItemColor: colorScheme.onSurfaceVariant,
         onTap: _onItemTapped,
       ),
+    );
+  }
+
+  Widget _buildContentStack({
+    required List<Widget> options,
+    required int safeIndex,
+    required ScheduleSyncProgress? progress,
+  }) {
+    return Stack(
+      children: [
+        IndexedStack(
+          index: safeIndex,
+          children: options,
+        ),
+        if (progress != null)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: ScheduleSyncProgressBanner(progress: progress),
+          ),
+      ],
     );
   }
 }
