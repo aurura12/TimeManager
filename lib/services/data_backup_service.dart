@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../providers/time_provider.dart';
+import 'app_log_service.dart';
 
 class BackupFileResult {
   final bool cancelled;
@@ -46,13 +47,21 @@ class DataBackupService {
       if (path == null) {
         return BackupFileResult.cancelled();
       }
+      AppLogService.instance.info('备份导出成功', source: 'backup');
       return BackupFileResult.success(path);
-    } catch (e) {
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        '备份导出失败',
+        source: 'backup',
+        error: e,
+        stackTrace: stackTrace,
+      );
       return BackupFileResult.error('导出失败: $e');
     }
   }
 
-  static Future<({BackupFileResult result, BackupPreview? preview, String? json})>
+  static Future<
+          ({BackupFileResult result, BackupPreview? preview, String? json})>
       pickBackupFile(TimeProvider provider) async {
     try {
       final picked = await FilePicker.pickFiles(
@@ -62,11 +71,19 @@ class DataBackupService {
       );
 
       if (picked == null || picked.files.isEmpty) {
-        return (result: BackupFileResult.cancelled(), preview: null, json: null);
+        return (
+          result: BackupFileResult.cancelled(),
+          preview: null,
+          json: null
+        );
       }
 
       final bytes = picked.files.first.bytes;
       if (bytes == null || bytes.isEmpty) {
+        AppLogService.instance.warning(
+          '备份文件内容为空或无法读取',
+          source: 'backup',
+        );
         return (
           result: BackupFileResult.error('无法读取文件内容'),
           preview: null,
@@ -77,6 +94,10 @@ class DataBackupService {
       final jsonStr = utf8.decode(bytes);
       final preview = provider.previewBackupJson(jsonStr);
       if (preview == null) {
+        AppLogService.instance.warning(
+          '备份文件格式无效',
+          source: 'backup',
+        );
         return (
           result: BackupFileResult.error('不是有效的时间块备份文件'),
           preview: null,
@@ -84,8 +105,18 @@ class DataBackupService {
         );
       }
 
-      return (result: BackupFileResult.success(), preview: preview, json: jsonStr);
-    } catch (e) {
+      return (
+        result: BackupFileResult.success(),
+        preview: preview,
+        json: jsonStr
+      );
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        '选择备份文件失败',
+        source: 'backup',
+        error: e,
+        stackTrace: stackTrace,
+      );
       return (
         result: BackupFileResult.error('选择备份文件失败: $e'),
         preview: null,
@@ -100,10 +131,23 @@ class DataBackupService {
   ) async {
     try {
       await provider.importBackupJson(jsonStr);
+      AppLogService.instance.info('备份导入成功', source: 'backup');
       return BackupFileResult.success();
-    } on FormatException catch (e) {
+    } on FormatException catch (e, stackTrace) {
+      AppLogService.instance.warning(
+        '备份导入格式无效',
+        source: 'backup',
+        error: e,
+        stackTrace: stackTrace,
+      );
       return BackupFileResult.error(e.message);
-    } catch (e) {
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        '备份导入失败',
+        source: 'backup',
+        error: e,
+        stackTrace: stackTrace,
+      );
       return BackupFileResult.error('导入失败: $e');
     }
   }

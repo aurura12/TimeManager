@@ -13,6 +13,7 @@ import '../models/calendar_block.dart';
 import 'google_session_store.dart';
 import 'app_user_identity_store.dart';
 import 'google_calendar_event_parser.dart';
+import 'app_log_service.dart';
 import '../utils/local_day_range.dart';
 
 class GoogleCalendarService {
@@ -74,6 +75,35 @@ class GoogleCalendarService {
   static void _log(String message) {
     _logger.i(message);
     debugPrint('[GoogleCalendar] $message');
+    AppLogService.instance.info(message, source: 'google_calendar');
+  }
+
+  static void _logWarning(
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+  }) {
+    _logger.w(message, stackTrace: stackTrace);
+    AppLogService.instance.warning(
+      message,
+      source: 'google_calendar',
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+
+  static void _logError(
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+  }) {
+    _logger.e(message, stackTrace: stackTrace);
+    AppLogService.instance.error(
+      message,
+      source: 'google_calendar',
+      error: error,
+      stackTrace: stackTrace,
+    );
   }
 
   /// 应用启动时调用一次：初始化 SDK 并监听登录状态流（7.x 官方推荐）
@@ -96,10 +126,10 @@ class GoogleCalendarService {
     final serverClientId = GoogleSignInConfig.serverClientId.trim();
     try {
       await _googleSignIn.initialize(serverClientId: serverClientId);
-    } catch (e) {
+    } catch (e, stackTrace) {
       // iOS 缺少 GoogleService-Info.plist 或客户端 ID 无效时 initialize 会抛异常，
       // 降级为未登录状态，避免应用启动崩溃
-      _logger.e('Google Sign-In 初始化失败: $e');
+      _logError('Google Sign-In 初始化失败', error: e, stackTrace: stackTrace);
       _lastLoginError = 'Google 登录初始化失败，请检查配置';
       _initialized = true;
       return;
@@ -107,7 +137,7 @@ class GoogleCalendarService {
     _googleSignIn.authenticationEvents.listen(
       _handleAuthenticationEvent,
       onError: (error, stack) {
-        _logger.e('Google 登录状态流错误: $error', stackTrace: stack);
+        _logError('Google 登录状态流错误', error: error, stackTrace: stack);
         _restoreCompleter?.complete(_currentUser);
       },
     );
@@ -119,23 +149,28 @@ class GoogleCalendarService {
     try {
       await account.authorizationClient.authorizationForScopes(_scopes) ??
           await account.authorizationClient.authorizeScopes(_scopes);
-    } catch (e) {
-      _logger.w('恢复日历授权失败: $e');
+    } catch (e, stackTrace) {
+      _logWarning('恢复日历授权失败', error: e, stackTrace: stackTrace);
     }
   }
 
   static Future<void> _ensureKnownUserLoaded() async {
     if (_knownUserLoaded) return;
-    _knownUser = await AppUserIdentityStore.load();
-    if (_knownUser == null) {
-      final legacy = await GoogleSessionStore.load();
-      if (legacy != null) {
-        _knownUser = legacy;
-        await AppUserIdentityStore.saveUser(legacy);
-        _log('已从旧会话档案迁移用户身份: ${_knownUser!.label}');
+    try {
+      _knownUser = await AppUserIdentityStore.load();
+      if (_knownUser == null) {
+        final legacy = await GoogleSessionStore.load();
+        if (legacy != null) {
+          _knownUser = legacy;
+          await AppUserIdentityStore.saveUser(legacy);
+          _log('已从旧会话档案迁移用户身份: ${_knownUser!.label}');
+        }
       }
+    } catch (e, stackTrace) {
+      _logError('加载本地用户身份失败', error: e, stackTrace: stackTrace);
+    } finally {
+      _knownUserLoaded = true;
     }
-    _knownUserLoaded = true;
     if (_knownUser != null) {
       _log('已加载本地用户身份: ${_knownUser!.label}');
     }
@@ -211,8 +246,8 @@ class GoogleCalendarService {
       _log('本地档案 + token 恢复成功');
       _notifyAuthStateChanged();
       return true;
-    } catch (e) {
-      _log('token 恢复失败，保留本地身份: $e');
+    } catch (e, stackTrace) {
+      _logError('token 恢复失败，保留本地身份', error: e, stackTrace: stackTrace);
       _knownUser ??= identity;
       await AppUserIdentityStore.saveUser(_knownUser!);
       await _degradeToKnownUserOnly();
@@ -223,18 +258,25 @@ class GoogleCalendarService {
   static Future<void> _handleAuthenticationEvent(
     GoogleSignInAuthenticationEvent event,
   ) async {
-    if (event is GoogleSignInAuthenticationEventSignIn) {
-      await _applySignedInUser(event.user);
-      _log('authenticationEvents: 已登录 ${event.user.email}');
-      if (_restoreCompleter != null && !_restoreCompleter!.isCompleted) {
-        _restoreCompleter!.complete(event.user);
+    try {
+      if (event is GoogleSignInAuthenticationEventSignIn) {
+        await _applySignedInUser(event.user);
+        _log('authenticationEvents: 已登录 ${event.user.email}');
+        if (_restoreCompleter != null && !_restoreCompleter!.isCompleted) {
+          _restoreCompleter!.complete(event.user);
+        }
+      } else if (event is GoogleSignInAuthenticationEventSignOut) {
+        // 网络等原因可能误触发 SignOut，不清永久身份，仅降级日历连接
+        await _degradeToKnownUserOnly();
+        _log('authenticationEvents: 日历会话断开（保留本地身份）');
+        if (_restoreCompleter != null && !_restoreCompleter!.isCompleted) {
+          _restoreCompleter!.complete(null);
+        }
       }
-    } else if (event is GoogleSignInAuthenticationEventSignOut) {
-      // 网络等原因可能误触发 SignOut，不清永久身份，仅降级日历连接
-      await _degradeToKnownUserOnly();
-      _log('authenticationEvents: 日历会话断开（保留本地身份）');
+    } catch (e, stackTrace) {
+      _logError('处理 Google 登录状态失败', error: e, stackTrace: stackTrace);
       if (_restoreCompleter != null && !_restoreCompleter!.isCompleted) {
-        _restoreCompleter!.complete(null);
+        _restoreCompleter!.complete(_currentUser);
       }
     }
   }
@@ -248,13 +290,13 @@ class GoogleCalendarService {
       await _applySignedInUser(account);
       _log('手动登录成功: ${account.email}');
       return account;
-    } on GoogleSignInException catch (e) {
+    } on GoogleSignInException catch (e, stackTrace) {
       _lastLoginError = e.description ?? e.toString();
-      _logger.e('Google 登录失败: $e');
+      _logError('Google 登录失败', error: e, stackTrace: stackTrace);
       return null;
-    } catch (e) {
+    } catch (e, stackTrace) {
       _lastLoginError = e.toString();
-      _logger.e('Google 登录失败: $e');
+      _logError('Google 登录失败', error: e, stackTrace: stackTrace);
       return null;
     }
   }
@@ -339,9 +381,8 @@ class GoogleCalendarService {
           return _currentUser;
         },
       );
-    } catch (e) {
-      _logger.e('轻量登录失败: $e');
-      _log('轻量登录异常: $e');
+    } catch (e, stackTrace) {
+      _logError('轻量登录失败', error: e, stackTrace: stackTrace);
     } finally {
       _restoreCompleter = null;
     }
@@ -385,8 +426,8 @@ class GoogleCalendarService {
         if (block != null) blocks.add(block);
       }
       return blocks;
-    } catch (e) {
-      _logger.e("从 Google Calendar 拉取失败: $e");
+    } catch (e, stackTrace) {
+      _logError('从 Google Calendar 拉取失败', error: e, stackTrace: stackTrace);
       return null;
     }
   }
@@ -399,13 +440,13 @@ class GoogleCalendarService {
     try {
       final event = await api.events.get('primary', eventId);
       if (event.description == _appSignature) {
-        _logger.w("拒绝删除本 App 创建的日历事件: $eventId");
+        _logWarning('拒绝删除本 App 创建的日历事件');
         return false;
       }
       await api.events.delete('primary', eventId);
       return true;
-    } catch (e) {
-      _logger.e("删除 Google 日历事件失败: $e");
+    } catch (e, stackTrace) {
+      _logError('删除 Google 日历事件失败', error: e, stackTrace: stackTrace);
       return false;
     }
   }
@@ -454,8 +495,8 @@ class GoogleCalendarService {
         }
       }
       return true;
-    } catch (e) {
-      _logger.e("同步到 Google Calendar 失败: $e");
+    } catch (e, stackTrace) {
+      _logError('同步到 Google Calendar 失败', error: e, stackTrace: stackTrace);
       return false;
     }
   }

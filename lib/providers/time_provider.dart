@@ -24,6 +24,7 @@ import '../services/category_gitee_service.dart';
 import '../services/voice_schedule_slot_planner.dart';
 import '../services/pending_google_day_sync.dart';
 import '../services/calendar_slot_refresh.dart';
+import '../services/app_log_service.dart';
 import '../models/diary_kind.dart';
 import '../models/known_google_users.dart';
 import '../services/app_user_identity_store.dart';
@@ -213,6 +214,19 @@ class TimeProvider with ChangeNotifier {
   bool _deferredScheduleSaveRequested = false;
   int _googleSyncGeneration = 0;
 
+  void _recordAppError(
+    String message,
+    Object error, [
+    StackTrace? stackTrace,
+  ]) {
+    AppLogService.instance.error(
+      message,
+      source: 'time_provider',
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+
   bool get _isSchedulePersistenceBlocked =>
       !_isInitialLoadFinished ||
       _initializationFailed ||
@@ -380,8 +394,9 @@ class TimeProvider with ChangeNotifier {
           pendingGiteeSyncDates.isNotEmpty) {
         unawaited(syncAllSchedulesToGitee());
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('切换日程身份失败: $e');
+      _recordAppError('切换日程身份失败', e, stackTrace);
     } finally {
       if (persistenceNeedsRestore) {
         _scheduleUser = previousKind;
@@ -393,21 +408,24 @@ class TimeProvider with ChangeNotifier {
             } else {
               await prefs.setString(_scheduleUserKey, previousStoredKind);
             }
-          } catch (e) {
+          } catch (e, stackTrace) {
             debugPrint('恢复日程身份偏好失败: $e');
+            _recordAppError('恢复日程身份偏好失败', e, stackTrace);
           }
         }
         if (previousHasSelectedUser) {
           try {
             await AppUserIdentityStore.saveManualKind(previousKind);
-          } catch (e) {
+          } catch (e, stackTrace) {
             debugPrint('恢复安全存储中的日程身份失败: $e');
+            _recordAppError('恢复安全存储中的日程身份失败', e, stackTrace);
           }
         } else {
           try {
             await AppUserIdentityStore.clearManualKind();
-          } catch (e) {
+          } catch (e, stackTrace) {
             debugPrint('清除未提交的日程身份失败: $e');
+            _recordAppError('清除未提交的日程身份失败', e, stackTrace);
           }
         }
       }
@@ -628,8 +646,9 @@ class TimeProvider with ChangeNotifier {
     // 先加载本地数据并刷新 UI，避免等待 Google 静默登录阻塞首屏
     try {
       await _loadData();
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('初始数据加载失败: $e');
+      _recordAppError('初始数据加载失败', e, stackTrace);
       if (!_isDisposed) {
         _markInitializationFailed('本地日程恢复失败，请检查本地数据后重试');
       }
@@ -1242,8 +1261,9 @@ class TimeProvider with ChangeNotifier {
           _addSyncStatus("日程同步失败");
         }
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       _addScheduleSyncStatus('同步失败: $e');
+      _recordAppError('日程同步失败', e, stackTrace);
       if (!_syncStatusController.isClosed) {
         _addSyncStatus("日程同步失败: $e");
       }
@@ -1493,8 +1513,9 @@ class TimeProvider with ChangeNotifier {
       Future.delayed(const Duration(seconds: 3), () {
         _addScheduleSyncStatus('');
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
       _addScheduleSyncStatus('全量同步失败: $e');
+      _recordAppError('全量日程同步失败', e, stackTrace);
     } finally {
       _allScheduleSyncing = false;
     }
@@ -1598,8 +1619,9 @@ class TimeProvider with ChangeNotifier {
       Future.delayed(const Duration(seconds: 3), () {
         _addScheduleSyncStatus('');
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
       _addScheduleSyncStatus('全量拉取失败: $e');
+      _recordAppError('全量日程拉取失败', e, stackTrace);
     } finally {
       _allSchedulePulling = false;
     }
@@ -1753,8 +1775,9 @@ class TimeProvider with ChangeNotifier {
       // production has no await between this guard and memory publication.
       try {
         _scheduleSnapshotJournalPhaseObserver?.call('before_remove');
-      } catch (e) {
+      } catch (e, stackTrace) {
         debugPrint('覆盖快照提交阶段失败: $e');
+        _recordAppError('覆盖快照提交阶段失败', e, stackTrace);
         await _rollbackCommittedScheduleOverwrite();
         return false;
       }
@@ -1807,8 +1830,9 @@ class TimeProvider with ChangeNotifier {
       succeeded = true;
       _addScheduleSyncStatus('覆盖拉取完成');
       return true;
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('覆盖拉取失败: $e');
+      _recordAppError('覆盖拉取失败', e, stackTrace);
       _lastScheduleOverwriteFailure = '覆盖拉取未开始或失败，请稍后重试';
       return false;
     } finally {
@@ -1944,8 +1968,9 @@ class TimeProvider with ChangeNotifier {
       Future.delayed(const Duration(seconds: 3), () {
         _addScheduleSyncStatus('');
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('分类同步失败: $e');
+      _recordAppError('分类同步失败', e, stackTrace);
       _addScheduleSyncStatus('分类同步失败: $e');
     } finally {
       _categoriesGiteeSyncing = false;
@@ -1996,8 +2021,9 @@ class TimeProvider with ChangeNotifier {
       final remoteDoc = parseCategoryDocument(pullResult.content);
       final merged = mergeCategoryDocuments(local: localDoc, remote: remoteDoc);
       _applyMergedCategories(merged);
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('分类拉取失败: $e');
+      _recordAppError('分类拉取失败', e, stackTrace);
     } finally {
       _categoriesGiteeSyncing = false;
     }
@@ -2121,8 +2147,9 @@ class TimeProvider with ChangeNotifier {
         _addScheduleSyncStatus('');
       });
       return true;
-    } catch (e) {
+    } catch (e, stackTrace) {
       _addScheduleSyncStatus('拉取失败: $e');
+      _recordAppError('日程拉取失败', e, stackTrace);
       return false;
     } finally {
       _scheduleMergePullsInProgress--;
@@ -3798,6 +3825,9 @@ class TimeProvider with ChangeNotifier {
     _ongoingSave = save;
     try {
       return await save;
+    } catch (e, stackTrace) {
+      _recordAppError('本地数据保存失败', e, stackTrace);
+      return false;
     } finally {
       if (_ongoingSave == save) _ongoingSave = null;
     }
@@ -4059,8 +4089,9 @@ class TimeProvider with ChangeNotifier {
       if (_isDisposed || _initializationFailed) return false;
       _scheduleOverwriteJournalCleanupPending = false;
       return true;
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('覆盖日程提交日志重试清理失败: $e');
+      _recordAppError('覆盖日程提交日志重试清理失败', e, stackTrace);
       _addScheduleSyncStatus('覆盖日程清理未完成，已暂停本地保存');
       return false;
     }
@@ -4160,8 +4191,9 @@ class TimeProvider with ChangeNotifier {
       // Keep the committed journal until the caller has published the same
       // replacement into memory.  Cleanup is deliberately a separate phase.
       return true;
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('覆盖快照写入失败: $e');
+      _recordAppError('覆盖快照写入失败', e, stackTrace);
     }
 
     if (journalWritten) {
@@ -4232,8 +4264,9 @@ class TimeProvider with ChangeNotifier {
         return false;
       }
       return true;
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('覆盖快照回滚失败: $e');
+      _recordAppError('覆盖快照回滚失败', e, stackTrace);
       return false;
     }
   }
@@ -4258,8 +4291,9 @@ class TimeProvider with ChangeNotifier {
         _markInitializationFailed('覆盖日程回滚无法确认本地数据，请重启应用恢复');
       }
       return rolledBack;
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('覆盖快照提交后回滚失败: $e');
+      _recordAppError('覆盖快照提交后回滚失败', e, stackTrace);
       return false;
     }
   }
@@ -4316,8 +4350,9 @@ class TimeProvider with ChangeNotifier {
       // fail after the key has been deleted and leave an unrecoverable state.
       _scheduleOverwriteJournalCleanupPending = false;
       return true;
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('覆盖快照提交后清理日志失败，保留 committed 日志: $e');
+      _recordAppError('覆盖快照提交后清理日志失败，保留 committed 日志', e, stackTrace);
       if (_isDisposed) return false;
       _scheduleOverwriteJournalCleanupPending = true;
       if (prefs != null && journal != null) {
@@ -4335,8 +4370,9 @@ class TimeProvider with ChangeNotifier {
   ) async {
     try {
       return await _writeScheduleOverwriteJournal(prefs, journal);
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('覆盖快照提交日志保留失败: $e');
+      _recordAppError('覆盖快照提交日志保留失败', e, stackTrace);
       return false;
     }
   }
@@ -4393,8 +4429,9 @@ class TimeProvider with ChangeNotifier {
                 prefs.get(entry.key), entry.value)) {
           restored = false;
         }
-      } catch (e) {
+      } catch (e, stackTrace) {
         debugPrint('恢复覆盖快照 ${entry.key} 失败: $e');
+        _recordAppError('恢复覆盖快照失败（${entry.key}）', e, stackTrace);
         restored = false;
       }
     }
@@ -4447,8 +4484,9 @@ class TimeProvider with ChangeNotifier {
         pendingSync: hasPendingSyncForCurrentDate,
       );
       if (!_isScheduleReady) return;
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('更新桌面小组件失败: $e');
+      _recordAppError('更新桌面小组件失败', e, stackTrace);
     }
   }
 
@@ -4561,8 +4599,9 @@ class TimeProvider with ChangeNotifier {
       try {
         final map = Map<String, dynamic>.from(e as Map);
         parsedCategories.add(Category.fromJson(map));
-      } catch (err) {
+      } catch (err, stackTrace) {
         debugPrint("导入分类数据出错: $err");
+        _recordAppError('导入分类数据出错', err, stackTrace);
       }
     }
     if (!parsedCategories.any((c) => c.name == temporaryCategoryName)) {
@@ -4580,8 +4619,9 @@ class TimeProvider with ChangeNotifier {
         try {
           parsedTargets
               .add(Target.fromJson(Map<String, dynamic>.from(e as Map)));
-        } catch (err) {
+        } catch (err, stackTrace) {
           debugPrint("导入目标数据出错: $err");
+          _recordAppError('导入目标数据出错', err, stackTrace);
         }
       }
     }
@@ -4592,8 +4632,9 @@ class TimeProvider with ChangeNotifier {
         Map<String, dynamic>.from(data['dailySlots'] as Map),
         destination: parsedDailySlots,
       );
-    } catch (err) {
+    } catch (err, stackTrace) {
       debugPrint("导入时间块数据出错: $err");
+      _recordAppError('导入时间块数据出错', err, stackTrace);
     }
 
     final parsedTemplates = <ScheduleTemplate>[];
@@ -4603,8 +4644,9 @@ class TimeProvider with ChangeNotifier {
         try {
           parsedTemplates.add(
               ScheduleTemplate.fromJson(Map<String, dynamic>.from(e as Map)));
-        } catch (err) {
+        } catch (err, stackTrace) {
           debugPrint("导入模板数据出错: $err");
+          _recordAppError('导入模板数据出错', err, stackTrace);
         }
       }
     }
@@ -4777,8 +4819,9 @@ class TimeProvider with ChangeNotifier {
             needMigration = true;
           }
           _categories.add(cat);
-        } catch (e) {
+        } catch (e, stackTrace) {
           debugPrint("加载分类数据出错: $e");
+          _recordAppError('加载分类数据出错', e, stackTrace);
         }
       }
       if (needMigration) _categoriesDirty = true;
@@ -4800,7 +4843,9 @@ class TimeProvider with ChangeNotifier {
             }
           });
         }
-      } catch (_) {}
+      } catch (e, stackTrace) {
+        _recordAppError('加载分类删除记录出错', e, stackTrace);
+      }
     }
     _categoriesDocUpdatedAt = prefs.getInt('categories_doc_updated_at') ?? 0;
 
@@ -4811,8 +4856,9 @@ class TimeProvider with ChangeNotifier {
       for (final str in targetList) {
         try {
           _targets.add(Target.fromJson(json.decode(str)));
-        } catch (e) {
+        } catch (e, stackTrace) {
           debugPrint("加载目标数据出错: $e");
+          _recordAppError('加载目标数据出错', e, stackTrace);
         }
       }
     }
@@ -4823,8 +4869,9 @@ class TimeProvider with ChangeNotifier {
       try {
         _dailySlots.clear();
         _loadDailySlotsFromJson(json.decode(slotsStr) as Map<String, dynamic>);
-      } catch (e) {
+      } catch (e, stackTrace) {
         debugPrint("加载时间块数据出错: $e");
+        _recordAppError('加载时间块数据出错', e, stackTrace);
       }
     }
 
@@ -4838,8 +4885,9 @@ class TimeProvider with ChangeNotifier {
           ..addAll(list
               .map((e) => ScheduleTemplate.fromJson(e as Map<String, dynamic>))
               .toList());
-      } catch (e) {
+      } catch (e, stackTrace) {
         debugPrint("加载模板数据出错: $e");
+        _recordAppError('加载模板数据出错', e, stackTrace);
       }
     }
 
@@ -4856,8 +4904,9 @@ class TimeProvider with ChangeNotifier {
           set.addAll((value as List<dynamic>).cast<String>());
           _ignoredCalendarImports[normalizedKey] = set;
         });
-      } catch (e) {
+      } catch (e, stackTrace) {
         debugPrint("加载忽略日历列表出错: $e");
+        _recordAppError('加载忽略日历列表出错', e, stackTrace);
       }
     }
 
@@ -4891,8 +4940,9 @@ class TimeProvider with ChangeNotifier {
         _categoryExpandStates = expandJson.map(
           (key, value) => MapEntry(key, value as bool),
         );
-      } catch (e) {
+      } catch (e, stackTrace) {
         debugPrint("加载分类展开状态出错: $e");
+        _recordAppError('加载分类展开状态出错', e, stackTrace);
       }
     }
 

@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../config/diary_gitee_config.dart';
 import '../config/remote_repo_config.dart';
+import 'app_log_service.dart';
 import '../utils/platform_features.dart';
 
 class UpdateInfo {
@@ -77,7 +78,9 @@ class UpdateService {
     var currentUri = uri;
     var currentHeaders = headers;
 
-    for (var redirectCount = 0; redirectCount <= maxRedirects; redirectCount++) {
+    for (var redirectCount = 0;
+        redirectCount <= maxRedirects;
+        redirectCount++) {
       final request = http.Request('GET', currentUri)
         ..followRedirects = false
         ..headers.addAll(currentHeaders);
@@ -112,10 +115,13 @@ class UpdateService {
     for (int i = 0; i <= _maxRetries; i++) {
       try {
         debugPrint('检查更新: 请求 Gitee API... (尝试 ${i + 1})');
-        final response = await http.get(
-          Uri.parse('https://gitee.com/api/v5/repos/$_owner/$_repo/releases/latest'),
-          headers: _headers,
-        ).timeout(_checkTimeout);
+        final response = await http
+            .get(
+              Uri.parse(
+                  'https://gitee.com/api/v5/repos/$_owner/$_repo/releases/latest'),
+              headers: _headers,
+            )
+            .timeout(_checkTimeout);
 
         debugPrint('检查更新: HTTP ${response.statusCode}');
         if (response.statusCode != 200) {
@@ -124,11 +130,24 @@ class UpdateService {
             continue;
           }
           if (response.statusCode == 404) {
+            AppLogService.instance.warning(
+              '暂无可用发布版本',
+              source: 'update',
+            );
             return const UpdateCheckResult(error: '暂无发布版本');
           }
           if (response.statusCode == 401 || response.statusCode == 403) {
-            return const UpdateCheckResult(error: '更新接口认证失败，请检查 Gitee Token 和仓库权限');
+            AppLogService.instance.error(
+              '更新接口认证失败（HTTP ${response.statusCode}）',
+              source: 'update',
+            );
+            return const UpdateCheckResult(
+                error: '更新接口认证失败，请检查 Gitee Token 和仓库权限');
           }
+          AppLogService.instance.error(
+            '更新接口返回错误（HTTP ${response.statusCode}）',
+            source: 'update',
+          );
           return UpdateCheckResult(error: '服务器返回错误 (${response.statusCode})');
         }
 
@@ -152,9 +171,17 @@ class UpdateService {
         }
 
         if (installUrl == null || installUrl.isEmpty) {
+          AppLogService.instance.warning(
+            '发布版本未找到可下载的安装包',
+            source: 'update',
+          );
           return const UpdateCheckResult(error: '未找到可下载的安装包');
         }
         if (tagName.isEmpty) {
+          AppLogService.instance.error(
+            '发布版本缺少版本信息',
+            source: 'update',
+          );
           return const UpdateCheckResult(error: '版本信息无效');
         }
 
@@ -173,8 +200,14 @@ class UpdateService {
         }
 
         return const UpdateCheckResult();
-      } on TimeoutException catch (e) {
+      } on TimeoutException catch (e, stackTrace) {
         debugPrint('检查更新超时: $e');
+        AppLogService.instance.warning(
+          '检查更新超时',
+          source: 'update',
+          error: e,
+          stackTrace: stackTrace,
+        );
         if (i < _maxRetries) {
           await Future.delayed(const Duration(seconds: 1));
           continue;
@@ -183,6 +216,12 @@ class UpdateService {
       } catch (e, st) {
         debugPrint('检查更新失败: $e');
         debugPrint('堆栈: $st');
+        AppLogService.instance.error(
+          '检查更新失败',
+          source: 'update',
+          error: e,
+          stackTrace: st,
+        );
         if (i < _maxRetries) {
           await Future.delayed(const Duration(seconds: 1));
           continue;
@@ -273,9 +312,13 @@ class UpdateService {
         );
 
         if (response.statusCode != 200) {
-          final responseBody = await response.stream.bytesToString();
+          await response.stream.drain<void>();
           client.close();
-          debugPrint('下载失败: HTTP ${response.statusCode}, body=$responseBody');
+          debugPrint('下载失败: HTTP ${response.statusCode}');
+          AppLogService.instance.warning(
+            '下载更新失败（HTTP ${response.statusCode}）',
+            source: 'update',
+          );
           if (context.mounted) {
             Navigator.pop(context);
             _showDownloadFailedDialog(context, version, response.statusCode);
@@ -340,15 +383,20 @@ class UpdateService {
             );
           }
         } else {
-          final channel =
-              MethodChannel('com.example.time_manager/install_apk');
+          final channel = MethodChannel('com.example.time_manager/install_apk');
           try {
             debugPrint('尝试通过 MethodChannel 安装 APK...');
             await channel
                 .invokeMethod('installApk', {'path': installerFile.path});
             debugPrint('MethodChannel 安装成功');
-          } catch (e) {
+          } catch (e, stackTrace) {
             debugPrint('MethodChannel 失败: $e，降级到 url_launcher');
+            AppLogService.instance.warning(
+              '安装器通道失败，尝试备用方式',
+              source: 'update',
+              error: e,
+              stackTrace: stackTrace,
+            );
             final uri = Uri.file(installerFile.path);
             if (await canLaunchUrl(uri)) {
               await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -365,12 +413,23 @@ class UpdateService {
       }
     } on TimeoutException catch (e) {
       debugPrint('下载超时: $e');
+      AppLogService.instance.error(
+        '下载安装超时',
+        source: 'update',
+        error: e,
+      );
       if (context.mounted) {
         Navigator.pop(context);
         _showDownloadFailedDialog(context, version, null);
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('下载安装失败: $e');
+      AppLogService.instance.error(
+        '下载安装失败',
+        source: 'update',
+        error: e,
+        stackTrace: stackTrace,
+      );
       if (context.mounted) {
         Navigator.pop(context);
         _showDownloadFailedDialog(context, version, null);
@@ -396,6 +455,12 @@ class UpdateService {
     } catch (e, st) {
       debugPrint('启动安装程序失败: $e');
       debugPrint('堆栈: $st');
+      AppLogService.instance.error(
+        '启动安装程序失败',
+        source: 'update',
+        error: e,
+        stackTrace: st,
+      );
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('无法启动安装程序，请打开发布页手动下载安装包')),

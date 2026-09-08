@@ -8,6 +8,7 @@ import '../providers/theme_mode_provider.dart';
 import '../providers/time_provider.dart';
 import '../services/data_backup_service.dart';
 import '../services/update_service.dart';
+import '../screens/app_log_screen.dart';
 import '../screens/word_cloud_screen.dart';
 import '../screens/on_this_day_screen.dart';
 import '../services/google_calendar_service.dart';
@@ -144,6 +145,20 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                           Navigator.of(context, rootNavigator: true).context;
                       Navigator.pop(context);
                       await _handleImport(rootContext, provider);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.receipt_long_outlined),
+                    title: const Text('运行日志'),
+                    subtitle: const Text('查看问题记录并导出日志'),
+                    onTap: () {
+                      final navigator = Navigator.of(context);
+                      navigator.pop();
+                      navigator.push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const AppLogScreen(),
+                        ),
+                      );
                     },
                   ),
                   ListTile(

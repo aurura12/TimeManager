@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -7,6 +8,7 @@ import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'providers/time_provider.dart';
 import 'package:time_manager/screens/main_screen.dart';
+import 'services/app_log_service.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -24,8 +26,42 @@ class _StableHttpOverrides extends HttpOverrides {
   }
 }
 
+void installGlobalLogErrorHandlers(AppLogService service) {
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    service.error(
+      'Flutter 未捕获异常',
+      source: 'flutter',
+      error: details.exception,
+      stackTrace: details.stack,
+    );
+  };
+  PlatformDispatcher.instance.onError = (error, stackTrace) {
+    service.error(
+      'Dart 未捕获异步异常',
+      source: 'dart',
+      error: error,
+      stackTrace: stackTrace,
+    );
+    return false;
+  };
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final appLogService = AppLogService.instance;
+  installGlobalLogErrorHandlers(appLogService);
+  try {
+    await appLogService.initialize();
+  } catch (error, stackTrace) {
+    debugPrint('应用日志初始化失败: $error\n$stackTrace');
+    appLogService.error(
+      '应用日志初始化失败',
+      source: 'startup',
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
   HttpOverrides.global = _StableHttpOverrides();
 
   ErrorWidget.builder = (details) {
@@ -39,7 +75,9 @@ void main() async {
               children: [
                 const Icon(Icons.error_outline, size: 48, color: Colors.red),
                 const SizedBox(height: 16),
-                const Text('应用遇到了问题', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const Text('应用遇到了问题',
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
                 Text(details.exceptionAsString(), textAlign: TextAlign.center),
                 const SizedBox(height: 16),
@@ -65,8 +103,14 @@ void main() async {
         child: const TimeManagerApp(),
       ),
     );
-  } catch (e) {
+  } catch (e, stackTrace) {
     debugPrint('应用启动失败: $e');
+    appLogService.error(
+      '应用启动失败',
+      source: 'startup',
+      error: e,
+      stackTrace: stackTrace,
+    );
     runApp(MaterialApp(
       home: Scaffold(
         body: Center(
