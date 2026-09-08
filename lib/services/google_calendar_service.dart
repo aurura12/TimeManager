@@ -8,6 +8,7 @@ import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sig
 import 'package:logger/logger.dart';
 import '../config/google_sign_in_config.dart';
 import '../models/google_calendar_user.dart';
+import '../models/known_google_users.dart';
 import '../models/time_slot.dart';
 import '../models/calendar_block.dart';
 import 'google_session_store.dart';
@@ -188,13 +189,18 @@ class GoogleCalendarService {
     _notifyAuthStateChanged();
   }
 
-  static Future<void> _clearAllIdentity() async {
+  static Future<void> _clearAllIdentity(
+      {bool clearManualIdentity = true}) async {
     _currentUser = null;
     _cachedUser = null;
     _knownUser = null;
     _knownUserLoaded = false;
     await GoogleSessionStore.clear();
-    await AppUserIdentityStore.clear();
+    if (clearManualIdentity) {
+      await AppUserIdentityStore.clear();
+    } else {
+      await AppUserIdentityStore.clearGoogleIdentity();
+    }
   }
 
   /// 网络/token 失效时：保留「是谁」，仅降级日历连接
@@ -281,12 +287,22 @@ class GoogleCalendarService {
     }
   }
 
-  static Future<GoogleSignInAccount?> login() async {
+  static Future<GoogleSignInAccount?> login(
+      {bool requireKnownUser = false}) async {
     if (!isSupportedPlatform) return null;
     _lastLoginError = null;
+    if (!isConfigured) {
+      _lastLoginError = '请先配置 Google OAuth 客户端 ID';
+      return null;
+    }
     try {
       await bootstrap();
       final account = await _googleSignIn.authenticate(scopeHint: _scopes);
+      if (requireKnownUser && !KnownGoogleUsers.isKnownEmail(account.email)) {
+        _lastLoginError = '该 Google 账号未绑定到乖乖或晶晶';
+        await _googleSignIn.signOut();
+        return null;
+      }
       await _applySignedInUser(account);
       _log('手动登录成功: ${account.email}');
       return account;
@@ -301,15 +317,15 @@ class GoogleCalendarService {
     }
   }
 
-  static Future<void> logout() async {
+  static Future<void> logout({bool clearManualIdentity = true}) async {
     if (!isSupportedPlatform) {
-      await _clearAllIdentity();
+      await _clearAllIdentity(clearManualIdentity: clearManualIdentity);
       _notifyAuthStateChanged();
       return;
     }
     await bootstrap();
     await _googleSignIn.signOut();
-    await _clearAllIdentity();
+    await _clearAllIdentity(clearManualIdentity: clearManualIdentity);
     _notifyAuthStateChanged();
     _log('已退出 Google 登录');
   }
@@ -318,12 +334,15 @@ class GoogleCalendarService {
   static Future<bool> reconnectCalendar() async {
     if (!isSupportedPlatform) return false;
     _lastLoginError = null;
-    if (!isConfigured) return false;
+    if (!isConfigured) {
+      _lastLoginError = '请先配置 Google OAuth 客户端 ID';
+      return false;
+    }
 
     await restoreSignIn(background: false);
     if (isSignedIn) return true;
 
-    final account = await login();
+    final account = await login(requireKnownUser: true);
     return account != null;
   }
 

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
+import 'app_identity_service.dart';
 import 'siliconflow_ai_service.dart';
 
 enum DailyReviewAiError {
@@ -60,9 +61,13 @@ class DailyReviewSummaryBuilder {
   }
 
   static Future<void> clearAiCache() async {
+    await AppIdentityService.load();
     final prefs = await SharedPreferences.getInstance();
+    final cachePrefix = AppIdentityService.dataKeyForCurrentIdentity(
+      _cachePrefix,
+    );
     for (final key in prefs.getKeys()) {
-      if (key.startsWith(_cachePrefix)) {
+      if (key.startsWith(cachePrefix)) {
         await prefs.remove(key);
       }
     }
@@ -72,12 +77,17 @@ class DailyReviewSummaryBuilder {
       '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
 
   static Future<DailyReviewAiResult?> loadCachedAi(DateTime date) async {
+    await AppIdentityService.load();
     final prefs = await SharedPreferences.getInstance();
-    final dataHash = _hashDayData(prefs, date);
+    final slotsKey =
+        AppIdentityService.dataKeyForCurrentIdentity('daily_slots');
+    final dataHash = _hashDayData(prefs, date, slotsKey: slotsKey);
     final body = await _loadCachedAiBody(
       prefs: prefs,
-      date: date,
       dataHash: dataHash,
+      cacheKey: AppIdentityService.dataKeyForCurrentIdentity(
+        '$_cachePrefix${dateKey(date)}',
+      ),
     );
     if (body == null) return null;
     return DailyReviewAiResult(
@@ -90,11 +100,20 @@ class DailyReviewSummaryBuilder {
 
   /// 仅 AI 生成复盘（有缓存则直接返回）
   static Future<DailyReviewAiResult> fetchAiForDate(DateTime date) async {
+    await AppIdentityService.load();
     final prefs = await SharedPreferences.getInstance();
-    final todayStats = await _loadDayStats(prefs, date);
+    final slotsKey =
+        AppIdentityService.dataKeyForCurrentIdentity('daily_slots');
+    final categoriesKey =
+        AppIdentityService.dataKeyForCurrentIdentity('categories');
+    final cacheKey = AppIdentityService.dataKeyForCurrentIdentity(
+      '$_cachePrefix${dateKey(date)}',
+    );
+    final todayStats = await _loadDayStats(prefs, date, slotsKey: slotsKey);
     final yesterday = date.subtract(const Duration(days: 1));
-    final yesterdayStats = await _loadDayStats(prefs, yesterday);
-    final dataHash = _hashDayData(prefs, date);
+    final yesterdayStats =
+        await _loadDayStats(prefs, yesterday, slotsKey: slotsKey);
+    final dataHash = _hashDayData(prefs, date, slotsKey: slotsKey);
     final title = _titleForDate(date);
 
     if (!SiliconFlowAiService.hasApiKeyConfigured) {
@@ -107,8 +126,8 @@ class DailyReviewSummaryBuilder {
 
     final cached = await _loadCachedAiBody(
       prefs: prefs,
-      date: date,
       dataHash: dataHash,
+      cacheKey: cacheKey,
     );
     if (cached != null) {
       return DailyReviewAiResult(
@@ -119,8 +138,9 @@ class DailyReviewSummaryBuilder {
       );
     }
 
-    final timeline = await _loadDayTimeline(prefs, date);
-    final labelToCategory = await _loadLabelCategoryMap(prefs);
+    final timeline = await _loadDayTimeline(prefs, date, slotsKey: slotsKey);
+    final labelToCategory =
+        await _loadLabelCategoryMap(prefs, categoriesKey: categoriesKey);
     final highlights = _buildHighlights(timeline, todayStats);
 
     final prompt = _buildReviewPrompt(
@@ -130,7 +150,8 @@ class DailyReviewSummaryBuilder {
       timeline: timeline,
       highlights: highlights,
       labelToCategory: labelToCategory,
-      unrecordedGaps: await _loadUnrecordedGaps(prefs, date),
+      unrecordedGaps:
+          await _loadUnrecordedGaps(prefs, date, slotsKey: slotsKey),
     );
 
     final result = await SiliconFlowAiService.generateDailyReview(
@@ -148,7 +169,7 @@ class DailyReviewSummaryBuilder {
     }
 
     await prefs.setString(
-      '$_cachePrefix${dateKey(date)}',
+      cacheKey,
       json.encode({'hash': dataHash, 'body': result.content}),
     );
 
@@ -165,27 +186,40 @@ class DailyReviewSummaryBuilder {
 
   /// 供对话使用的当日记录（完整时间轴 + 全部事项）
   static Future<String> buildDayContext(DateTime date) async {
+    await AppIdentityService.load();
     final prefs = await SharedPreferences.getInstance();
-    final todayStats = await _loadDayStats(prefs, date);
+    final slotsKey =
+        AppIdentityService.dataKeyForCurrentIdentity('daily_slots');
+    final categoriesKey =
+        AppIdentityService.dataKeyForCurrentIdentity('categories');
+    final todayStats = await _loadDayStats(prefs, date, slotsKey: slotsKey);
     final yesterday = date.subtract(const Duration(days: 1));
-    final yesterdayStats = await _loadDayStats(prefs, yesterday);
-    final timeline = await _loadDayTimeline(prefs, date);
-    final labelToCategory = await _loadLabelCategoryMap(prefs);
+    final yesterdayStats =
+        await _loadDayStats(prefs, yesterday, slotsKey: slotsKey);
+    final timeline = await _loadDayTimeline(prefs, date, slotsKey: slotsKey);
+    final labelToCategory =
+        await _loadLabelCategoryMap(prefs, categoriesKey: categoriesKey);
     return _buildDayContextString(
       date: date,
       todayStats: todayStats,
       yesterdayStats: yesterdayStats,
       timeline: timeline,
       labelToCategory: labelToCategory,
-      unrecordedGaps: await _loadUnrecordedGaps(prefs, date),
+      unrecordedGaps:
+          await _loadUnrecordedGaps(prefs, date, slotsKey: slotsKey),
       fullDetail: true,
     );
   }
 
   /// 当日时间记录指纹，用于判断对话上下文是否过期
   static Future<String> computeDayDataHash(DateTime date) async {
+    await AppIdentityService.load();
     final prefs = await SharedPreferences.getInstance();
-    return _hashDayData(prefs, date);
+    return _hashDayData(
+      prefs,
+      date,
+      slotsKey: AppIdentityService.dataKeyForCurrentIdentity('daily_slots'),
+    );
   }
 
   static String _buildDayContextString({
@@ -214,11 +248,11 @@ class DailyReviewSummaryBuilder {
     }
 
     if (fullDetail) {
-      buffer.writeln(
-          '说明：以下为 $snapshot 的最新完整记录；与对话中早前摘要不一致时，必须以本数据为准。');
+      buffer.writeln('说明：以下为 $snapshot 的最新完整记录；与对话中早前摘要不一致时，必须以本数据为准。');
     }
 
-    buffer.writeln('记录总时长 ${_formatDuration(todayTotal)}，较昨日 ${_formatDeltaMinutes(delta)}');
+    buffer.writeln(
+        '记录总时长 ${_formatDuration(todayTotal)}，较昨日 ${_formatDeltaMinutes(delta)}');
     buffer.writeln(
         '自主 ${_formatDuration(todayStats.userMinutes)}，日历/会议 ${_formatDuration(todayStats.calendarMinutes)}');
 
@@ -286,29 +320,27 @@ class DailyReviewSummaryBuilder {
 
   static String _formatBlockLine(_TimeBlock block) {
     final tag = block.fromCalendar ? '日历' : '自主';
-    final duration =
-        _formatDuration((block.endIndex - block.startIndex) * 10);
+    final duration = _formatDuration((block.endIndex - block.startIndex) * 10);
     return '${block.range} ${block.label}（$tag，$duration）';
   }
 
   static Future<String?> _loadCachedAiBody({
     required SharedPreferences prefs,
-    required DateTime date,
     required String dataHash,
+    required String cacheKey,
   }) async {
-    final cacheKey = '$_cachePrefix${dateKey(date)}';
     final cachedRaw = prefs.getString(cacheKey);
     if (cachedRaw == null) return null;
     try {
       final cached = json.decode(cachedRaw) as Map<String, dynamic>;
-        if (cached['hash'] == dataHash) {
-          final body = cached['body'] as String?;
-          if (body != null &&
-              body.isNotEmpty &&
-              !SiliconFlowAiService.looksLikeThinkingProcess(body)) {
-            return body;
-          }
+      if (cached['hash'] == dataHash) {
+        final body = cached['body'] as String?;
+        if (body != null &&
+            body.isNotEmpty &&
+            !SiliconFlowAiService.looksLikeThinkingProcess(body)) {
+          return body;
         }
+      }
     } catch (_) {}
     return null;
   }
@@ -368,9 +400,9 @@ class DailyReviewSummaryBuilder {
   }
 
   static Future<Map<String, String>> _loadLabelCategoryMap(
-    SharedPreferences prefs,
-  ) async {
-    final catList = prefs.getStringList('categories');
+      SharedPreferences prefs,
+      {required String categoriesKey}) async {
+    final catList = prefs.getStringList(categoriesKey);
     if (catList == null || catList.isEmpty) return {};
 
     final map = <String, String>{};
@@ -399,9 +431,13 @@ class DailyReviewSummaryBuilder {
     return '$sign${_formatDuration(delta.abs())}';
   }
 
-  static String _hashDayData(SharedPreferences prefs, DateTime date) {
+  static String _hashDayData(
+    SharedPreferences prefs,
+    DateTime date, {
+    required String slotsKey,
+  }) {
     final key = dateKey(date);
-    final slotsStr = prefs.getString('daily_slots') ?? '';
+    final slotsStr = prefs.getString(slotsKey) ?? '';
     try {
       final root = json.decode(slotsStr) as Map<String, dynamic>?;
       final day = root?[key];
@@ -413,10 +449,11 @@ class DailyReviewSummaryBuilder {
 
   static Future<List<_TimeBlock>> _loadDayTimeline(
     SharedPreferences prefs,
-    DateTime date,
-  ) async {
+    DateTime date, {
+    required String slotsKey,
+  }) async {
     final key = dateKey(date);
-    final slotsStr = prefs.getString('daily_slots');
+    final slotsStr = prefs.getString(slotsKey);
     if (slotsStr == null) return [];
 
     try {
@@ -486,9 +523,10 @@ class DailyReviewSummaryBuilder {
     DateTime date, {
     int minSlots = 3,
     int maxGaps = 3,
+    required String slotsKey,
   }) async {
     final key = dateKey(date);
-    final slotsStr = prefs.getString('daily_slots');
+    final slotsStr = prefs.getString(slotsKey);
     if (slotsStr == null) return const [];
 
     try {
@@ -552,10 +590,11 @@ class DailyReviewSummaryBuilder {
 
   static Future<_DayStats> _loadDayStats(
     SharedPreferences prefs,
-    DateTime date,
-  ) async {
+    DateTime date, {
+    required String slotsKey,
+  }) async {
     final key = dateKey(date);
-    final slotsStr = prefs.getString('daily_slots');
+    final slotsStr = prefs.getString(slotsKey);
     if (slotsStr == null) return const _DayStats.empty();
 
     try {

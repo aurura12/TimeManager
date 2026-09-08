@@ -12,6 +12,7 @@ import '../screens/app_log_screen.dart';
 import '../screens/word_cloud_screen.dart';
 import '../screens/on_this_day_screen.dart';
 import '../services/google_calendar_service.dart';
+import '../services/app_identity_service.dart';
 import '../models/diary_kind.dart';
 
 class ProfileSettingsDrawer extends StatefulWidget {
@@ -31,11 +32,12 @@ class ProfileSettingsDrawer extends StatefulWidget {
 class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
   /// Windows 用户身份选择是否展开（选中角色后自动收起）
   bool _identityExpanded = false;
+  bool _identitySwitching = false;
 
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<TimeProvider>();
-    final googleUser = GoogleCalendarService.sessionUser;
+    final googleUser = AppIdentityService.googleUser;
     final themeModeProvider = context.watch<ThemeModeProvider>();
     final colorScheme = Theme.of(context).colorScheme;
 
@@ -60,7 +62,11 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                     ),
                   ),
                   if (widget.desktopPlatformOverride ?? isDesktopPlatform) ...[
-                    _buildWindowsIdentitySection(context, provider),
+                    _buildManualIdentitySection(
+                      context,
+                      provider,
+                      title: 'Windows 用户身份',
+                    ),
                     ListTile(
                       leading: const Icon(Icons.cloud_download_outlined),
                       title: const Text('拉取所有日程'),
@@ -89,7 +95,20 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                       },
                     ),
                   ] else ...[
-                    _buildLoginSection(context, googleUser, provider),
+                    if (provider.isManualIdentityMode)
+                      _buildManualIdentitySection(
+                        context,
+                        provider,
+                        title: '手动用户身份',
+                      )
+                    else
+                      _buildLoginSection(
+                        context,
+                        provider.isGoogleIdentityMode
+                            ? AppIdentityService.googleUser
+                            : googleUser,
+                        provider,
+                      ),
                     const Divider(height: 1),
                     _buildRemoteSyncSection(context, provider),
                     _buildOverwriteScheduleTile(context, provider),
@@ -202,15 +221,43 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
         SwitchListTile(
           secondary: const Icon(Icons.calendar_month_outlined),
           title: const Text('Google 日历同步'),
-          subtitle: Text(provider.googleCalendarSyncEnabled ? '已开启' : '已关闭'),
+          subtitle: Text(
+            _identitySwitching
+                ? '正在连接 Google...'
+                : provider.googleCalendarSyncEnabled
+                    ? '已开启'
+                    : '已关闭（手动选择用户）',
+          ),
           value: provider.googleCalendarSyncEnabled,
-          onChanged: (value) {
-            provider.setGoogleCalendarSyncEnabled(value);
-            widget.onChanged();
-          },
+          onChanged: _identitySwitching
+              ? null
+              : (value) => _handleGoogleSyncToggle(context, provider, value),
         ),
       ],
     );
+  }
+
+  Future<void> _handleGoogleSyncToggle(
+    BuildContext context,
+    TimeProvider provider,
+    bool enabled,
+  ) async {
+    setState(() => _identitySwitching = true);
+    final ok = await provider.setGoogleCalendarSyncEnabled(enabled);
+    if (!context.mounted) return;
+    setState(() => _identitySwitching = false);
+    widget.onChanged();
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            enabled
+                ? (GoogleCalendarService.lastLoginError ?? 'Google 登录未完成')
+                : '无法切换到手动身份',
+          ),
+        ),
+      );
+    }
   }
 
   Widget _buildOverwriteScheduleTile(
@@ -239,8 +286,11 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     );
   }
 
-  Widget _buildWindowsIdentitySection(
-      BuildContext context, TimeProvider provider) {
+  Widget _buildManualIdentitySection(
+    BuildContext context,
+    TimeProvider provider, {
+    required String title,
+  }) {
     final selected =
         provider.hasSelectedScheduleUser ? provider.scheduleUser : null;
     // 未选择时强制展开以便选择；选中后默认收起，点击身份行可展开切换
@@ -249,7 +299,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       children: [
         ListTile(
           leading: const Icon(Icons.person_pin_outlined),
-          title: const Text('Windows 用户身份'),
+          title: Text(title),
           subtitle: Text(
             selected == null
                 ? '请选择身份后再同步'
@@ -477,7 +527,9 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                 icon: const Icon(Icons.logout_rounded, size: 18),
                 label: const Text('退出登录'),
                 onPressed: () async {
-                  await GoogleCalendarService.logout();
+                  await GoogleCalendarService.logout(
+                    clearManualIdentity: false,
+                  );
                   widget.onChanged();
                   if (context.mounted) Navigator.pop(context);
                 },
@@ -560,7 +612,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       );
       return;
     }
-    final ok = await GoogleCalendarService.reconnectCalendar();
+    final ok = await provider.setGoogleCalendarSyncEnabled(true);
     if (!context.mounted) return;
     if (ok) {
       provider.synchronizeCalendar();

@@ -4,15 +4,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/daily_review_chat_message.dart';
 import '../models/daily_review_chat_session.dart';
+import 'app_identity_service.dart';
 import 'daily_review_summary.dart';
 
 class DailyReviewChatStore {
   static const _prefix = 'daily_review_chat_';
 
   static String _key(DateTime date) =>
-      '$_prefix${DailyReviewSummaryBuilder.dateKey(date)}';
+      AppIdentityService.dataKeyForCurrentIdentity(
+        '$_prefix${DailyReviewSummaryBuilder.dateKey(date)}',
+      );
 
   static Future<DailyReviewChatSession> loadSession(DateTime date) async {
+    await AppIdentityService.load();
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_key(date));
     if (raw == null || raw.isEmpty) {
@@ -58,6 +62,7 @@ class DailyReviewChatStore {
     List<DailyReviewChatMessage> messages, {
     String? dataHash,
   }) async {
+    await AppIdentityService.load();
     final prefs = await SharedPreferences.getInstance();
     final encoded = json.encode({
       'v': 1,
@@ -68,6 +73,7 @@ class DailyReviewChatStore {
   }
 
   static Future<void> clear(DateTime date) async {
+    await AppIdentityService.load();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_key(date));
   }

@@ -154,7 +154,7 @@ class CalendarSyncStatusBadge extends StatelessWidget {
       return;
     }
 
-    final ok = await GoogleCalendarService.reconnectCalendar();
+    final ok = await provider.setGoogleCalendarSyncEnabled(true);
     if (!context.mounted) return;
     if (ok) {
       provider.synchronizeCalendar();

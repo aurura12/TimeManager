@@ -14,7 +14,6 @@ import '../models/voice_schedule_draft.dart';
 import '../models/pending_sync_state.dart';
 import '../services/home_widget_service.dart';
 import '../utils/platform_features.dart';
-import '../services/diary_local_store.dart';
 import '../services/schedule_day_merge.dart';
 import '../services/schedule_gitee_service.dart';
 import '../services/schedule_overwrite.dart';
@@ -26,8 +25,9 @@ import '../services/pending_google_day_sync.dart';
 import '../services/calendar_slot_refresh.dart';
 import '../services/app_log_service.dart';
 import '../models/diary_kind.dart';
-import '../models/known_google_users.dart';
+import '../models/google_calendar_user.dart';
 import '../services/app_user_identity_store.dart';
+import '../services/app_identity_service.dart';
 import 'target_stats_cache.dart';
 import '../utils/schedule_view_dates.dart';
 import '../utils/calendar_time_range.dart';
@@ -86,8 +86,10 @@ class _SchedulePreferencesSnapshot {
     try {
       if (raw is! Map) return null;
       final values = <String, Object?>{};
-      for (final key in TimeProvider._scheduleSnapshotKeys) {
-        final entry = raw[key];
+      for (final rawEntry in raw.entries) {
+        final key = rawEntry.key;
+        final entry = rawEntry.value;
+        if (key is! String) return null;
         if (entry is! Map || entry['present'] is! bool) return null;
         final present = entry['present'] as bool;
         final value = entry['value'];
@@ -178,12 +180,6 @@ class TimeProvider with ChangeNotifier {
   static const Color calendarImportColor = Color(0xFF78909C);
   static const String _scheduleOverwriteJournalKey =
       'schedule_overwrite_transaction_journal';
-  static const Set<String> _scheduleSnapshotKeys = {
-    'daily_slots',
-    'pending_gitee_sync_dates',
-    'pending_google_sync_dates',
-    'pending_sync_dates',
-  };
 
   /// 临时事件保留名：首页"临时"按钮分类，也是父事件视图中无归属事件的聚合项名称
   static const String temporaryCategoryName = '临时';
@@ -196,6 +192,7 @@ class TimeProvider with ChangeNotifier {
   bool _isSyncing = false; // 添加同步锁标志，防止并发同步导致重复
   final Duration _scheduleGiteeDebounce;
   final Duration _googleCalendarDebounce;
+  final bool? _identityModePlatformOverride;
   final bool? _googleCalendarSyncPlatformOverride;
   final bool? _googleCalendarSignedInOverride;
   final ScheduleSyncDependencies _scheduleSyncDependencies;
@@ -231,6 +228,7 @@ class TimeProvider with ChangeNotifier {
       !_isInitialLoadFinished ||
       _initializationFailed ||
       _isDisposed ||
+      (_usesMobileIdentityFlow && _localIdentityCode == null) ||
       _scheduleOverwriteJournalCleanupPending ||
       _scheduleOverwriteCleanupInProgress ||
       _remoteViewTransitionInProgress ||
@@ -261,6 +259,10 @@ class TimeProvider with ChangeNotifier {
       );
       return false;
     }
+    if (_usesMobileIdentityFlow && !_hasSelectedScheduleUser) {
+      _addScheduleSyncStatus('请先选择身份');
+      return false;
+    }
     return true;
   }
 
@@ -281,6 +283,7 @@ class TimeProvider with ChangeNotifier {
       );
       return false;
     }
+    if (_usesMobileIdentityFlow && !_hasSelectedScheduleUser) return true;
     return _allowScheduleMutation();
   }
 
@@ -329,16 +332,44 @@ class TimeProvider with ChangeNotifier {
   }
 
   /// 本地已改、尚未成功同步到日历的日期（dateKey 列表）
-  bool _googleCalendarSyncEnabled = !isDesktopPlatform;
+  bool _googleCalendarSyncEnabled = false;
   bool get _supportsGoogleCalendarSync =>
       _googleCalendarSyncPlatformOverride ?? !isDesktopPlatform;
   bool get _isGoogleCalendarSignedIn =>
       _googleCalendarSignedInOverride ?? GoogleCalendarService.isSignedIn;
   bool get googleCalendarSyncEnabled =>
-      _supportsGoogleCalendarSync && _googleCalendarSyncEnabled;
+      _supportsGoogleCalendarSync &&
+      (!_usesMobileIdentityFlow ||
+          (_identityMode == AppIdentityMode.google &&
+              _hasSelectedScheduleUser &&
+              _localIdentityCode != null)) &&
+      _googleCalendarSyncEnabled;
   bool get isWindows => isDesktopPlatform;
-  bool _hasSelectedScheduleUser = !isDesktopPlatform;
+  bool _hasSelectedScheduleUser = false;
   bool get hasSelectedScheduleUser => _hasSelectedScheduleUser;
+  AppIdentityMode _identityMode = AppIdentityMode.manual;
+  String? _localIdentityCode;
+  String? _googleIdentityId;
+
+  AppIdentityMode get identityMode => _identityMode;
+  bool get isManualIdentityMode => _identityMode == AppIdentityMode.manual;
+  bool get isGoogleIdentityMode => _identityMode == AppIdentityMode.google;
+  bool get hasAppIdentity => AppIdentityService.hasIdentity;
+  bool get _usesMobileIdentityFlow =>
+      _identityModePlatformOverride ?? !isDesktopPlatform;
+
+  /// Android app-owned preferences are partitioned by logical person. Desktop
+  /// keeps its established global preference names for backwards compatibility.
+  String _identityDataKey(String baseKey) {
+    if (!_usesMobileIdentityFlow) return baseKey;
+    final code = _localIdentityCode;
+    return code == null
+        ? 'identity_unbound_$baseKey'
+        : AppIdentityResolver.dataKey(
+            DiaryKindX.fromCode(code),
+            baseKey,
+          );
+  }
 
   /// 是否正在查看对方日程（合并了远端数据）
   bool _remoteViewEnabled = false;
@@ -360,6 +391,10 @@ class TimeProvider with ChangeNotifier {
   static const String _scheduleUserKey = 'schedule_user_kind';
 
   Future<void> setScheduleUser(DiaryKind kind) async {
+    if (_usesMobileIdentityFlow) {
+      await _setMobileManualIdentity(kind);
+      return;
+    }
     if (!_allowScheduleIdentityMutation()) return;
     if (_scheduleUser == kind && _hasSelectedScheduleUser) return;
     final previousKind = _scheduleUser;
@@ -433,6 +468,221 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
+  static const String _legacyIdentityDataMigratedKey =
+      'identity_legacy_data_migrated_v1';
+  static const List<String> _identityScopedPreferenceBases = [
+    'categories',
+    'deleted_categories',
+    'categories_doc_updated_at',
+    'targets',
+    'daily_slots',
+    'schedule_templates',
+    'ignored_calendar_imports',
+    'pending_gitee_sync_dates',
+    'pending_google_sync_dates',
+    'pending_sync_dates',
+    'category_expand_states',
+  ];
+
+  Future<void> _setMobileManualIdentity(DiaryKind kind) async {
+    if (!_allowScheduleIdentityMutation()) return;
+    if (_identityMode == AppIdentityMode.manual &&
+        _localIdentityCode == kind.code &&
+        _hasSelectedScheduleUser) {
+      return;
+    }
+
+    _scheduleIdentityMutationInProgress = true;
+    final prefs = await SharedPreferences.getInstance();
+    final previousModeCode = prefs.getString(AppIdentityService.modeKey);
+    final previousSyncEnabled = prefs.getBool(AppIdentityService.legacySyncKey);
+    final previousScheduleUserCode = prefs.getString(_scheduleUserKey);
+    final previousManualKind = AppIdentityService.manualKind;
+    final previousMode = _identityMode;
+    final previousIdentityCode = _localIdentityCode;
+    final previousGoogleIdentityId = _googleIdentityId;
+    final previousScheduleUser = _scheduleUser;
+    final previousHasSelected = _hasSelectedScheduleUser;
+    final previousGoogleSyncEnabled = _googleCalendarSyncEnabled;
+    var persistenceChanged = false;
+    var committed = false;
+    try {
+      if (_localIdentityCode != null && !await _saveData()) return;
+
+      if (!await AppIdentityService.setManualKind(kind) ||
+          !await AppIdentityService.setMode(AppIdentityMode.manual) ||
+          !await prefs.setBool(AppIdentityService.legacySyncKey, false)) {
+        persistenceChanged = true;
+        throw StateError('无法保存手动身份设置');
+      }
+      persistenceChanged = true;
+
+      _invalidateIdentityScopedOperations();
+      _clearLoadedIdentityData();
+      _identityMode = AppIdentityMode.manual;
+      _localIdentityCode = kind.code;
+      _googleIdentityId = null;
+      _scheduleUser = kind;
+      _hasSelectedScheduleUser = true;
+      await _migrateLegacyDataToNamespace(prefs);
+      await _loadData();
+      committed = true;
+      AppIdentityService.notifyChanged();
+      if (!_isDisposed) notifyListeners();
+    } catch (e, stackTrace) {
+      debugPrint('切换 Android 手动身份失败: $e');
+      _recordAppError('切换 Android 手动身份失败', e, stackTrace);
+    } finally {
+      if (!committed && persistenceChanged && !_isDisposed) {
+        await _restoreIdentityPersistence(
+          prefs,
+          previousModeCode: previousModeCode,
+          previousSyncEnabled: previousSyncEnabled,
+          previousManualKind: previousManualKind,
+          previousScheduleUserCode: previousScheduleUserCode,
+        );
+        _identityMode = previousMode;
+        _localIdentityCode = previousIdentityCode;
+        _googleIdentityId = previousGoogleIdentityId;
+        _scheduleUser = previousScheduleUser;
+        _hasSelectedScheduleUser = previousHasSelected;
+        _googleCalendarSyncEnabled = previousGoogleSyncEnabled;
+        _invalidateIdentityScopedOperations();
+        _clearLoadedIdentityData();
+        await _loadData();
+        AppIdentityService.notifyChanged();
+        if (!_isDisposed) notifyListeners();
+      }
+      _scheduleIdentityMutationInProgress = false;
+    }
+  }
+
+  Future<void> _restoreIdentityPersistence(
+    SharedPreferences prefs, {
+    required String? previousModeCode,
+    required bool? previousSyncEnabled,
+    required DiaryKind? previousManualKind,
+    required String? previousScheduleUserCode,
+  }) async {
+    try {
+      if (previousModeCode == null) {
+        await prefs.remove(AppIdentityService.modeKey);
+      } else {
+        await prefs.setString(AppIdentityService.modeKey, previousModeCode);
+      }
+      if (previousSyncEnabled == null) {
+        await prefs.remove(AppIdentityService.legacySyncKey);
+      } else {
+        await prefs.setBool(
+          AppIdentityService.legacySyncKey,
+          previousSyncEnabled,
+        );
+      }
+      if (previousScheduleUserCode == null) {
+        await prefs.remove(AppIdentityService.legacyScheduleUserKey);
+      } else {
+        await prefs.setString(
+          AppIdentityService.legacyScheduleUserKey,
+          previousScheduleUserCode,
+        );
+      }
+      if (previousManualKind == null) {
+        await AppUserIdentityStore.clearManualKind();
+      } else {
+        await AppUserIdentityStore.saveManualKind(previousManualKind);
+        await prefs.setString(
+          _scheduleUserKey,
+          previousManualKind.code,
+        );
+      }
+      await AppIdentityService.load();
+    } catch (e, stackTrace) {
+      debugPrint('恢复身份设置失败: $e');
+      _recordAppError('恢复身份设置失败', e, stackTrace);
+    }
+  }
+
+  void _invalidateIdentityScopedOperations() {
+    _googleSyncGeneration++;
+    _debounceTimer?.cancel();
+    _debounceTimer = null;
+    _scheduleGiteeTimer?.cancel();
+    _scheduleGiteeTimer = null;
+    _categoriesGiteeTimer?.cancel();
+    _categoriesGiteeTimer = null;
+    _schedulePullRevision++;
+    _pendingScheduleGiteeDateKeys.clear();
+    _scheduleGiteeDateRevisions.clear();
+    _undoStacks.clear();
+    _remoteViewBackup.clear();
+    _remoteViewEnabled = false;
+    _remoteViewTransitionInProgress = false;
+    _remoteViewTransitionEpoch++;
+  }
+
+  void _clearLoadedIdentityData() {
+    _categories.clear();
+    _targets.clear();
+    _dailySlots.clear();
+    _templates.clear();
+    _ignoredCalendarImports.clear();
+    _deletedCategories.clear();
+    _categoryExpandStates.clear();
+    _pendingSyncState.replace();
+    _categoriesDocUpdatedAt = 0;
+    _categoriesUserCode = '';
+    _categoriesDirty = false;
+    _targetsDirty = false;
+    _templatesDirty = false;
+    _slotsDirty.clear();
+    _allSlotsDirty = false;
+    _calendarDirty = false;
+    _syncDirty = false;
+    _categoryExpandDirty = false;
+    _statsCache = null;
+    _statsCacheKey = null;
+    _occurrenceCache = null;
+    _occurrenceCacheKey = null;
+    _labelCategoryIdCache = null;
+    _categoryIdMapCache = null;
+  }
+
+  Future<void> _migrateLegacyDataToNamespace(SharedPreferences prefs) async {
+    if (!_usesMobileIdentityFlow || _localIdentityCode == null) return;
+    if (prefs.getBool(_legacyIdentityDataMigratedKey) == true) return;
+
+    var hasLegacyData = false;
+    for (final baseKey in _identityScopedPreferenceBases) {
+      if (prefs.containsKey(baseKey)) {
+        hasLegacyData = true;
+        break;
+      }
+    }
+    if (!hasLegacyData) return;
+
+    var copiedAll = true;
+    final kind = DiaryKindX.fromCode(_localIdentityCode);
+    for (final baseKey in _identityScopedPreferenceBases) {
+      final sourceKey = baseKey;
+      final targetKey = AppIdentityResolver.dataKey(kind, baseKey);
+      if (!prefs.containsKey(sourceKey) || prefs.containsKey(targetKey)) {
+        continue;
+      }
+      final value = prefs.get(sourceKey);
+      final copied = switch (value) {
+        String value => await prefs.setString(targetKey, value),
+        List<String> value => await prefs.setStringList(targetKey, value),
+        int value => await prefs.setInt(targetKey, value),
+        bool value => await prefs.setBool(targetKey, value),
+        _ => false,
+      };
+      if (!copied) copiedAll = false;
+    }
+    if (copiedAll) {
+      await prefs.setBool(_legacyIdentityDataMigratedKey, true);
+    }
+  }
+
   bool _canContinueScheduleIdentityMutation() {
     return _isScheduleIdentityReady &&
         _scheduleIdentityMutationInProgress &&
@@ -441,9 +691,14 @@ class TimeProvider with ChangeNotifier {
         !_scheduleOverwriteJournalCleanupPending;
   }
 
-  Future<void> setGoogleCalendarSyncEnabled(bool enabled) async {
-    if (!_allowScheduleMutation() || !_supportsGoogleCalendarSync) return;
-    if (_googleCalendarSyncEnabled == enabled) return;
+  Future<bool> setGoogleCalendarSyncEnabled(bool enabled) async {
+    if (_usesMobileIdentityFlow) {
+      return enabled
+          ? _enableMobileGoogleIdentity()
+          : _disableMobileGoogleIdentity();
+    }
+    if (!_allowScheduleMutation() || !_supportsGoogleCalendarSync) return false;
+    if (_googleCalendarSyncEnabled == enabled) return true;
     _googleCalendarSyncEnabled = enabled;
     if (!enabled) {
       _googleSyncGeneration++;
@@ -454,15 +709,184 @@ class TimeProvider with ChangeNotifier {
       }
     }
     final prefs = await SharedPreferences.getInstance();
-    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return;
-    if (!await prefs.setBool('google_calendar_sync_enabled', enabled) ||
+    if (!_isScheduleReady || _scheduleOverwriteCleanupInProgress) return false;
+    if (!await prefs.setBool(AppIdentityService.legacySyncKey, enabled) ||
         !_isScheduleReady ||
         _scheduleOverwriteCleanupInProgress) {
-      return;
+      _googleCalendarSyncEnabled = !enabled;
+      return false;
     }
     notifyListeners();
     if (enabled && !_initializationFailed) {
       unawaited(_restoreGoogleInBackground());
+    }
+    return true;
+  }
+
+  Future<bool> _enableMobileGoogleIdentity() async {
+    if (!_allowScheduleIdentityMutation() || !_supportsGoogleCalendarSync) {
+      return false;
+    }
+    if (_identityMode == AppIdentityMode.google &&
+        googleCalendarSyncEnabled &&
+        _hasSelectedScheduleUser &&
+        GoogleCalendarService.isSignedIn) {
+      return true;
+    }
+
+    _scheduleIdentityMutationInProgress = true;
+    final prefs = await SharedPreferences.getInstance();
+    final previousModeCode = prefs.getString(AppIdentityService.modeKey);
+    final previousSyncEnabled = prefs.getBool(AppIdentityService.legacySyncKey);
+    final previousScheduleUserCode = prefs.getString(_scheduleUserKey);
+    final previousManualKind = AppIdentityService.manualKind;
+    final previousMode = _identityMode;
+    final previousIdentityCode = _localIdentityCode;
+    final previousGoogleIdentityId = _googleIdentityId;
+    final previousScheduleUser = _scheduleUser;
+    final previousHasSelected = _hasSelectedScheduleUser;
+    final previousGoogleSyncEnabled = _googleCalendarSyncEnabled;
+    var persistenceChanged = false;
+    var acceptedGoogleLogin = false;
+    var committed = false;
+    try {
+      if (_localIdentityCode != null && !await _saveData()) return false;
+
+      final account = await GoogleCalendarService.login(requireKnownUser: true);
+      if (account == null) return false;
+      final googleUser = GoogleCalendarUser.fromAccount(account);
+      final resolved = AppIdentityResolver.google(googleUser);
+      if (resolved == null) {
+        await GoogleCalendarService.logout(clearManualIdentity: false);
+        _addScheduleSyncStatus('该 Google 账号未绑定到乖乖或晶晶');
+        return false;
+      }
+      acceptedGoogleLogin = true;
+
+      if (!await AppIdentityService.setMode(AppIdentityMode.google) ||
+          !await prefs.setBool(AppIdentityService.legacySyncKey, true)) {
+        persistenceChanged = true;
+        throw StateError('无法保存 Google 身份设置');
+      }
+      persistenceChanged = true;
+
+      _invalidateIdentityScopedOperations();
+      _clearLoadedIdentityData();
+      _identityMode = AppIdentityMode.google;
+      _localIdentityCode = resolved.person.code;
+      _googleIdentityId = googleUser.id;
+      _scheduleUser = resolved.person;
+      _hasSelectedScheduleUser = true;
+      await _migrateLegacyDataToNamespace(prefs);
+      await _loadData();
+      committed = true;
+      AppIdentityService.notifyChanged();
+      if (!_isDisposed) notifyListeners();
+      return true;
+    } catch (e, stackTrace) {
+      debugPrint('开启 Google 身份失败: $e');
+      _recordAppError('开启 Google 身份失败', e, stackTrace);
+      return false;
+    } finally {
+      if (!committed && acceptedGoogleLogin && !_isDisposed) {
+        await GoogleCalendarService.logout(clearManualIdentity: false);
+      }
+      if (!committed && persistenceChanged && !_isDisposed) {
+        await _restoreIdentityPersistence(
+          prefs,
+          previousModeCode: previousModeCode,
+          previousSyncEnabled: previousSyncEnabled,
+          previousManualKind: previousManualKind,
+          previousScheduleUserCode: previousScheduleUserCode,
+        );
+        _identityMode = previousMode;
+        _localIdentityCode = previousIdentityCode;
+        _googleIdentityId = previousGoogleIdentityId;
+        _scheduleUser = previousScheduleUser;
+        _hasSelectedScheduleUser = previousHasSelected;
+        _googleCalendarSyncEnabled = previousGoogleSyncEnabled;
+        _invalidateIdentityScopedOperations();
+        _clearLoadedIdentityData();
+        await _loadData();
+        AppIdentityService.notifyChanged();
+        if (!_isDisposed) notifyListeners();
+      }
+      _scheduleIdentityMutationInProgress = false;
+    }
+  }
+
+  Future<bool> _disableMobileGoogleIdentity() async {
+    if (!_allowScheduleIdentityMutation() || !_supportsGoogleCalendarSync) {
+      return false;
+    }
+    if (_identityMode == AppIdentityMode.manual && !googleCalendarSyncEnabled) {
+      return true;
+    }
+
+    _scheduleIdentityMutationInProgress = true;
+    final prefs = await SharedPreferences.getInstance();
+    final previousModeCode = prefs.getString(AppIdentityService.modeKey);
+    final previousSyncEnabled = prefs.getBool(AppIdentityService.legacySyncKey);
+    final previousScheduleUserCode = prefs.getString(_scheduleUserKey);
+    final previousManualKind = AppIdentityService.manualKind;
+    final previousMode = _identityMode;
+    final previousIdentityCode = _localIdentityCode;
+    final previousGoogleIdentityId = _googleIdentityId;
+    final previousScheduleUser = _scheduleUser;
+    final previousHasSelected = _hasSelectedScheduleUser;
+    final previousGoogleSyncEnabled = _googleCalendarSyncEnabled;
+    var persistenceChanged = false;
+    var committed = false;
+    try {
+      if (_localIdentityCode != null && !await _saveData()) return false;
+
+      if (!await AppIdentityService.setMode(AppIdentityMode.manual) ||
+          !await prefs.setBool(AppIdentityService.legacySyncKey, false)) {
+        persistenceChanged = true;
+        throw StateError('无法保存手动身份设置');
+      }
+      persistenceChanged = true;
+
+      final manualKind = AppIdentityService.manualKind;
+      _invalidateIdentityScopedOperations();
+      _clearLoadedIdentityData();
+      _identityMode = AppIdentityMode.manual;
+      _localIdentityCode = manualKind?.code;
+      _googleIdentityId = null;
+      _scheduleUser = manualKind ?? DiaryKind.g;
+      _hasSelectedScheduleUser = manualKind != null;
+      await _migrateLegacyDataToNamespace(prefs);
+      await _loadData();
+      committed = true;
+      AppIdentityService.notifyChanged();
+      if (!_isDisposed) notifyListeners();
+      return true;
+    } catch (e, stackTrace) {
+      debugPrint('关闭 Google 身份失败: $e');
+      _recordAppError('关闭 Google 身份失败', e, stackTrace);
+      return false;
+    } finally {
+      if (!committed && persistenceChanged && !_isDisposed) {
+        await _restoreIdentityPersistence(
+          prefs,
+          previousModeCode: previousModeCode,
+          previousSyncEnabled: previousSyncEnabled,
+          previousManualKind: previousManualKind,
+          previousScheduleUserCode: previousScheduleUserCode,
+        );
+        _identityMode = previousMode;
+        _localIdentityCode = previousIdentityCode;
+        _googleIdentityId = previousGoogleIdentityId;
+        _scheduleUser = previousScheduleUser;
+        _hasSelectedScheduleUser = previousHasSelected;
+        _googleCalendarSyncEnabled = previousGoogleSyncEnabled;
+        _invalidateIdentityScopedOperations();
+        _clearLoadedIdentityData();
+        await _loadData();
+        AppIdentityService.notifyChanged();
+        if (!_isDisposed) notifyListeners();
+      }
+      _scheduleIdentityMutationInProgress = false;
     }
   }
 
@@ -588,6 +1012,7 @@ class TimeProvider with ChangeNotifier {
   TimeProvider({
     Duration scheduleGiteeDebounce = const Duration(seconds: 3),
     Duration googleCalendarDebounce = const Duration(seconds: 3),
+    bool? identityModePlatformOverride,
     bool? googleCalendarSyncPlatformOverride,
     bool? googleCalendarSignedInOverride,
     ScheduleSyncDependencies? scheduleSyncDependencies,
@@ -597,6 +1022,7 @@ class TimeProvider with ChangeNotifier {
     Future<bool> Function()? scheduleSnapshotJournalRemoveOverride,
   })  : _scheduleGiteeDebounce = scheduleGiteeDebounce,
         _googleCalendarDebounce = googleCalendarDebounce,
+        _identityModePlatformOverride = identityModePlatformOverride,
         _googleCalendarSyncPlatformOverride =
             googleCalendarSyncPlatformOverride,
         _googleCalendarSignedInOverride = googleCalendarSignedInOverride,
@@ -613,17 +1039,85 @@ class TimeProvider with ChangeNotifier {
     }
     _googleAuthSubscription =
         GoogleCalendarService.authStateChanges.listen((_) {
-      if (!_isInitialLoadFinished || _initializationFailed || _isDisposed) {
-        return;
-      }
-      final syncGeneration = _googleSyncGeneration;
-      notifyListeners();
-      unawaited(pullGoogleCalendarForDate(
-        _currentDate,
-        syncGeneration: syncGeneration,
-      ));
+      unawaited(_handleGoogleAuthStateChanged());
     });
     _init();
+  }
+
+  Future<void> _handleGoogleAuthStateChanged() async {
+    if (_isDisposed) return;
+    await AppIdentityService.load();
+    if (_isDisposed) return;
+    AppIdentityService.notifyChanged();
+    if (!_isInitialLoadFinished || _initializationFailed) return;
+
+    if (_usesMobileIdentityFlow && _identityMode == AppIdentityMode.google) {
+      await _syncMobileGoogleIdentityFromService();
+      return;
+    }
+
+    final syncGeneration = _googleSyncGeneration;
+    notifyListeners();
+    unawaited(pullGoogleCalendarForDate(
+      _currentDate,
+      syncGeneration: syncGeneration,
+    ));
+  }
+
+  Future<void> _syncMobileGoogleIdentityFromService() async {
+    if (_isDisposed || _scheduleIdentityMutationInProgress) return;
+    final user = AppIdentityService.googleUser;
+    final kind = AppIdentityService.personKind;
+    final previousIdentityCode = _localIdentityCode;
+    _scheduleIdentityMutationInProgress = true;
+    try {
+      if (user == null || kind == null) {
+        if (!_hasSelectedScheduleUser && previousIdentityCode == null) {
+          notifyListeners();
+          return;
+        }
+        if (previousIdentityCode != null && !await _saveData()) return;
+        _invalidateIdentityScopedOperations();
+        _clearLoadedIdentityData();
+        _localIdentityCode = null;
+        _googleIdentityId = null;
+        _scheduleUser = DiaryKind.g;
+        _hasSelectedScheduleUser = false;
+        notifyListeners();
+        return;
+      }
+
+      if (_localIdentityCode == kind.code && _hasSelectedScheduleUser) {
+        _googleIdentityId = user.id;
+        notifyListeners();
+        if (googleCalendarSyncEnabled) {
+          final syncGeneration = _googleSyncGeneration;
+          unawaited(pullGoogleCalendarForDate(
+            _currentDate,
+            syncGeneration: syncGeneration,
+          ));
+        }
+        return;
+      }
+
+      if (previousIdentityCode != null && !await _saveData()) return;
+      _invalidateIdentityScopedOperations();
+      _clearLoadedIdentityData();
+      _localIdentityCode = kind.code;
+      _googleIdentityId = user.id;
+      _scheduleUser = kind;
+      _hasSelectedScheduleUser = true;
+      final prefs = await SharedPreferences.getInstance();
+      await _migrateLegacyDataToNamespace(prefs);
+      await _loadData();
+      AppIdentityService.notifyChanged();
+      if (!_isDisposed) notifyListeners();
+    } catch (e, stackTrace) {
+      debugPrint('切换 Google 账号身份失败: $e');
+      _recordAppError('切换 Google 账号身份失败', e, stackTrace);
+    } finally {
+      _scheduleIdentityMutationInProgress = false;
+    }
   }
 
   void _markInitializationFailed(String message) {
@@ -643,6 +1137,18 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> _init() async {
+    // Android must know the identity mode before reading any user-scoped data.
+    // Desktop keeps its established load order because its data is global.
+    if (_usesMobileIdentityFlow) {
+      try {
+        await _loadScheduleUserFromStore();
+        final prefs = await SharedPreferences.getInstance();
+        await _migrateLegacyDataToNamespace(prefs);
+      } catch (e, stackTrace) {
+        debugPrint('初始身份加载失败: $e');
+        _recordAppError('初始身份加载失败', e, stackTrace);
+      }
+    }
     // 先加载本地数据并刷新 UI，避免等待 Google 静默登录阻塞首屏
     try {
       await _loadData();
@@ -666,47 +1172,60 @@ class TimeProvider with ChangeNotifier {
     await _refreshHomeWidget();
     if (_isDisposed || _initializationFailed) return;
     // 从本地持久化存储直接加载用户身份（不联网，瞬间完成）
-    await _loadScheduleUserFromStore();
+    if (!_usesMobileIdentityFlow) await _loadScheduleUserFromStore();
     if (_isDisposed || _initializationFailed) return;
     // 拉取当前身份的分类（事件/子事件）到本地（安卓与 Windows 都执行）
     unawaited(_pullCategoriesFromGitee());
     // Windows 上拉取当前日期自己的日程，补上安卓端推送的数据
     _pullOwnScheduleIfWindows();
-    // 后台恢复 Google 日历会话（不阻塞）
-    unawaited(GoogleCalendarService.restoreSignIn(background: true));
+    // 仅在用户明确选择 Google 模式后恢复会话；手动模式绝不触发 Google。
+    if (_usesMobileIdentityFlow &&
+        _identityMode == AppIdentityMode.google &&
+        googleCalendarSyncEnabled) {
+      unawaited(GoogleCalendarService.restoreSignIn(background: true));
+    }
   }
 
   Future<void> _loadScheduleUserFromStore() async {
-    if (isDesktopPlatform) {
+    if (!_usesMobileIdentityFlow) {
       final manualKind = await AppUserIdentityStore.loadManualKind();
       if (_initializationFailed || _isDisposed) return;
       if (manualKind != null) {
         _scheduleUser = manualKind;
         _hasSelectedScheduleUser = true;
       }
+      _identityMode = AppIdentityMode.manual;
       _scheduleUserLoadFinished = true;
       notifyListeners();
       return;
     }
-    final identity = await AppUserIdentityStore.load();
+    await AppIdentityService.load();
+    _identityMode = AppIdentityService.mode;
     if (_initializationFailed || _isDisposed) return;
-    if (identity != null) {
-      final nickname = KnownGoogleUsers.nicknameFor(identity.email);
-      if (nickname == '乖乖') {
-        _scheduleUser = DiaryKind.g;
-      } else if (nickname == '晶晶') {
-        _scheduleUser = DiaryKind.j;
-      }
+    final kind = AppIdentityService.personKind;
+    final googleUser = AppIdentityService.googleUser;
+    _googleIdentityId = googleUser?.id;
+    if (kind != null) {
+      _scheduleUser = kind;
+      _localIdentityCode = kind.code;
+      _hasSelectedScheduleUser = true;
+    } else {
+      // 未选手动身份或 Google 账号无法映射时，保持未绑定，不能落到默认 g。
+      _scheduleUser = DiaryKind.g;
+      _localIdentityCode = null;
+      _hasSelectedScheduleUser = false;
     }
     _scheduleUserLoadFinished = true;
+    AppIdentityService.notifyChanged();
   }
 
   Future<void> _restoreGoogleInBackground() async {
     if (_isDisposed ||
         !_scheduleUserLoadFinished ||
         _initializationFailed ||
+        (_usesMobileIdentityFlow && _identityMode != AppIdentityMode.google) ||
         _scheduleOverwriteJournalCleanupPending ||
-        !_googleCalendarSyncEnabled) {
+        !googleCalendarSyncEnabled) {
       return;
     }
     final syncGeneration = _googleSyncGeneration;
@@ -715,7 +1234,7 @@ class TimeProvider with ChangeNotifier {
         _initializationFailed ||
         _scheduleOverwriteJournalCleanupPending ||
         syncGeneration != _googleSyncGeneration ||
-        !_googleCalendarSyncEnabled) {
+        !googleCalendarSyncEnabled) {
       return;
     }
     if (_isGoogleCalendarSignedIn) {
@@ -1092,7 +1611,8 @@ class TimeProvider with ChangeNotifier {
   }
 
   /// 是否已登录可同步的 Google 日历账号
-  bool get canSyncToCalendar => GoogleCalendarService.isSignedIn;
+  bool get canSyncToCalendar =>
+      googleCalendarSyncEnabled && GoogleCalendarService.isSignedIn;
 
   /// 走防抖自动同步（待同步标记由调用方在 _saveData 前写入）
   void _scheduleCalendarSync() {
@@ -1921,7 +2441,7 @@ class TimeProvider with ChangeNotifier {
     final userCode =
         _categoriesUserCode.isEmpty ? _scheduleUser.code : _categoriesUserCode;
     try {
-      final token = await DiaryLocalStore.loadToken();
+      final token = await _scheduleSyncDependencies.loadToken();
       if (!_isScheduleReady ||
           _scheduleOverwriteJournalCleanupPending ||
           !_hasSelectedScheduleUser ||
@@ -1990,7 +2510,7 @@ class TimeProvider with ChangeNotifier {
     _categoriesGiteeSyncing = true;
     final userCode = _scheduleUser.code;
     try {
-      final token = await DiaryLocalStore.loadToken();
+      final token = await _scheduleSyncDependencies.loadToken();
       if (!_isScheduleReady ||
           _scheduleOverwriteJournalCleanupPending ||
           _remoteViewEnabled ||
@@ -2484,7 +3004,7 @@ class TimeProvider with ChangeNotifier {
     }
 
     // 若开启了 Google 日历同步则同步所有 Google 待同步日期。
-    if (_googleCalendarSyncEnabled) {
+    if (googleCalendarSyncEnabled) {
       await synchronizeAllPendingCalendars();
     }
   }
@@ -2499,8 +3019,7 @@ class TimeProvider with ChangeNotifier {
         _scheduleOverwriteJournalCleanupPending ||
         _remoteViewTransitionInProgress ||
         _remoteViewEnabled ||
-        !_supportsGoogleCalendarSync ||
-        !_googleCalendarSyncEnabled) {
+        !googleCalendarSyncEnabled) {
       if (!delay) {
         _addSyncStatus('Google 日历同步已关闭');
       }
@@ -2628,7 +3147,7 @@ class TimeProvider with ChangeNotifier {
         _scheduleOverwriteJournalCleanupPending ||
         _remoteViewTransitionInProgress ||
         _remoteViewEnabled ||
-        !_googleCalendarSyncEnabled) {
+        !googleCalendarSyncEnabled) {
       _addSyncStatus('Google 日历同步已关闭');
       return;
     }
@@ -3189,8 +3708,7 @@ class TimeProvider with ChangeNotifier {
         _scheduleOverwriteJournalCleanupPending ||
         _remoteViewTransitionInProgress ||
         _remoteViewEnabled ||
-        !_supportsGoogleCalendarSync ||
-        !_googleCalendarSyncEnabled) {
+        !googleCalendarSyncEnabled) {
       return;
     }
     await pullGoogleCalendarForDate(_currentDate);
@@ -3206,8 +3724,7 @@ class TimeProvider with ChangeNotifier {
         _scheduleOverwriteJournalCleanupPending ||
         _remoteViewTransitionInProgress ||
         _remoteViewEnabled ||
-        !_supportsGoogleCalendarSync ||
-        !_googleCalendarSyncEnabled) {
+        !googleCalendarSyncEnabled) {
       return false;
     }
     if (syncGeneration != null && syncGeneration != _googleSyncGeneration) {
@@ -3456,7 +3973,7 @@ class TimeProvider with ChangeNotifier {
     if (mode == ApplyTemplateMode.replaceAll) {
       _dailySlots[dateKey] = _generateInitialSlots();
       // 恢复日历导入事件（replaceAll 清空了全部 slot，需要重新拉取日历数据）
-      if (_googleCalendarSyncEnabled) {
+      if (googleCalendarSyncEnabled) {
         unawaited(pullGoogleCalendarForCurrentDate());
       }
     }
@@ -3876,20 +4393,20 @@ class TimeProvider with ChangeNotifier {
       List<String> catList =
           _categories.map((c) => json.encode(c.toJson())).toList();
       if (!canPersist() ||
-          !await prefs.setStringList('categories', catList) ||
+          !await prefs.setStringList(_identityDataKey('categories'), catList) ||
           !canPersist()) {
         return false;
       }
       // 分类删除墓碑（id → 删除时间戳）与文档时间戳随分类一并持久化
       if (!canPersist() ||
-          !await prefs.setString(
-              'deleted_categories', json.encode(_deletedCategories)) ||
+          !await prefs.setString(_identityDataKey('deleted_categories'),
+              json.encode(_deletedCategories)) ||
           !canPersist()) {
         return false;
       }
       if (!canPersist() ||
-          !await prefs.setInt(
-              'categories_doc_updated_at', _categoriesDocUpdatedAt) ||
+          !await prefs.setInt(_identityDataKey('categories_doc_updated_at'),
+              _categoriesDocUpdatedAt) ||
           !canPersist()) {
         return false;
       }
@@ -3904,7 +4421,7 @@ class TimeProvider with ChangeNotifier {
       List<String> targetList =
           _targets.map((t) => json.encode(t.toJson())).toList();
       if (!canPersist() ||
-          !await prefs.setStringList('targets', targetList) ||
+          !await prefs.setStringList(_identityDataKey('targets'), targetList) ||
           !canPersist()) {
         return false;
       }
@@ -3930,7 +4447,7 @@ class TimeProvider with ChangeNotifier {
       final encoded = await compute(_encodeSlotsJson, slotsJson);
       if (!canPersist()) return false;
       if (!canPersist() ||
-          !await prefs.setString('daily_slots', encoded) ||
+          !await prefs.setString(_identityDataKey('daily_slots'), encoded) ||
           !canPersist()) {
         return false;
       }
@@ -3943,7 +4460,7 @@ class TimeProvider with ChangeNotifier {
       // 增量保存：先对本次请求的脏日期做快照，成功后再清理，
       // 保存期间产生的新修改会保留给下一次保存。
       // 加载现有数据并合并
-      String? slotsStr = prefs.getString('daily_slots');
+      String? slotsStr = prefs.getString(_identityDataKey('daily_slots'));
       Map<String, dynamic> slotsJson = {};
       if (slotsStr != null) {
         try {
@@ -3965,7 +4482,8 @@ class TimeProvider with ChangeNotifier {
         }
       }
       if (!canPersist() ||
-          !await prefs.setString('daily_slots', json.encode(slotsJson)) ||
+          !await prefs.setString(
+              _identityDataKey('daily_slots'), json.encode(slotsJson)) ||
           !canPersist()) {
         return false;
       }
@@ -3980,7 +4498,7 @@ class TimeProvider with ChangeNotifier {
     if (templatesDirtyAtStart) {
       if (!canPersist() ||
           !await prefs.setString(
-            'schedule_templates',
+            _identityDataKey('schedule_templates'),
             json.encode(_templates.map((t) => t.toJson()).toList()),
           ) ||
           !canPersist()) {
@@ -3999,8 +4517,8 @@ class TimeProvider with ChangeNotifier {
         if (ids.isNotEmpty) ignoredJson[dateKey] = ids.toList();
       });
       if (!canPersist() ||
-          !await prefs.setString(
-              'ignored_calendar_imports', json.encode(ignoredJson)) ||
+          !await prefs.setString(_identityDataKey('ignored_calendar_imports'),
+              json.encode(ignoredJson)) ||
           !canPersist()) {
         return false;
       }
@@ -4017,18 +4535,21 @@ class TimeProvider with ChangeNotifier {
       final googlePendingDates = pendingGoogleSyncDates.toList()..sort();
       if (!canPersist() ||
           !await prefs.setStringList(
-              'pending_gitee_sync_dates', giteePendingDates) ||
+              _identityDataKey('pending_gitee_sync_dates'),
+              giteePendingDates) ||
           !canPersist()) {
         return false;
       }
       if (!canPersist() ||
           !await prefs.setStringList(
-              'pending_google_sync_dates', googlePendingDates) ||
+              _identityDataKey('pending_google_sync_dates'),
+              googlePendingDates) ||
           !canPersist()) {
         return false;
       }
       if (!canPersist() ||
-          !await prefs.setStringList('pending_sync_dates', allPendingDates) ||
+          !await prefs.setStringList(
+              _identityDataKey('pending_sync_dates'), allPendingDates) ||
           !canPersist()) {
         return false;
       }
@@ -4041,8 +4562,8 @@ class TimeProvider with ChangeNotifier {
     final expandChanged = _categoryExpandDirty;
     if (expandChanged) {
       if (!canPersist() ||
-          !await prefs.setString(
-              'category_expand_states', json.encode(_categoryExpandStates)) ||
+          !await prefs.setString(_identityDataKey('category_expand_states'),
+              json.encode(_categoryExpandStates)) ||
           !canPersist()) {
         return false;
       }
@@ -4123,10 +4644,10 @@ class TimeProvider with ChangeNotifier {
     final googleDates = snapshot.googlePendingDates.toList()..sort();
 
     final replacement = <String, Object?>{
-      'daily_slots': json.encode(slotsJson),
-      'pending_gitee_sync_dates': giteeDates,
-      'pending_google_sync_dates': googleDates,
-      'pending_sync_dates': allPendingDates,
+      _identityDataKey('daily_slots'): json.encode(slotsJson),
+      _identityDataKey('pending_gitee_sync_dates'): giteeDates,
+      _identityDataKey('pending_google_sync_dates'): googleDates,
+      _identityDataKey('pending_sync_dates'): allPendingDates,
     };
     final previous = _captureSchedulePreferences(prefs, replacement.keys);
     final replacementSnapshot = _SchedulePreferencesSnapshot(replacement);
@@ -4802,9 +5323,10 @@ class TimeProvider with ChangeNotifier {
     if (_isDisposed) return;
     await _recoverScheduleOverwriteJournal(prefs);
     if (_isDisposed) return;
+    _clearLoadedIdentityData();
 
     // 1. 加载分类
-    List<String>? catList = prefs.getStringList('categories');
+    List<String>? catList = prefs.getStringList(_identityDataKey('categories'));
     if (catList != null && catList.isNotEmpty) {
       _categories = [];
       var needMigration = false;
@@ -4831,7 +5353,7 @@ class TimeProvider with ChangeNotifier {
     }
 
     // 分类删除墓碑（id → 删除时间戳）与文档时间戳
-    final deletedStr = prefs.getString('deleted_categories');
+    final deletedStr = prefs.getString(_identityDataKey('deleted_categories'));
     if (deletedStr != null) {
       try {
         final decoded = json.decode(deletedStr);
@@ -4847,10 +5369,11 @@ class TimeProvider with ChangeNotifier {
         _recordAppError('加载分类删除记录出错', e, stackTrace);
       }
     }
-    _categoriesDocUpdatedAt = prefs.getInt('categories_doc_updated_at') ?? 0;
+    _categoriesDocUpdatedAt =
+        prefs.getInt(_identityDataKey('categories_doc_updated_at')) ?? 0;
 
     // 2. 加载目标
-    List<String>? targetList = prefs.getStringList('targets');
+    List<String>? targetList = prefs.getStringList(_identityDataKey('targets'));
     if (targetList != null) {
       _targets.clear();
       for (final str in targetList) {
@@ -4864,7 +5387,7 @@ class TimeProvider with ChangeNotifier {
     }
 
     // 3. 加载时间块
-    String? slotsStr = prefs.getString('daily_slots');
+    String? slotsStr = prefs.getString(_identityDataKey('daily_slots'));
     if (slotsStr != null) {
       try {
         _dailySlots.clear();
@@ -4876,7 +5399,8 @@ class TimeProvider with ChangeNotifier {
     }
 
     // 4. 日程模板
-    final templatesStr = prefs.getString('schedule_templates');
+    final templatesStr =
+        prefs.getString(_identityDataKey('schedule_templates'));
     if (templatesStr != null) {
       try {
         final list = json.decode(templatesStr) as List<dynamic>;
@@ -4892,7 +5416,8 @@ class TimeProvider with ChangeNotifier {
     }
 
     // 5. 已忽略的 Google 日历导入
-    final ignoredStr = prefs.getString('ignored_calendar_imports');
+    final ignoredStr =
+        prefs.getString(_identityDataKey('ignored_calendar_imports'));
     if (ignoredStr != null) {
       try {
         final ignoredJson = json.decode(ignoredStr) as Map<String, dynamic>;
@@ -4911,12 +5436,15 @@ class TimeProvider with ChangeNotifier {
     }
 
     // 6. 待同步日期
-    final legacyPending = (prefs.getStringList('pending_sync_dates') ?? [])
-        .map(_normalizeDateKey)
-        .toSet();
-    final storedGiteePending = prefs.getStringList('pending_gitee_sync_dates');
+    final legacyPending =
+        (prefs.getStringList(_identityDataKey('pending_sync_dates')) ?? [])
+            .map(_normalizeDateKey)
+            .toSet();
+    final storedGiteePending = prefs.getStringList(
+      _identityDataKey('pending_gitee_sync_dates'),
+    );
     final storedGooglePending =
-        prefs.getStringList('pending_google_sync_dates');
+        prefs.getStringList(_identityDataKey('pending_google_sync_dates'));
     final legacyState = PendingSyncState.fromLegacy(
       legacyPending,
       desktop: isDesktopPlatform,
@@ -4927,13 +5455,17 @@ class TimeProvider with ChangeNotifier {
       googleDates: (storedGooglePending ?? legacyState.googleDates)
           .map(_normalizeDateKey),
     );
-    _googleCalendarSyncEnabled = !_supportsGoogleCalendarSync
+    _googleCalendarSyncEnabled = !_supportsGoogleCalendarSync ||
+            (_usesMobileIdentityFlow && _identityMode != AppIdentityMode.google)
         ? false
-        : (prefs.getBool('google_calendar_sync_enabled') ?? true);
-    _scheduleUser = DiaryKindX.fromCode(prefs.getString(_scheduleUserKey));
+        : (prefs.getBool(AppIdentityService.legacySyncKey) ?? true);
+    if (!_usesMobileIdentityFlow) {
+      _scheduleUser = DiaryKindX.fromCode(prefs.getString(_scheduleUserKey));
+    }
 
     // 7. 分类展开状态（key 为 Category ID）
-    final expandStr = prefs.getString('category_expand_states');
+    final expandStr =
+        prefs.getString(_identityDataKey('category_expand_states'));
     if (expandStr != null) {
       try {
         final expandJson = json.decode(expandStr) as Map<String, dynamic>;

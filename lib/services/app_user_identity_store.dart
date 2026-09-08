@@ -48,11 +48,17 @@ class AppUserIdentityStore {
   }
 
   static Future<void> clear() async {
+    await clearGoogleIdentity();
+    await clearManualKind();
+  }
+
+  /// Clears only the Google profile. Manual identity selection belongs to the
+  /// app mode and must survive rejecting an unknown Google account.
+  static Future<void> clearGoogleIdentity() async {
     await _storage.delete(key: _emailKey);
     await _storage.delete(key: _idKey);
     await _storage.delete(key: _nameKey);
     await _storage.delete(key: _photoKey);
-    await _storage.delete(key: _manualKindKey);
   }
 
   static Future<DiaryKind?> loadManualKind() async {

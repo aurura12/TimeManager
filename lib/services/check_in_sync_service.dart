@@ -15,6 +15,7 @@ import 'check_in_location_service.dart';
 import 'check_in_photo_cache.dart';
 import 'diary_local_store.dart';
 import 'google_calendar_service.dart';
+import 'app_identity_service.dart';
 import '../utils/platform_features.dart';
 
 class CheckInSyncResult {
@@ -70,25 +71,29 @@ class CheckInSyncService {
   GoogleCalendarUser? _manualUser;
 
   GoogleCalendarUser? get currentUser => isDesktopPlatform
-      ? _manualUser
-      : GoogleCalendarService.sessionUser;
+      ? (_manualUser ?? AppIdentityService.currentUser)
+      : AppIdentityService.currentUser;
 
   /// 是否已识别用户（含曾登录但日历 token 暂时失效）
-  bool get hasIdentity => isDesktopPlatform
-      ? _manualUser != null
-      : GoogleCalendarService.hasKnownUser;
+  bool get hasIdentity => currentUser != null;
 
   /// 日历是否在线（与打卡身份无关）
-  bool get isCalendarOnline => GoogleCalendarService.isSignedIn;
+  bool get isCalendarOnline =>
+      AppIdentityService.isGoogleMode && GoogleCalendarService.isSignedIn;
 
   /// 初始化：读本地 → 拉远端 → 合并
   Future<void> initialize({bool silent = false}) async {
     if (!silent) _loading = true;
     _lastError = null;
     try {
+      await AppIdentityService.load();
       // Windows 无 Google 登录，打卡身份来自手动选择的角色
       if (isDesktopPlatform) {
         _manualUser = await _loadManualUser();
+      } else if (AppIdentityService.isGoogleMode &&
+          AppIdentityService.personKind != null) {
+        // 手动模式不应因为进入打卡页而触发 Google 恢复。
+        unawaited(GoogleCalendarService.restoreSignIn(background: true));
       }
 
       final local = await CheckInLocalStore.loadDraft();
@@ -107,9 +112,8 @@ class CheckInSyncService {
       if (pull.success && pull.content != null) {
         try {
           final remote = CheckInDocument.fromMarkdown(pull.content!);
-          _document = local == null
-              ? remote
-              : CheckInDocument.merge(local, remote);
+          _document =
+              local == null ? remote : CheckInDocument.merge(local, remote);
           await CheckInLocalStore.saveDraft(_document);
         } catch (e) {
           _lastError = '解析远端打卡数据失败: $e';
@@ -201,7 +205,7 @@ class CheckInSyncService {
   Future<CheckInSyncResult> saveGoal(CheckInGoal goal) async {
     final user = await _requireUser();
     if (!hasIdentity || user == null) {
-      return CheckInSyncResult.fail('请先至少登录一次 Google 以识别身份');
+      return CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
     }
 
     final meta = goal.copyWith(
@@ -219,7 +223,7 @@ class CheckInSyncService {
   Future<CheckInSyncResult> deleteGoal(CheckInGoal goal) async {
     final user = await _requireUser();
     if (!hasIdentity || user == null) {
-      return CheckInSyncResult.fail('请先至少登录一次 Google 以识别身份');
+      return CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
     }
     if (!goal.isOwnedBy(user.id, email: user.email)) {
       return CheckInSyncResult.fail('只能删除自己创建的目标');
@@ -271,70 +275,72 @@ class CheckInSyncService {
   ) async {
     final user = await _requireUser();
     if (!hasIdentity || user == null) {
-      return CheckInSyncResult.fail('请先至少登录一次 Google 以识别身份');
+      return CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
     }
     if (!record.belongsTo(user.id, user.email)) {
       return CheckInSyncResult.fail('只能删除自己的打卡记录');
     }
 
     return _synchronized(() async {
-    _syncing = true;
-    _lastError = null;
-    try {
-      final token = await _requireToken();
-      if (token == null) {
-        return CheckInSyncResult.fail('未配置当前平台同步 Token');
-      }
+      _syncing = true;
+      _lastError = null;
+      try {
+        final token = await _requireToken();
+        if (token == null) {
+          return CheckInSyncResult.fail('未配置当前平台同步 Token');
+        }
 
-      // Step 1: Pull remote and merge to avoid overwriting others' data
-      final pull = await CheckInGiteeService.pullText(
-        token: token,
-        path: CheckInDocument.filePath,
-      );
-      if (pull.success && pull.content != null) {
-        final remote = CheckInDocument.fromMarkdown(pull.content!);
-        _document = CheckInDocument.merge(_document, remote);
-      }
-
-      // Step 2: Delete photo from GitHub if present
-      if (record.photoPath != null && record.photoPath!.isNotEmpty) {
-        await CheckInGiteeService.deleteFile(
+        // Step 1: Pull remote and merge to avoid overwriting others' data
+        final pull = await CheckInGiteeService.pullText(
           token: token,
-          path: record.photoPath!,
-          commitMessage: 'check-in(${user.label}): delete photo ${record.photoPath}',
+          path: CheckInDocument.filePath,
         );
-        // Also remove local cache (best-effort, ignore errors)
-        try {
-          final cached = await CheckInPhotoCache.getCachedFile(record.photoPath!);
-          if (cached != null && await cached.exists()) {
-            await cached.delete();
-          }
-        } catch (_) {}
+        if (pull.success && pull.content != null) {
+          final remote = CheckInDocument.fromMarkdown(pull.content!);
+          _document = CheckInDocument.merge(_document, remote);
+        }
+
+        // Step 2: Delete photo from GitHub if present
+        if (record.photoPath != null && record.photoPath!.isNotEmpty) {
+          await CheckInGiteeService.deleteFile(
+            token: token,
+            path: record.photoPath!,
+            commitMessage:
+                'check-in(${user.label}): delete photo ${record.photoPath}',
+          );
+          // Also remove local cache (best-effort, ignore errors)
+          try {
+            final cached =
+                await CheckInPhotoCache.getCachedFile(record.photoPath!);
+            if (cached != null && await cached.exists()) {
+              await cached.delete();
+            }
+          } catch (_) {}
+        }
+
+        // Step 3: Remove record from document
+        _document = _document.tombstoneRecord(record.id);
+
+        // Step 4: Save locally
+        await CheckInLocalStore.saveDraft(_document);
+
+        // Step 5: Push updated document to GitHub
+        final push = await CheckInGiteeService.pushText(
+          token: token,
+          path: CheckInDocument.filePath,
+          content: _document.toMarkdown(),
+          commitMessage: 'check-in(${user.label}): delete record ${record.id}',
+        );
+        if (!push.success) {
+          return CheckInSyncResult.fail(push.error ?? '删除同步失败');
+        }
+
+        return CheckInSyncResult.ok(_document);
+      } catch (e) {
+        return CheckInSyncResult.fail('删除失败: $e');
+      } finally {
+        _syncing = false;
       }
-
-      // Step 3: Remove record from document
-      _document = _document.tombstoneRecord(record.id);
-
-      // Step 4: Save locally
-      await CheckInLocalStore.saveDraft(_document);
-
-      // Step 5: Push updated document to GitHub
-      final push = await CheckInGiteeService.pushText(
-        token: token,
-        path: CheckInDocument.filePath,
-        content: _document.toMarkdown(),
-        commitMessage: 'check-in(${user.label}): delete record ${record.id}',
-      );
-      if (!push.success) {
-        return CheckInSyncResult.fail(push.error ?? '删除同步失败');
-      }
-
-      return CheckInSyncResult.ok(_document);
-    } catch (e) {
-      return CheckInSyncResult.fail('删除失败: $e');
-    } finally {
-      _syncing = false;
-    }
     });
   }
 
@@ -347,7 +353,7 @@ class CheckInSyncService {
   }) async {
     final user = await _requireUser();
     if (!hasIdentity || user == null) {
-      return CheckInSyncResult.fail('请先至少登录一次 Google 以识别身份');
+      return CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
     }
 
     final now = DateTime.now();
@@ -358,67 +364,67 @@ class CheckInSyncService {
     }
 
     return _synchronized(() async {
-    _syncing = true;
-    try {
-      final recordId = now.millisecondsSinceEpoch.toString();
-      String? photoPath;
+      _syncing = true;
+      try {
+        final recordId = now.millisecondsSinceEpoch.toString();
+        String? photoPath;
 
-      // 有照片时：压缩并上传
-      if (photoFile != null) {
-        final token = await _requireToken();
-        if (token == null) {
-          return CheckInSyncResult.fail('未配置当前平台同步 Token，无法上传照片');
+        // 有照片时：压缩并上传
+        if (photoFile != null) {
+          final token = await _requireToken();
+          if (token == null) {
+            return CheckInSyncResult.fail('未配置当前平台同步 Token，无法上传照片');
+          }
+
+          photoPath = CheckInDocument.imagePathFor(
+            userEmail: user.email,
+            recordId: recordId,
+          );
+
+          final compressed = await CheckInImageService.compressFile(photoFile);
+          if (compressed == null || compressed.isEmpty) {
+            return CheckInSyncResult.fail('照片压缩失败');
+          }
+
+          // Photo is a new file, skip GET sha to save one HTTP request
+          final imagePush = await CheckInGiteeService.pushBinary(
+            token: token,
+            path: photoPath,
+            bytes: compressed,
+            commitMessage: 'check-in(${user.label}): photo $recordId',
+            skipGetSha: true,
+          );
+          if (!imagePush.success) {
+            return CheckInSyncResult.fail(imagePush.error ?? '照片上传失败');
+          }
+
+          await CheckInPhotoCache.saveBytes(photoPath, compressed);
         }
 
-        photoPath = CheckInDocument.imagePathFor(
+        final record = CheckInRecord(
+          id: recordId,
+          goalId: goal.id,
+          userId: user.id,
           userEmail: user.email,
-          recordId: recordId,
+          userDisplayName: user.displayName ?? user.label,
+          timestamp: effectiveDate,
+          latitude: location?.latitude,
+          longitude: location?.longitude,
+          locationName: location?.locationName,
+          photoPath: photoPath,
+          isBackfill: isBackfill,
         );
 
-        final compressed = await CheckInImageService.compressFile(photoFile);
-        if (compressed == null || compressed.isEmpty) {
-          return CheckInSyncResult.fail('照片压缩失败');
-        }
+        _document = _document.upsertRecord(record);
+        await CheckInLocalStore.saveDraft(_document);
 
-        // Photo is a new file, skip GET sha to save one HTTP request
-        final imagePush = await CheckInGiteeService.pushBinary(
-          token: token,
-          path: photoPath,
-          bytes: compressed,
-          commitMessage: 'check-in(${user.label}): photo $recordId',
-          skipGetSha: true,
-        );
-        if (!imagePush.success) {
-          return CheckInSyncResult.fail(imagePush.error ?? '照片上传失败');
-        }
-
-        await CheckInPhotoCache.saveBytes(photoPath, compressed);
+        final metaResult = await _pushToGitHubInternal();
+        return metaResult;
+      } catch (e) {
+        return CheckInSyncResult.fail('打卡失败: $e');
+      } finally {
+        _syncing = false;
       }
-
-      final record = CheckInRecord(
-        id: recordId,
-        goalId: goal.id,
-        userId: user.id,
-        userEmail: user.email,
-        userDisplayName: user.displayName ?? user.label,
-        timestamp: effectiveDate,
-        latitude: location?.latitude,
-        longitude: location?.longitude,
-        locationName: location?.locationName,
-        photoPath: photoPath,
-        isBackfill: isBackfill,
-      );
-
-      _document = _document.upsertRecord(record);
-      await CheckInLocalStore.saveDraft(_document);
-
-      final metaResult = await _pushToGitHubInternal();
-      return metaResult;
-    } catch (e) {
-      return CheckInSyncResult.fail('打卡失败: $e');
-    } finally {
-      _syncing = false;
-    }
     });
   }
 
@@ -437,9 +443,9 @@ class CheckInSyncService {
   Future<GoogleCalendarUser?> _requireUser() async {
     if (isDesktopPlatform) {
       _manualUser ??= await _loadManualUser();
-      return _manualUser;
+      return _manualUser ?? AppIdentityService.currentUser;
     }
-    return GoogleCalendarService.sessionUser;
+    return AppIdentityService.currentUser;
   }
 
   /// 从手动身份派生打卡用户，保证跨设备稳定且照片目录与安卓一致

@@ -9,6 +9,7 @@ import '../models/diary_search_result.dart';
 import '../services/diary_gitee_service.dart';
 import '../services/diary_local_store.dart';
 import '../services/diary_search_service.dart';
+import '../services/app_identity_service.dart';
 import 'diary_search_screen.dart';
 
 class DiaryScreen extends StatefulWidget {
@@ -23,8 +24,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   DiaryKind _kind = DiaryKind.g;
-  /// Windows 手动身份（设置中选的角色），用于只读提示
-  DiaryKind? _windowsManualKind;
+
+  /// 设置中选定的当前身份，用于同步保护和只读提示
+  DiaryKind? _selectedIdentityKind;
   DateTime _selectedDate = DateTime.now();
   DateTime? _startedAt;
   String? _token;
@@ -44,17 +46,23 @@ class _DiaryScreenState extends State<DiaryScreen> {
   static const Duration _remotePathsTtl = Duration(minutes: 3);
   Set<String> _gDiaryDateKeys = {};
   Set<String> _jDiaryDateKeys = {};
+  late final StreamSubscription<void> _identitySubscription;
 
   @override
   void initState() {
     super.initState();
     _bodyController.addListener(_onBodyChanged);
+    _identitySubscription = AppIdentityService.changes.listen((_) {
+      if (!mounted) return;
+      setState(() => _selectedIdentityKind = AppIdentityService.personKind);
+    });
     _loadInitial();
   }
 
   @override
   void dispose() {
     _saveDebounce?.cancel();
+    _identitySubscription.cancel();
     _bodyController.removeListener(_onBodyChanged);
     _bodyController.dispose();
     super.dispose();
@@ -62,12 +70,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   Future<void> _loadInitial() async {
     final token = await DiaryLocalStore.loadToken();
-    final manualKind =
-        isDesktopPlatform ? await DiaryLocalStore.loadManualKind() : null;
-    _windowsManualKind = manualKind;
-    final kind = isDesktopPlatform
-        ? (manualKind ?? await DiaryLocalStore.loadPreferredKind())
-        : await DiaryLocalStore.loadPreferredKind();
+    await AppIdentityService.load();
+    final identityKind = AppIdentityService.personKind;
+    _selectedIdentityKind = identityKind;
+    final kind = identityKind ?? await DiaryLocalStore.loadPreferredKind();
     _token = token;
     _kind = kind;
     await _loadDraftForCurrentContext();
@@ -704,16 +710,22 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   Future<void> _pushDiary() async {
-    if (isDesktopPlatform) {
-      final manualKind = await DiaryLocalStore.loadManualKind();
-      if (manualKind == null) {
-        _showMessage('请先在设置中选择“乖乖”或“晶晶”身份');
-        return;
-      }
-      if (_kind != manualKind) {
-        _showMessage('当前日记分区与 Windows 用户身份不一致，请先切换回正确分区');
-        return;
-      }
+    await AppIdentityService.load();
+    final identityKind = AppIdentityService.personKind;
+    _selectedIdentityKind = identityKind;
+    if (identityKind == null) {
+      _showMessage(
+        AppIdentityService.isGoogleMode
+            ? '请先在设置中完成 Google 登录'
+            : '请先在设置中选择“乖乖”或“晶晶”身份',
+      );
+      return;
+    }
+    if (_kind != identityKind) {
+      _showMessage(
+        '当前日记分区与${isDesktopPlatform ? ' Windows' : ''}用户身份不一致，请先切换回正确分区',
+      );
+      return;
     }
     final ok = await _ensureToken();
     if (!ok) return;
@@ -848,9 +860,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
                     ],
                   ),
                   // Windows 只读提示：查看对方日记分区时不可同步
-                  if (isDesktopPlatform &&
-                      _windowsManualKind != null &&
-                      _windowsManualKind != _kind) ...[
+                  if (_selectedIdentityKind != null &&
+                      _selectedIdentityKind != _kind) ...[
                     const SizedBox(height: 12),
                     Container(
                       padding: const EdgeInsets.symmetric(

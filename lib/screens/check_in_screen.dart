@@ -1,11 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/check_in_goal.dart';
 import '../models/check_in_record.dart';
 import '../models/check_in_view_filter.dart';
 import '../models/known_google_users.dart';
+import '../services/app_identity_service.dart';
 import '../services/check_in_sync_service.dart';
-import '../services/google_calendar_service.dart';
 import '../widgets/check_in_map_preview.dart';
 import '../widgets/check_in_photo_sheet.dart';
 import 'add_check_in_goal_screen.dart';
@@ -23,17 +25,25 @@ class CheckInScreen extends StatefulWidget {
 class _CheckInScreenState extends State<CheckInScreen> {
   final _sync = CheckInSyncService();
   CheckInViewFilter _filter = CheckInViewFilter.all;
+  late final StreamSubscription<void> _identitySubscription;
 
   @override
   void initState() {
     super.initState();
+    _identitySubscription = AppIdentityService.changes.listen((_) {
+      if (mounted) setState(() {});
+    });
     _load();
+  }
+
+  @override
+  void dispose() {
+    _identitySubscription.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
     setState(() {});
-    // 不需要等待 Google 恢复，国内网络下会超时阻塞 UI
-    GoogleCalendarService.restoreSignIn(background: true);
     await _sync.initialize(silent: false);
     if (mounted) setState(() {});
   }
@@ -89,14 +99,15 @@ class _CheckInScreenState extends State<CheckInScreen> {
     final userId = _currentUserId;
     if (userId == null) return 0;
     return _allGoals
-        .where((g) => g.isOwnedBy(userId, email: _sync.currentUser?.email) &&
+        .where((g) =>
+            g.isOwnedBy(userId, email: _sync.currentUser?.email) &&
             g.isCompletedTodayBy(userId, email: _sync.currentUser?.email))
         .length;
   }
 
   int get _myGoalCount => _allGoals
-      .where((g) => g.isOwnedBy(_currentUserId ?? '',
-          email: _sync.currentUser?.email))
+      .where((g) =>
+          g.isOwnedBy(_currentUserId ?? '', email: _sync.currentUser?.email))
       .length;
 
   void _showMessage(String msg) {
@@ -115,7 +126,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
 
   Future<void> _openAddGoal() async {
     if (!_sync.hasIdentity) {
-      _showMessage('请先在「我的」中登录一次 Google');
+      _showMessage('请先在「我的」中选择身份或完成 Google 登录');
       return;
     }
     final result = await Navigator.push<CheckInGoal>(
@@ -144,7 +155,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
 
   Future<void> _quickCheckIn(CheckInGoal goal) async {
     if (!_sync.hasIdentity) {
-      _showMessage('请先登录 Google');
+      _showMessage('请先选择身份或完成 Google 登录');
       return;
     }
     final userId = _currentUserId;
@@ -171,7 +182,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
 
   Future<void> _backfillCheckIn(CheckInGoal goal) async {
     if (!_sync.hasIdentity) {
-      _showMessage('请先登录 Google');
+      _showMessage('请先选择身份或完成 Google 登录');
       return;
     }
     final userId = _currentUserId;
@@ -235,8 +246,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
       appBar: AppBar(
         title: const Text('打卡', style: TextStyle(fontSize: 18)),
         centerTitle: true,
-        backgroundColor:
-            isDark ? colorScheme.surface : const Color(0xFF96B462),
+        backgroundColor: isDark ? colorScheme.surface : const Color(0xFF96B462),
         foregroundColor: isDark ? colorScheme.onSurface : Colors.white,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
@@ -278,13 +288,20 @@ class _CheckInScreenState extends State<CheckInScreen> {
   }
 
   Widget _buildSignInBanner(ColorScheme colorScheme) {
+    final manualMode = AppIdentityService.isManualMode;
     return MaterialBanner(
-      content: const Text('登录一次 Google 后即可识别身份（乖乖/晶晶），并与对方互相看到打卡'),
+      content: Text(
+        manualMode
+            ? '请在「我的」中选择“乖乖”或“晶晶”后使用打卡'
+            : '完成 Google 登录后即可识别身份（乖乖/晶晶），并与对方互相看到打卡',
+      ),
       leading: Icon(Icons.account_circle, color: colorScheme.primary),
       actions: [
         TextButton(
-          onPressed: () => _showMessage('请在底部「我的」→ 设置抽屉中连接 Google'),
-          child: const Text('了解'),
+          onPressed: () => _showMessage(
+            manualMode ? '请在底部「我的」→ 设置抽屉中选择身份' : '请在底部「我的」→ 设置抽屉中连接 Google',
+          ),
+          child: const Text('设置'),
         ),
       ],
     );
@@ -446,7 +463,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
             .where((g) =>
                 userId.isEmpty ||
                 g.isOwnedBy(userId, email: _sync.currentUser?.email))
-            .map((g) => g.streakDaysFor(userId, email: _sync.currentUser?.email))
+            .map(
+                (g) => g.streakDaysFor(userId, email: _sync.currentUser?.email))
             .fold(0, (a, b) => a > b ? a : b);
 
     return Container(
@@ -503,7 +521,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
     );
   }
 
-  Widget _buildMapSection(ColorScheme colorScheme, List<CheckInRecord> records) {
+  Widget _buildMapSection(
+      ColorScheme colorScheme, List<CheckInRecord> records) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -617,7 +636,9 @@ class _CheckInScreenState extends State<CheckInScreen> {
                                   fontWeight: FontWeight.bold,
                                   color: onCardColor)),
                           Text(
-                            isMine ? goal.description : '${goal.ownerLabel} 的目标',
+                            isMine
+                                ? goal.description
+                                : '${goal.ownerLabel} 的目标',
                             style: TextStyle(fontSize: 12, color: mutedColor),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -625,8 +646,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
                         ],
                       ),
                     ),
-                    if (checked)
-                      _badge('已打卡', onCardColor),
+                    if (checked) _badge('已打卡', onCardColor),
                   ],
                 ),
                 const SizedBox(height: 14),
@@ -675,8 +695,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
                               borderRadius: BorderRadius.circular(20)),
                           padding: const EdgeInsets.symmetric(horizontal: 10),
                         ),
-                        child: const Text('补打卡',
-                            style: TextStyle(fontSize: 12)),
+                        child:
+                            const Text('补打卡', style: TextStyle(fontSize: 12)),
                       ),
                     ],
                     // 打卡 — 仅当天未打卡时显示
