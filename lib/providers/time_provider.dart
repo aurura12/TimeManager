@@ -1808,6 +1808,7 @@ class TimeProvider with ChangeNotifier {
       return;
     }
     _scheduleGiteeSyncing = true;
+    _startScheduleSyncProgress('正在同步日程 $effectiveDateKey', total: 1);
     try {
       final token = await _scheduleSyncDependencies.loadToken();
       if (!_canContinueScheduleSync(selectedUserCode) ||
@@ -1815,12 +1816,18 @@ class TimeProvider with ChangeNotifier {
           token.isEmpty) {
         _addScheduleSyncStatus('未配置同步 Token');
         _addSyncStatus("未配置同步 Token");
+        _failScheduleSyncProgress('同步失败：未配置同步 Token');
         return;
       }
 
       final slots = _dailySlots[effectiveDateKey] ??= _generateInitialSlots();
 
       _addScheduleSyncStatus('同步中...');
+      _setScheduleSyncProgress(
+        message: '正在同步日程 $effectiveDateKey',
+        completed: 0,
+        total: 1,
+      );
       if (!_syncStatusController.isClosed) {
         _addSyncStatus("SYNCING");
       }
@@ -1833,6 +1840,11 @@ class TimeProvider with ChangeNotifier {
       if (!_canContinueScheduleSync(selectedUserCode)) return;
       if (ok) {
         _addScheduleSyncStatus('已同步');
+        _finishScheduleSyncProgress(
+          '日程同步完成：$effectiveDateKey',
+          completed: 1,
+          total: 1,
+        );
         if ((_scheduleGiteeDateRevisions[effectiveDateKey] ?? 0) ==
             syncRevision) {
           _pendingScheduleGiteeDateKeys.remove(effectiveDateKey);
@@ -1846,17 +1858,28 @@ class TimeProvider with ChangeNotifier {
         });
       } else {
         _addScheduleSyncStatus('同步失败');
+        _failScheduleSyncProgress(
+          '日程同步失败：$effectiveDateKey',
+          completed: 0,
+          total: 1,
+        );
         if (!_syncStatusController.isClosed) {
           _addSyncStatus("日程同步失败");
         }
       }
     } catch (e, stackTrace) {
       _addScheduleSyncStatus('同步失败: $e');
+      _failScheduleSyncProgress('日程同步失败：$e', completed: 0, total: 1);
       _recordAppError('日程同步失败', e, stackTrace);
       if (!_syncStatusController.isClosed) {
         _addSyncStatus("日程同步失败: $e");
       }
     } finally {
+      if (_scheduleSyncProgress != null &&
+          !_scheduleSyncProgress!.isFinished &&
+          !_scheduleSyncProgress!.isError) {
+        _failScheduleSyncProgress('日程同步已取消', completed: 0, total: 1);
+      }
       _scheduleGiteeSyncing = false;
       if (!_syncStatusController.isClosed) {
         _addSyncStatus("IDLE");
@@ -2039,6 +2062,11 @@ class TimeProvider with ChangeNotifier {
     }
     _allScheduleSyncing = true;
     final selectedUserCode = _scheduleUser.code;
+    _appLogService.info(
+      '全量日程同步开始（身份 $selectedUserCode）',
+      source: 'schedule_sync',
+    );
+    _startScheduleSyncProgress('正在准备同步所有日程');
     // 取消可能正在等待的当日自动同步
     _scheduleGiteeTimer?.cancel();
     try {
@@ -2047,6 +2075,7 @@ class TimeProvider with ChangeNotifier {
           token == null ||
           token.isEmpty) {
         _addScheduleSyncStatus('未配置同步 Token');
+        _failScheduleSyncProgress('同步失败：未配置同步 Token');
         return;
       }
 
@@ -2062,17 +2091,28 @@ class TimeProvider with ChangeNotifier {
 
       if (dateKeys.isEmpty) {
         _addScheduleSyncStatus('无日程');
+        _finishScheduleSyncProgress('无日程', completed: 0, total: 0);
         return;
       }
 
       final sortedDateKeys = dateKeys.toList()..sort();
       final total = sortedDateKeys.length;
       var done = 0;
+      _setScheduleSyncProgress(
+        message: '准备同步日程 0/$total',
+        completed: 0,
+        total: total,
+      );
       for (final dateKey in sortedDateKeys) {
         if (!_canContinueScheduleSync(selectedUserCode)) return;
         final syncRevision = _scheduleGiteeDateRevisions[dateKey] ?? 0;
         final slots = _dailySlots[dateKey] ?? _generateInitialSlots();
         _addScheduleSyncStatus('同步中 ${done + 1}/$total...');
+        _setScheduleSyncProgress(
+          message: '正在同步日程 ${done + 1}/$total',
+          completed: done,
+          total: total,
+        );
         final ok = await _pushScheduleDay(
           dateKey,
           slots,
@@ -2082,6 +2122,11 @@ class TimeProvider with ChangeNotifier {
         if (!_canContinueScheduleSync(selectedUserCode)) return;
         if (ok) {
           done++;
+          _setScheduleSyncProgress(
+            message: '已同步日程 $done/$total',
+            completed: done,
+            total: total,
+          );
           if ((_scheduleGiteeDateRevisions[dateKey] ?? 0) == syncRevision) {
             _pendingSyncState.clearGitee(dateKey);
             _pendingScheduleGiteeDateKeys.remove(dateKey);
@@ -2096,16 +2141,36 @@ class TimeProvider with ChangeNotifier {
 
       if (done == total) {
         _addScheduleSyncStatus('全部同步完成 ($total 天)');
+        _finishScheduleSyncProgress(
+          '全部同步完成 ($total 天)',
+          completed: done,
+          total: total,
+        );
       } else {
         _addScheduleSyncStatus('同步完成 $done/$total');
+        _finishScheduleSyncProgress(
+          '同步完成 $done/$total',
+          completed: done,
+          total: total,
+        );
       }
+      _appLogService.info(
+        '全量日程同步完成：$done/$total 天',
+        source: 'schedule_sync',
+      );
       Future.delayed(const Duration(seconds: 3), () {
         _addScheduleSyncStatus('');
       });
     } catch (e, stackTrace) {
       _addScheduleSyncStatus('全量同步失败: $e');
+      _failScheduleSyncProgress('全量同步失败：$e');
       _recordAppError('全量日程同步失败', e, stackTrace);
     } finally {
+      if (_scheduleSyncProgress != null &&
+          !_scheduleSyncProgress!.isFinished &&
+          !_scheduleSyncProgress!.isError) {
+        _failScheduleSyncProgress('全量同步已取消');
+      }
       _allScheduleSyncing = false;
     }
   }
@@ -2603,7 +2668,13 @@ class TimeProvider with ChangeNotifier {
   Future<bool> _rejectScheduleOverwrite(String message) async {
     if (_isDisposed) return false;
     _lastScheduleOverwriteFailure = message;
+    _appLogService.warning(message, source: 'schedule_sync');
     _addScheduleSyncStatus(message);
+    _addSyncStatus(message);
+    final current = _scheduleSyncProgress;
+    if (current == null || current.isFinished || current.isError) {
+      _failScheduleSyncProgress(message);
+    }
     _addScheduleSyncStatus('');
     return false;
   }

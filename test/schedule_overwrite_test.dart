@@ -1084,6 +1084,66 @@ void main() {
     expect(await firstCall, isTrue);
   });
 
+  test('已有普通同步时覆盖拉取会保留当前进度并提示原因', () async {
+    final pullGate = Completer<void>();
+    var gateEnabled = false;
+    final provider = await _createProvider(
+      failPull: false,
+      dependencies: _fakeDependencies(
+        failPull: false,
+        pullGate: pullGate,
+        gateDateKey: '2026-09-06',
+        shouldGate: () => gateEnabled,
+      ),
+    );
+    addTearDown(provider.dispose);
+    gateEnabled = true;
+    final statuses = <String>[];
+    final subscription = provider.syncStatusStream.listen(statuses.add);
+    addTearDown(subscription.cancel);
+
+    final sync = provider.syncScheduleToGitee(dateKey: '2026-09-06');
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(provider.scheduleSyncProgress?.message, '正在同步日程 2026-09-06');
+    expect(await provider.overwriteAllSchedulesFromGitee(), isFalse);
+    expect(
+      statuses,
+      contains('覆盖拉取未开始：已有日程同步任务'),
+    );
+    expect(provider.scheduleSyncProgress?.isError, isFalse);
+
+    pullGate.complete();
+    await sync;
+  });
+
+  test('同步所有日程时覆盖拉取能看到当前任务进度', () async {
+    final pullGate = Completer<void>();
+    var gateEnabled = false;
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: {
+        'daily_slots': '{"2026-09-06":[{"i":0,"l":"待同步","ts":1000}]}',
+      },
+      dependencies: _fakeDependencies(
+        failPull: false,
+        pullGate: pullGate,
+        gateDateKey: '2026-09-06',
+        shouldGate: () => gateEnabled,
+      ),
+    );
+    addTearDown(provider.dispose);
+    gateEnabled = true;
+
+    final sync = provider.syncAllSchedulesToGitee();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(provider.scheduleSyncProgress?.message, '正在同步日程 1/1');
+
+    pullGate.complete();
+    await sync;
+  });
+
   test('remote view transition owns its save window and rejects overwrite pull',
       () async {
     final saveStarted = Completer<void>();
@@ -2140,6 +2200,16 @@ void main() {
   testWidgets(
       'desktop drawer exposes overwrite pull separately and acknowledges it after closing',
       (tester) async {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('home_widget'),
+      (call) async => null,
+    );
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+      (call) async => null,
+    );
     final provider = TimeProvider();
     addTearDown(provider.dispose);
     final scaffoldKey = GlobalKey<ScaffoldState>();
@@ -2181,8 +2251,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.text('覆盖拉取未开始：请先选择身份'), findsOneWidget);
+    expect(find.textContaining('覆盖拉取未开始：'), findsOneWidget);
     expect(scaffoldKey.currentState!.isDrawerOpen, isFalse);
+    await tester.pump(const Duration(seconds: 6));
   });
 
   testWidgets('mobile drawer exposes only overwrite pull action',
