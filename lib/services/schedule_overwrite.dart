@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'schedule_day_merge.dart';
+
 class ScheduleOverwriteSnapshotResult {
   final Map<String, List<Map<String, dynamic>>> entriesByDate;
   final String? error;
@@ -54,39 +56,15 @@ class ScheduleOverwriteSnapshot {
             : decoded is Map && decoded['slots'] is List
                 ? decoded['slots'] as List
                 : throw const FormatException('slots must be a list');
+        // 逐条校验规则与普通拉取/推送共享（见 scheduleDayEntriesError），
+        // 保证"覆盖拉取认为非法"的记录在其他同步路径也一定被拒绝。
+        final entryError = scheduleDayEntriesError(slots);
+        if (entryError != null) {
+          throw FormatException(entryError);
+        }
         final day = <Map<String, dynamic>>[];
-        final indexes = <int>{};
         for (final raw in slots) {
-          if (raw is! Map) throw const FormatException('slot must be an object');
-          final slot = Map<String, dynamic>.from(raw);
-          final index = slot['i'];
-          if (index is! int || index < 0 || index > 143 || !indexes.add(index)) {
-            throw const FormatException('invalid slot index');
-          }
-          final deleted = slot['del'];
-          for (final key in const ['fc', 'del']) {
-            if (slot.containsKey(key) && slot[key] is! bool) {
-              throw const FormatException('invalid boolean field');
-            }
-          }
-          if (slot.containsKey('l') && slot['l'] is! String) {
-            throw const FormatException('invalid label');
-          }
-          if (deleted != true &&
-              (slot['l'] is! String || (slot['l'] as String).isEmpty)) {
-            throw const FormatException('invalid label');
-          }
-          for (final key in const ['cid', 'eid']) {
-            if (slot.containsKey(key) && slot[key] is! String) {
-              throw const FormatException('invalid identifier');
-            }
-          }
-          for (final key in const ['c', 'ts']) {
-            if (slot.containsKey(key) && slot[key] is! num) {
-              throw const FormatException('invalid numeric field');
-            }
-          }
-          day.add(slot);
+          day.add(Map<String, dynamic>.from(raw));
         }
         day.sort((a, b) => (a['i'] as int).compareTo(b['i'] as int));
         entries[date] = day;

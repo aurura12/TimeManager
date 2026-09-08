@@ -326,7 +326,12 @@ void main() {
       final initialSlotsRevision = provider.slotsRevision;
       final initialCategoriesRevision = provider.categoriesRevision;
 
-      provider.toggleSlot(0);
+      // 真实写入一个时段（toggleSlot 现在禁止把空槽标记为已记录，故用
+      // 带内容的写入来推动槽位版本号）
+      provider.assignCategoryToSlots(
+        {0},
+        Category(name: '记录', color: Colors.blue),
+      );
       provider.addCategory(Category(name: '新分类', color: Colors.blue));
 
       expect(provider.slotsRevision, greaterThan(initialSlotsRevision));

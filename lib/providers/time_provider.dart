@@ -404,6 +404,23 @@ class TimeProvider with ChangeNotifier {
     SharedPreferences? prefs;
     String? previousStoredKind;
     var persistenceNeedsRestore = false;
+    // 桌面版本地时间块与待同步队列不分身份：若切换前仍有本会话产生的
+    // 自动同步定时器/待同步日期（旧身份下的编辑），先用旧身份把它们推送
+    // 完，避免 3 秒后定时器在切换后把旧身份的修改写入新身份的文件。
+    // 注意只处理"本会话产生的"待同步状态；从偏好加载的持久化待同步日期
+    // 不在此处推送（避免身份切换窗口内出现意外网络 I/O），它们会留在共享
+    // 待同步队列中，待用户回到对应身份或手动全量同步时再上传。
+    if (isDesktopPlatform &&
+        !_initializationFailed &&
+        (_scheduleGiteeTimer != null ||
+            _pendingScheduleGiteeDateKeys.isNotEmpty)) {
+      try {
+        await syncAllSchedulesToGitee();
+      } catch (e, stackTrace) {
+        debugPrint('切换日程身份前同步旧身份日程失败: $e');
+        _recordAppError('切换日程身份前同步旧身份日程失败', e, stackTrace);
+      }
+    }
     _scheduleIdentityMutationInProgress = true;
     try {
       prefs = await SharedPreferences.getInstance();
@@ -423,14 +440,16 @@ class TimeProvider with ChangeNotifier {
       _scheduleUser = kind;
       _hasSelectedScheduleUser = true;
       persistenceNeedsRestore = false;
+      // 取消旧身份仍挂起的自动同步定时器，并清空其待同步日期/修订缓存，
+      // 防止 3 秒后定时器或残留 pending 把旧身份的修改推送到新身份文件。
+      _scheduleGiteeTimer?.cancel();
+      _scheduleGiteeTimer = null;
+      _pendingScheduleGiteeDateKeys.clear();
+      _scheduleGiteeDateRevisions.clear();
+      _schedulePullRevision++;
       notifyListeners();
       // 切换身份后拉取新身份当前日期的日程
       _pullOwnScheduleIfWindows();
-      if (!_initializationFailed &&
-          isDesktopPlatform &&
-          pendingGiteeSyncDates.isNotEmpty) {
-        unawaited(syncAllSchedulesToGitee());
-      }
     } catch (e, stackTrace) {
       debugPrint('切换日程身份失败: $e');
       _recordAppError('切换日程身份失败', e, stackTrace);
@@ -1407,6 +1426,14 @@ class TimeProvider with ChangeNotifier {
     if (!_allowScheduleMutation() || _remoteViewEnabled) {
       return; // 恢复失败或远程视图只读，禁止编辑本地数据
     }
+    final targetSlot = slots[index];
+    if (!targetSlot.recorded &&
+        (targetSlot.label == null || targetSlot.label!.isEmpty)) {
+      // 空槽不能直接标记为"已记录"：没有内容却置 recorded 会在序列化时
+      // 产出 l:null 空标签，必须先以"选择分类"等方式填入内容。
+      _addScheduleSyncStatus('空时段不能直接记录，请先选择分类');
+      return;
+    }
     _saveSnapshot();
     List<TimeSlot> currentSlots = slots;
     currentSlots[index].recorded = !currentSlots[index].recorded;
@@ -1933,10 +1960,30 @@ class TimeProvider with ChangeNotifier {
 
     // 2) 合并（后写覆盖：同槽 ts 大者胜，仅一侧有则保留）
     final remote = parseScheduleContent(remoteContent);
+    if (!remote.isValid) {
+      // 远端含有非法记录（如 l:null 空标签）：拒绝本次推送，
+      // 不应用、不合并、不上传，保留待同步状态，避免把坏数据继续传播。
+      _addScheduleSyncStatus('远端日程数据异常（$dateKey）：${remote.error}，已中止同步');
+      _appLogService.warning(
+        '日程推送中止：$dateKey 远端数据异常：${remote.error}',
+        source: 'schedule_sync',
+      );
+      return false;
+    }
     final merged = scheduleEntriesForPush(
       localEntries: localEntries,
       remoteEntries: remote.slots,
     );
+    final mergedError = scheduleDayEntriesError(merged);
+    if (mergedError != null) {
+      // 兜底：合并结果含非法记录则绝不上传。
+      _addScheduleSyncStatus('合并结果数据异常（$dateKey）：$mergedError，已中止同步');
+      _appLogService.warning(
+        '日程推送中止：$dateKey 合并结果异常：$mergedError',
+        source: 'schedule_sync',
+      );
+      return false;
+    }
 
     // 3) 生成差异描述（对比远端原内容与合并结果）
     final commitMessage = _buildScheduleDiffMessage(
@@ -2006,8 +2053,20 @@ class TimeProvider with ChangeNotifier {
         }
         continue;
       }
+      final label = e['l'] as String?;
+      if (label == null || label.isEmpty) {
+        // 深度防御：无标签的 live 条目按删除意图处理，绝不允许落入内存成为
+        // "已记录但无内容"的槽位（避免后续再次导出 l:null 传播）。
+        final ts = _parseInt(e['ts']);
+        final delMs = (ts != null && ts > 0)
+            ? ts
+            : DateTime.now().millisecondsSinceEpoch;
+        slots[idx].deletedAt = DateTime.fromMillisecondsSinceEpoch(delMs);
+        if (e['fc'] == true) slots[idx].isFromCalendar = true;
+        continue;
+      }
       slots[idx].recorded = true;
-      slots[idx].label = e['l'] as String?;
+      slots[idx].label = label;
       slots[idx].categoryId = e['cid'] as String?;
       final colorVal = _parseInt(e['c']);
       if (colorVal != null) slots[idx].color = Color(colorVal);
@@ -2703,6 +2762,14 @@ class TimeProvider with ChangeNotifier {
     }
 
     final remote = parseScheduleContent(result.content);
+    if (!remote.isValid) {
+      // 远端含非法记录（如 l:null 空标签）：拒绝应用到本地，单日失败不中断整体。
+      _appLogService.warning(
+        '日程拉取拒绝：$dateKey 远端数据异常：${remote.error}',
+        source: 'schedule_sync',
+      );
+      return false;
+    }
     final daySlots = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
     final localEntries = _serializeRecordedSlots(daySlots);
     // 双向合并：union + 同槽 ts 大者胜，与推送 mergeScheduleSlots 完全对称
@@ -2974,6 +3041,17 @@ class TimeProvider with ChangeNotifier {
         return false;
       }
       final remote = parseScheduleContent(result.content);
+      if (!remote.isValid) {
+        // 远端含非法记录（如 l:null 空标签）：拒绝合并/应用，本地保持原状。
+        final message = '远端日程数据异常（$dateKey）：${remote.error}';
+        _addScheduleSyncStatus(message);
+        _appLogService.warning(
+          '日程拉取拒绝：$dateKey 远端数据异常：${remote.error}',
+          source: 'schedule_sync',
+        );
+        _failScheduleSyncProgress('拉取失败：$message', completed: 0, total: 1);
+        return false;
+      }
       final daySlots = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
       final merged = mergeScheduleSlots(
         localEntries: _serializeRecordedSlots(daySlots),
@@ -3073,8 +3151,21 @@ class TimeProvider with ChangeNotifier {
                 }
                 continue;
               }
+              final label = map['l'] as String?;
+              if (label == null || label.isEmpty) {
+                // 与其它加载路径一致：无标签 live 条目按删除意图还原，
+                // 不落入"已记录但无内容"状态。
+                final delTs = _parseInt(map['ts']);
+                slots[idx].deletedAt = DateTime.fromMillisecondsSinceEpoch(
+                  (delTs != null && delTs > 0)
+                      ? delTs
+                      : DateTime.now().millisecondsSinceEpoch,
+                );
+                if (map['fc'] == true) slots[idx].isFromCalendar = true;
+                continue;
+              }
               slots[idx].recorded = true;
-              slots[idx].label = map['l'] as String?;
+              slots[idx].label = label;
               slots[idx].categoryId = map['cid'] as String?;
               if (map['c'] != null) {
                 final colorVal = _parseInt(map['c']);
@@ -4177,9 +4268,24 @@ class TimeProvider with ChangeNotifier {
       }
       if (!slot.recorded) continue;
       if (excludeCalendar && slot.isFromCalendar) continue;
+      final label = slot.label;
+      if (label == null || label.isEmpty) {
+        // 防御：无内容的"已记录"槽绝不能作为 live entry 写出（避免 l:null
+        // 空标签再次传播）。按删除意图写墓碑，时间取该槽最近修改时间；
+        // 序列化保持无副作用，不就地改动内存中的槽位状态。
+        final tomb = <String, dynamic>{
+          'i': i,
+          'del': true,
+          'ts': slot.modifiedAt?.millisecondsSinceEpoch ??
+              DateTime.now().millisecondsSinceEpoch,
+        };
+        if (slot.isFromCalendar) tomb['fc'] = true;
+        recorded.add(tomb);
+        continue;
+      }
       final entry = <String, dynamic>{
         'i': i,
-        'l': slot.label,
+        'l': label,
         'c': slot.color?.toARGB32(),
       };
       if (slot.modifiedAt != null) {
@@ -5613,10 +5719,16 @@ class TimeProvider with ChangeNotifier {
     ];
   }
 
-  void _loadDailySlotsFromJson(
+  /// 解析并载入每日时间块 JSON。
+  ///
+  /// 返回发生"坏数据迁移"的日期集合：把历史上被旧版 APK 写成空标签
+  /// live 条目（`l:null`/空串）的记录还原为删除状态，保证再次导出为
+  /// `del:true` 墓碑。调用方按需根据返回值决定是否把这些日期标脏重写。
+  Set<String> _loadDailySlotsFromJson(
     Map<String, dynamic> slotsJson, {
     Map<String, List<TimeSlot>>? destination,
   }) {
+    final migratedDates = <String>{};
     final target = destination ?? _dailySlots;
     slotsJson.forEach((rawKey, value) {
       final dateKey = _normalizeDateKey(rawKey);
@@ -5639,8 +5751,27 @@ class TimeProvider with ChangeNotifier {
             }
             continue;
           }
+          final label = map['l'] as String?;
+          if (label == null || label.isEmpty) {
+            // 历史坏数据迁移：无标签的 live 条目本质是"删除意图"（旧版 APK
+            // 无法识别 del:true 墓碑、将其误写成空标签存活条目所致）。
+            // 还原为删除状态（删除时间取原 ts，缺失时取当前时间），
+            // 使后续导出产出 del:true 墓碑而非继续传播 l:null。
+            daySlots[idx].recorded = false;
+            daySlots[idx].categoryId = null;
+            daySlots[idx].color = null;
+            daySlots[idx].calendarEventId = null;
+            if (map['fc'] == true) daySlots[idx].isFromCalendar = true;
+            final ts = _parseInt(map['ts']);
+            final delMs = (ts != null && ts > 0)
+                ? ts
+                : DateTime.now().millisecondsSinceEpoch;
+            daySlots[idx].deletedAt = DateTime.fromMillisecondsSinceEpoch(delMs);
+            migratedDates.add(dateKey);
+            continue;
+          }
           daySlots[idx].recorded = true;
-          daySlots[idx].label = map['l'] as String?;
+          daySlots[idx].label = label;
           daySlots[idx].categoryId = map['cid'] as String?;
           if (map['c'] != null) {
             final colorVal = _parseInt(map['c']);
@@ -5663,6 +5794,7 @@ class TimeProvider with ChangeNotifier {
       }
       target[dateKey] = daySlots;
     });
+    return migratedDates;
   }
 
   Future<void> _loadData() async {
@@ -5738,7 +5870,20 @@ class TimeProvider with ChangeNotifier {
     if (slotsStr != null) {
       try {
         _dailySlots.clear();
-        _loadDailySlotsFromJson(json.decode(slotsStr) as Map<String, dynamic>);
+        final migratedDates = _loadDailySlotsFromJson(
+          json.decode(slotsStr) as Map<String, dynamic>,
+        );
+        // 历史空标签坏记录已还原为删除状态：标脏这些日期，让下一次保存
+        // 落盘为 del:true 墓碑，而非继续保留 l:null。
+        if (migratedDates.isNotEmpty) {
+          for (final dk in migratedDates) {
+            _markSlotsDirty(dk);
+          }
+          _appLogService.info(
+            '加载日程时修复了历史空标签记录：${migratedDates.length} 天（${migratedDates.join(',')}）',
+            source: 'schedule_sync',
+          );
+        }
       } catch (e, stackTrace) {
         debugPrint("加载时间块数据出错: $e");
         _recordAppError('加载时间块数据出错', e, stackTrace);

@@ -11,11 +11,70 @@ class ScheduleDayMergeResult {
   /// 文件级最后修改时间（epoch ms）
   final int updatedAt;
 
-  const ScheduleDayMergeResult({required this.slots, required this.updatedAt});
+  /// 解析/校验失败原因；为 null 表示内容可正常处理。
+  final String? error;
+
+  const ScheduleDayMergeResult({
+    required this.slots,
+    required this.updatedAt,
+    this.error,
+  });
+
+  /// 内容是否合法（空内容也算合法，表示"无远端日程"）。
+  bool get isValid => error == null;
+}
+
+/// 严格校验一天的槽位记录列表。
+///
+/// 返回 null 表示全部合法，否则返回中文错误描述。规则与覆盖拉取
+/// (schedule_overwrite.dart) 保持一致，作为普通拉取、推送、覆盖拉取的统一校验器：
+/// - 每条必须是对象，`i` 必须是 int 且 0..143 且不重复；
+/// - `del`/`fc` 键出现时必须是 bool，`cid`/`eid` 必须是 String，`c`/`ts` 必须是 num；
+/// - 携带 `l` 键但值不是 String 即非法（含 `l:null`）；
+/// - live 条目（`del != true`）必须有非空 String 标签 `l`。
+String? scheduleDayEntriesError(List<dynamic> rawSlots) {
+  final indexes = <int>{};
+  var position = 0;
+  for (final raw in rawSlots) {
+    if (raw is! Map) return '第 $position 条日程记录不是对象';
+    final slot = Map<String, dynamic>.from(raw);
+    final index = slot['i'];
+    if (index is! int || index < 0 || index > 143 || !indexes.add(index)) {
+      return '槽位索引非法或重复：$index';
+    }
+    final deleted = slot['del'];
+    for (final key in const ['fc', 'del']) {
+      if (slot.containsKey(key) && slot[key] is! bool) {
+        return '第 $index 槽字段 $key 必须是布尔值';
+      }
+    }
+    if (slot.containsKey('l') && slot['l'] is! String) {
+      return '第 $index 槽标签字段类型非法';
+    }
+    if (deleted != true &&
+        (slot['l'] is! String || (slot['l'] as String).isEmpty)) {
+      return '第 $index 槽是有效日程但缺少非空标签';
+    }
+    for (final key in const ['cid', 'eid']) {
+      if (slot.containsKey(key) && slot[key] is! String) {
+        return '第 $index 槽字段 $key 必须是字符串';
+      }
+    }
+    for (final key in const ['c', 'ts']) {
+      if (slot.containsKey(key) && slot[key] is! num) {
+        return '第 $index 槽字段 $key 必须是数字';
+      }
+    }
+    position++;
+  }
+  return null;
 }
 
 /// 解析远端日程文件内容（新对象格式优先，旧裸数组回退）。
-/// 解析失败视为无远端数据。
+///
+/// 与旧行为不同：只有"文件为空"表示无远端数据；JSON 解析失败、结构非法
+/// 或任一槽位记录不通过 [scheduleDayEntriesError] 都会返回带 [error] 的
+/// 非法结果，调用方必须据此中止合并/推送，不能静默当作"远端为空"。
 ScheduleDayMergeResult parseScheduleContent(String? content) {
   if (content == null || content.trim().isEmpty) {
     return const ScheduleDayMergeResult(slots: [], updatedAt: 0);
@@ -24,25 +83,49 @@ ScheduleDayMergeResult parseScheduleContent(String? content) {
   try {
     decoded = json.decode(content);
   } catch (_) {
-    return const ScheduleDayMergeResult(slots: [], updatedAt: 0);
+    return ScheduleDayMergeResult(
+      slots: const [],
+      updatedAt: 0,
+      error: '内容不是合法 JSON',
+    );
   }
+  int updatedAt = 0;
+  List<dynamic> rawSlots;
   if (decoded is Map) {
-    final updatedAt = _toInt(decoded['updated_at']) ?? 0;
+    updatedAt = _toInt(decoded['updated_at']) ?? 0;
     final raw = decoded['slots'];
-    final slots = raw is List
-        ? raw.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList()
-        : <Map<String, dynamic>>[];
-    return ScheduleDayMergeResult(slots: slots, updatedAt: updatedAt);
-  }
-  if (decoded is List) {
+    if (raw is List) {
+      rawSlots = raw;
+    } else {
+      return ScheduleDayMergeResult(
+        slots: const [],
+        updatedAt: 0,
+        error: '缺少有效的 slots 数组字段',
+      );
+    }
+  } else if (decoded is List) {
     // 旧裸数组格式：无时间信息，视为最旧
-    final slots = decoded
-        .whereType<Map>()
-        .map((m) => Map<String, dynamic>.from(m))
-        .toList();
-    return ScheduleDayMergeResult(slots: slots, updatedAt: 0);
+    rawSlots = decoded;
+  } else {
+    return ScheduleDayMergeResult(
+      slots: const [],
+      updatedAt: 0,
+      error: '内容结构非法（应为对象或数组）',
+    );
   }
-  return const ScheduleDayMergeResult(slots: [], updatedAt: 0);
+  final entryError = scheduleDayEntriesError(rawSlots);
+  if (entryError != null) {
+    return ScheduleDayMergeResult(
+      slots: const [],
+      updatedAt: 0,
+      error: entryError,
+    );
+  }
+  final slots = rawSlots
+      .whereType<Map>()
+      .map((m) => Map<String, dynamic>.from(m))
+      .toList();
+  return ScheduleDayMergeResult(slots: slots, updatedAt: updatedAt);
 }
 
 /// 合并本地与远端槽位（后写覆盖）。

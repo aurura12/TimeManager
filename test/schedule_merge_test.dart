@@ -19,10 +19,162 @@ void main() {
       expect(result.slots.length, 1);
     });
 
-    test('null / 空 / 非法内容返回空', () {
+    test('null / 空内容视为无远端数据（合法空）', () {
+      expect(parseScheduleContent(null).isValid, isTrue);
       expect(parseScheduleContent(null).slots, isEmpty);
+      expect(parseScheduleContent('').isValid, isTrue);
       expect(parseScheduleContent('').slots, isEmpty);
-      expect(parseScheduleContent('not json').slots, isEmpty);
+      expect(parseScheduleContent('   ').isValid, isTrue);
+      expect(parseScheduleContent('   ').slots, isEmpty);
+    });
+
+    test('JSON 解析失败 / 结构非法标记为非法而非静默为空', () {
+      final notJson = parseScheduleContent('not json');
+      expect(notJson.isValid, isFalse);
+      expect(notJson.error, isNotNull);
+
+      // 裸标量/数字/字符串内容
+      expect(parseScheduleContent('42').isValid, isFalse);
+      expect(parseScheduleContent('"hello"').isValid, isFalse);
+
+      // 对象但缺少 slots 数组
+      final missingSlots = parseScheduleContent('{"updated_at": 1}');
+      expect(missingSlots.isValid, isFalse);
+
+      // slots 不是 List
+      final slotsNotList =
+          parseScheduleContent('{"updated_at": 1, "slots": "oops"}');
+      expect(slotsNotList.isValid, isFalse);
+    });
+
+    test('live 条目缺失/空标签标记为非法（l:null、l:""）', () {
+      final nullLabel = parseScheduleContent(
+          '{"updated_at":1,"slots":[{"i":98,"l":null,"c":null,"ts":1000}]}');
+      expect(nullLabel.isValid, isFalse);
+      expect(nullLabel.error, isNotNull);
+
+      final emptyLabel = parseScheduleContent(
+          '{"updated_at":1,"slots":[{"i":98,"l":"","ts":1000}]}');
+      expect(emptyLabel.isValid, isFalse);
+
+      // 完全没有 l 键的 live 条目同样非法
+      final noLabel = parseScheduleContent(
+          '{"updated_at":1,"slots":[{"i":98,"ts":1000}]}');
+      expect(noLabel.isValid, isFalse);
+
+      // 非法内容 slots 应为空且不抛异常（调用方靠 isValid 决定行为）
+      expect(nullLabel.slots, isEmpty);
+    });
+
+    test('墓碑条目：无 l 合法，带 l:null 非法，带 l:"" 合法', () {
+      final tomb = parseScheduleContent(
+          '{"updated_at":1,"slots":[{"i":98,"del":true,"ts":1000}]}');
+      expect(tomb.isValid, isTrue);
+      expect(tomb.slots.single['del'], true);
+
+      final tombNullLabel = parseScheduleContent(
+          '{"updated_at":1,"slots":[{"i":98,"del":true,"l":null,"ts":1000}]}');
+      expect(tombNullLabel.isValid, isFalse);
+
+      final tombEmptyString = parseScheduleContent(
+          '{"updated_at":1,"slots":[{"i":98,"del":true,"l":"","ts":1000}]}');
+      expect(tombEmptyString.isValid, isTrue);
+    });
+
+    test('槽位索引：越界 / 非整数 / 重复均标记为非法', () {
+      expect(
+        parseScheduleContent(
+                '{"updated_at":1,"slots":[{"i":144,"l":"x","ts":1}]}')
+            .isValid,
+        isFalse,
+      );
+      expect(
+        parseScheduleContent(
+                '{"updated_at":1,"slots":[{"i":-1,"l":"x","ts":1}]}')
+            .isValid,
+        isFalse,
+      );
+      expect(
+        parseScheduleContent(
+                '{"updated_at":1,"slots":[{"i":1.5,"l":"x","ts":1}]}')
+            .isValid,
+        isFalse,
+      );
+      expect(
+        parseScheduleContent(
+                '{"updated_at":1,"slots":[{"i":0,"l":"x","ts":1},{"i":0,"l":"y","ts":2}]}')
+            .isValid,
+        isFalse,
+      );
+      // 边界 143 合法
+      expect(
+        parseScheduleContent(
+                '{"updated_at":1,"slots":[{"i":143,"l":"x","ts":1}]}')
+            .isValid,
+        isTrue,
+      );
+    });
+
+    test('字段类型校验：del/fc 必须 bool，cid/eid 必须 String，c/ts 必须 num',
+        () {
+      final badDel = parseScheduleContent(
+          '{"updated_at":1,"slots":[{"i":0,"del":"true","ts":1}]}');
+      expect(badDel.isValid, isFalse);
+
+      final badFc = parseScheduleContent(
+          '{"updated_at":1,"slots":[{"i":0,"l":"x","fc":"yes","ts":1}]}');
+      expect(badFc.isValid, isFalse);
+
+      final badCid = parseScheduleContent(
+          '{"updated_at":1,"slots":[{"i":0,"l":"x","cid":5,"ts":1}]}');
+      expect(badCid.isValid, isFalse);
+
+      final badEid = parseScheduleContent(
+          '{"updated_at":1,"slots":[{"i":0,"l":"x","eid":true,"ts":1}]}');
+      expect(badEid.isValid, isFalse);
+
+      final badC = parseScheduleContent(
+          '{"updated_at":1,"slots":[{"i":0,"l":"x","c":"red","ts":1}]}');
+      expect(badC.isValid, isFalse);
+
+      final badTs = parseScheduleContent(
+          '{"updated_at":1,"slots":[{"i":0,"l":"x","ts":"later"}]}');
+      expect(badTs.isValid, isFalse);
+    });
+  });
+
+  group('scheduleDayEntriesError', () {
+    test('合法列表返回 null', () {
+      expect(scheduleDayEntriesError(const [
+        {'i': 0, 'l': '跑步', 'c': 1, 'cid': 'c1', 'ts': 1000},
+        {'i': 98, 'del': true, 'ts': 2000},
+        {'i': 143, 'l': '睡觉', 'fc': true, 'eid': 'evt', 'ts': 3000},
+      ]), isNull);
+    });
+
+    test('空列表合法（空文件语义）', () {
+      expect(scheduleDayEntriesError(const []), isNull);
+    });
+
+    test('非法条目返回非 null 原因', () {
+      expect(scheduleDayEntriesError(const [
+        {'i': 98, 'l': null, 'ts': 1000},
+      ]), isNotNull);
+
+      expect(scheduleDayEntriesError(const [
+        {'i': 98, 'l': '', 'ts': 1000},
+      ]), isNotNull);
+
+      expect(scheduleDayEntriesError(const ['not-a-map']), isNotNull);
+
+      expect(scheduleDayEntriesError(const [
+        {'i': 98, 'del': true, 'l': null, 'ts': 1000},
+      ]), isNotNull);
+
+      // 合法墓碑
+      expect(scheduleDayEntriesError(const [
+        {'i': 98, 'del': true, 'l': '', 'ts': 1000},
+      ]), isNull);
     });
   });
 
