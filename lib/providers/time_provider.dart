@@ -360,6 +360,12 @@ class TimeProvider with ChangeNotifier {
   bool get _usesMobileIdentityFlow =>
       _identityModePlatformOverride ?? !isDesktopPlatform;
 
+  /// 日程自动拉取使用的平台日期范围。
+  ///
+  /// 生产环境中与 Android / Windows 平台一一对应；复用身份流程开关还
+  /// 允许测试在桌面宿主上模拟 Android 的单日拉取行为。
+  bool get _usesDesktopScheduleView => !_usesMobileIdentityFlow;
+
   /// Android app-owned preferences are partitioned by logical person. Desktop
   /// keeps its established global preference names for backwards compatibility.
   String _identityDataKey(String baseKey) {
@@ -449,7 +455,7 @@ class TimeProvider with ChangeNotifier {
       _schedulePullRevision++;
       notifyListeners();
       // 切换身份后拉取新身份当前日期的日程
-      _pullOwnScheduleIfWindows();
+      _pullOwnScheduleOnDateChange();
     } catch (e, stackTrace) {
       debugPrint('切换日程身份失败: $e');
       _recordAppError('切换日程身份失败', e, stackTrace);
@@ -1200,8 +1206,8 @@ class TimeProvider with ChangeNotifier {
     if (_isDisposed || _initializationFailed) return;
     // 拉取当前身份的分类（事件/子事件）到本地（安卓与 Windows 都执行）
     unawaited(_pullCategoriesFromGitee());
-    // Windows 上拉取当前日期自己的日程，补上安卓端推送的数据
-    _pullOwnScheduleIfWindows();
+    // 各平台拉取当前日期自己的日程，补上另一平台推送的数据
+    _pullOwnScheduleOnDateChange();
     // 仅在用户明确选择 Google 模式后恢复会话；手动模式绝不触发 Google。
     if (_usesMobileIdentityFlow &&
         _identityMode == AppIdentityMode.google &&
@@ -1346,7 +1352,7 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
     _refreshHomeWidget();
     pullGoogleCalendarForCurrentDate();
-    _pullOwnScheduleIfWindows();
+    _pullOwnScheduleOnDateChange();
   }
 
   void nextDay() {
@@ -1355,7 +1361,7 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
     _refreshHomeWidget();
     pullGoogleCalendarForCurrentDate();
-    _pullOwnScheduleIfWindows();
+    _pullOwnScheduleOnDateChange();
   }
 
   void goToDate(DateTime date) {
@@ -1364,18 +1370,16 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
     _refreshHomeWidget();
     pullGoogleCalendarForCurrentDate();
-    _pullOwnScheduleIfWindows();
+    _pullOwnScheduleOnDateChange();
   }
 
-  /// Windows 上切日/初始化后的日程拉取：
-  /// 远程视图开启时拉取对方三列数据；否则拉取当前日期"自己身份"的日程并合并（union），
-  /// 解决安卓端推送后 Windows 本地无数据看不到自己日程的问题。
-  /// 拉取失败静默，不打断用户操作。
-  void _pullOwnScheduleIfWindows() {
+  /// 各平台切日/初始化后的日程拉取：
+  /// 远程视图开启时拉取对方可见日期；否则拉取当前日期"自己身份"的日程并合并（union）。
+  /// Windows 拉取三列，Android 拉取当前选中日，失败静默，不打断用户操作。
+  void _pullOwnScheduleOnDateChange() {
     if (!_isInitialLoadFinished ||
         !_scheduleUserLoadFinished ||
-        _initializationFailed ||
-        !isDesktopPlatform) {
+        _initializationFailed) {
       return;
     }
     if (!_hasSelectedScheduleUser) return;
@@ -1385,7 +1389,7 @@ class TimeProvider with ChangeNotifier {
     } else {
       for (final date in scheduleDatesForView(
         _currentDate,
-        desktop: isDesktopPlatform,
+        desktop: _usesDesktopScheduleView,
       )) {
         unawaited(pullScheduleFromGitee(
           date: date,
@@ -1396,7 +1400,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   /// 远程视图下：对当前三列日期备份本地（仅首次访问的日期）并拉取对方数据。
-  /// 远程视图期间切换日期时，由 [_pullOwnScheduleIfWindows] 调用。
+  /// 远程视图期间切换日期时，由 [_pullOwnScheduleOnDateChange] 调用。
   void _pullRemoteViewSchedules({int? requestRevision}) {
     final otherCode = _scheduleUser.code == 'g' ? 'j' : 'g';
     for (final d in _getRemoteViewDates()) {
@@ -3318,7 +3322,10 @@ class TimeProvider with ChangeNotifier {
 
   /// 远程视图覆盖的日期：Windows 三列（选中日 ±1 天），安卓仅选中日。
   List<DateTime> _getRemoteViewDates() {
-    return scheduleDatesForView(_currentDate, desktop: isDesktopPlatform);
+    return scheduleDatesForView(
+      _currentDate,
+      desktop: _usesDesktopScheduleView,
+    );
   }
 
   /// 清空一天的槽位数据（远程视图备份/恢复用）
