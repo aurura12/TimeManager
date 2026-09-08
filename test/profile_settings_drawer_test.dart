@@ -12,7 +12,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
-    'mobile settings keeps the manual identity entry visible in Google mode',
+    'mobile settings hides manual identity entry in Google mode',
     (tester) async {
       SharedPreferences.setMockInitialValues({
         AppIdentityService.modeKey: 'google',
@@ -70,9 +70,7 @@ void main() {
       scaffoldState.openDrawer();
       await tester.pump();
 
-      expect(find.text('手动用户身份'), findsOneWidget);
-      expect(find.text('乖乖'), findsOneWidget);
-      expect(find.text('晶晶'), findsOneWidget);
+      expect(find.text('手动用户身份'), findsNothing);
     },
   );
 }

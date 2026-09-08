@@ -95,15 +95,18 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                       },
                     ),
                   ] else ...[
-                    _buildManualIdentitySection(
-                      context,
-                      provider,
-                      title: '手动用户身份',
-                    ),
-                    if (provider.isGoogleIdentityMode)
+                    if (provider.isManualIdentityMode)
+                      _buildManualIdentitySection(
+                        context,
+                        provider,
+                        title: '手动用户身份',
+                      )
+                    else
                       _buildLoginSection(
                         context,
-                        AppIdentityService.googleUser ?? googleUser,
+                        provider.isGoogleIdentityMode
+                            ? AppIdentityService.googleUser
+                            : googleUser,
                         provider,
                       ),
                     const Divider(height: 1),
@@ -289,24 +292,19 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     required String title,
   }) {
     final selected =
-        provider.isManualIdentityMode && provider.hasSelectedScheduleUser
-            ? provider.scheduleUser
-            : AppIdentityService.manualKind;
+        provider.hasSelectedScheduleUser ? provider.scheduleUser : null;
     // 未选择时强制展开以便选择；选中后默认收起，点击身份行可展开切换
     final expanded = selected == null || _identityExpanded;
-    final subtitle = selected == null
-        ? provider.isGoogleIdentityMode
-            ? '选择后切换到手动模式'
-            : '请选择身份后再同步'
-        : provider.isGoogleIdentityMode
-            ? '手动身份：${selected == DiaryKind.g ? '乖乖' : '晶晶'}（选择后关闭 Google 同步）'
-            : '当前身份：${selected == DiaryKind.g ? '乖乖' : '晶晶'}';
     return Column(
       children: [
         ListTile(
           leading: const Icon(Icons.person_pin_outlined),
           title: Text(title),
-          subtitle: Text(subtitle),
+          subtitle: Text(
+            selected == null
+                ? '请选择身份后再同步'
+                : '当前身份：${selected == DiaryKind.g ? '乖乖' : '晶晶'}',
+          ),
           trailing: Icon(expanded ? Icons.expand_less : Icons.expand_more),
           onTap: () {
             setState(() => _identityExpanded = !_identityExpanded);
