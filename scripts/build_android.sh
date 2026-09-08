@@ -165,7 +165,7 @@ case "$TARGET_PLATFORM" in
   android-arm)   APK_FILE="app-armeabi-v7a-release.apk"; APK_LABEL="armeabi-v7a" ;;
   android-arm64) APK_FILE="app-arm64-v8a-release.apk";   APK_LABEL="arm64-v8a" ;;
   android-x64)   APK_FILE="app-x86_64-release.apk";      APK_LABEL="x86_64" ;;
-  *) die "不支持的架构：$TARGET_PLATFORM（可选 android-arm / android-arm64 / android-x64）" ;;
+  *) die "不支持的架构：${TARGET_PLATFORM}（可选 android-arm / android-arm64 / android-x64）" ;;
 esac
 
 read_version
@@ -173,7 +173,7 @@ compute_next_version
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   if [[ "$SKIP_BUMP" -eq 1 ]]; then
-    echo "当前版本：$VERSION_STR（--skip-bump，构建时不变）"
+    echo "当前版本：${VERSION_STR}（--skip-bump，构建时不变）"
   else
     echo "当前版本：$VERSION_STR"
     echo "构建版本：$NEW_VERSION_STR"
@@ -217,8 +217,8 @@ if [[ "$SKIP_BUMP" -eq 0 ]]; then
   VERSION_NAME="$NEW_VERSION_NAME"
 fi
 
-log "构建 $TARGET_PLATFORM release APK（版本 $VERSION_STR）"
-flutter build apk --release --target-platform "$TARGET_PLATFORM"
+log "构建 $TARGET_PLATFORM release APK（版本 ${VERSION_STR}）"
+flutter build apk --release --target-platform "$TARGET_PLATFORM" --split-per-abi
 
 SOURCE_APK="$REPO_ROOT/build/app/outputs/flutter-apk/$APK_FILE"
 [[ -f "$SOURCE_APK" ]] || die "构建完成但找不到 APK：$SOURCE_APK"
