@@ -15,8 +15,11 @@ import 'package:time_manager/services/google_calendar_service.dart';
 import 'package:time_manager/services/schedule_gitee_service.dart';
 import 'package:time_manager/services/schedule_overwrite.dart';
 import 'package:time_manager/services/schedule_sync_dependencies.dart';
+import 'package:time_manager/services/app_log_service.dart';
 import 'package:time_manager/widgets/profile_settings_drawer.dart';
 import 'package:provider/provider.dart';
+
+import 'support/fake_app_log_store.dart';
 
 const _localPreferences = <String, Object>{
   'daily_slots':
@@ -118,6 +121,7 @@ Future<TimeProvider> _createProvider({
   Duration googleCalendarDebounce = const Duration(seconds: 3),
   bool? googleCalendarSyncPlatformOverride,
   bool? googleCalendarSignedInOverride,
+  AppLogService? appLogService,
   Future<Object?> Function(MethodCall call)? secureStorageHandler,
 }) async {
   SharedPreferences.setMockInitialValues(initialPreferences);
@@ -139,6 +143,7 @@ Future<TimeProvider> _createProvider({
     googleCalendarSignedInOverride: googleCalendarSignedInOverride,
     scheduleSyncDependencies:
         dependencies ?? _fakeDependencies(failPull: failPull),
+    appLogService: appLogService,
     saveDataOverride: saveDataOverride,
     scheduleSnapshotWriteObserver: scheduleSnapshotWriteObserver,
     scheduleSnapshotJournalPhaseObserver: scheduleSnapshotJournalPhaseObserver,
@@ -173,6 +178,62 @@ class _RejectScheduleUserPreferenceStore
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('全量拉取会记录成功日志并保留完成进度', () async {
+    final logs = AppLogService(store: FakeAppLogStore());
+    await logs.initialize();
+    final provider = await _createProvider(
+      failPull: false,
+      appLogService: logs,
+      googleCalendarSyncPlatformOverride: false,
+    );
+    addTearDown(provider.dispose);
+
+    await provider.pullAllSchedulesFromGitee();
+
+    final progress = provider.scheduleSyncProgress;
+    expect(progress, isNotNull);
+    expect(progress!.message, '全部拉取完成 (1 天)');
+    expect(progress.completed, 1);
+    expect(progress.total, 1);
+    expect(progress.isFinished, isTrue);
+    expect(
+      logs.entries.map((entry) => entry.message),
+      containsAll(<String>[
+        '全量日程拉取开始（身份 g）',
+        '日程拉取成功：2026-09-06（远端 1 条，合并后 1 条）',
+        '全量日程拉取完成：1/1 天',
+      ]),
+    );
+  });
+
+  test('覆盖拉取会发布逐阶段进度并记录远端快照结果', () async {
+    final logs = AppLogService(store: FakeAppLogStore());
+    await logs.initialize();
+    final provider = await _createProvider(
+      failPull: false,
+      appLogService: logs,
+      googleCalendarSyncPlatformOverride: false,
+    );
+    addTearDown(provider.dispose);
+
+    expect(await provider.overwriteAllSchedulesFromGitee(), isTrue);
+
+    final progress = provider.scheduleSyncProgress;
+    expect(progress, isNotNull);
+    expect(progress!.message, '覆盖拉取完成');
+    expect(progress.completed, 1);
+    expect(progress.total, 1);
+    expect(progress.isFinished, isTrue);
+    expect(
+      logs.entries.map((entry) => entry.message),
+      containsAll(<String>[
+        '覆盖拉取开始（身份 g）',
+        '覆盖拉取远端文件列表完成：1 个文件',
+        '覆盖拉取完成：1/1 天',
+      ]),
+    );
+  });
 
   test('accepts only padded canonical paths for the selected user', () {
     expect(
@@ -804,6 +865,9 @@ void main() {
       date: DateTime(2026, 9, 6),
     );
     await pullStarted.future;
+    // The pull now publishes its initial progress before waiting on the
+    // network. Only the post-dispose continuation must remain silent.
+    notificationCount = 0;
     provider.dispose();
     disposed = true;
     pullGate.complete();

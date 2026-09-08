@@ -12,6 +12,7 @@ import '../models/calendar_block.dart';
 import '../models/search_result.dart';
 import '../models/voice_schedule_draft.dart';
 import '../models/pending_sync_state.dart';
+import '../models/schedule_sync_progress.dart';
 import '../services/home_widget_service.dart';
 import '../utils/platform_features.dart';
 import '../services/schedule_day_merge.dart';
@@ -196,6 +197,7 @@ class TimeProvider with ChangeNotifier {
   final bool? _googleCalendarSyncPlatformOverride;
   final bool? _googleCalendarSignedInOverride;
   final ScheduleSyncDependencies _scheduleSyncDependencies;
+  final AppLogService _appLogService;
   final Future<bool> Function()? _saveDataOverride;
   final void Function(String key)? _scheduleSnapshotWriteObserver;
   final void Function(String phase)? _scheduleSnapshotJournalPhaseObserver;
@@ -216,7 +218,7 @@ class TimeProvider with ChangeNotifier {
     Object error, [
     StackTrace? stackTrace,
   ]) {
-    AppLogService.instance.error(
+    _appLogService.error(
       message,
       source: 'time_provider',
       error: error,
@@ -996,6 +998,7 @@ class TimeProvider with ChangeNotifier {
     _debounceTimer?.cancel();
     _scheduleGiteeTimer?.cancel();
     _categoriesGiteeTimer?.cancel();
+    _scheduleSyncProgressClearTimer?.cancel();
     _googleAuthSubscription?.cancel();
     _syncStatusController.close();
     _scheduleGiteeSyncController?.close();
@@ -1016,6 +1019,7 @@ class TimeProvider with ChangeNotifier {
     bool? googleCalendarSyncPlatformOverride,
     bool? googleCalendarSignedInOverride,
     ScheduleSyncDependencies? scheduleSyncDependencies,
+    AppLogService? appLogService,
     Future<bool> Function()? saveDataOverride,
     void Function(String key)? scheduleSnapshotWriteObserver,
     void Function(String phase)? scheduleSnapshotJournalPhaseObserver,
@@ -1028,6 +1032,7 @@ class TimeProvider with ChangeNotifier {
         _googleCalendarSignedInOverride = googleCalendarSignedInOverride,
         _scheduleSyncDependencies =
             scheduleSyncDependencies ?? ScheduleSyncDependencies.production(),
+        _appLogService = appLogService ?? AppLogService.instance,
         _saveDataOverride = saveDataOverride,
         _scheduleSnapshotWriteObserver = scheduleSnapshotWriteObserver,
         _scheduleSnapshotJournalPhaseObserver =
@@ -1634,6 +1639,67 @@ class TimeProvider with ChangeNotifier {
     if (c != null && !c.isClosed) c.add(message);
   }
 
+  void _setScheduleSyncProgress({
+    required String message,
+    required int completed,
+    required int total,
+    bool isFinished = false,
+    bool isError = false,
+  }) {
+    if (_isDisposed) return;
+    _scheduleSyncProgressClearTimer?.cancel();
+    _scheduleSyncProgressClearTimer = null;
+    _scheduleSyncProgress = ScheduleSyncProgress(
+      message: message,
+      completed: completed,
+      total: total,
+      isFinished: isFinished,
+      isError: isError,
+    );
+    notifyListeners();
+    if (isFinished || isError) {
+      _scheduleSyncProgressClearTimer = Timer(
+        Duration(seconds: isError ? 5 : 3),
+        () {
+          _scheduleSyncProgressClearTimer = null;
+          if (_isDisposed) return;
+          _scheduleSyncProgress = null;
+          notifyListeners();
+        },
+      );
+    }
+  }
+
+  void _startScheduleSyncProgress(String message, {int total = 0}) {
+    _setScheduleSyncProgress(message: message, completed: 0, total: total);
+  }
+
+  void _finishScheduleSyncProgress(
+    String message, {
+    required int completed,
+    required int total,
+  }) {
+    _setScheduleSyncProgress(
+      message: message,
+      completed: completed,
+      total: total,
+      isFinished: true,
+    );
+  }
+
+  void _failScheduleSyncProgress(
+    String message, {
+    int completed = 0,
+    int total = 0,
+  }) {
+    _setScheduleSyncProgress(
+      message: message,
+      completed: completed,
+      total: total,
+      isError: true,
+    );
+  }
+
   void _addSyncStatus(String message) {
     if (_isDisposed || _syncStatusController.isClosed) return;
     _syncStatusController.add(message);
@@ -1645,6 +1711,8 @@ class TimeProvider with ChangeNotifier {
   }
 
   Timer? _scheduleGiteeTimer;
+  Timer? _scheduleSyncProgressClearTimer;
+  ScheduleSyncProgress? _scheduleSyncProgress;
   bool _scheduleGiteeSyncing = false;
   bool _scheduleOverwriteInProgress = false;
   int _scheduleMergePullsInProgress = 0;
@@ -1652,6 +1720,7 @@ class TimeProvider with ChangeNotifier {
   final Set<String> _pendingScheduleGiteeDateKeys = {};
   final Map<String, int> _scheduleGiteeDateRevisions = {};
   String? _lastEditedDateKey;
+  ScheduleSyncProgress? get scheduleSyncProgress => _scheduleSyncProgress;
   bool get hasPendingScheduleGiteeUpload =>
       _pendingScheduleGiteeDateKeys.isNotEmpty;
 
@@ -2067,6 +2136,11 @@ class TimeProvider with ChangeNotifier {
     }
     _allSchedulePulling = true;
     final selectedUserCode = _scheduleUser.code;
+    _appLogService.info(
+      '全量日程拉取开始（身份 $selectedUserCode）',
+      source: 'schedule_sync',
+    );
+    _startScheduleSyncProgress('正在准备拉取所有日程');
     // 取消等待中的当日自动推送，避免与全量拉取并发
     _scheduleGiteeTimer?.cancel();
     try {
@@ -2075,16 +2149,27 @@ class TimeProvider with ChangeNotifier {
           token == null ||
           token.isEmpty) {
         _addScheduleSyncStatus('未配置同步 Token');
+        _appLogService.warning('全量日程拉取未开始：未配置同步 Token',
+            source: 'schedule_sync');
+        _failScheduleSyncProgress('全量拉取失败：未配置同步 Token');
         return;
       }
 
       // 1) 列出远端当前用户所有日程文件
+      _setScheduleSyncProgress(
+        message: '正在读取远端日程列表',
+        completed: 0,
+        total: 0,
+      );
       final listResult = await _scheduleSyncDependencies.listPaths(
         token: token,
         userCode: selectedUserCode,
       );
       if (!_canContinueScheduleSync(selectedUserCode) || !listResult.success) {
-        _addScheduleSyncStatus(listResult.error ?? '读取远端日程列表失败');
+        final message = listResult.error ?? '读取远端日程列表失败';
+        _addScheduleSyncStatus(message);
+        _appLogService.warning('全量日程拉取失败：$message', source: 'schedule_sync');
+        _failScheduleSyncProgress('全量拉取失败：$message');
         return;
       }
 
@@ -2098,9 +2183,14 @@ class TimeProvider with ChangeNotifier {
         if (!dateKeys.contains(normalized)) dateKeys.add(normalized);
       }
       dateKeys.sort();
+      _appLogService.info(
+        '远端日程列表读取完成：共 ${dateKeys.length} 天',
+        source: 'schedule_sync',
+      );
 
       if (dateKeys.isEmpty) {
         _addScheduleSyncStatus('远端无日程');
+        _finishScheduleSyncProgress('远端无日程', completed: 0, total: 0);
         Future.delayed(const Duration(seconds: 3), () {
           _addScheduleSyncStatus('');
         });
@@ -2110,16 +2200,34 @@ class TimeProvider with ChangeNotifier {
       // 3) 逐日拉取并双向合并（单日失败不中断整体）
       final total = dateKeys.length;
       var done = 0;
+      _setScheduleSyncProgress(
+        message: '准备拉取日程 0/$total',
+        completed: 0,
+        total: total,
+      );
       for (final dateKey in dateKeys) {
         if (!_canContinueScheduleSync(selectedUserCode)) return;
-        _addScheduleSyncStatus('拉取中 ${done + 1}/$total...');
+        final current = done + 1;
+        _addScheduleSyncStatus('拉取中 $current/$total...');
+        _setScheduleSyncProgress(
+          message: '正在拉取日程 $current/$total',
+          completed: done,
+          total: total,
+        );
         final ok = await _pullScheduleDayFromGitee(
           token,
           dateKey,
           userCode: selectedUserCode,
         );
         if (!_canContinueScheduleSync(selectedUserCode)) return;
-        if (ok) done++;
+        if (ok) {
+          done++;
+          _setScheduleSyncProgress(
+            message: '已拉取日程 $done/$total',
+            completed: done,
+            total: total,
+          );
+        }
       }
 
       // 4) 全部完成后统一落盘 + 通知（避免逐日保存）
@@ -2131,18 +2239,39 @@ class TimeProvider with ChangeNotifier {
 
       if (done == total) {
         _addScheduleSyncStatus('全部拉取完成 ($total 天)');
+        _finishScheduleSyncProgress(
+          '全部拉取完成 ($total 天)',
+          completed: done,
+          total: total,
+        );
       } else if (done > 0) {
         _addScheduleSyncStatus('拉取完成 $done/$total');
+        _finishScheduleSyncProgress(
+          '拉取完成 $done/$total',
+          completed: done,
+          total: total,
+        );
       } else {
         _addScheduleSyncStatus('拉取失败');
+        _failScheduleSyncProgress('全量拉取失败', completed: done, total: total);
       }
+      _appLogService.info(
+        '全量日程拉取完成：$done/$total 天',
+        source: 'schedule_sync',
+      );
       Future.delayed(const Duration(seconds: 3), () {
         _addScheduleSyncStatus('');
       });
     } catch (e, stackTrace) {
       _addScheduleSyncStatus('全量拉取失败: $e');
+      _failScheduleSyncProgress('全量拉取失败：$e');
       _recordAppError('全量日程拉取失败', e, stackTrace);
     } finally {
+      if (_scheduleSyncProgress != null &&
+          !_scheduleSyncProgress!.isFinished &&
+          !_scheduleSyncProgress!.isError) {
+        _failScheduleSyncProgress('全量拉取已取消');
+      }
       _allSchedulePulling = false;
     }
   }
@@ -2188,6 +2317,11 @@ class TimeProvider with ChangeNotifier {
 
     final selectedUserCode = _scheduleUser.code;
     _scheduleOverwriteInProgress = true;
+    _appLogService.info(
+      '覆盖拉取开始（身份 $selectedUserCode）',
+      source: 'schedule_sync',
+    );
+    _startScheduleSyncProgress('覆盖拉取：准备读取远端文件');
     _googleSyncGeneration++;
     _scheduleGiteeTimer?.cancel();
     _scheduleGiteeTimer = null;
@@ -2210,14 +2344,26 @@ class TimeProvider with ChangeNotifier {
       final token = await _scheduleSyncDependencies.loadToken();
       if (!overwriteIsStillValid() || token == null || token.isEmpty) {
         _lastScheduleOverwriteFailure = '覆盖拉取未开始或失败，请稍后重试';
+        _appLogService.warning('覆盖拉取失败：未配置同步 Token', source: 'schedule_sync');
+        _failScheduleSyncProgress('覆盖拉取失败：未配置同步 Token');
         return false;
       }
 
+      _setScheduleSyncProgress(
+        message: '覆盖拉取：正在读取远端文件列表',
+        completed: 0,
+        total: 0,
+      );
       final listResult = await _scheduleSyncDependencies.listPaths(
         token: token,
         userCode: selectedUserCode,
       );
-      if (!overwriteIsStillValid() || !listResult.success) return false;
+      if (!overwriteIsStillValid() || !listResult.success) {
+        final message = listResult.error ?? '读取远端日程列表失败';
+        _appLogService.warning('覆盖拉取失败：$message', source: 'schedule_sync');
+        _failScheduleSyncProgress('覆盖拉取失败：$message');
+        return false;
+      }
 
       final canonicalPaths = listResult.pathShaMap.keys.where((path) {
         return ScheduleOverwriteSnapshot.isCanonicalSchedulePath(
@@ -2227,14 +2373,30 @@ class TimeProvider with ChangeNotifier {
       }).toList()
         ..sort();
 
+      _appLogService.info(
+        '覆盖拉取远端文件列表完成：${canonicalPaths.length} 个文件',
+        source: 'schedule_sync',
+      );
+      _setScheduleSyncProgress(
+        message: '覆盖拉取：准备拉取 ${canonicalPaths.length} 天日程',
+        completed: 0,
+        total: canonicalPaths.length,
+      );
+
       final contentsByPath = <String, String>{};
-      for (final path in canonicalPaths) {
+      for (var index = 0; index < canonicalPaths.length; index++) {
+        final path = canonicalPaths[index];
         final dateKey = ScheduleOverwriteSnapshot.dateKeyFromCanonicalPath(
           path,
           userCode: selectedUserCode,
         );
         if (dateKey == null) continue;
         if (!overwriteIsStillValid()) return false;
+        _setScheduleSyncProgress(
+          message: '覆盖拉取：正在拉取日程 ${index + 1}/${canonicalPaths.length}',
+          completed: index,
+          total: canonicalPaths.length,
+        );
         final pullResult = await _scheduleSyncDependencies.pullDay(
           token: token,
           dateKey: dateKey,
@@ -2246,16 +2408,51 @@ class TimeProvider with ChangeNotifier {
             pullResult.content!.trim().isEmpty ||
             pullResult.sha == null ||
             pullResult.sha != listResult.pathShaMap[path]) {
+          final reason = pullResult.error ??
+              (pullResult.sha != listResult.pathShaMap[path]
+                  ? '远端文件版本发生变化'
+                  : '远端文件内容无效');
+          _appLogService.warning(
+            '覆盖拉取失败：$dateKey，$reason',
+            source: 'schedule_sync',
+          );
+          _failScheduleSyncProgress(
+            '覆盖拉取失败：第 ${index + 1}/${canonicalPaths.length} 天，$reason',
+            completed: index,
+            total: canonicalPaths.length,
+          );
           return false;
         }
         contentsByPath[path] = pullResult.content!;
+        _appLogService.info(
+          '覆盖拉取远端日程成功：$dateKey（${index + 1}/${canonicalPaths.length}）',
+          source: 'schedule_sync',
+        );
+        _setScheduleSyncProgress(
+          message: '覆盖拉取：已拉取日程 ${index + 1}/${canonicalPaths.length}',
+          completed: index + 1,
+          total: canonicalPaths.length,
+        );
       }
 
+      _setScheduleSyncProgress(
+        message: '覆盖拉取：正在校验远端日程快照',
+        completed: canonicalPaths.length,
+        total: canonicalPaths.length,
+      );
       final snapshot = ScheduleOverwriteSnapshot.fromRemoteFiles(
         userCode: selectedUserCode,
         contentsByPath: contentsByPath,
       );
-      if (!snapshot.isValid) return false;
+      if (!snapshot.isValid) {
+        _appLogService.warning('覆盖拉取失败：远端日程快照校验失败', source: 'schedule_sync');
+        _failScheduleSyncProgress(
+          '覆盖拉取失败：远端日程快照校验失败',
+          completed: canonicalPaths.length,
+          total: canonicalPaths.length,
+        );
+        return false;
+      }
 
       if (!overwriteIsStillValid() || _slotsRevision != startSlotsRevision) {
         return false;
@@ -2268,6 +2465,11 @@ class TimeProvider with ChangeNotifier {
         nextDailySlots[entry.key] = daySlots;
       }
 
+      _setScheduleSyncProgress(
+        message: '覆盖拉取：正在保存到本地',
+        completed: canonicalPaths.length,
+        total: canonicalPaths.length,
+      );
       // 持久化先于内存提交。SharedPreferences 的 set* 会返回 false，
       // 因此这里失败时尚未碰触 slots、撤销栈或待同步状态。
       final persisted = await _saveData(
@@ -2286,6 +2488,11 @@ class TimeProvider with ChangeNotifier {
           !overwriteIsStillValid() ||
           _slotsRevision != startSlotsRevision) {
         if (persisted) await _rollbackCommittedScheduleOverwrite();
+        _failScheduleSyncProgress(
+          '覆盖拉取失败：本地保存未完成',
+          completed: canonicalPaths.length,
+          total: canonicalPaths.length,
+        );
         return false;
       }
 
@@ -2345,13 +2552,28 @@ class TimeProvider with ChangeNotifier {
         _lastScheduleOverwriteFailure = _scheduleOverwriteJournalCleanupPending
             ? '覆盖拉取已写入，但提交日志清理未完成，请稍后重试'
             : '覆盖拉取提交后状态发生变化，请重新确认';
+        _failScheduleSyncProgress(
+          _lastScheduleOverwriteFailure!,
+          completed: canonicalPaths.length,
+          total: canonicalPaths.length,
+        );
         return false;
       }
       succeeded = true;
       _addScheduleSyncStatus('覆盖拉取完成');
+      _appLogService.info(
+        '覆盖拉取完成：${canonicalPaths.length}/${canonicalPaths.length} 天',
+        source: 'schedule_sync',
+      );
+      _finishScheduleSyncProgress(
+        '覆盖拉取完成',
+        completed: canonicalPaths.length,
+        total: canonicalPaths.length,
+      );
       return true;
     } catch (e, stackTrace) {
       debugPrint('覆盖拉取失败: $e');
+      _failScheduleSyncProgress('覆盖拉取失败：$e');
       _recordAppError('覆盖拉取失败', e, stackTrace);
       _lastScheduleOverwriteFailure = '覆盖拉取未开始或失败，请稍后重试';
       return false;
@@ -2367,6 +2589,11 @@ class TimeProvider with ChangeNotifier {
       }
       if (!_isDisposed && !succeeded) {
         _lastScheduleOverwriteFailure ??= '覆盖拉取未开始或失败，请稍后重试';
+        if (_scheduleSyncProgress == null ||
+            (!_scheduleSyncProgress!.isFinished &&
+                !_scheduleSyncProgress!.isError)) {
+          _failScheduleSyncProgress(_lastScheduleOverwriteFailure!);
+        }
         _addScheduleSyncStatus('覆盖拉取失败');
       }
       if (!_isDisposed) _addScheduleSyncStatus('');
@@ -2395,6 +2622,12 @@ class TimeProvider with ChangeNotifier {
     );
     if (!_canContinueScheduleSync(userCode)) return false;
     if (result.notFound || !result.success || result.content == null) {
+      _appLogService.warning(
+        result.notFound
+            ? '日程拉取无数据：$dateKey'
+            : '日程拉取失败：$dateKey${result.error == null ? '' : '，${result.error}'}',
+        source: 'schedule_sync',
+      );
       return false; // notFound/error 不中断整体，计入失败数
     }
 
@@ -2409,6 +2642,10 @@ class TimeProvider with ChangeNotifier {
     _applyScheduleEntriesToSlots(daySlots, merged);
     _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
+    _appLogService.info(
+      '日程拉取成功：$dateKey（远端 ${remote.slots.length} 条，合并后 ${merged.length} 条）',
+      source: 'schedule_sync',
+    );
     return true;
   }
 
@@ -2531,6 +2768,12 @@ class TimeProvider with ChangeNotifier {
           _scheduleUser.code != userCode ||
           !pullResult.success ||
           pullResult.content == null) {
+        _appLogService.warning(
+          pullResult.notFound
+              ? '分类拉取无数据：$userCode'
+              : '分类拉取失败：${pullResult.error ?? '远端数据不可用'}',
+          source: 'schedule_sync',
+        );
         return;
       }
       final localDoc = CategoryDocument(
@@ -2541,6 +2784,10 @@ class TimeProvider with ChangeNotifier {
       final remoteDoc = parseCategoryDocument(pullResult.content);
       final merged = mergeCategoryDocuments(local: localDoc, remote: remoteDoc);
       _applyMergedCategories(merged);
+      _appLogService.info(
+        '分类拉取成功：$userCode（远端 ${remoteDoc.categories.length} 个，合并后 ${merged.categories.length} 个）',
+        source: 'schedule_sync',
+      );
     } catch (e, stackTrace) {
       debugPrint('分类拉取失败: $e');
       _recordAppError('分类拉取失败', e, stackTrace);
@@ -2594,6 +2841,11 @@ class TimeProvider with ChangeNotifier {
     final code = userCode ?? _scheduleUser.code;
     final selectedUserCode = _scheduleUser.code;
     _scheduleMergePullsInProgress++;
+    _appLogService.info(
+      '日程拉取开始：$dateKey（身份 $code）',
+      source: 'schedule_sync',
+    );
+    _startScheduleSyncProgress('正在拉取日程 $dateKey', total: 1);
     try {
       final token = await _scheduleSyncDependencies.loadToken();
       if (!_canContinueScheduleSync(
@@ -2604,9 +2856,16 @@ class TimeProvider with ChangeNotifier {
           token == null ||
           token.isEmpty) {
         _addScheduleSyncStatus('未配置同步 Token');
+        _appLogService.warning('日程拉取未开始：未配置同步 Token', source: 'schedule_sync');
+        _failScheduleSyncProgress('拉取失败：未配置同步 Token');
         return false;
       }
       _addScheduleSyncStatus('拉取中...');
+      _setScheduleSyncProgress(
+        message: '正在拉取日程 $dateKey',
+        completed: 0,
+        total: 1,
+      );
       final result = await _scheduleSyncDependencies.pullDay(
         token: token,
         dateKey: dateKey,
@@ -2621,13 +2880,19 @@ class TimeProvider with ChangeNotifier {
       }
       if (result.notFound) {
         _addScheduleSyncStatus('远端无数据');
+        _appLogService.warning('日程拉取无数据：$dateKey', source: 'schedule_sync');
+        _finishScheduleSyncProgress('远端无数据：$dateKey', completed: 1, total: 1);
         Future.delayed(const Duration(seconds: 3), () {
           _addScheduleSyncStatus('');
         });
         return false;
       }
       if (!result.success || result.content == null) {
-        _addScheduleSyncStatus(result.error ?? '拉取失败');
+        final message = result.error ?? '拉取失败';
+        _addScheduleSyncStatus(message);
+        _appLogService.warning('日程拉取失败：$dateKey，$message',
+            source: 'schedule_sync');
+        _failScheduleSyncProgress('拉取失败：$message', completed: 0, total: 1);
         return false;
       }
       if (requestRevision != null && requestRevision != _schedulePullRevision) {
@@ -2663,15 +2928,26 @@ class TimeProvider with ChangeNotifier {
       }
       notifyListeners();
       _addScheduleSyncStatus('已同步');
+      _appLogService.info(
+        '日程拉取成功：$dateKey（远端 ${remote.slots.length} 条，合并后 ${merged.length} 条）',
+        source: 'schedule_sync',
+      );
+      _finishScheduleSyncProgress('日程拉取完成：$dateKey', completed: 1, total: 1);
       Future.delayed(const Duration(seconds: 3), () {
         _addScheduleSyncStatus('');
       });
       return true;
     } catch (e, stackTrace) {
       _addScheduleSyncStatus('拉取失败: $e');
+      _failScheduleSyncProgress('拉取失败：$e', completed: 0, total: 1);
       _recordAppError('日程拉取失败', e, stackTrace);
       return false;
     } finally {
+      if (_scheduleSyncProgress != null &&
+          !_scheduleSyncProgress!.isFinished &&
+          !_scheduleSyncProgress!.isError) {
+        _failScheduleSyncProgress('日程拉取已取消', completed: 0, total: 1);
+      }
       _scheduleMergePullsInProgress--;
     }
   }

@@ -444,6 +444,9 @@ class GoogleCalendarService {
         final block = calendarEventToBlock(event, date);
         if (block != null) blocks.add(block);
       }
+      _log(
+        '从 Google Calendar 拉取成功: ${date.toIso8601String().substring(0, 10)}（${blocks.length} 条）',
+      );
       return blocks;
     } catch (e, stackTrace) {
       _logError('从 Google Calendar 拉取失败', error: e, stackTrace: stackTrace);
