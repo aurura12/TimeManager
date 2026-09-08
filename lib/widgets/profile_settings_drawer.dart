@@ -91,6 +91,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                     _buildLoginSection(context, googleUser, provider),
                     const Divider(height: 1),
                     _buildRemoteSyncSection(context, provider),
+                    _buildOverwriteScheduleTile(context, provider),
                   ],
                   const Divider(height: 1),
                   ListTile(
