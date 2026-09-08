@@ -90,6 +90,7 @@ void main() {
     final state = _RemoteState();
     final provider = await _createProvider(state, mobile: true);
     addTearDown(provider.dispose);
+    final progressBeforeDateChange = provider.scheduleSyncProgress;
 
     // Ignore any startup request. This test is about the request caused by
     // changing the selected date.
@@ -98,6 +99,11 @@ void main() {
         '{"updated_at":2000,"slots":[{"i":60,"l":"Windows日程","c":1,"ts":2000}]}';
 
     provider.goToDate(DateTime(2026, 9, 6));
+    expect(
+      identical(provider.scheduleSyncProgress, progressBeforeDateChange),
+      isTrue,
+      reason: '日期切换的后台拉取不应显示底部进度条',
+    );
     await _waitUntil(
       () => provider.getSlotsForDate('2026-09-06')?[60].label == 'Windows日程',
     );

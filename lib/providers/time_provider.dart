@@ -1385,7 +1385,10 @@ class TimeProvider with ChangeNotifier {
     if (!_hasSelectedScheduleUser) return;
     final requestRevision = ++_schedulePullRevision;
     if (_remoteViewEnabled) {
-      _pullRemoteViewSchedules(requestRevision: requestRevision);
+      _pullRemoteViewSchedules(
+        requestRevision: requestRevision,
+        showProgress: false,
+      );
     } else {
       for (final date in scheduleDatesForView(
         _currentDate,
@@ -1394,6 +1397,7 @@ class TimeProvider with ChangeNotifier {
         unawaited(pullScheduleFromGitee(
           date: date,
           requestRevision: requestRevision,
+          showProgress: false,
         ));
       }
     }
@@ -1401,7 +1405,10 @@ class TimeProvider with ChangeNotifier {
 
   /// 远程视图下：对当前三列日期备份本地（仅首次访问的日期）并拉取对方数据。
   /// 远程视图期间切换日期时，由 [_pullOwnScheduleOnDateChange] 调用。
-  void _pullRemoteViewSchedules({int? requestRevision}) {
+  void _pullRemoteViewSchedules({
+    int? requestRevision,
+    bool showProgress = true,
+  }) {
     final otherCode = _scheduleUser.code == 'g' ? 'j' : 'g';
     for (final d in _getRemoteViewDates()) {
       _backupAndClearDay(_getDateKey(d));
@@ -1410,6 +1417,7 @@ class TimeProvider with ChangeNotifier {
         date: d,
         requestRevision: requestRevision,
         allowRemoteViewTransition: true,
+        showProgress: showProgress,
       ));
     }
     _markAllSlotsDirty();
@@ -2958,11 +2966,13 @@ class TimeProvider with ChangeNotifier {
 
   /// 从 Gitee 拉取指定用户日程并合并到指定日期。
   /// [date] 为 null 时拉取当前选中日期。
+  /// [showProgress] 为 false 时用于后台日期切换拉取，不显示底部进度条。
   Future<bool> pullScheduleFromGitee({
     String? userCode,
     DateTime? date,
     int? requestRevision,
     bool allowRemoteViewTransition = false,
+    bool showProgress = true,
   }) async {
     if (!_isInitialLoadFinished ||
         !_scheduleUserLoadFinished ||
@@ -2987,7 +2997,9 @@ class TimeProvider with ChangeNotifier {
       '日程拉取开始：$dateKey（身份 $code）',
       source: 'schedule_sync',
     );
-    _startScheduleSyncProgress('正在拉取日程 $dateKey', total: 1);
+    if (showProgress) {
+      _startScheduleSyncProgress('正在拉取日程 $dateKey', total: 1);
+    }
     try {
       final token = await _scheduleSyncDependencies.loadToken();
       if (!_canContinueScheduleSync(
@@ -2999,15 +3011,19 @@ class TimeProvider with ChangeNotifier {
           token.isEmpty) {
         _addScheduleSyncStatus('未配置同步 Token');
         _appLogService.warning('日程拉取未开始：未配置同步 Token', source: 'schedule_sync');
-        _failScheduleSyncProgress('拉取失败：未配置同步 Token');
+        if (showProgress) {
+          _failScheduleSyncProgress('拉取失败：未配置同步 Token');
+        }
         return false;
       }
       _addScheduleSyncStatus('拉取中...');
-      _setScheduleSyncProgress(
-        message: '正在拉取日程 $dateKey',
-        completed: 0,
-        total: 1,
-      );
+      if (showProgress) {
+        _setScheduleSyncProgress(
+          message: '正在拉取日程 $dateKey',
+          completed: 0,
+          total: 1,
+        );
+      }
       final result = await _scheduleSyncDependencies.pullDay(
         token: token,
         dateKey: dateKey,
@@ -3023,7 +3039,13 @@ class TimeProvider with ChangeNotifier {
       if (result.notFound) {
         _addScheduleSyncStatus('远端无数据');
         _appLogService.warning('日程拉取无数据：$dateKey', source: 'schedule_sync');
-        _finishScheduleSyncProgress('远端无数据：$dateKey', completed: 1, total: 1);
+        if (showProgress) {
+          _finishScheduleSyncProgress(
+            '远端无数据：$dateKey',
+            completed: 1,
+            total: 1,
+          );
+        }
         Future.delayed(const Duration(seconds: 3), () {
           _addScheduleSyncStatus('');
         });
@@ -3034,7 +3056,13 @@ class TimeProvider with ChangeNotifier {
         _addScheduleSyncStatus(message);
         _appLogService.warning('日程拉取失败：$dateKey，$message',
             source: 'schedule_sync');
-        _failScheduleSyncProgress('拉取失败：$message', completed: 0, total: 1);
+        if (showProgress) {
+          _failScheduleSyncProgress(
+            '拉取失败：$message',
+            completed: 0,
+            total: 1,
+          );
+        }
         return false;
       }
       if (requestRevision != null && requestRevision != _schedulePullRevision) {
@@ -3053,7 +3081,13 @@ class TimeProvider with ChangeNotifier {
           '日程拉取拒绝：$dateKey 远端数据异常：${remote.error}',
           source: 'schedule_sync',
         );
-        _failScheduleSyncProgress('拉取失败：$message', completed: 0, total: 1);
+        if (showProgress) {
+          _failScheduleSyncProgress(
+            '拉取失败：$message',
+            completed: 0,
+            total: 1,
+          );
+        }
         return false;
       }
       final daySlots = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
@@ -3085,18 +3119,31 @@ class TimeProvider with ChangeNotifier {
         '日程拉取成功：$dateKey（远端 ${remote.slots.length} 条，合并后 ${merged.length} 条）',
         source: 'schedule_sync',
       );
-      _finishScheduleSyncProgress('日程拉取完成：$dateKey', completed: 1, total: 1);
+      if (showProgress) {
+        _finishScheduleSyncProgress(
+          '日程拉取完成：$dateKey',
+          completed: 1,
+          total: 1,
+        );
+      }
       Future.delayed(const Duration(seconds: 3), () {
         _addScheduleSyncStatus('');
       });
       return true;
     } catch (e, stackTrace) {
       _addScheduleSyncStatus('拉取失败: $e');
-      _failScheduleSyncProgress('拉取失败：$e', completed: 0, total: 1);
+      if (showProgress) {
+        _failScheduleSyncProgress(
+          '拉取失败：$e',
+          completed: 0,
+          total: 1,
+        );
+      }
       _recordAppError('日程拉取失败', e, stackTrace);
       return false;
     } finally {
-      if (_scheduleSyncProgress != null &&
+      if (showProgress &&
+          _scheduleSyncProgress != null &&
           !_scheduleSyncProgress!.isFinished &&
           !_scheduleSyncProgress!.isError) {
         _failScheduleSyncProgress('日程拉取已取消', completed: 0, total: 1);
