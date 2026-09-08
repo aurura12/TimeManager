@@ -178,3 +178,4 @@ lib/config/google_sign_in_config.dart
 lib/config/github_config.dart
 .codebuddy/
 .VSCodeCounter/
+.worktrees/
