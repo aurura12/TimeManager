@@ -17,6 +17,10 @@ class Target {
   final String startTime;
   final String endTime;
 
+  /// 目标最后修改时间（毫秒时间戳），用于跨设备合并冲突。
+  /// 旧版本数据没有该字段，加载时由 TimeProvider 迁移补齐。
+  final int updatedAt;
+
   Target({
     required this.id,
     required this.name,
@@ -30,6 +34,7 @@ class Target {
     this.targetTime = "",
     this.startTime = "",
     this.endTime = "",
+    this.updatedAt = 0,
   });
 
   Target copyWith({
@@ -45,6 +50,7 @@ class Target {
     String? targetTime,
     String? startTime,
     String? endTime,
+    int? updatedAt,
   }) {
     return Target(
       id: id ?? this.id,
@@ -59,6 +65,7 @@ class Target {
       targetTime: targetTime ?? this.targetTime,
       startTime: startTime ?? this.startTime,
       endTime: endTime ?? this.endTime,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 
@@ -76,16 +83,20 @@ class Target {
       'targetTime': targetTime,
       'startTime': startTime,
       'endTime': endTime,
+      'updatedAt': updatedAt,
     };
   }
 
   factory Target.fromJson(Map<String, dynamic> json) {
     final typeIndex = json['type'] as int?;
     return Target(
-      id: json['id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      id: json['id']?.toString() ??
+          DateTime.now().millisecondsSinceEpoch.toString(),
       name: json['name']?.toString() ?? '',
       categoryId: json['categoryId'] as String? ?? '',
-      type: (typeIndex != null && typeIndex >= 0 && typeIndex < TargetType.values.length)
+      type: (typeIndex != null &&
+              typeIndex >= 0 &&
+              typeIndex < TargetType.values.length)
           ? TargetType.values[typeIndex]
           : TargetType.duration,
       color: Color(json['color'] as int? ?? 0xFF9CB86A),
@@ -96,6 +107,7 @@ class Target {
       targetTime: json['targetTime']?.toString() ?? "",
       startTime: json['startTime']?.toString() ?? "",
       endTime: json['endTime']?.toString() ?? "",
+      updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
     );
   }
 }

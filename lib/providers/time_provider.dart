@@ -21,6 +21,8 @@ import '../services/schedule_overwrite.dart';
 import '../services/schedule_sync_dependencies.dart';
 import '../services/category_document_merge.dart';
 import '../services/category_gitee_service.dart';
+import '../services/target_document_merge.dart';
+import '../services/target_sync_dependencies.dart';
 import '../services/voice_schedule_slot_planner.dart';
 import '../services/pending_google_day_sync.dart';
 import '../services/calendar_slot_refresh.dart';
@@ -197,6 +199,7 @@ class TimeProvider with ChangeNotifier {
   final bool? _googleCalendarSyncPlatformOverride;
   final bool? _googleCalendarSignedInOverride;
   final ScheduleSyncDependencies _scheduleSyncDependencies;
+  final TargetSyncDependencies _targetSyncDependencies;
   final AppLogService _appLogService;
   final Future<bool> Function()? _saveDataOverride;
   final void Function(String key)? _scheduleSnapshotWriteObserver;
@@ -492,6 +495,9 @@ class TimeProvider with ChangeNotifier {
         }
       }
       _scheduleIdentityMutationInProgress = false;
+      if (!persistenceNeedsRestore && !_isDisposed) {
+        unawaited(_pullTargetsFromGitee());
+      }
     }
   }
 
@@ -502,6 +508,8 @@ class TimeProvider with ChangeNotifier {
     'deleted_categories',
     'categories_doc_updated_at',
     'targets',
+    'deleted_targets',
+    'targets_doc_updated_at',
     'daily_slots',
     'schedule_templates',
     'ignored_calendar_imports',
@@ -581,6 +589,9 @@ class TimeProvider with ChangeNotifier {
         if (!_isDisposed) notifyListeners();
       }
       _scheduleIdentityMutationInProgress = false;
+      if (committed && !_isDisposed) {
+        unawaited(_pullTargetsFromGitee());
+      }
     }
   }
 
@@ -637,6 +648,10 @@ class TimeProvider with ChangeNotifier {
     _scheduleGiteeTimer = null;
     _categoriesGiteeTimer?.cancel();
     _categoriesGiteeTimer = null;
+    _targetsGiteeTimer?.cancel();
+    _targetsGiteeTimer = null;
+    _targetsUserCode = '';
+    _targetsGiteePending = false;
     _schedulePullRevision++;
     _pendingScheduleGiteeDateKeys.clear();
     _scheduleGiteeDateRevisions.clear();
@@ -654,10 +669,13 @@ class TimeProvider with ChangeNotifier {
     _templates.clear();
     _ignoredCalendarImports.clear();
     _deletedCategories.clear();
+    _deletedTargets.clear();
     _categoryExpandStates.clear();
     _pendingSyncState.replace();
     _categoriesDocUpdatedAt = 0;
     _categoriesUserCode = '';
+    _targetsDocUpdatedAt = 0;
+    _targetsUserCode = '';
     _categoriesDirty = false;
     _targetsDirty = false;
     _templatesDirty = false;
@@ -839,6 +857,9 @@ class TimeProvider with ChangeNotifier {
         if (!_isDisposed) notifyListeners();
       }
       _scheduleIdentityMutationInProgress = false;
+      if (committed && !_isDisposed) {
+        unawaited(_pullTargetsFromGitee());
+      }
     }
   }
 
@@ -914,6 +935,9 @@ class TimeProvider with ChangeNotifier {
         if (!_isDisposed) notifyListeners();
       }
       _scheduleIdentityMutationInProgress = false;
+      if (committed && !_isDisposed) {
+        unawaited(_pullTargetsFromGitee());
+      }
     }
   }
 
@@ -1023,6 +1047,7 @@ class TimeProvider with ChangeNotifier {
     _debounceTimer?.cancel();
     _scheduleGiteeTimer?.cancel();
     _categoriesGiteeTimer?.cancel();
+    _targetsGiteeTimer?.cancel();
     _scheduleSyncProgressClearTimer?.cancel();
     _googleAuthSubscription?.cancel();
     _syncStatusController.close();
@@ -1044,6 +1069,7 @@ class TimeProvider with ChangeNotifier {
     bool? googleCalendarSyncPlatformOverride,
     bool? googleCalendarSignedInOverride,
     ScheduleSyncDependencies? scheduleSyncDependencies,
+    TargetSyncDependencies? targetSyncDependencies,
     AppLogService? appLogService,
     Future<bool> Function()? saveDataOverride,
     void Function(String key)? scheduleSnapshotWriteObserver,
@@ -1057,6 +1083,10 @@ class TimeProvider with ChangeNotifier {
         _googleCalendarSignedInOverride = googleCalendarSignedInOverride,
         _scheduleSyncDependencies =
             scheduleSyncDependencies ?? ScheduleSyncDependencies.production(),
+        _targetSyncDependencies = targetSyncDependencies ??
+            (scheduleSyncDependencies == null
+                ? TargetSyncDependencies.production()
+                : TargetSyncDependencies.disabled()),
         _appLogService = appLogService ?? AppLogService.instance,
         _saveDataOverride = saveDataOverride,
         _scheduleSnapshotWriteObserver = scheduleSnapshotWriteObserver,
@@ -1147,6 +1177,9 @@ class TimeProvider with ChangeNotifier {
       _recordAppError('切换 Google 账号身份失败', e, stackTrace);
     } finally {
       _scheduleIdentityMutationInProgress = false;
+      if (_hasSelectedScheduleUser && !_isDisposed) {
+        unawaited(_pullTargetsFromGitee());
+      }
     }
   }
 
@@ -1159,9 +1192,11 @@ class TimeProvider with ChangeNotifier {
     _debounceTimer?.cancel();
     _scheduleGiteeTimer?.cancel();
     _categoriesGiteeTimer?.cancel();
+    _targetsGiteeTimer?.cancel();
     _debounceTimer = null;
     _scheduleGiteeTimer = null;
     _categoriesGiteeTimer = null;
+    _targetsGiteeTimer = null;
     _addScheduleSyncStatus(message);
     if (!wasFailed) notifyListeners();
   }
@@ -1206,6 +1241,8 @@ class TimeProvider with ChangeNotifier {
     if (_isDisposed || _initializationFailed) return;
     // 拉取当前身份的分类（事件/子事件）到本地（安卓与 Windows 都执行）
     unawaited(_pullCategoriesFromGitee());
+    // 拉取当前身份的目标，避免卸载重装后本地空目标覆盖远端数据
+    unawaited(_pullTargetsFromGitee());
     // 各平台拉取当前日期自己的日程，补上另一平台推送的数据
     _pullOwnScheduleOnDateChange();
     // 仅在用户明确选择 Google 模式后恢复会话；手动模式绝不触发 Google。
@@ -2070,9 +2107,8 @@ class TimeProvider with ChangeNotifier {
         // 深度防御：无标签的 live 条目按删除意图处理，绝不允许落入内存成为
         // "已记录但无内容"的槽位（避免后续再次导出 l:null 传播）。
         final ts = _parseInt(e['ts']);
-        final delMs = (ts != null && ts > 0)
-            ? ts
-            : DateTime.now().millisecondsSinceEpoch;
+        final delMs =
+            (ts != null && ts > 0) ? ts : DateTime.now().millisecondsSinceEpoch;
         slots[idx].deletedAt = DateTime.fromMillisecondsSinceEpoch(delMs);
         if (e['fc'] == true) slots[idx].isFromCalendar = true;
         continue;
@@ -2098,6 +2134,11 @@ class TimeProvider with ChangeNotifier {
   Timer? _categoriesGiteeTimer;
   bool _categoriesGiteeSyncing = false;
 
+  // --- 目标跨端同步 ---
+  Timer? _targetsGiteeTimer;
+  bool _targetsGiteeSyncing = false;
+  bool _targetsGiteePending = false;
+
   /// 分类删除墓碑：id → 删除时间戳（毫秒）
   final Map<String, int> _deletedCategories = {};
 
@@ -2106,6 +2147,15 @@ class TimeProvider with ChangeNotifier {
 
   /// 分类修改发生时归属的身份（捕获当前 scheduleUser.code，避免切身份后错写）
   String _categoriesUserCode = '';
+
+  /// 目标删除墓碑：id → 删除时间戳（毫秒）
+  final Map<String, int> _deletedTargets = {};
+
+  /// 目标文档最后修改时间，用于合并顺序基准
+  int _targetsDocUpdatedAt = 0;
+
+  /// 目标修改发生时归属的身份
+  String _targetsUserCode = '';
 
   /// 全量同步所有日期的日程到 Gitee
   Future<void> syncAllSchedulesToGitee() async {
@@ -2797,6 +2847,251 @@ class TimeProvider with ChangeNotifier {
       source: 'schedule_sync',
     );
     return true;
+  }
+
+  // --- 目标跨端同步 ---
+
+  bool _canContinueTargetSync(String selectedUserCode) {
+    return _isScheduleIdentityReady &&
+        !_initializationFailed &&
+        !_isDisposed &&
+        !_scheduleOverwriteJournalCleanupPending &&
+        !_scheduleOverwriteInProgress &&
+        !_scheduleOverwriteCleanupInProgress &&
+        !_scheduleIdentityMutationInProgress &&
+        !_remoteViewTransitionInProgress &&
+        !_remoteViewEnabled &&
+        _hasSelectedScheduleUser &&
+        _scheduleUser.code == selectedUserCode;
+  }
+
+  void _scheduleTargetsRetry() {
+    if (_isDisposed || !_targetsGiteePending) return;
+    _targetsGiteeTimer?.cancel();
+    _targetsGiteeTimer = Timer(const Duration(milliseconds: 100), () {
+      _targetsGiteeTimer = null;
+      unawaited(_syncTargetsToGitee());
+    });
+  }
+
+  /// 标记目标已修改：使用现有 Gitee 防抖时间，避免连续编辑产生多个提交。
+  void _markTargetsGiteePending() {
+    if (!_isScheduleReady ||
+        !_scheduleUserLoadFinished ||
+        !_hasSelectedScheduleUser ||
+        _scheduleOverwriteJournalCleanupPending ||
+        _scheduleOverwriteInProgress ||
+        _scheduleOverwriteCleanupInProgress ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled) {
+      return;
+    }
+    _targetsGiteePending = true;
+    _targetsUserCode = _scheduleUser.code;
+    _targetsGiteeTimer?.cancel();
+    _targetsGiteeTimer = Timer(_scheduleGiteeDebounce, () {
+      _targetsGiteeTimer = null;
+      unawaited(_syncTargetsToGitee());
+    });
+  }
+
+  /// 将本地目标与远端合并后推送。远端请求失败时保留 pending，绝不推送。
+  Future<void> _syncTargetsToGitee() async {
+    if (!_isScheduleIdentityReady ||
+        _scheduleOverwriteJournalCleanupPending ||
+        _scheduleOverwriteInProgress ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled ||
+        !_hasSelectedScheduleUser ||
+        !_targetsGiteePending) {
+      return;
+    }
+    if (_targetsGiteeSyncing) {
+      _scheduleTargetsRetry();
+      return;
+    }
+
+    _targetsGiteeSyncing = true;
+    final userCode =
+        _targetsUserCode.isEmpty ? _scheduleUser.code : _targetsUserCode;
+    try {
+      final token = await _targetSyncDependencies.loadToken();
+      if (!_canContinueTargetSync(userCode) || token == null || token.isEmpty) {
+        _appLogService.warning(
+          '目标同步未开始：未配置同步 Token',
+          source: 'target_sync',
+        );
+        return;
+      }
+
+      final pullResult = await _targetSyncDependencies.pullTargets(
+        token: token,
+        userCode: userCode,
+      );
+      if (!_canContinueTargetSync(userCode)) return;
+      if (!pullResult.success && !pullResult.notFound) {
+        _appLogService.warning(
+          '目标同步失败：${pullResult.error ?? '远端目标不可用'}',
+          source: 'target_sync',
+        );
+        return;
+      }
+
+      final remoteDoc = pullResult.notFound
+          ? const TargetDocument()
+          : parseTargetDocument(pullResult.content);
+      if (!remoteDoc.isValid) {
+        _appLogService.warning(
+          '目标同步失败：远端目标格式无效',
+          source: 'target_sync',
+        );
+        return;
+      }
+
+      final localDoc = TargetDocument(
+        updatedAt: _targetsDocUpdatedAt,
+        targets: List.from(_targets),
+        deletedTargets: Map.from(_deletedTargets),
+      );
+      final merged = mergeTargetDocuments(
+        local: localDoc,
+        remote: remoteDoc,
+      );
+      final pushResult = await _targetSyncDependencies.pushTargets(
+        token: token,
+        userCode: userCode,
+        content: encodeTargetDocument(
+          merged,
+          nowMs: DateTime.now().millisecondsSinceEpoch,
+        ),
+        commitMessage: 'targets($userCode): sync',
+      );
+      if (!_canContinueTargetSync(userCode)) return;
+      if (!pushResult.success) {
+        _appLogService.warning(
+          '目标同步失败：${pushResult.error ?? '推送失败'}',
+          source: 'target_sync',
+        );
+        return;
+      }
+
+      _applyMergedTargets(merged);
+      _targetsGiteePending = false;
+      _appLogService.info(
+        '目标同步成功：$userCode（${merged.targets.length} 个）',
+        source: 'target_sync',
+      );
+    } catch (e, stackTrace) {
+      debugPrint('目标同步失败: $e');
+      _recordAppError('目标同步失败', e, stackTrace);
+    } finally {
+      _targetsGiteeSyncing = false;
+    }
+  }
+
+  /// 从 Gitee 拉取当前身份目标并与本地合并，不在此阶段推送。
+  Future<void> _pullTargetsFromGitee() async {
+    if (!_isScheduleIdentityReady ||
+        _scheduleOverwriteJournalCleanupPending ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled ||
+        !_hasSelectedScheduleUser) {
+      return;
+    }
+    // 身份切换可能发生在旧身份的拉取尚未结束时。不要丢掉新身份的拉取请求，
+    // 等当前请求释放锁后重新按当前身份执行。
+    if (_targetsGiteeSyncing) {
+      Future<void>.delayed(const Duration(milliseconds: 100), () {
+        if (!_isDisposed) unawaited(_pullTargetsFromGitee());
+      });
+      return;
+    }
+
+    _targetsGiteeSyncing = true;
+    final userCode = _scheduleUser.code;
+    try {
+      final token = await _targetSyncDependencies.loadToken();
+      if (!_canContinueTargetSync(userCode) || token == null || token.isEmpty) {
+        _appLogService.warning(
+          '目标拉取未开始：未配置同步 Token',
+          source: 'target_sync',
+        );
+        return;
+      }
+
+      final pullResult = await _targetSyncDependencies.pullTargets(
+        token: token,
+        userCode: userCode,
+      );
+      if (!_canContinueTargetSync(userCode)) return;
+      if (pullResult.notFound) {
+        _appLogService.warning(
+          '目标拉取无数据：$userCode',
+          source: 'target_sync',
+        );
+        // 升级到支持目标同步的版本后，若本地已有目标而远端文件尚未创建，
+        // 允许后续同步把本地目标作为首份文档上传；空本地数据不主动建空文件。
+        if (_targets.isNotEmpty) {
+          _markTargetsGiteePending();
+        }
+        return;
+      }
+      if (!pullResult.success || pullResult.content == null) {
+        _appLogService.warning(
+          '目标拉取失败：${pullResult.error ?? '远端目标不可用'}',
+          source: 'target_sync',
+        );
+        return;
+      }
+
+      final remoteDoc = parseTargetDocument(pullResult.content);
+      if (!remoteDoc.isValid) {
+        _appLogService.warning(
+          '目标拉取失败：远端目标格式无效',
+          source: 'target_sync',
+        );
+        return;
+      }
+      final localDoc = TargetDocument(
+        updatedAt: _targetsDocUpdatedAt,
+        targets: List.from(_targets),
+        deletedTargets: Map.from(_deletedTargets),
+      );
+      final merged = mergeTargetDocuments(
+        local: localDoc,
+        remote: remoteDoc,
+      );
+      _applyMergedTargets(merged);
+      _appLogService.info(
+        '目标拉取成功：$userCode（远端 ${remoteDoc.targets.length} 个，合并后 ${merged.targets.length} 个）',
+        source: 'target_sync',
+      );
+    } catch (e, stackTrace) {
+      debugPrint('目标拉取失败: $e');
+      _recordAppError('目标拉取失败', e, stackTrace);
+    } finally {
+      _targetsGiteeSyncing = false;
+    }
+  }
+
+  void _applyMergedTargets(TargetDocument merged) {
+    if (!_isScheduleIdentityReady ||
+        _scheduleOverwriteCleanupInProgress ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled) {
+      return;
+    }
+    _targets
+      ..clear()
+      ..addAll(merged.targets);
+    _deletedTargets
+      ..clear()
+      ..addAll(merged.deletedTargets);
+    _targetsDocUpdatedAt = merged.updatedAt;
+    _targetsDirty = true;
+    _saveData();
+    _addTargetStatsChanged();
+    notifyListeners();
   }
 
   // --- 分类（事件/子事件）跨端同步 ---
@@ -4686,10 +4981,16 @@ class TimeProvider with ChangeNotifier {
       }
     });
 
+    var targetsChanged = false;
+    final targetUpdatedAt = DateTime.now().millisecondsSinceEpoch;
     for (int i = 0; i < _targets.length; i++) {
       final target = _targets[i];
       if (target.categoryId == categoryId && target.name == oldLabel) {
-        _targets[i] = target.copyWith(name: newLabel);
+        _targets[i] = target.copyWith(
+          name: newLabel,
+          updatedAt: targetUpdatedAt,
+        );
+        targetsChanged = true;
       }
     }
 
@@ -4715,7 +5016,11 @@ class TimeProvider with ChangeNotifier {
 
     // 重命名会影响所有日期的时间块、目标和模板
     _markAllSlotsDirty();
-    _targetsDirty = true;
+    if (targetsChanged) {
+      _targetsDocUpdatedAt = targetUpdatedAt;
+      _targetsDirty = true;
+      _markTargetsGiteePending();
+    }
     _markTemplatesChanged();
     _targetStatsCache.invalidate();
     _invalidateLabelCategoryIdCache();
@@ -4753,12 +5058,16 @@ class TimeProvider with ChangeNotifier {
     });
 
     var targetsChanged = false;
+    final targetUpdatedAt = DateTime.now().millisecondsSinceEpoch;
     for (int i = 0; i < _targets.length; i++) {
       final target = _targets[i];
       if (target.categoryId.isEmpty) {
         final cid = labelMap[target.name];
         if (cid != null) {
-          _targets[i] = target.copyWith(categoryId: cid);
+          _targets[i] = target.copyWith(
+            categoryId: cid,
+            updatedAt: targetUpdatedAt,
+          );
           targetsChanged = true;
         }
       }
@@ -4767,7 +5076,11 @@ class TimeProvider with ChangeNotifier {
     if (categoriesChanged || slotsChanged || targetsChanged) {
       if (categoriesChanged) _markCategoriesChanged();
       if (slotsChanged) _markAllSlotsDirty();
-      if (targetsChanged) _targetsDirty = true;
+      if (targetsChanged) {
+        _targetsDocUpdatedAt = targetUpdatedAt;
+        _targetsDirty = true;
+        _markTargetsGiteePending();
+      }
       _saveData();
     }
   }
@@ -4929,6 +5242,22 @@ class TimeProvider with ChangeNotifier {
           _targets.map((t) => json.encode(t.toJson())).toList();
       if (!canPersist() ||
           !await prefs.setStringList(_identityDataKey('targets'), targetList) ||
+          !canPersist()) {
+        return false;
+      }
+      if (!canPersist() ||
+          !await prefs.setString(
+            _identityDataKey('deleted_targets'),
+            json.encode(_deletedTargets),
+          ) ||
+          !canPersist()) {
+        return false;
+      }
+      if (!canPersist() ||
+          !await prefs.setInt(
+            _identityDataKey('targets_doc_updated_at'),
+            _targetsDocUpdatedAt,
+          ) ||
           !canPersist()) {
         return false;
       }
@@ -5820,7 +6149,8 @@ class TimeProvider with ChangeNotifier {
             final delMs = (ts != null && ts > 0)
                 ? ts
                 : DateTime.now().millisecondsSinceEpoch;
-            daySlots[idx].deletedAt = DateTime.fromMillisecondsSinceEpoch(delMs);
+            daySlots[idx].deletedAt =
+                DateTime.fromMillisecondsSinceEpoch(delMs);
             migratedDates.add(dateKey);
             continue;
           }
@@ -5905,19 +6235,55 @@ class TimeProvider with ChangeNotifier {
     _categoriesDocUpdatedAt =
         prefs.getInt(_identityDataKey('categories_doc_updated_at')) ?? 0;
 
-    // 2. 加载目标
+    // 2. 加载目标同步元数据和目标
+    final deletedTargetsStr =
+        prefs.getString(_identityDataKey('deleted_targets'));
+    if (deletedTargetsStr != null) {
+      try {
+        final decoded = json.decode(deletedTargetsStr);
+        if (decoded is Map) {
+          decoded.forEach((key, value) {
+            final timestamp =
+                value is num ? value.toInt() : int.tryParse(value.toString());
+            if (key is String && timestamp != null && timestamp > 0) {
+              _deletedTargets[key] = timestamp;
+            }
+          });
+        }
+      } catch (e, stackTrace) {
+        _recordAppError('加载目标删除记录出错', e, stackTrace);
+      }
+    }
+    _targetsDocUpdatedAt =
+        prefs.getInt(_identityDataKey('targets_doc_updated_at')) ?? 0;
+
     List<String>? targetList = prefs.getStringList(_identityDataKey('targets'));
+    var targetNeedsMigration = false;
+    final targetMigrationTimestamp = DateTime.now().millisecondsSinceEpoch;
     if (targetList != null) {
       _targets.clear();
       for (final str in targetList) {
         try {
-          _targets.add(Target.fromJson(json.decode(str)));
+          var target = Target.fromJson(json.decode(str));
+          if (target.updatedAt <= 0) {
+            target = target.copyWith(updatedAt: targetMigrationTimestamp);
+            targetNeedsMigration = true;
+          }
+          _targets.add(target);
         } catch (e, stackTrace) {
           debugPrint("加载目标数据出错: $e");
           _recordAppError('加载目标数据出错', e, stackTrace);
         }
       }
     }
+    if (_targetsDocUpdatedAt <= 0 && _targets.isNotEmpty) {
+      _targetsDocUpdatedAt = _targets.fold<int>(
+        0,
+        (latest, target) =>
+            target.updatedAt > latest ? target.updatedAt : latest,
+      );
+    }
+    if (targetNeedsMigration) _targetsDirty = true;
 
     // 3. 加载时间块
     String? slotsStr = prefs.getString(_identityDataKey('daily_slots'));
@@ -6059,17 +6425,26 @@ class TimeProvider with ChangeNotifier {
     });
 
     // 3. 更新目标的 categoryId（如果关联了这个子分类）
+    var targetsChanged = false;
     for (int i = 0; i < _targets.length; i++) {
       final target = _targets[i];
       if (target.categoryId == fromCategoryId && target.name == subName) {
-        _targets[i] = target.copyWith(categoryId: toCategoryId);
+        _targets[i] = target.copyWith(
+          categoryId: toCategoryId,
+          updatedAt: nowMs,
+        );
+        targetsChanged = true;
       }
     }
 
     // 4. 通知 UI 刷新
     _markCategoriesChanged();
     _markCategoriesGiteePending();
-    _targetsDirty = true;
+    if (targetsChanged) {
+      _targetsDocUpdatedAt = nowMs;
+      _targetsDirty = true;
+      _markTargetsGiteePending();
+    }
     _markAllSlotsDirty();
     _invalidateLabelCategoryIdCache();
     _targetStatsCache.invalidate();
@@ -6094,8 +6469,9 @@ class TimeProvider with ChangeNotifier {
   void deleteCategory(int index) {
     if (!_allowScheduleMutation()) return;
     final categoryId = _categories[index].id;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
     // 写入带时间戳的删除墓碑，防止另一端已同步的分支复活
-    _deletedCategories[categoryId] = DateTime.now().millisecondsSinceEpoch;
+    _deletedCategories[categoryId] = nowMs;
     _categories.removeAt(index);
     _markCategoriesChanged();
     _markCategoriesGiteePending();
@@ -6110,9 +6486,19 @@ class TimeProvider with ChangeNotifier {
       }
     }
 
-    // Remove targets referencing this category
-    _targets.removeWhere((t) => t.categoryId == categoryId);
-    _targetsDirty = true;
+    // Remove targets referencing this category and keep tombstones so another
+    // device cannot resurrect the cascade-deleted targets.
+    final removedTargets =
+        _targets.where((target) => target.categoryId == categoryId).toList();
+    _targets.removeWhere((target) => target.categoryId == categoryId);
+    for (final target in removedTargets) {
+      _deletedTargets[target.id] = nowMs;
+    }
+    if (removedTargets.isNotEmpty) {
+      _targetsDocUpdatedAt = nowMs;
+      _targetsDirty = true;
+      _markTargetsGiteePending();
+    }
 
     notifyListeners();
     _saveData();
@@ -6121,8 +6507,13 @@ class TimeProvider with ChangeNotifier {
 
   void addTarget(Target target) {
     if (!_allowScheduleMutation()) return;
-    _targets.add(target);
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final stampedTarget = target.copyWith(updatedAt: nowMs);
+    _deletedTargets.remove(stampedTarget.id);
+    _targets.add(stampedTarget);
+    _targetsDocUpdatedAt = nowMs;
     _targetsDirty = true;
+    _markTargetsGiteePending();
     _saveData();
     notifyListeners();
     _addTargetStatsChanged(); // 通知目标统计变化
@@ -6132,8 +6523,12 @@ class TimeProvider with ChangeNotifier {
     if (!_allowScheduleMutation()) return;
     int index = _targets.indexWhere((t) => t.id == newTarget.id);
     if (index != -1) {
-      _targets[index] = newTarget;
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      _targets[index] = newTarget.copyWith(updatedAt: nowMs);
+      _deletedTargets.remove(newTarget.id);
+      _targetsDocUpdatedAt = nowMs;
       _targetsDirty = true;
+      _markTargetsGiteePending();
       _saveData();
       notifyListeners();
       _addTargetStatsChanged(); // 通知目标统计变化
@@ -6142,8 +6537,14 @@ class TimeProvider with ChangeNotifier {
 
   void deleteTarget(Target target) {
     if (!_allowScheduleMutation()) return;
-    _targets.remove(target);
+    final index = _targets.indexWhere((item) => item.id == target.id);
+    if (index == -1) return;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    _targets.removeAt(index);
+    _deletedTargets[target.id] = nowMs;
+    _targetsDocUpdatedAt = nowMs;
     _targetsDirty = true;
+    _markTargetsGiteePending();
     _saveData();
     notifyListeners();
     _addTargetStatsChanged(); // 通知目标统计变化
@@ -6153,7 +6554,9 @@ class TimeProvider with ChangeNotifier {
     if (!_allowScheduleMutation()) return;
     final Target item = _targets.removeAt(oldIndex);
     _targets.insert(newIndex, item);
+    _targetsDocUpdatedAt = DateTime.now().millisecondsSinceEpoch;
     _targetsDirty = true; // 标记目标为脏
+    _markTargetsGiteePending();
     _saveData();
     notifyListeners();
   }
