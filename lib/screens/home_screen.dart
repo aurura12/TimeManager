@@ -58,8 +58,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // 监听同步状态并显示提示
     _syncSubscription = timeProvider.syncStatusStream.listen((message) {
-      // 只对最终状态（成功/失败）的消息弹出提示，避免 "SYNCING" 和 "IDLE" 弹出
-      if (mounted && message != "SYNCING" && message != "IDLE") {
+      // 详细日程横幅已经展示 Gitee 的结果，避免再弹一次底部 SnackBar。
+      final isScheduleSyncMessage = message == "日程同步成功" ||
+          message.startsWith("日程同步失败") ||
+          message == "未配置同步 Token";
+      if (mounted &&
+          !isScheduleSyncMessage &&
+          message != "SYNCING" &&
+          message != "IDLE") {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
               content: Text(message), duration: const Duration(seconds: 2)),
@@ -148,6 +154,8 @@ class _HomeScreenState extends State<HomeScreen> {
         context.select<TimeProvider, bool>((p) => p.isRemoteViewEnabled);
     final hasPendingSync =
         context.select<TimeProvider, bool>((p) => p.hasPendingSync);
+    final hasDetailedScheduleProgress = context
+        .select<TimeProvider, bool>((p) => p.scheduleSyncProgress != null);
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -360,7 +368,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 stream: timeProvider.syncStatusStream,
                 builder: (context, snapshot) {
                   final status = snapshot.data ?? "IDLE";
-                  if (status == "SYNCING") {
+                  if (!hasDetailedScheduleProgress &&
+                      status == "SYNCING") {
                     return const LinearProgressIndicator(
                       backgroundColor: Colors.transparent,
                       valueColor:
