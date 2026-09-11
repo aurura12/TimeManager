@@ -11,6 +11,35 @@ import 'package:time_manager/widgets/profile_settings_drawer.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  testWidgets('Android settings hide the overwrite pull entry', (tester) async {
+    final provider = TimeProvider();
+    addTearDown(provider.dispose);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            drawer: ProfileSettingsDrawer(
+              onChanged: () {},
+              desktopPlatformOverride: false,
+              androidPlatformOverride: true,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final scaffoldState = tester.state<ScaffoldState>(find.byType(Scaffold));
+    scaffoldState.openDrawer();
+    await tester.pump();
+
+    expect(find.text('覆盖拉取日程'), findsNothing);
+  });
+
   testWidgets(
     'mobile settings hides manual identity entry in Google mode',
     (tester) async {

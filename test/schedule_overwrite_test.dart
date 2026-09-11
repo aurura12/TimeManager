@@ -2274,6 +2274,7 @@ void main() {
             drawer: ProfileSettingsDrawer(
               onChanged: () {},
               desktopPlatformOverride: false,
+              androidPlatformOverride: false,
             ),
           ),
         ),

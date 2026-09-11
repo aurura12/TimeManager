@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import '../utils/platform_features.dart';
 
 import 'package:flutter/material.dart';
@@ -18,11 +20,13 @@ import '../models/diary_kind.dart';
 class ProfileSettingsDrawer extends StatefulWidget {
   final VoidCallback onChanged;
   final bool? desktopPlatformOverride;
+  final bool? androidPlatformOverride;
 
   const ProfileSettingsDrawer({
     super.key,
     required this.onChanged,
     this.desktopPlatformOverride,
+    this.androidPlatformOverride,
   });
 
   @override
@@ -40,6 +44,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     final googleUser = AppIdentityService.googleUser;
     final themeModeProvider = context.watch<ThemeModeProvider>();
     final colorScheme = Theme.of(context).colorScheme;
+    final isAndroid = widget.androidPlatformOverride ?? Platform.isAndroid;
 
     return Drawer(
       backgroundColor: colorScheme.surface,
@@ -111,7 +116,8 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                       ),
                     const Divider(height: 1),
                     _buildRemoteSyncSection(context, provider),
-                    _buildOverwriteScheduleTile(context, provider),
+                    if (!isAndroid)
+                      _buildOverwriteScheduleTile(context, provider),
                   ],
                   const Divider(height: 1),
                   ListTile(
