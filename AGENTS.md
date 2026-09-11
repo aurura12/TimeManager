@@ -65,9 +65,9 @@ flutter build apk --release        # 构建 Android release APK
 
 # 平台构建脚本
 scripts/build_android.sh           # Android arm64 构建：bump 版本/跑测试/输出到 dist/
-build_windows.bat                  # Windows 构建（含自动下载 nuget.exe）
+scripts/build_windows.bat          # Windows 构建（含自动下载 nuget.exe）
 scripts/update_macos.sh            # macOS 构建并安装到 /Applications
-installer.iss                      # Inno Setup 6 打 Windows 安装包（上传 Gitee release）
+scripts/installer.iss              # Inno Setup 6 打 Windows 安装包（上传 Gitee release）
 ```
 
 ## Config Files (Secrets — .gitignore'd)

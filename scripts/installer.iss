@@ -2,18 +2,18 @@
 ; 用法：
 ;   1. 先构建 release：flutter build windows --release
 ;   2. 用 Inno Setup 编译本脚本：
-;      "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+;      "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" scripts\installer.iss
 ;   3. 产物：installer_output\time_manager_setup_<版本>.exe
 ;   4. 上传到 Gitee time_manager_releases 仓库 release 资产（tag 与版本一致）
 ;
 ; 版本号需与 pubspec.yaml 的 version 保持一致（只取前三段，如 1.84.0+1 → 1.84.0）
 
 #define MyAppName "时间块"
-#define MyAppVersion "1.86.0"
+#define MyAppVersion "1.95.0"
 #define MyAppPublisher "时间块"
 #define MyAppExeName "time_manager.exe"
 ; Flutter Windows release 产物目录
-#define MyReleaseDir "build\windows\x64\runner\Release"
+#define MyReleaseDir "..\build\windows\x64\runner\Release"
 
 [Setup]
 ; 应用唯一标识（GUID，勿与其他应用重复）
@@ -27,9 +27,9 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 ; 安装到 Program Files 需要管理员权限，Inno Setup 会自动触发 UAC
 PrivilegesRequired=admin
-OutputDir=installer_output
+OutputDir=..\installer_output
 OutputBaseFilename=time_manager_setup_{#MyAppVersion}
-SetupIconFile=windows\runner\resources\app_icon.ico
+SetupIconFile=..\windows\runner\resources\app_icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2
 SolidCompression=yes

@@ -1,5 +1,5 @@
 @echo off
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 echo ============================================
 echo  time_manager Windows build script
@@ -38,7 +38,7 @@ if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set "ISCC=C:\Program Fil
 if exist "C:\Program Files\Inno Setup 6\ISCC.exe" set "ISCC=C:\Program Files\Inno Setup 6\ISCC.exe"
 if not defined ISCC goto no_iscc
 echo   Using %ISCC%
-"%ISCC%" installer.iss
+"%ISCC%" scripts\installer.iss
 if not errorlevel 1 goto iscc_ok
 echo   [ERROR] Installer build failed!
 pause
