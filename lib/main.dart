@@ -9,6 +9,7 @@ import 'package:time_manager/theme/app_theme.dart';
 import 'providers/time_provider.dart';
 import 'package:time_manager/screens/main_screen.dart';
 import 'services/app_log_service.dart';
+import 'services/windows_legacy_preferences_migration.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -49,6 +50,18 @@ void installGlobalLogErrorHandlers(AppLogService service) {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final migrationResult = await WindowsLegacyPreferencesMigration().migrate();
+  if (migrationResult.didMigrate) {
+    debugPrint(
+      'Windows legacy preferences migrated: '
+      '${migrationResult.migratedKeyCount} keys',
+    );
+  } else if (migrationResult.status == WindowsLegacyMigrationStatus.failed) {
+    debugPrint(
+      'Windows legacy preferences migration failed: '
+      '${migrationResult.error}',
+    );
+  }
   final appLogService = AppLogService.instance;
   installGlobalLogErrorHandlers(appLogService);
   try {
