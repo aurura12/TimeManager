@@ -498,7 +498,7 @@ class _TravelScreenState extends State<TravelScreen> {
                   style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                 ),
               ),
-              SizedBox(width: 44),
+              SizedBox(width: 48),
             ],
           ),
         ),
@@ -528,8 +528,7 @@ class _TravelScreenState extends State<TravelScreen> {
                     });
                   },
                   child: Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
                     child: Row(
                       children: [
                         SizedBox(
@@ -562,10 +561,14 @@ class _TravelScreenState extends State<TravelScreen> {
                           ),
                         ),
                         SizedBox(
-                          width: 44,
+                          width: 48,
                           child: PopupMenuButton<_TravelRecordAction>(
                             tooltip: '记录操作',
                             padding: EdgeInsets.zero,
+                            style: IconButton.styleFrom(
+                              minimumSize: const Size(48, 48),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
                             onSelected: (action) =>
                                 _handleRecordAction(action, record.date),
                             itemBuilder: (context) => const [

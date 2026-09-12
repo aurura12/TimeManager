@@ -780,16 +780,18 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   String get _diaryStatusText {
-    if (_isReadOnlyContext) return '只读查看模式';
     if (_processing) return '正在同步…';
+    if (_isReadOnlyContext) return '只读查看模式';
+    if (_bodyController.text.trim().isEmpty) return '今天还没有内容';
     if ((_token ?? '').trim().isEmpty) return '仅保存在本机';
     if (_dirtySinceContextLoaded) return '本地有未同步修改';
     return '草稿已保存，可同步';
   }
 
   IconData get _diaryStatusIcon {
-    if (_isReadOnlyContext) return Icons.visibility_outlined;
     if (_processing) return Icons.sync;
+    if (_isReadOnlyContext) return Icons.visibility_outlined;
+    if (_bodyController.text.trim().isEmpty) return Icons.edit_note_outlined;
     if ((_token ?? '').trim().isEmpty) return Icons.save_outlined;
     if (_dirtySinceContextLoaded) return Icons.edit_note_outlined;
     return Icons.cloud_done_outlined;
@@ -801,12 +803,17 @@ class _DiaryScreenState extends State<DiaryScreen> {
       case _DiarySyncAction.pull:
         unawaited(_pullDiary());
       case _DiarySyncAction.push:
+        if (_isReadOnlyContext) {
+          _showMessage('当前分区只读，请切换回自己的分区后再同步到远端');
+          return;
+        }
         unawaited(_pushDiary());
     }
   }
 
   Widget _buildDiaryStatus(ColorScheme colorScheme) {
-    final detail = _isReadOnlyContext ? '切换回自己的分区后才可以同步' : '输入内容会自动保存到本机';
+    final detail =
+        _isReadOnlyContext ? '可刷新远端内容；切换回自己的分区后才能提交' : '输入内容会自动保存到本机';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
@@ -902,11 +909,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
             )
           else
             PopupMenuButton<_DiarySyncAction>(
-              tooltip: '同步日记',
+              tooltip: _isReadOnlyContext ? '刷新日记' : '同步日记',
               icon: const Icon(Icons.cloud_sync_outlined),
               onSelected: _handleSyncAction,
-              itemBuilder: (context) => const [
-                PopupMenuItem(
+              itemBuilder: (context) => [
+                const PopupMenuItem(
                   value: _DiarySyncAction.pull,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -919,6 +926,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                 ),
                 PopupMenuItem(
                   value: _DiarySyncAction.push,
+                  enabled: !_isReadOnlyContext,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -991,7 +999,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              '正在查看${_kindDisplayName(_kind)}的日记分区（只读，不可同步）',
+                              '正在查看${_kindDisplayName(_kind)}的日记分区（只读，不可提交到远端）',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: colorScheme.onSecondaryContainer,
