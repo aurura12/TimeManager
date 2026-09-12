@@ -11,7 +11,8 @@ class DiarySearchResult {
     required this.matchIndex,
   });
 
-  String get dateKey => '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+  String get dateKey =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
 
-  String get kindLabel => kind == 'g' ? 'G' : 'J';
+  String get kindLabel => kind == 'g' ? '乖乖' : '晶晶';
 }

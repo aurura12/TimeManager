@@ -12,6 +12,8 @@ import '../services/diary_search_service.dart';
 import '../services/app_identity_service.dart';
 import 'diary_search_screen.dart';
 
+enum _DiarySyncAction { pull, push }
+
 class DiaryScreen extends StatefulWidget {
   const DiaryScreen({super.key});
 
@@ -87,10 +89,6 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (token != null && token.isNotEmpty) {
       DiarySearchService.loadInBackground(token);
     }
-  }
-
-  String _selectedDateText() {
-    return DateFormat('yyyy-MM-dd').format(_selectedDate);
   }
 
   String _frontMatterTitle(DateTime startedAt) {
@@ -630,7 +628,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       );
     }
     if (_remoteDiaryPaths.isEmpty) {
-      return const Center(child: Text('远程仓库未找到 G/J 日记文件'));
+      return const Center(child: Text('暂无远程日记文件'));
     }
     final roots = _buildRemoteTree(_remoteDiaryPaths);
     return ListView(
@@ -766,7 +764,84 @@ class _DiaryScreenState extends State<DiaryScreen> {
   void _showMessage(String text) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(text)),
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(text),
+      ),
+    );
+  }
+
+  String _kindDisplayName(DiaryKind kind) {
+    return kind == DiaryKind.g ? '乖乖' : '晶晶';
+  }
+
+  bool get _isReadOnlyContext {
+    return _selectedIdentityKind != null && _selectedIdentityKind != _kind;
+  }
+
+  String get _diaryStatusText {
+    if (_isReadOnlyContext) return '只读查看模式';
+    if (_processing) return '正在同步…';
+    if ((_token ?? '').trim().isEmpty) return '仅保存在本机';
+    if (_dirtySinceContextLoaded) return '本地有未同步修改';
+    return '草稿已保存，可同步';
+  }
+
+  IconData get _diaryStatusIcon {
+    if (_isReadOnlyContext) return Icons.visibility_outlined;
+    if (_processing) return Icons.sync;
+    if ((_token ?? '').trim().isEmpty) return Icons.save_outlined;
+    if (_dirtySinceContextLoaded) return Icons.edit_note_outlined;
+    return Icons.cloud_done_outlined;
+  }
+
+  void _handleSyncAction(_DiarySyncAction action) {
+    if (_processing) return;
+    switch (action) {
+      case _DiarySyncAction.pull:
+        unawaited(_pullDiary());
+      case _DiarySyncAction.push:
+        unawaited(_pushDiary());
+    }
+  }
+
+  Widget _buildDiaryStatus(ColorScheme colorScheme) {
+    final detail = _isReadOnlyContext ? '切换回自己的分区后才可以同步' : '输入内容会自动保存到本机';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            _diaryStatusIcon,
+            size: 18,
+            color: colorScheme.primary,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _diaryStatusText,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  detail,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -780,7 +855,6 @@ class _DiaryScreenState extends State<DiaryScreen> {
       );
     }
 
-    final startedAt = _startedAt;
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -817,16 +891,45 @@ class _DiaryScreenState extends State<DiaryScreen> {
             onPressed: _openSearch,
             icon: const Icon(Icons.search),
           ),
-          IconButton(
-            tooltip: '拉取日记',
-            onPressed: _processing ? null : _pullDiary,
-            icon: const Icon(Icons.download_outlined),
-          ),
-          IconButton(
-            tooltip: '同步日记',
-            onPressed: _processing ? null : _pushDiary,
-            icon: const Icon(Icons.sync),
-          ),
+          if (_processing)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else
+            PopupMenuButton<_DiarySyncAction>(
+              tooltip: '同步日记',
+              icon: const Icon(Icons.cloud_sync_outlined),
+              onSelected: _handleSyncAction,
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: _DiarySyncAction.pull,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.download_outlined),
+                      SizedBox(width: 12),
+                      Text('从远端拉取'),
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: _DiarySyncAction.push,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.upload_outlined),
+                      SizedBox(width: 12),
+                      Text('同步到远端'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
         ],
       ),
       body: Column(
@@ -837,31 +940,42 @@ class _DiaryScreenState extends State<DiaryScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
-                      ChoiceChip(
-                        label: const Text('G'),
-                        selected: _kind == DiaryKind.g,
-                        onSelected: (_) => _changeKind(DiaryKind.g),
+                      SegmentedButton<DiaryKind>(
+                        segments: const [
+                          ButtonSegment(
+                            value: DiaryKind.g,
+                            label: Text('乖乖'),
+                          ),
+                          ButtonSegment(
+                            value: DiaryKind.j,
+                            label: Text('晶晶'),
+                          ),
+                        ],
+                        selected: {_kind},
+                        onSelectionChanged: (selection) {
+                          if (selection.isNotEmpty) {
+                            unawaited(_changeKind(selection.first));
+                          }
+                        },
                       ),
-                      const SizedBox(width: 8),
-                      ChoiceChip(
-                        label: const Text('J'),
-                        selected: _kind == DiaryKind.j,
-                        onSelected: (_) => _changeKind(DiaryKind.j),
-                      ),
-                      const Spacer(),
                       OutlinedButton.icon(
                         onPressed: _processing ? null : _showCalendarPicker,
                         icon:
                             const Icon(Icons.calendar_today_outlined, size: 16),
-                        label: Text(_selectedDateText()),
+                        label: Text(
+                          DateFormat('yyyy年M月d日').format(_selectedDate),
+                        ),
                       ),
                     ],
                   ),
                   // Windows 只读提示：查看对方日记分区时不可同步
-                  if (_selectedIdentityKind != null &&
-                      _selectedIdentityKind != _kind) ...[
+                  if (_isReadOnlyContext) ...[
                     const SizedBox(height: 12),
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -877,7 +991,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              '正在查看${_kind == DiaryKind.g ? '乖乖' : '晶晶'}的日记分区（只读，不可同步）',
+                              '正在查看${_kindDisplayName(_kind)}的日记分区（只读，不可同步）',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: colorScheme.onSecondaryContainer,
@@ -889,27 +1003,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                     ),
                   ],
                   const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHigh,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: startedAt == null
-                        ? Text(
-                            '开始输入正文后，会自动生成 title 与 date。',
-                            style:
-                                TextStyle(color: colorScheme.onSurfaceVariant),
-                          )
-                        : Text(
-                            'title: ${_frontMatterTitle(startedAt)}\n'
-                            'date: ${_frontMatterDate(startedAt)}',
-                            style: TextStyle(
-                              height: 1.5,
-                              color: colorScheme.onSurface,
-                            ),
-                          ),
-                  ),
+                  _buildDiaryStatus(colorScheme),
                   const SizedBox(height: 12),
                   Expanded(
                     child: Stack(
@@ -918,9 +1012,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
                           controller: _bodyController,
                           maxLines: null,
                           expands: true,
+                          readOnly: _isReadOnlyContext,
                           textAlignVertical: TextAlignVertical.top,
                           decoration: InputDecoration(
-                            hintText: '在这里写正文...',
+                            hintText:
+                                _isReadOnlyContext ? '当前分区仅供查看' : '写下今天发生的事…',
                             contentPadding: const EdgeInsets.only(
                               top: 16,
                               left: 12,
@@ -937,7 +1033,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
                           right: 0,
                           child: IconButton(
                             tooltip: '插入当前时间',
-                            onPressed: _insertCurrentTime,
+                            onPressed:
+                                _isReadOnlyContext ? null : _insertCurrentTime,
                             icon: const Icon(Icons.access_time, size: 20),
                           ),
                         ),

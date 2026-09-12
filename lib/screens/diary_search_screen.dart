@@ -100,7 +100,9 @@ class _DiarySearchScreenState extends State<DiarySearchScreen> {
                 Text(
                   '正在构建日记索引...',
                   style: TextStyle(
-                    color: isDark ? colorScheme.onSurfaceVariant : Colors.grey[500],
+                    color: isDark
+                        ? colorScheme.onSurfaceVariant
+                        : Colors.grey[500],
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -118,7 +120,9 @@ class _DiarySearchScreenState extends State<DiarySearchScreen> {
                     '${(value * 100).toInt()}%',
                     style: TextStyle(
                       fontSize: 12,
-                      color: isDark ? colorScheme.onSurfaceVariant : Colors.grey[500],
+                      color: isDark
+                          ? colorScheme.onSurfaceVariant
+                          : Colors.grey[500],
                     ),
                   ),
                 ],
@@ -140,9 +144,7 @@ class _DiarySearchScreenState extends State<DiarySearchScreen> {
           ),
           const SizedBox(height: 12),
           Text(
-            DiarySearchService.hasData
-                ? '输入关键词搜索日记'
-                : '暂无索引数据，请同步日记后再试',
+            DiarySearchService.hasData ? '输入关键词搜索日记' : '暂无索引数据，请同步日记后再试',
             style: TextStyle(
               color: isDark ? colorScheme.onSurfaceVariant : Colors.grey[500],
             ),
@@ -233,24 +235,24 @@ class _DiarySearchScreenState extends State<DiarySearchScreen> {
                             ),
                             const SizedBox(width: 10),
                             Text(
-                              '${result.kindLabel}  ${DateFormat('yyyy-MM-dd').format(result.date)}',
+                              '${result.kindLabel}  ${DateFormat('yyyy年M月d日').format(result.date)}',
                               style: TextStyle(
                                 fontWeight: FontWeight.w600,
                                 fontSize: 14,
                                 color: isDark
                                     ? colorScheme.onSurface
-                                : Colors.black87,
-                          ),
-                        ),
-                        const Spacer(),
-                        Icon(
-                          Icons.chevron_right,
-                          size: 18,
-                          color: isDark
-                              ? colorScheme.onSurfaceVariant
-                              : Colors.grey[400],
-                        ),
-                      ],
+                                    : Colors.black87,
+                              ),
+                            ),
+                            const Spacer(),
+                            Icon(
+                              Icons.chevron_right,
+                              size: 18,
+                              color: isDark
+                                  ? colorScheme.onSurfaceVariant
+                                  : Colors.grey[400],
+                            ),
+                          ],
                         ),
                         if (result.snippet.isNotEmpty) ...[
                           const SizedBox(height: 6),

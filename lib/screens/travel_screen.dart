@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
@@ -9,6 +11,8 @@ import '../services/travel_gitee_service.dart';
 import '../services/travel_local_store.dart';
 
 enum _TravelViewMode { table, calendar, stats }
+
+enum _TravelRecordAction { edit, delete }
 
 class TravelScreen extends StatefulWidget {
   const TravelScreen({super.key});
@@ -126,6 +130,10 @@ class _TravelScreenState extends State<TravelScreen> {
               child: const Text('取消'),
             ),
             FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+                foregroundColor: Theme.of(context).colorScheme.onError,
+              ),
               onPressed: () => Navigator.of(context).pop(true),
               child: const Text('删除'),
             ),
@@ -155,8 +163,8 @@ class _TravelScreenState extends State<TravelScreen> {
     await _pushToGitHub();
   }
 
-  Future<void> _showAddRecordDialog() async {
-    var tempDate = _normalizedDate(DateTime.now());
+  Future<void> _showAddRecordDialog({DateTime? initialDate}) async {
+    var tempDate = _normalizedDate(initialDate ?? DateTime.now());
     final locationController = TextEditingController();
     final eventController = TextEditingController();
 
@@ -319,7 +327,7 @@ class _TravelScreenState extends State<TravelScreen> {
     final token = (_token ?? '').trim();
     if (token.isEmpty) {
       if (!silent) {
-    _showMessage('未配置当前平台同步 Token，请先配置日记模块 token');
+        _showMessage('未配置当前平台同步 Token，请先配置日记模块 token');
       }
       return;
     }
@@ -386,39 +394,50 @@ class _TravelScreenState extends State<TravelScreen> {
 
   void _showMessage(String text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(text),
+      ),
+    );
+  }
+
+  void _handleRecordAction(_TravelRecordAction action, DateTime date) {
+    switch (action) {
+      case _TravelRecordAction.edit:
+        unawaited(_showEditRecordDialog(date));
+      case _TravelRecordAction.delete:
+        unawaited(_confirmDeleteRecord(date));
+    }
   }
 
   Widget _buildViewSwitch() {
-    return Row(
-      children: [
-        ChoiceChip(
-          label: const Text('表格'),
-          selected: _viewMode == _TravelViewMode.table,
-          onSelected: (_) => setState(() {
-            _viewMode = _TravelViewMode.table;
-            _touchedIndex = -1;
-          }),
+    return SegmentedButton<_TravelViewMode>(
+      segments: const [
+        ButtonSegment(
+          value: _TravelViewMode.table,
+          label: Text('表格'),
+          icon: Icon(Icons.table_rows_outlined),
         ),
-        const SizedBox(width: 8),
-        ChoiceChip(
-          label: const Text('日历'),
-          selected: _viewMode == _TravelViewMode.calendar,
-          onSelected: (_) => setState(() {
-            _viewMode = _TravelViewMode.calendar;
-            _touchedIndex = -1;
-          }),
+        ButtonSegment(
+          value: _TravelViewMode.calendar,
+          label: Text('日历'),
+          icon: Icon(Icons.calendar_month_outlined),
         ),
-        const SizedBox(width: 8),
-        ChoiceChip(
-          label: const Text('统计'),
-          selected: _viewMode == _TravelViewMode.stats,
-          onSelected: (_) => setState(() {
-            _viewMode = _TravelViewMode.stats;
-            _touchedIndex = -1;
-          }),
+        ButtonSegment(
+          value: _TravelViewMode.stats,
+          label: Text('统计'),
+          icon: Icon(Icons.insights_outlined),
         ),
       ],
+      selected: {_viewMode},
+      onSelectionChanged: (selection) {
+        if (selection.isEmpty) return;
+        setState(() {
+          _viewMode = selection.first;
+          _touchedIndex = -1;
+        });
+      },
     );
   }
 
@@ -426,7 +445,26 @@ class _TravelScreenState extends State<TravelScreen> {
     final colorScheme = Theme.of(context).colorScheme;
     final rows = _document.records;
     if (rows.isEmpty) {
-      return const Center(child: Text('暂无出行记录，先新增一条吧'));
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.luggage_outlined,
+              size: 42,
+              color: colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: 12),
+            const Text('还没有出行记录'),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _processing ? null : () => _showAddRecordDialog(),
+              icon: const Icon(Icons.add),
+              label: const Text('新增记录'),
+            ),
+          ],
+        ),
+      );
     }
     return Column(
       children: [
@@ -439,7 +477,7 @@ class _TravelScreenState extends State<TravelScreen> {
           child: const Row(
             children: [
               SizedBox(
-                width: 90,
+                width: 86,
                 child: Text(
                   '日期',
                   style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
@@ -460,6 +498,7 @@ class _TravelScreenState extends State<TravelScreen> {
                   style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                 ),
               ),
+              SizedBox(width: 44),
             ],
           ),
         ),
@@ -488,15 +527,13 @@ class _TravelScreenState extends State<TravelScreen> {
                           DateTime(record.date.year, record.date.month);
                     });
                   },
-                  onDoubleTap: () => _showEditRecordDialog(record.date),
-                  onLongPress: () => _confirmDeleteRecord(record.date),
                   child: Padding(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
                     child: Row(
                       children: [
                         SizedBox(
-                          width: 90,
+                          width: 86,
                           child: Text(
                             record.dateKey,
                             style: const TextStyle(fontSize: 13),
@@ -522,6 +559,39 @@ class _TravelScreenState extends State<TravelScreen> {
                             ),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        SizedBox(
+                          width: 44,
+                          child: PopupMenuButton<_TravelRecordAction>(
+                            tooltip: '记录操作',
+                            padding: EdgeInsets.zero,
+                            onSelected: (action) =>
+                                _handleRecordAction(action, record.date),
+                            itemBuilder: (context) => const [
+                              PopupMenuItem(
+                                value: _TravelRecordAction.edit,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.edit_outlined),
+                                    SizedBox(width: 12),
+                                    Text('编辑'),
+                                  ],
+                                ),
+                              ),
+                              PopupMenuItem(
+                                value: _TravelRecordAction.delete,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.delete_outline),
+                                    SizedBox(width: 12),
+                                    Text('删除'),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -632,7 +702,6 @@ class _TravelScreenState extends State<TravelScreen> {
   Widget _buildCalendarView() {
     final colorScheme = Theme.of(context).colorScheme;
     final selectedRecord = _recordForDate(_selectedDate);
-    final hasRecord = selectedRecord != null;
     final year = _calendarMonth.year;
     final month = _calendarMonth.month;
     final firstDayOfMonth = DateTime(year, month, 1);
@@ -719,7 +788,6 @@ class _TravelScreenState extends State<TravelScreen> {
                   _selectedDate = date;
                 });
               },
-              onDoubleTap: () => _showEditRecordDialog(date),
               child: Container(
                 margin: const EdgeInsets.all(2),
                 decoration: BoxDecoration(
@@ -758,34 +826,172 @@ class _TravelScreenState extends State<TravelScreen> {
             );
           }),
         ),
-        const SizedBox(height: 8),
-        const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHigh,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: hasRecord
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '日期：${DateFormat('yyyy-MM-dd').format(_selectedDate)}',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 6),
-                    Text('地点：${selectedRecord.location}'),
-                    const SizedBox(height: 4),
-                    Text('事件：${selectedRecord.event.isEmpty ? '（空）' : selectedRecord.event}'),
-                  ],
-                )
-              : Text(
-                  '日期：${DateFormat('yyyy-MM-dd').format(_selectedDate)}\n当天暂无记录',
-                  style: TextStyle(color: colorScheme.onSurfaceVariant),
-                ),
+        const SizedBox(height: 12),
+        _buildSelectedDateCard(
+          colorScheme: colorScheme,
+          record: selectedRecord,
         ),
       ],
+    );
+  }
+
+  String _weekdayLabel(DateTime date) {
+    const labels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+    return labels[date.weekday - 1];
+  }
+
+  Widget _buildTravelDetailLine({
+    required ColorScheme colorScheme,
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: colorScheme.primary),
+        const SizedBox(width: 10),
+        SizedBox(
+          width: 36,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.w500),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSelectedDateCard({
+    required ColorScheme colorScheme,
+    required TravelRecord? record,
+  }) {
+    final hasRecord = record != null;
+    return Card(
+      margin: EdgeInsets.zero,
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.55),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 12, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 4,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: colorScheme.primary,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        DateFormat('yyyy年M月d日').format(_selectedDate),
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${_weekdayLabel(_selectedDate)} · ${hasRecord ? '出行记录' : '暂无记录'}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  hasRecord
+                      ? Icons.check_circle_outline
+                      : Icons.add_circle_outline,
+                  color: colorScheme.primary,
+                  size: 22,
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            if (record != null) ...[
+              _buildTravelDetailLine(
+                colorScheme: colorScheme,
+                icon: Icons.place_outlined,
+                label: '地点',
+                value: record.location,
+              ),
+              const SizedBox(height: 10),
+              _buildTravelDetailLine(
+                colorScheme: colorScheme,
+                icon: Icons.event_note_outlined,
+                label: '事件',
+                value: record.event.isEmpty ? '未填写' : record.event,
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.tonalIcon(
+                      onPressed: _processing
+                          ? null
+                          : () => _showEditRecordDialog(_selectedDate),
+                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      label: const Text('编辑记录'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: '删除记录',
+                    onPressed: _processing
+                        ? null
+                        : () => _confirmDeleteRecord(_selectedDate),
+                    style: IconButton.styleFrom(
+                      foregroundColor: colorScheme.error,
+                      backgroundColor: colorScheme.errorContainer,
+                    ),
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                ],
+              ),
+            ] else ...[
+              Text(
+                '这一天还没有出行记录',
+                style: TextStyle(color: colorScheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: _processing
+                    ? null
+                    : () => _showAddRecordDialog(initialDate: _selectedDate),
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('新增当天记录'),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 
@@ -884,8 +1090,7 @@ class _TravelScreenState extends State<TravelScreen> {
                   child: PieChart(
                     PieChartData(
                       pieTouchData: PieTouchData(
-                        touchCallback:
-                            (FlTouchEvent event, pieTouchResponse) {
+                        touchCallback: (FlTouchEvent event, pieTouchResponse) {
                           setState(() {
                             if (!event.isInterestedForInteractions ||
                                 pieTouchResponse == null ||
@@ -902,8 +1107,7 @@ class _TravelScreenState extends State<TravelScreen> {
                       ),
                       sectionsSpace: 2,
                       centerSpaceRadius: 36,
-                      sections:
-                          List.generate(pieData.length, (i) {
+                      sections: List.generate(pieData.length, (i) {
                         final entry = pieData[i];
                         final color =
                             Colors.primaries[i % Colors.primaries.length];
@@ -918,8 +1122,7 @@ class _TravelScreenState extends State<TravelScreen> {
                                   ? ''
                                   : '${percentage.toStringAsFixed(1)}%'),
                           radius: isTouched ? 56.0 : 48.0,
-                          titlePositionPercentageOffset:
-                              isTouched ? 1.5 : 0.5,
+                          titlePositionPercentageOffset: isTouched ? 1.5 : 0.5,
                           titleStyle: TextStyle(
                             fontSize: isTouched ? 13.0 : 11.0,
                             fontWeight: FontWeight.bold,
@@ -939,8 +1142,7 @@ class _TravelScreenState extends State<TravelScreen> {
                   alignment: WrapAlignment.center,
                   children: List.generate(pieData.length, (i) {
                     final entry = pieData[i];
-                    final color =
-                        Colors.primaries[i % Colors.primaries.length];
+                    final color = Colors.primaries[i % Colors.primaries.length];
                     return Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -1015,7 +1217,8 @@ class _TravelScreenState extends State<TravelScreen> {
                   ),
                 ),
                 ...sortedMonths.map((entry) {
-                  final locs = (monthLocations[entry.key]?.toList() ?? [])..sort();
+                  final locs = (monthLocations[entry.key]?.toList() ?? [])
+                    ..sort();
                   return Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 12, vertical: 10),
@@ -1116,7 +1319,7 @@ class _TravelScreenState extends State<TravelScreen> {
           ),
           IconButton(
             tooltip: '新增记录',
-            onPressed: _processing ? null : _showAddRecordDialog,
+            onPressed: _processing ? null : () => _showAddRecordDialog(),
             icon: const Icon(Icons.add),
           ),
         ],
