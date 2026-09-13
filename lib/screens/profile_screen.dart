@@ -7,6 +7,8 @@ import '../widgets/calendar_sync_status_badge.dart';
 import '../providers/time_provider.dart';
 import 'event_detail_screen.dart';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_tokens.dart';
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
@@ -86,14 +88,14 @@ class _ProfileScreenState extends State<ProfileScreen>
                         color: _showParentOnly
                             ? colorScheme.primary
                             : colorScheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: AppRadius.cardAll,
                       ),
                       child: Text(
                         _showParentOnly ? '父事件' : '全部',
                         style: TextStyle(
                           fontSize: 12,
                           color: _showParentOnly
-                              ? Colors.white
+                              ? colorScheme.onPrimary
                               : colorScheme.onSurfaceVariant,
                         ),
                       ),
@@ -135,16 +137,15 @@ class _ProfileScreenState extends State<ProfileScreen>
   // 核心：双曲线折线图组件
   Widget _buildTrendChart(TimeProvider provider) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       height: 220,
       padding: const EdgeInsets.fromLTRB(10, 20, 20, 10),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(25),
+        borderRadius: AppRadius.sheetAll,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.16 : 0.02),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 10,
           )
         ],
@@ -200,23 +201,23 @@ class _ProfileScreenState extends State<ProfileScreen>
                   LineChartBarData(
                     spots: _generateTimeSpots(provider), // 真实数据点
                     isCurved: true,
-                    color: const Color(0xFF9CB86A),
+                    color: AppSemanticColors.brand,
                     barWidth: 3,
                     dotData: const FlDotData(show: false),
                     belowBarData: BarAreaData(
                         show: true,
-                        color: const Color(0xFF9CB86A).withValues(alpha: 0.1)),
+                        color: AppSemanticColors.brand.withValues(alpha: 0.1)),
                   ),
                   // 曲线 2: 事件数量 (橙色)
                   LineChartBarData(
                     spots: _generateCountSpots(provider), // 真实数据点
                     isCurved: true,
-                    color: Colors.orangeAccent,
+                    color: AppSemanticColors.warning,
                     barWidth: 3,
                     dotData: const FlDotData(show: false),
                     belowBarData: BarAreaData(
                         show: true,
-                        color: Colors.orangeAccent.withValues(alpha: 0.05)),
+                        color: AppSemanticColors.warning.withValues(alpha: 0.05)),
                   ),
                 ],
               ),
@@ -227,9 +228,9 @@ class _ProfileScreenState extends State<ProfileScreen>
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _buildLegend(const Color(0xFF9CB86A), "投入时长(h)"),
+              _buildLegend(AppSemanticColors.brand, "投入时长(h)"),
               const SizedBox(width: 20),
-              _buildLegend(Colors.orangeAccent, "事件数量"),
+              _buildLegend(AppSemanticColors.warning, "事件数量"),
             ],
           )
         ],
@@ -257,14 +258,13 @@ class _ProfileScreenState extends State<ProfileScreen>
   // 自定义 TabBar 样式
   Widget _buildCustomTabBar() {
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       height: 45,
       // 如果 TabBar 放在过窄的容器里，可以尝试稍微调大外层宽度或减小 padding
       padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(15),
+        borderRadius: AppRadius.cardAll,
       ),
       child: TabBar(
         controller: _tabController,
@@ -279,15 +279,18 @@ class _ProfileScreenState extends State<ProfileScreen>
 
         indicator: BoxDecoration(
           color: colorScheme.surfaceContainerLowest,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: AppRadius.controlAll,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: isDark ? 0.16 : 0.05),
+              color: Colors.black.withValues(alpha: 0.06),
               blurRadius: 5,
             )
           ],
         ),
-        labelColor: const Color(0xFF9CB86A),
+        // 品牌绿直接当文字色在白底只有约 2.2:1、在 surfaceContainerHigh 上更低。
+        // 这里按"选中块所在的更差底面"取可读版本，保持色相但压到 ≥4.5:1。
+        labelColor: AppSemanticColors.readableOn(
+            AppSemanticColors.brand, colorScheme.surfaceContainerHigh),
         unselectedLabelColor: colorScheme.onSurfaceVariant,
         labelStyle: const TextStyle(
           fontWeight: FontWeight.bold,
@@ -317,9 +320,9 @@ class _ProfileScreenState extends State<ProfileScreen>
     return Row(
       children: [
         _statCard(
-            "总投入/小时", totalHours.toStringAsFixed(1), const Color(0xFF9CB86A)),
+            "总投入/小时", totalHours.toStringAsFixed(1), AppSemanticColors.brand),
         const SizedBox(width: 16),
-        _statCard("涉及项目数", stats.length.toString(), const Color(0xFF4A90E2)),
+        _statCard("涉及项目数", stats.length.toString(), AppSemanticColors.info),
       ],
     );
   }
@@ -331,7 +334,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           color: colorScheme.surfaceContainerLowest,
-          borderRadius: BorderRadius.circular(25),
+          borderRadius: AppRadius.sheetAll,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -383,7 +386,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     return Container(
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(25),
+        borderRadius: AppRadius.sheetAll,
       ),
       child: ListView.separated(
         shrinkWrap: true,
@@ -396,7 +399,7 @@ class _ProfileScreenState extends State<ProfileScreen>
           String key = entry.key;
           double val = entry.value;
           double percent = (val / total) * 100;
-          Color itemColor = Colors.primaries[index % Colors.primaries.length];
+          Color itemColor = AppSemanticColors.chartAt(index);
 
           return Material(
             color: Colors.transparent,
@@ -460,7 +463,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(25),
+        borderRadius: AppRadius.sheetAll,
       ),
       child: Column(
         children: [
@@ -503,7 +506,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                 centerSpaceRadius: 40,
                 sections: List.generate(stats.length, (i) {
                   final entry = stats[i];
-                  final color = Colors.primaries[i % Colors.primaries.length];
+                  final color = AppSemanticColors.chartAt(i);
                   final percentage = (entry.value / total * 100);
                   final isTouched = i == _touchedIndex;
                   final double fontSize = isTouched ? 14.0 : 12.0;
@@ -522,7 +525,9 @@ class _ProfileScreenState extends State<ProfileScreen>
                     titleStyle: TextStyle(
                         fontSize: fontSize,
                         fontWeight: FontWeight.bold,
-                        color: isTouched ? colorScheme.onSurface : Colors.white),
+                        color: isTouched
+                            ? colorScheme.onSurface
+                            : AppSemanticColors.onColor(color)),
                   );
                 }),
               ),
@@ -536,7 +541,7 @@ class _ProfileScreenState extends State<ProfileScreen>
             alignment: WrapAlignment.center,
             children: List.generate(stats.length, (i) {
               final entry = stats[i];
-              final color = Colors.primaries[i % Colors.primaries.length];
+              final color = AppSemanticColors.chartAt(i);
               return Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [

@@ -10,6 +10,8 @@ import '../services/diary_local_store.dart';
 import '../services/travel_gitee_service.dart';
 import '../services/travel_local_store.dart';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_tokens.dart';
 enum _TravelViewMode { table, calendar, stats }
 
 enum _TravelRecordAction { edit, delete }
@@ -472,7 +474,7 @@ class _TravelScreenState extends State<TravelScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
           decoration: BoxDecoration(
             color: colorScheme.surfaceContainerHigh,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: AppRadius.controlAll,
           ),
           child: const Row(
             children: [
@@ -725,7 +727,7 @@ class _TravelScreenState extends State<TravelScreen> {
             ),
             InkWell(
               onTap: _pickCalendarMonth,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: AppRadius.badgeAll,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 child: Row(
@@ -798,7 +800,7 @@ class _TravelScreenState extends State<TravelScreen> {
                   border: isToday
                       ? Border.all(color: colorScheme.primary, width: 1.5)
                       : null,
-                  borderRadius: BorderRadius.circular(6),
+                  borderRadius: AppRadius.badgeAll,
                 ),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -819,7 +821,7 @@ class _TravelScreenState extends State<TravelScreen> {
                         width: 5,
                         height: 5,
                         decoration: const BoxDecoration(
-                          color: Colors.green,
+                          color: AppSemanticColors.success,
                           shape: BoxShape.circle,
                         ),
                       ),
@@ -885,7 +887,7 @@ class _TravelScreenState extends State<TravelScreen> {
       elevation: 0,
       color: colorScheme.surfaceContainerLow,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: AppRadius.cardAll,
         side: BorderSide(
           color: colorScheme.outlineVariant.withValues(alpha: 0.55),
         ),
@@ -902,7 +904,7 @@ class _TravelScreenState extends State<TravelScreen> {
                   height: 40,
                   decoration: BoxDecoration(
                     color: colorScheme.primary,
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: AppRadius.gridAll,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -1064,7 +1066,7 @@ class _TravelScreenState extends State<TravelScreen> {
                 colorScheme: colorScheme,
                 value: '${locationCounts.length}',
                 label: '到访地点',
-                accentColor: Colors.blue,
+                accentColor: AppSemanticColors.info,
               ),
             ],
           ),
@@ -1084,7 +1086,7 @@ class _TravelScreenState extends State<TravelScreen> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: colorScheme.surfaceContainerLowest,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: AppRadius.cardAll,
             ),
             child: Column(
               children: [
@@ -1113,7 +1115,7 @@ class _TravelScreenState extends State<TravelScreen> {
                       sections: List.generate(pieData.length, (i) {
                         final entry = pieData[i];
                         final color =
-                            Colors.primaries[i % Colors.primaries.length];
+                            AppSemanticColors.chartAt(i);
                         final percentage = entry.value / total * 100;
                         final isTouched = i == _touchedIndex;
                         return PieChartSectionData(
@@ -1131,7 +1133,7 @@ class _TravelScreenState extends State<TravelScreen> {
                             fontWeight: FontWeight.bold,
                             color: isTouched
                                 ? colorScheme.onSurface
-                                : Colors.white,
+                                : AppSemanticColors.onColor(color),
                           ),
                         );
                       }),
@@ -1145,7 +1147,7 @@ class _TravelScreenState extends State<TravelScreen> {
                   alignment: WrapAlignment.center,
                   children: List.generate(pieData.length, (i) {
                     final entry = pieData[i];
-                    final color = Colors.primaries[i % Colors.primaries.length];
+                    final color = AppSemanticColors.chartAt(i);
                     return Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -1187,7 +1189,7 @@ class _TravelScreenState extends State<TravelScreen> {
           Container(
             decoration: BoxDecoration(
               color: colorScheme.surfaceContainerLowest,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: AppRadius.cardAll,
             ),
             clipBehavior: Clip.antiAlias,
             child: Column(
@@ -1280,7 +1282,7 @@ class _TravelScreenState extends State<TravelScreen> {
         padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
         decoration: BoxDecoration(
           color: colorScheme.surfaceContainerLowest,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: AppRadius.cardAll,
         ),
         child: Column(
           children: [

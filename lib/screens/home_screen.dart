@@ -9,6 +9,9 @@ import 'package:provider/provider.dart';
 import '../models/category.dart';
 import '../models/schedule_template.dart';
 import '../providers/time_provider.dart';
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/template_bar.dart';
 import '../widgets/time_grid.dart';
@@ -157,17 +160,15 @@ class _HomeScreenState extends State<HomeScreen> {
     final hasDetailedScheduleProgress = context
         .select<TimeProvider, bool>((p) => p.scheduleSyncProgress != null);
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final surfaces = AppSurfaces.of(context);
 
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: isDark ? colorScheme.surface : const Color(0xFF9CB86A),
-        foregroundColor: isDark ? colorScheme.onSurface : Colors.white,
-        surfaceTintColor: Colors.transparent,
-        titleSpacing: 8,
+        // 底色、图标色、底部弱边框统一由主题给定，不再使用大面积橄榄绿
+        titleSpacing: AppSpacing.sm,
         // 仅 Windows：切换日期的按钮居中；安卓保持默认左对齐
         centerTitle: isDesktopPlatform,
-        actionsPadding: const EdgeInsets.only(right: 15),
+        actionsPadding: const EdgeInsets.only(right: AppSpacing.lg),
         title: _buildAppBarDateNav(timeProvider, currentDate),
         actions: _buildAppBarActions(
           timeProvider,
@@ -217,17 +218,17 @@ class _HomeScreenState extends State<HomeScreen> {
                                     children: [
                                       Expanded(
                                           child: _DayHeader(date: prevDate)),
-                                      const VerticalDivider(
+                                      VerticalDivider(
                                         width: 1,
                                         thickness: 1,
-                                        color: Color(0x33000000),
+                                        color: surfaces.joinDivider,
                                       ),
                                       Expanded(
                                           child: _DayHeader(date: currentDate)),
-                                      const VerticalDivider(
+                                      VerticalDivider(
                                         width: 1,
                                         thickness: 1,
-                                        color: Color(0x33000000),
+                                        color: surfaces.joinDivider,
                                       ),
                                       Expanded(
                                           child: _DayHeader(date: nextDate)),
@@ -262,10 +263,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                                         date: date),
                                           ),
                                         ),
-                                        const VerticalDivider(
+                                        VerticalDivider(
                                           width: 1,
                                           thickness: 1,
-                                          color: Color(0x33000000),
+                                          color: surfaces.joinDivider,
                                         ),
                                         Expanded(
                                           child: _DayGrid(
@@ -290,10 +291,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                                         date: date),
                                           ),
                                         ),
-                                        const VerticalDivider(
+                                        VerticalDivider(
                                           width: 1,
                                           thickness: 1,
-                                          color: Color(0x33000000),
+                                          color: surfaces.joinDivider,
                                         ),
                                         Expanded(
                                           child: _DayGrid(
@@ -368,12 +369,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 stream: timeProvider.syncStatusStream,
                 builder: (context, snapshot) {
                   final status = snapshot.data ?? "IDLE";
-                  if (!hasDetailedScheduleProgress &&
-                      status == "SYNCING") {
-                    return const LinearProgressIndicator(
+                  if (!hasDetailedScheduleProgress && status == "SYNCING") {
+                    return LinearProgressIndicator(
                       backgroundColor: Colors.transparent,
                       valueColor:
-                          AlwaysStoppedAnimation<Color>(Color(0xFF9CB86A)),
+                          AlwaysStoppedAnimation<Color>(colorScheme.primary),
                       minHeight: 3,
                     );
                   }
@@ -424,23 +424,24 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildTimeLabelRow(int h) {
     return Container(
-      width: 55,
-      height: 45,
+      width: AppSizes.gridTimeAxis,
+      height: AppSizes.gridRow,
       alignment: Alignment.center,
       child: Text(
         "${h.toString().padLeft(2, '0')}:00",
-        style: TextStyle(color: Colors.grey[600], fontSize: 12),
+        style: AppText.gridLabel.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
       ),
     );
   }
 
   Widget _buildCategorySidebar(TimeProvider provider) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final surfaces = AppSurfaces.of(context);
 
     return Container(
       width: 100,
-      color: isDark ? colorScheme.surfaceContainerLow : Colors.grey[100],
+      color: surfaces.subtle,
       child: Column(
         children: [
           TemplateBar(
@@ -466,21 +467,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
               // 2. 补齐底部添加按钮
               footer: Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: ElevatedButton(
+                padding: const EdgeInsets.all(AppSpacing.sm),
+                child: OutlinedButton(
                   onPressed: () =>
                       _showCategoryDialog(context, provider), // 调用通用对话框（添加模式）
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    backgroundColor: isDark
-                        ? colorScheme.surfaceContainerHighest
-                        : Colors.white,
-                    foregroundColor:
-                        isDark ? colorScheme.onSurface : Colors.grey[700],
-                    elevation: 0,
-                    side: BorderSide(color: colorScheme.outlineVariant),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8)),
+                  style: OutlinedButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                    backgroundColor: surfaces.card,
+                    side: BorderSide(color: surfaces.border),
+                    shape: const RoundedRectangleBorder(
+                        borderRadius: AppRadius.controlAll),
                   ),
                   child: const Icon(Icons.add, size: 24),
                 ),
@@ -502,11 +499,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       SlidableAction(
                         onPressed: (context) => _showDeleteConfirmDialog(
                             context, index, category, provider),
-                        backgroundColor: const Color(0xFFFE4A49),
-                        foregroundColor: Colors.white,
+                        backgroundColor: AppSemanticColors.danger,
+                        foregroundColor:
+                            AppSemanticColors.onColor(AppSemanticColors.danger),
                         icon: Icons.delete,
                         label: '删除',
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: AppRadius.badgeAll,
                       ),
                     ],
                   ),
@@ -525,6 +523,12 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildCategoryItem(int catIndex, Category cat, TimeProvider provider) {
     bool isExpanded = provider.getCategoryExpandState(cat.id);
     bool isTemporary = cat.name == TimeProvider.temporaryCategoryName;
+    // 侧栏底下是 surfaces.subtle：半透明分类色要先合成，对比度才算得对
+    final sidebarSurface = AppSurfaces.of(context).subtle;
+    final subBg = AppSemanticColors.tint(cat.color, sidebarSurface, 0.6);
+    final onSubBg = AppSemanticColors.onColor(subBg);
+    final editBg = AppSemanticColors.tint(cat.color, sidebarSurface, 0.4);
+    final onEditBg = AppSemanticColors.onColor(editBg);
 
     return Column(
       children: [
@@ -564,13 +568,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
                     decoration: BoxDecoration(
                       color: cat.color,
-                      borderRadius: BorderRadius.circular(6),
+                      borderRadius: AppRadius.badgeAll,
                     ),
                     child: Text(
                       cat.name,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: AppSemanticColors.onColor(cat.color),
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
                       ),
@@ -597,10 +601,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 4, vertical: 6),
                       decoration: BoxDecoration(
-                        color: cat.color.withValues(alpha: 0.6),
-                        borderRadius: BorderRadius.circular(4),
+                        color: subBg,
+                        borderRadius: AppRadius.gridAll,
                         border: Border.all(
-                          color: Colors.white,
+                          color: AppSemanticColors.onColorMuted(subBg),
                           width: 1,
                         ),
                       ),
@@ -610,8 +614,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           Expanded(
                             child: Text(
                               subCat,
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: onSubBg,
                                 fontSize: 11,
                               ),
                               overflow: TextOverflow.ellipsis,
@@ -630,18 +634,20 @@ class _HomeScreenState extends State<HomeScreen> {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
                     decoration: BoxDecoration(
-                      color: cat.color.withValues(alpha: 0.4),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.white, width: 1),
+                      color: editBg,
+                      borderRadius: AppRadius.gridAll,
+                      border: Border.all(
+                        color: AppSemanticColors.onColorMuted(editBg),
+                        width: 1,
+                      ),
                     ),
-                    child: const Row(
+                    child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.edit, color: Colors.white, size: 14),
-                        SizedBox(width: 4),
+                        Icon(Icons.edit, color: onEditBg, size: 14),
+                        const SizedBox(width: 4),
                         Text('编辑',
-                            style:
-                                TextStyle(color: Colors.white, fontSize: 11)),
+                            style: TextStyle(color: onEditBg, fontSize: 11)),
                       ],
                     ),
                   ),
@@ -731,8 +737,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ElevatedButton(
               onPressed: () {
                 if (nameController.text.isNotEmpty) {
-                  Category tempCat =
-                      Category(name: nameController.text, color: Colors.grey);
+                  Category tempCat = Category(
+                      name: nameController.text,
+                      color: AppSemanticColors.neutral);
                   _assignCategory(tempCat, provider);
                   Navigator.pop(context);
                 }
@@ -758,13 +765,20 @@ class _HomeScreenState extends State<HomeScreen> {
   }) {
     showModalBottomSheet(
       context: context,
+      // 底部弹层的底色是 surfaces.card；亮红 #FE4A49 压在其上只有约 3.3:1
       builder: (context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.delete_outline, color: Colors.red),
-              title: const Text('删除', style: TextStyle(color: Colors.red)),
+              leading: Icon(Icons.delete_outline,
+                  color: AppSemanticColors.readableOn(
+                      AppSemanticColors.danger, AppSurfaces.of(context).card)),
+              title: Text('删除',
+                  style: TextStyle(
+                      color: AppSemanticColors.readableOn(
+                          AppSemanticColors.danger,
+                          AppSurfaces.of(context).card))),
               onTap: () {
                 Navigator.pop(context);
                 showDialog(
@@ -783,8 +797,10 @@ class _HomeScreenState extends State<HomeScreen> {
                               () => tempSubCategories.removeAt(subIndex));
                           Navigator.pop(context);
                         },
-                        style:
-                            TextButton.styleFrom(foregroundColor: Colors.red),
+                        style: TextButton.styleFrom(
+                            foregroundColor: AppSemanticColors.readableOn(
+                                AppSemanticColors.danger,
+                                AppSurfaces.of(context).card)),
                         child: const Text('删除'),
                       ),
                     ],
@@ -873,10 +889,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _showCategoryDialog(BuildContext context, TimeProvider provider,
       {int? index, Category? existingCat}) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final surfaces = AppSurfaces.of(context);
     bool isEdit = index != null && existingCat != null;
 
     String catName = isEdit ? existingCat.name : '';
-    Color selectedColor = isEdit ? existingCat.color : Colors.blue;
+    Color selectedColor =
+        isEdit ? existingCat.color : AppSemanticColors.palette.first;
     List<String> tempSubCategories =
         isEdit ? List.from(existingCat.subCategories) : [];
     List<String> tempHiddenSubCategories =
@@ -897,8 +916,6 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           return AlertDialog(
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             title: Text(isEdit ? '编辑事件' : '添加事件',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
             content: SizedBox(
@@ -941,21 +958,24 @@ class _HomeScreenState extends State<HomeScreen> {
                         isDense: true,
                       ),
                       onChanged: (value) {
-                        try {
-                          String clean =
-                              value.replaceAll('#', '').toUpperCase();
-                          if (clean.length == 6) clean = 'FF$clean';
-                          if (clean.length == 8) {
-                            setDialogState(() =>
-                                selectedColor = Color(int.parse('0x$clean')));
-                          }
-                        } catch (e) {
+                        // 用户逐字输入时先不打扰；只有达到完整长度后才校验。
+                        final clean = value
+                            .trim()
+                            .replaceAll('#', '')
+                            .replaceFirst(
+                                RegExp(r'^0x', caseSensitive: false), '');
+                        if (clean.length != 6 && clean.length != 8) return;
+
+                        final parsed = AppSemanticColors.parseOpaqueHex(value);
+                        if (parsed == null) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                                 content: Text(
-                                    '请输入合法的6位/8位十六进制颜色值（如 #FFFFFF 或 #FFFFFFFF）')),
+                                    '请输入合法的6位/8位十六进制颜色值（如 #FFFFFF 或 #FFFFFFFF，透明度会被忽略）')),
                           );
+                          return;
                         }
+                        setDialogState(() => selectedColor = parsed);
                       },
                     ),
 
@@ -965,8 +985,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
                     // 4. 子事件区域
                     Text('编辑子事件 (点击删除，拖动到下方隐藏)',
-                        style:
-                            TextStyle(color: Colors.grey[600], fontSize: 11)),
+                        style: TextStyle(
+                            color: colorScheme.onSurfaceVariant, fontSize: 11)),
                     const SizedBox(height: 10),
 
                     // 子事件列表
@@ -1027,17 +1047,26 @@ class _HomeScreenState extends State<HomeScreen> {
                       },
                       builder: (context, candidateData, rejectedData) {
                         final isHovering = candidateData.isNotEmpty;
+                        // 拖拽区的底是 surfaces.subtle 上一层的 warning 淡色；
+                        // 文案/图标在"hover"态下不能再直接用 warning 原色（同色系低对比），
+                        // 先合成底面再取可读色。
+                        final hoverBg = AppSemanticColors.tint(
+                            AppSemanticColors.warning, surfaces.subtle, 0.3);
+                        final hoverFg = AppSemanticColors.onTint(
+                            AppSemanticColors.warning, surfaces.subtle,
+                            alpha: 0.3);
                         return Container(
                           width: double.infinity,
                           padding: const EdgeInsets.symmetric(
                               horizontal: 8, vertical: 12),
                           decoration: BoxDecoration(
-                            color: isHovering
-                                ? Colors.orange.withValues(alpha: 0.3)
-                                : Colors.grey.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(8),
+                            color: isHovering ? hoverBg : surfaces.subtle,
+                            borderRadius: AppRadius.controlAll,
                             border: Border.all(
-                              color: isHovering ? Colors.orange : Colors.grey,
+                              color: isHovering
+                                  ? AppSemanticColors.readableOn(
+                                      AppSemanticColors.warning, hoverBg)
+                                  : surfaces.border,
                               width: 1,
                             ),
                           ),
@@ -1045,15 +1074,17 @@ class _HomeScreenState extends State<HomeScreen> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(Icons.visibility_off,
-                                  color:
-                                      isHovering ? Colors.orange : Colors.grey,
+                                  color: isHovering
+                                      ? hoverFg
+                                      : colorScheme.onSurfaceVariant,
                                   size: 16),
                               const SizedBox(width: 8),
                               Text(
                                 isHovering ? '释放以隐藏' : '拖动子事件到此处隐藏',
                                 style: TextStyle(
-                                  color:
-                                      isHovering ? Colors.orange : Colors.grey,
+                                  color: isHovering
+                                      ? hoverFg
+                                      : colorScheme.onSurfaceVariant,
                                   fontSize: 12,
                                 ),
                               ),
@@ -1083,8 +1114,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         IconButton(
-                          icon: const Icon(Icons.add_circle,
-                              color: Color(0xFF9CB86A)),
+                          icon: Icon(Icons.add_circle,
+                              color: Theme.of(context).colorScheme.primary),
                           onPressed: () {
                             if (subCatController.text.isNotEmpty) {
                               setDialogState(() {
@@ -1103,30 +1134,31 @@ class _HomeScreenState extends State<HomeScreen> {
                       const Divider(height: 1, thickness: 1),
                       const SizedBox(height: 10),
                       Text('已隐藏的子事件 (点击恢复)',
-                          style:
-                              TextStyle(color: Colors.grey[600], fontSize: 11)),
+                          style: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                              fontSize: 11)),
                       const SizedBox(height: 10),
                       Wrap(
                         spacing: 8.0,
                         runSpacing: 8.0,
                         children: tempHiddenSubCategories.map((hiddenSubCat) {
                           return ActionChip(
-                            avatar: const Icon(Icons.restore,
-                                size: 14, color: Colors.grey),
+                            avatar: Icon(Icons.restore,
+                                size: 14, color: colorScheme.onSurfaceVariant),
                             label: Text(hiddenSubCat,
-                                style: const TextStyle(
-                                    color: Colors.grey, fontSize: 12)),
-                            backgroundColor: Colors.grey.withValues(alpha: 0.2),
+                                style: TextStyle(
+                                    color: colorScheme.onSurfaceVariant,
+                                    fontSize: 12)),
+                            backgroundColor: surfaces.subtle,
                             onPressed: () {
                               setDialogState(() {
                                 tempHiddenSubCategories.remove(hiddenSubCat);
                                 tempSubCategories.add(hiddenSubCat);
                               });
                             },
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8)),
-                            side: BorderSide(
-                                color: Colors.grey.withValues(alpha: 0.4)),
+                            shape: const RoundedRectangleBorder(
+                                borderRadius: AppRadius.badgeAll),
+                            side: BorderSide(color: surfaces.border),
                           );
                         }).toList(),
                       ),
@@ -1140,12 +1172,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: () => Navigator.pop(context),
                   child: const Text('取消')),
               ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF9CB86A),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                ),
                 onPressed: () {
                   if (catName.isNotEmpty) {
                     Category newCat = Category(
@@ -1177,16 +1203,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildColorPalette(
       Color currentColor, Function(Color) onColorChanged) {
     // 生成一个颜色矩阵：水平是色调，垂直是亮度
-    List<Color> hues = [
-      Colors.red,
-      Colors.orange,
-      Colors.yellow,
-      Colors.green,
-      Colors.cyan,
-      Colors.blue,
-      Colors.purple,
-      Colors.pink,
-    ];
+    // 分类自定义颜色的色相基准，集中在语义色文件里
+    final hues = AppSemanticColors.pickerHues;
 
     return Padding(
       padding: const EdgeInsets.all(8),
@@ -1216,11 +1234,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: color,
                           border: Border.all(
                             color: currentColor == color
-                                ? Colors.white
+                                ? AppSemanticColors.onColor(color)
                                 : Colors.transparent,
                             width: 2,
                           ),
-                          borderRadius: BorderRadius.circular(3),
+                          borderRadius: AppRadius.gridAll,
                         ),
                       ),
                     ),
@@ -1257,7 +1275,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildAppBarDateNav(TimeProvider provider, DateTime date) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1269,14 +1286,17 @@ class _HomeScreenState extends State<HomeScreen> {
             provider.previousDay();
           },
         ),
-        GestureDetector(
-          onTap: () => _showDatePicker(),
-          child: Text(
-            "${date.month}月${date.day}日",
-            style: TextStyle(
-              decoration: TextDecoration.underline,
-              decorationColor:
-                  isDark ? colorScheme.onSurfaceVariant : Colors.white70,
+        Flexible(
+          child: GestureDetector(
+            onTap: () => _showDatePicker(),
+            child: Text(
+              "${date.month}月${date.day}日",
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                decoration: TextDecoration.underline,
+                decorationColor: colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
         ),
@@ -1298,6 +1318,12 @@ class _HomeScreenState extends State<HomeScreen> {
     bool remoteViewEnabled,
     bool hasPendingSync,
   ) {
+    final surfaces = AppSurfaces.of(context);
+    final pendingSyncColor = AppSemanticColors.readableOn(
+      AppSemanticColors.warning,
+      surfaces.panel,
+      minRatio: 3.0,
+    );
     return [
       _appBarIconButton(
         icon: Icons.search,
@@ -1323,6 +1349,7 @@ class _HomeScreenState extends State<HomeScreen> {
           stream: provider.scheduleGiteeSyncStream,
           initialData: '',
           builder: (context, snapshot) {
+            final surfaces = AppSurfaces.of(context);
             final status = snapshot.data ?? '';
             return Tooltip(
               message: remoteViewEnabled
@@ -1334,14 +1361,20 @@ class _HomeScreenState extends State<HomeScreen> {
                   Icon(
                     Icons.people_outline,
                     size: 23,
-                    color: remoteViewEnabled ? Colors.blue : null,
+                    // 面板底色上的语义色要压到可读，否则 3.4:1 的蓝看不清
+                    color: remoteViewEnabled
+                        ? AppSemanticColors.readableOn(
+                            AppSemanticColors.info, surfaces.panel)
+                        : null,
                   ),
                   if (remoteViewEnabled)
-                    const Positioned(
+                    Positioned(
                       right: -4,
                       top: -4,
                       child: Icon(Icons.check_circle,
-                          size: 12, color: Colors.blue),
+                          size: 12,
+                          color: AppSemanticColors.readableOn(
+                              AppSemanticColors.info, surfaces.panel)),
                     ),
                 ],
               ),
@@ -1372,8 +1405,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Container(
                   width: 8,
                   height: 8,
-                  decoration: const BoxDecoration(
-                    color: Colors.orange,
+                  decoration: BoxDecoration(
+                    color: pendingSyncColor,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -1440,10 +1473,6 @@ class _HomeScreenState extends State<HomeScreen> {
             child: const Text('仅填充空白'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF9CB86A),
-              foregroundColor: Colors.white,
-            ),
             onPressed: () {
               provider.copyFromYesterday(mode: ApplyTemplateMode.replaceAll);
               Navigator.pop(context);
@@ -1476,10 +1505,6 @@ class _HomeScreenState extends State<HomeScreen> {
             child: const Text('仅填充空白'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF9CB86A),
-              foregroundColor: Colors.white,
-            ),
             onPressed: () {
               provider.applyTemplate(template.id, ApplyTemplateMode.replaceAll);
               Navigator.pop(context);
@@ -1496,11 +1521,12 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        borderRadius: BorderRadius.vertical(top: AppRadius.rCard),
       ),
       builder: (sheetContext) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
+            final colorScheme = Theme.of(context).colorScheme;
             final templates = provider.templates;
             return SafeArea(
               child: Padding(
@@ -1534,7 +1560,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         padding: const EdgeInsets.all(24),
                         child: Text(
                           '暂无模板，可从今日记录保存',
-                          style: TextStyle(color: Colors.grey[600]),
+                          style: TextStyle(color: colorScheme.onSurfaceVariant),
                         ),
                       )
                     else
@@ -1566,8 +1592,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                     },
                                   ),
                                   IconButton(
-                                    icon: const Icon(Icons.delete_outline,
-                                        size: 20, color: Colors.red),
+                                    icon: Icon(Icons.delete_outline,
+                                        size: 20,
+                                        color: AppSemanticColors.readableOn(
+                                            AppSemanticColors.danger,
+                                            AppSurfaces.of(context).card)),
                                     onPressed: () {
                                       provider.deleteTemplate(t.id);
                                       setSheetState(() {});
@@ -1585,8 +1614,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         width: double.infinity,
                         child: ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF9CB86A),
-                            foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 12),
                           ),
                           icon: const Icon(Icons.save_alt),
@@ -1630,10 +1657,6 @@ class _HomeScreenState extends State<HomeScreen> {
             child: const Text('取消'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF9CB86A),
-              foregroundColor: Colors.white,
-            ),
             onPressed: () {
               final ok =
                   provider.saveTemplateFromCurrentDay(nameController.text);
@@ -1677,10 +1700,6 @@ class _HomeScreenState extends State<HomeScreen> {
             child: const Text('取消'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF9CB86A),
-              foregroundColor: Colors.white,
-            ),
             onPressed: () {
               provider.renameTemplate(template.id, nameController.text);
               Navigator.pop(context);
@@ -1710,7 +1729,9 @@ class _HomeScreenState extends State<HomeScreen> {
               provider.deleteCategory(index); // 在 Provider 中实现此方法
               Navigator.pop(context);
             },
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            style: TextButton.styleFrom(
+                foregroundColor: AppSemanticColors.readableOn(
+                    AppSemanticColors.danger, AppSurfaces.of(context).card)),
             child: const Text("删除"),
           ),
         ],
@@ -1735,9 +1756,12 @@ class _HomeScreenState extends State<HomeScreen> {
           child:
               Text(provider.getCategoryExpandState(cat.id) ? '折叠子事件' : '展开子事件'),
         ),
-        const PopupMenuItem(
+        PopupMenuItem(
           value: 'delete',
-          child: Text('删除事件', style: TextStyle(color: Colors.red)),
+          child: Text('删除事件',
+              style: TextStyle(
+                  color: AppSemanticColors.readableOn(
+                      AppSemanticColors.danger, AppSurfaces.of(context).card))),
         ),
       ],
     );
@@ -1771,25 +1795,28 @@ class _DayHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final today = _isToday;
+    final pageSurface = AppSurfaces.of(context).page;
+    // primary 压在 12% primary 淡底上要压深才够对比
+    final todayBg =
+        AppSemanticColors.tint(colorScheme.primary, pageSurface, 0.12);
+    final onTodayBg =
+        AppSemanticColors.onTint(colorScheme.primary, pageSurface, alpha: 0.12);
     return SizedBox(
       height: _kDayHeaderHeight,
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: today ? colorScheme.primary.withValues(alpha: 0.12) : null,
-          borderRadius: BorderRadius.circular(6),
+          color: today ? todayBg : null,
+          borderRadius: AppRadius.badgeAll,
         ),
         child: Text(
           '${date.month}月${date.day}日 ${_kWeekdayLabels[date.weekday - 1]}',
           style: TextStyle(
             fontSize: 13,
             fontWeight: today ? FontWeight.bold : FontWeight.w500,
-            color: today
-                ? colorScheme.primary
-                : (isDark ? colorScheme.onSurfaceVariant : Colors.black87),
+            color: today ? onTodayBg : colorScheme.onSurfaceVariant,
           ),
           overflow: TextOverflow.ellipsis,
         ),
@@ -1991,7 +2018,7 @@ class _ExpandButtonState extends State<_ExpandButton> {
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
         child: Icon(
           widget.isExpanded ? Icons.expand_less : Icons.expand_more,
-          color: Colors.white,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
           size: 16,
         ),
       ),
@@ -2069,6 +2096,9 @@ class _ReorderableChipWrapState extends State<_ReorderableChipWrap> {
   }
 
   Widget _buildChip(String item, int index) {
+    // 半透明分类色先合成为不透明色，onColor 才不会比错
+    final chipBg =
+        AppSemanticColors.tint(widget.color, AppSurfaces.of(context).card, 0.8);
     return GestureDetector(
       onTap: () => widget.onTap(item, index),
       onSecondaryTap: widget.onSecondaryTap == null
@@ -2076,10 +2106,11 @@ class _ReorderableChipWrapState extends State<_ReorderableChipWrap> {
           : () => widget.onSecondaryTap!(item, index),
       child: Chip(
         visualDensity: VisualDensity.compact,
-        backgroundColor: widget.color.withValues(alpha: 0.8),
+        backgroundColor: chipBg,
         label: Text(item,
-            style: const TextStyle(color: Colors.white, fontSize: 12)),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            style: TextStyle(
+                color: AppSemanticColors.onColor(chipBg), fontSize: 12)),
+        shape: const RoundedRectangleBorder(borderRadius: AppRadius.badgeAll),
         side: BorderSide.none,
       ),
     );
@@ -2088,13 +2119,14 @@ class _ReorderableChipWrapState extends State<_ReorderableChipWrap> {
   Widget _buildFeedback(String item) {
     return Material(
       elevation: 8.0,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: AppRadius.badgeAll,
       child: Chip(
         visualDensity: VisualDensity.compact,
         backgroundColor: widget.color,
         label: Text(item,
-            style: const TextStyle(color: Colors.white, fontSize: 12)),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            style: TextStyle(
+                color: AppSemanticColors.onColor(widget.color), fontSize: 12)),
+        shape: const RoundedRectangleBorder(borderRadius: AppRadius.badgeAll),
         side: BorderSide.none,
       ),
     );

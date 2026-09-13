@@ -8,6 +8,8 @@ import '../models/known_google_users.dart';
 import '../services/check_in_sync_service.dart';
 import '../widgets/check_in_map_preview.dart';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_tokens.dart';
 class CheckInMapScreen extends StatefulWidget {
   const CheckInMapScreen({
     super.key,
@@ -236,11 +238,13 @@ class _LocationRankTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 卡片底面：奖牌/主色都是压在它上面的
+    final surface = colorScheme.surfaceContainerLow;
     final rankColor = rank <= 3
-        ? [
-            const Color(0xFFFFD700),
-            const Color(0xFFC0C0C0),
-            const Color(0xFFCD7F32)
+        ? const [
+            AppSemanticColors.medalGoldBright,
+            AppSemanticColors.medalSilver,
+            AppSemanticColors.medalBronze
           ][rank - 1]
         : colorScheme.onSurfaceVariant;
 
@@ -248,28 +252,32 @@ class _LocationRankTile extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 8),
       elevation: 0,
       color: colorScheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(borderRadius: AppRadius.controlAll),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: rankColor.withValues(alpha: 0.15),
+          backgroundColor: AppSemanticColors.tint(rankColor, surface, 0.15),
           child: Text(
             '$rank',
-            style: TextStyle(fontWeight: FontWeight.bold, color: rankColor),
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: AppSemanticColors.onTint(rankColor, surface),
+            ),
           ),
         ),
         title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
         trailing: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           decoration: BoxDecoration(
-            color: colorScheme.primary.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(12),
+            color: AppSemanticColors.tint(colorScheme.primary, surface, 0.12),
+            borderRadius: AppRadius.controlAll,
           ),
           child: Text(
             '$count 次',
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: colorScheme.primary,
+              color: AppSemanticColors.onTint(colorScheme.primary, surface,
+                  alpha: 0.12),
             ),
           ),
         ),

@@ -11,6 +11,9 @@ import '../widgets/check_in_photo_thumb.dart';
 import '../widgets/check_in_photo_viewer.dart';
 import 'add_check_in_goal_screen.dart';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 class CheckInDetailScreen extends StatefulWidget {
   const CheckInDetailScreen({
     super.key,
@@ -265,9 +268,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final onColor =
-        ThemeData.estimateBrightnessForColor(_goal.color) == Brightness.dark
-            ? Colors.white
-            : Colors.black87;
+        AppSemanticColors.onColor(_goal.color);
     final sortedRecords = [..._goal.records]
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     final statsUserId = _isMine ? _userId : _goal.ownerId;
@@ -348,7 +349,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                           icon: Icons.local_fire_department,
                           label: '连续天数',
                           value: '${_goal.streakDaysFor(statsUserId ?? _goal.ownerId)}',
-                          color: const Color(0xFFF98E45),
+                          color: AppSemanticColors.warning,
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -357,7 +358,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                           icon: Icons.history,
                           label: '累计',
                           value: '${sortedRecords.length}',
-                          color: const Color(0xFF4DA8EE),
+                          color: AppSemanticColors.identityGuaiGuai,
                         ),
                       ),
                     ],
@@ -416,8 +417,9 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                   FloatingActionButton.small(
                     heroTag: 'backfill',
                     onPressed: _backfillCheckIn,
-                    backgroundColor: Colors.orange,
-                    foregroundColor: Colors.white,
+                    backgroundColor: AppSemanticColors.warning,
+                    foregroundColor: AppSemanticColors.onColor(
+                        AppSemanticColors.warning),
                     child: const Icon(Icons.history),
                   ),
                   // 打卡 — 仅当天未打卡时显示
@@ -449,9 +451,9 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
       margin: const EdgeInsets.only(bottom: 10),
       elevation: 0,
       color: colorScheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(borderRadius: AppRadius.controlAll),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: AppRadius.controlAll,
         onTap: hasPhoto
             ? () => CheckInPhotoViewer.show(
                   context,
@@ -485,12 +487,21 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 5, vertical: 1),
                             decoration: BoxDecoration(
-                              color: Colors.orange.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(4),
+                              // 底色先合成成不透明，文字再按"同色淡底"取可读色：
+                              // 直接用 warning 当文字色压在自己的 20% 淡底上只有约 1.8:1。
+                              color: AppSemanticColors.tint(
+                                  AppSemanticColors.warning,
+                                  colorScheme.surfaceContainerLow,
+                                  0.2),
+                              borderRadius: AppRadius.gridAll,
                             ),
-                            child: const Text('补',
+                            child: Text('补',
                                 style: TextStyle(
-                                    fontSize: 10, color: Colors.orange)),
+                                    fontSize: 10,
+                                    color: AppSemanticColors.onTint(
+                                        AppSemanticColors.warning,
+                                        colorScheme.surfaceContainerLow,
+                                        alpha: 0.2))),
                           ),
                         ],
                         const SizedBox(width: 8),
@@ -558,11 +569,12 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
         children: [
           SlidableAction(
             onPressed: (_) => _confirmDeleteRecord(record),
-            backgroundColor: const Color(0xFFFE4A49),
-            foregroundColor: Colors.white,
+            backgroundColor: AppSemanticColors.danger,
+            foregroundColor:
+                AppSemanticColors.onColor(AppSemanticColors.danger),
             icon: Icons.delete,
             label: '删除',
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: AppRadius.controlAll,
           ),
         ],
       ),
@@ -586,21 +598,24 @@ class _StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final surface = AppSurfaces.of(context).page;
+    final tinted = AppSemanticColors.tint(color, surface, 0.1);
+    final onTinted = AppSemanticColors.onTint(color, surface, alpha: 0.1);
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(14),
+        color: tinted,
+        borderRadius: AppRadius.cardAll,
       ),
       child: Column(
         children: [
-          Icon(icon, color: color, size: 22),
+          Icon(icon, color: onTinted, size: 22),
           const SizedBox(height: 6),
           Text(value,
               style: TextStyle(
-                  fontSize: 18, fontWeight: FontWeight.bold, color: color)),
+                  fontSize: 18, fontWeight: FontWeight.bold, color: onTinted)),
           Text(label,
-              style: TextStyle(fontSize: 11, color: color.withValues(alpha: 0.8))),
+              style: TextStyle(fontSize: 11, color: onTinted)),
         ],
       ),
     );

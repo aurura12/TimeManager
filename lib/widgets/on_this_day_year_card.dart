@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/on_this_day_entry.dart';
 
+import '../theme/app_tokens.dart';
 /// 统一的时长格式化（中文，如 "1小时30分钟" / "45分钟"）
 String formatOnThisDayDuration(int minutes) {
   if (minutes >= 60) {
@@ -40,7 +41,7 @@ class OnThisDayYearCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: AppRadius.controlAll,
         side: BorderSide(color: theme.colorScheme.outlineVariant),
       ),
       child: Padding(
@@ -125,7 +126,7 @@ class _ActivityChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: theme.colorScheme.primaryContainer.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: AppRadius.sheetAll,
       ),
       child: Text(
         '$label ${formatOnThisDayDurationCompact(minutes)}',
@@ -211,7 +212,7 @@ class _DiaryRowState extends State<_DiaryRow> {
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
               color: colorScheme.secondaryContainer,
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: AppRadius.badgeAll,
             ),
             child: Text(
               widget.nickname,
@@ -225,7 +226,7 @@ class _DiaryRowState extends State<_DiaryRow> {
           Expanded(
             child: InkWell(
               onTap: widget.expandable && _truncated ? _toggle : null,
-              borderRadius: BorderRadius.circular(4),
+              borderRadius: AppRadius.gridAll,
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Column(

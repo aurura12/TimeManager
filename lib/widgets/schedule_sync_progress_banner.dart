@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/schedule_sync_progress.dart';
 
+import '../theme/app_semantic_colors.dart';
 class ScheduleSyncProgressBanner extends StatelessWidget {
   const ScheduleSyncProgressBanner({
     super.key,
@@ -16,8 +17,10 @@ class ScheduleSyncProgressBanner extends StatelessWidget {
     final color = progress.isError
         ? colorScheme.error
         : progress.isFinished
-            ? const Color(0xFF9CB86A)
+            ? AppSemanticColors.brand
             : colorScheme.primary;
+    // brand 绿在白底只有 2.2:1，当文字/图标用要先压到可读
+    final textColor = AppSemanticColors.readableOn(color, colorScheme.surface);
     final progressText =
         progress.total > 0 ? '${progress.completed}/${progress.total}' : null;
 
@@ -41,7 +44,7 @@ class ScheduleSyncProgressBanner extends StatelessWidget {
                             ? Icons.check_circle_outline
                             : Icons.sync,
                     size: 18,
-                    color: color,
+                    color: textColor,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
@@ -61,7 +64,7 @@ class ScheduleSyncProgressBanner extends StatelessWidget {
                     Text(
                       progressText,
                       style: TextStyle(
-                        color: color,
+                        color: textColor,
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
                       ),
@@ -74,7 +77,8 @@ class ScheduleSyncProgressBanner extends StatelessWidget {
                 LinearProgressIndicator(
                   value: progress.value,
                   color: color,
-                  backgroundColor: color.withValues(alpha: 0.14),
+                  backgroundColor:
+                      AppSemanticColors.tint(color, colorScheme.surface, 0.14),
                   minHeight: 3,
                 ),
               ],

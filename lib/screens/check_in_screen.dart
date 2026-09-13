@@ -8,6 +8,9 @@ import '../models/check_in_view_filter.dart';
 import '../models/known_google_users.dart';
 import '../services/app_identity_service.dart';
 import '../services/check_in_sync_service.dart';
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 import '../widgets/check_in_map_preview.dart';
 import '../widgets/check_in_photo_sheet.dart';
 import 'add_check_in_goal_screen.dart';
@@ -239,17 +242,11 @@ class _CheckInScreenState extends State<CheckInScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      backgroundColor: isDark ? colorScheme.surface : const Color(0xFFF8F9FA),
       appBar: AppBar(
-        title: const Text('打卡', style: TextStyle(fontSize: 18)),
+        title: const Text('打卡'),
         centerTitle: true,
-        backgroundColor: isDark ? colorScheme.surface : const Color(0xFF96B462),
-        foregroundColor: isDark ? colorScheme.onSurface : Colors.white,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
         actions: [
           if (_sync.syncing)
             const Padding(
@@ -280,7 +277,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
                 if (!_sync.hasIdentity) _buildSignInBanner(colorScheme),
                 _buildFilterBar(colorScheme),
                 Expanded(
-                  child: _buildBody(colorScheme, isDark),
+                  child: _buildBody(colorScheme),
                 ),
               ],
             ),
@@ -325,14 +322,14 @@ class _CheckInScreenState extends State<CheckInScreen> {
     );
   }
 
-  Widget _buildBody(ColorScheme colorScheme, bool isDark) {
+  Widget _buildBody(ColorScheme colorScheme) {
     final records = _filteredRecords;
     final userId = _currentUserId;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
-        _buildSummaryCard(colorScheme, isDark, records.length),
+        _buildSummaryCard(colorScheme, records.length),
         const SizedBox(height: 16),
         _buildMapSection(colorScheme, records),
         const SizedBox(height: 20),
@@ -362,7 +359,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
           _buildGoalsEmptyHint(colorScheme)
         else
           ..._filteredGoals.map(
-            (goal) => _buildGoalCard(goal, colorScheme, isDark, userId),
+            (goal) => _buildGoalCard(goal, colorScheme, userId),
           ),
         if (_archivedCount > 0) ...[
           const SizedBox(height: 16),
@@ -402,7 +399,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
 
   Widget _buildArchiveEntry(ColorScheme colorScheme) {
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: AppRadius.controlAll,
       onTap: () async {
         await Navigator.push(
           context,
@@ -412,50 +409,62 @@ class _CheckInScreenState extends State<CheckInScreen> {
         );
         if (mounted) setState(() {});
       },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerLow,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.archive, size: 20, color: colorScheme.onSurfaceVariant),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                '已归档的目标',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: colorScheme.onSurface,
+      // 归档计数 chip 的底是 onSurfaceVariant 淡涂 10%，文字色按涂后的底取
+      child: Builder(builder: (context) {
+        final pageSurface = AppSurfaces.of(context).page;
+        final archivedChipBg = AppSemanticColors.tint(
+            colorScheme.onSurfaceVariant, pageSurface, 0.1);
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerLow,
+            borderRadius: AppRadius.controlAll,
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.archive,
+                  size: 20, color: colorScheme.onSurfaceVariant),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '已归档的目标',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: colorScheme.onSurface,
+                  ),
                 ),
               ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                '$_archivedCount',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: colorScheme.onSurfaceVariant,
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  // 计数 chip 的底是 onSurfaceVariant 淡涂 10%，
+                  // 文字色按涂后的底重算（同色淡底规则）。
+                  color: archivedChipBg,
+                  borderRadius: AppRadius.controlAll,
+                ),
+                child: Text(
+                  '$_archivedCount',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppSemanticColors.onTint(
+                        colorScheme.onSurfaceVariant, pageSurface,
+                        alpha: 0.1),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Icon(Icons.chevron_right,
-                size: 20, color: colorScheme.onSurfaceVariant),
-          ],
-        ),
-      ),
+              const SizedBox(width: 8),
+              Icon(Icons.chevron_right,
+                  size: 20, color: colorScheme.onSurfaceVariant),
+            ],
+          ),
+        );
+      }),
     );
   }
 
   Widget _buildSummaryCard(
-      ColorScheme colorScheme, bool isDark, int recordCount) {
+      ColorScheme colorScheme, int recordCount) {
     final userId = _currentUserId ?? '';
     final maxStreak = _allGoals.isEmpty
         ? 0
@@ -470,14 +479,20 @@ class _CheckInScreenState extends State<CheckInScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
+        // 统计卡片统一用 primaryContainer，浅色/深色同一套，不再各写一套绿
         gradient: LinearGradient(
-          colors: isDark
-              ? [colorScheme.primaryContainer, colorScheme.surfaceContainerHigh]
-              : [const Color(0xFF96B462), const Color(0xFF7FA34E)],
+          colors: [
+            colorScheme.primaryContainer,
+            Color.lerp(
+              colorScheme.primaryContainer,
+              colorScheme.primary,
+              0.35,
+            )!,
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: AppRadius.sheetAll,
       ),
       child: Row(
         children: [
@@ -486,25 +501,25 @@ class _CheckInScreenState extends State<CheckInScreen> {
               label: '打卡次数',
               value: '$recordCount',
               unit: '次',
-              textColor: isDark ? colorScheme.onPrimaryContainer : Colors.white,
+              textColor: colorScheme.onPrimaryContainer,
             ),
           ),
-          _divider(isDark, colorScheme),
+          _divider(colorScheme),
           Expanded(
             child: _SummaryItem(
               label: '最长连续',
               value: '$maxStreak',
               unit: '天',
-              textColor: isDark ? colorScheme.onPrimaryContainer : Colors.white,
+              textColor: colorScheme.onPrimaryContainer,
             ),
           ),
-          _divider(isDark, colorScheme),
+          _divider(colorScheme),
           Expanded(
             child: _SummaryItem(
               label: '目标数',
               value: '${_filteredGoals.length}',
               unit: '个',
-              textColor: isDark ? colorScheme.onPrimaryContainer : Colors.white,
+              textColor: colorScheme.onPrimaryContainer,
             ),
           ),
         ],
@@ -512,12 +527,11 @@ class _CheckInScreenState extends State<CheckInScreen> {
     );
   }
 
-  Widget _divider(bool isDark, ColorScheme colorScheme) {
+  Widget _divider(ColorScheme colorScheme) {
     return Container(
       width: 1,
       height: 40,
-      color: (isDark ? colorScheme.onPrimaryContainer : Colors.white)
-          .withValues(alpha: 0.3),
+      color: colorScheme.onPrimaryContainer.withValues(alpha: 0.3),
     );
   }
 
@@ -580,17 +594,22 @@ class _CheckInScreenState extends State<CheckInScreen> {
   Widget _buildGoalCard(
     CheckInGoal goal,
     ColorScheme colorScheme,
-    bool isDark,
     String? userId,
   ) {
-    final cardColor = isDark
-        ? Color.lerp(goal.color, colorScheme.surfaceContainerHigh, 0.45)!
-        : goal.color;
+    // 深色下的压暗规则收敛在 AppSemanticColorAdaptation 里
+    final cardColor = context.adaptSemanticColor(goal.color);
     final onCardColor =
-        ThemeData.estimateBrightnessForColor(cardColor) == Brightness.dark
-            ? Colors.white
-            : Colors.black87;
+        AppSemanticColors.onColor(cardColor);
     final mutedColor = onCardColor.withValues(alpha: 0.75);
+    // 「打卡」按钮与「已打卡」徽标都是"把前景色淡涂一层当底"的做法。
+    // 底被淡涂之后，对比度就不再等于 onCardColor vs cardColor ——
+    // 在 onColor 的黑白切换点附近，淡涂白色会把底提亮到白字只剩 3.6:1。
+    // 所以文字色一律按**涂后的那个底**重算。
+    final quickActionBg =
+        AppSemanticColors.tint(onCardColor, cardColor, 0.15);
+    // 图标块的底同样是 onCardColor 淡涂，图标色要按涂后的底重算
+    final iconChipBg =
+        AppSemanticColors.tint(onCardColor, cardColor, 0.15);
     final isMine = userId != null &&
         goal.isOwnedBy(userId, email: _sync.currentUser?.email);
     final checked = userId != null &&
@@ -605,7 +624,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
       padding: const EdgeInsets.only(bottom: 12),
       child: Material(
         color: cardColor,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: AppRadius.cardAll,
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () => _openDetail(goal),
@@ -620,10 +639,12 @@ class _CheckInScreenState extends State<CheckInScreen> {
                       width: 44,
                       height: 44,
                       decoration: BoxDecoration(
-                        color: onCardColor.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(12),
+                        color: iconChipBg,
+                        borderRadius: AppRadius.controlAll,
                       ),
-                      child: Icon(goal.icon, color: onCardColor, size: 24),
+                      child: Icon(goal.icon,
+                          color: AppSemanticColors.onColor(iconChipBg),
+                          size: 24),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -646,7 +667,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
                         ],
                       ),
                     ),
-                    if (checked) _badge('已打卡', onCardColor),
+                    if (checked) _badge('已打卡', onCardColor, cardColor),
                   ],
                 ),
                 const SizedBox(height: 14),
@@ -654,7 +675,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
                   children: [
                     Expanded(
                       child: ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
+                        borderRadius: AppRadius.gridAll,
                         child: LinearProgressIndicator(
                           value: goal.progressFor(progressUserId),
                           minHeight: 6,
@@ -692,7 +713,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
                         style: TextButton.styleFrom(
                           foregroundColor: onCardColor.withValues(alpha: 0.7),
                           shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(20)),
+                              borderRadius: AppRadius.sheetAll),
                           padding: const EdgeInsets.symmetric(horizontal: 10),
                         ),
                         child:
@@ -705,10 +726,11 @@ class _CheckInScreenState extends State<CheckInScreen> {
                       TextButton.icon(
                         onPressed: () => _quickCheckIn(goal),
                         style: TextButton.styleFrom(
-                          foregroundColor: onCardColor,
-                          backgroundColor: onCardColor.withValues(alpha: 0.15),
+                          foregroundColor:
+                              AppSemanticColors.onColor(quickActionBg),
+                          backgroundColor: quickActionBg,
                           shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(20)),
+                              borderRadius: AppRadius.sheetAll),
                         ),
                         icon: const Icon(Icons.camera_alt, size: 16),
                         label: const Text('打卡', style: TextStyle(fontSize: 13)),
@@ -743,21 +765,28 @@ class _CheckInScreenState extends State<CheckInScreen> {
     return null;
   }
 
-  Widget _badge(String text, Color color) {
+  /// 目标卡上的「已打卡」徽标。
+  ///
+  /// [color] 是卡片的前景色（黑或白），[surface] 是卡片底色。
+  /// 徽标底是 [color] 淡涂 20% 的结果，所以图标/文字必须按**涂后的底**重算，
+  /// 不能继续用 [color]。
+  Widget _badge(String text, Color color, Color surface) {
+    final bg = AppSemanticColors.tint(color, surface, 0.2);
+    final fg = AppSemanticColors.onColor(bg);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.2),
-        borderRadius: BorderRadius.circular(20),
+        color: bg,
+        borderRadius: AppRadius.sheetAll,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.check, size: 14, color: color),
+          Icon(Icons.check, size: 14, color: fg),
           const SizedBox(width: 4),
           Text(text,
               style: TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w600, color: color)),
+                  fontSize: 12, fontWeight: FontWeight.w600, color: fg)),
         ],
       ),
     );

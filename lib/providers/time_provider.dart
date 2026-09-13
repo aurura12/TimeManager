@@ -35,6 +35,7 @@ import 'target_stats_cache.dart';
 import '../utils/schedule_view_dates.dart';
 import '../utils/calendar_time_range.dart';
 
+import '../theme/app_semantic_colors.dart';
 enum TimePointStatus { onTime, late, notDone }
 
 class BackupPreview {
@@ -180,7 +181,7 @@ class _ScheduleOverwriteJournal {
 
 class TimeProvider with ChangeNotifier {
   static const int backupVersion = 1;
-  static const Color calendarImportColor = Color(0xFF78909C);
+  static const Color calendarImportColor = AppSemanticColors.calendarImport;
   static const String _scheduleOverwriteJournalKey =
       'schedule_overwrite_transaction_journal';
 
@@ -1672,7 +1673,7 @@ class TimeProvider with ChangeNotifier {
     final category = matchedCategory == null
         ? Category(
             name: draft.label,
-            color: const Color(0xFF9E9E9E),
+            color: AppSemanticColors.neutral,
           )
         : Category(
             id: matchedCategory.id,
@@ -2117,7 +2118,9 @@ class TimeProvider with ChangeNotifier {
       slots[idx].label = label;
       slots[idx].categoryId = e['cid'] as String?;
       final colorVal = _parseInt(e['c']);
-      if (colorVal != null) slots[idx].color = Color(colorVal);
+      if (colorVal != null) {
+        slots[idx].color = AppSemanticColors.opaque(Color(colorVal));
+      }
       if (e['fc'] == true) slots[idx].isFromCalendar = true;
       if (e['eid'] != null) slots[idx].calendarEventId = e['eid'] as String?;
       final ts = _parseInt(e['ts']);
@@ -3515,7 +3518,10 @@ class TimeProvider with ChangeNotifier {
               slots[idx].categoryId = map['cid'] as String?;
               if (map['c'] != null) {
                 final colorVal = _parseInt(map['c']);
-                if (colorVal != null) slots[idx].color = Color(colorVal);
+                if (colorVal != null) {
+                  slots[idx].color =
+                      AppSemanticColors.opaque(Color(colorVal));
+                }
               }
               if (map['fc'] == true) slots[idx].isFromCalendar = true;
               if (map['eid'] != null) {
@@ -4794,7 +4800,8 @@ class TimeProvider with ChangeNotifier {
       daySlots[entry.index].isFromCalendar = false;
       daySlots[entry.index].calendarEventId = null;
       if (entry.colorArgb != null) {
-        daySlots[entry.index].color = Color(entry.colorArgb!);
+        daySlots[entry.index].color =
+            AppSemanticColors.opaque(Color(entry.colorArgb!));
       }
     }
 
@@ -5964,7 +5971,7 @@ class TimeProvider with ChangeNotifier {
     if (!parsedCategories.any((c) => c.name == temporaryCategoryName)) {
       parsedCategories.add(Category(
         name: temporaryCategoryName,
-        color: const Color(0xFF9E9E9E),
+        color: AppSemanticColors.neutral,
         updatedAt: DateTime.now().millisecondsSinceEpoch,
       ));
     }
@@ -6075,7 +6082,7 @@ class TimeProvider with ChangeNotifier {
     if (!_categories.any((c) => c.name == temporaryCategoryName)) {
       _categories.add(Category(
         name: temporaryCategoryName,
-        color: const Color(0xFF9E9E9E),
+        color: AppSemanticColors.neutral,
         updatedAt: DateTime.now().millisecondsSinceEpoch,
       ));
     }
@@ -6086,18 +6093,18 @@ class TimeProvider with ChangeNotifier {
     return [
       Category(
           name: '学习',
-          color: const Color(0xFFD4AF37),
+          color: AppSemanticColors.medalGold,
           subCategories: ['阅读', '编程'],
           updatedAt: nowMs),
       Category(
           name: '工作',
-          color: const Color(0xFF9CB86A),
+          color: AppSemanticColors.brand,
           subCategories: ['会议', '文档'],
           updatedAt: nowMs),
-      Category(name: '运动', color: const Color(0xFF4A90E2), updatedAt: nowMs),
+      Category(name: '运动', color: AppSemanticColors.info, updatedAt: nowMs),
       Category(
           name: temporaryCategoryName,
-          color: const Color(0xFF9E9E9E),
+          color: AppSemanticColors.neutral,
           updatedAt: nowMs),
     ];
   }
@@ -6160,7 +6167,8 @@ class TimeProvider with ChangeNotifier {
           if (map['c'] != null) {
             final colorVal = _parseInt(map['c']);
             if (colorVal != null) {
-              daySlots[idx].color = Color(colorVal);
+              daySlots[idx].color =
+                  AppSemanticColors.opaque(Color(colorVal));
             }
           }
           if (map['fc'] == true) {

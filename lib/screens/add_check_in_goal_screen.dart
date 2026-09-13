@@ -3,6 +3,9 @@ import 'package:intl/intl.dart';
 
 import '../models/check_in_goal.dart';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 class AddCheckInGoalScreen extends StatefulWidget {
   const AddCheckInGoalScreen({super.key, this.goal});
 
@@ -26,15 +29,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
   DateTime? _endDate;
   int? _selectedDurationDays;
 
-  static const _themeColors = [
-    Color(0xFFF16B77),
-    Color(0xFFF98E45),
-    Color(0xFFD9BD2E),
-    Color(0xFF96B462),
-    Color(0xFF4DA8EE),
-    Color(0xFF9575CD),
-    Color(0xFFE91E63),
-  ];
+  static const _themeColors = AppSemanticColors.palette;
 
   static const _icons = CheckInGoalIcons.options;
 
@@ -139,6 +134,10 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final isEdit = widget.goal != null;
+    // 图标网格所在的底：选中态是"主题色淡涂 20%"，图标再叠上去，
+    // 所以图标色必须按涂后的底取（onTint），不能直接用主题色原色。
+    final pageSurface = AppSurfaces.of(context).page;
+    final accent = _themeColors[_selectedColorIndex];
 
     return Scaffold(
       appBar: AppBar(
@@ -209,19 +208,22 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
                   height: 48,
                   decoration: BoxDecoration(
                     color: selected
-                        ? _themeColors[_selectedColorIndex]
-                            .withValues(alpha: 0.2)
+                        ? AppSemanticColors.tint(accent, pageSurface, 0.2)
                         : colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: AppRadius.controlAll,
                     border: selected
                         ? Border.all(
-                            color: _themeColors[_selectedColorIndex], width: 2)
+                            color: AppSemanticColors.onTint(
+                                accent, pageSurface,
+                                alpha: 0.2),
+                            width: 2)
                         : null,
                   ),
                   child: Icon(
                     _icons[i],
                     color: selected
-                        ? _themeColors[_selectedColorIndex]
+                        ? AppSemanticColors.onTint(accent, pageSurface,
+                            alpha: 0.2)
                         : colorScheme.onSurfaceVariant,
                   ),
                 ),
@@ -248,7 +250,9 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
                         : null,
                   ),
                   child: selected
-                      ? const Icon(Icons.check, color: Colors.white, size: 18)
+                      ? Icon(Icons.check,
+                          color: AppSemanticColors.onColor(_themeColors[i]),
+                          size: 18)
                       : null,
                 ),
               );
@@ -292,7 +296,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
                     ? DateFormat('yyyy-MM-dd').format(_startDate!)
                     : '今天',
                 style: TextStyle(
-                  color: _startDate != null ? null : Colors.grey,
+                  color: _startDate != null ? null : colorScheme.onSurfaceVariant,
                 ),
               ),
             ),
@@ -348,11 +352,15 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
     final icon = _icons[_selectedIconIndex];
     final name = _nameController.text.isEmpty ? '打卡目标' : _nameController.text;
 
+    final onColor = AppSemanticColors.onColor(color);
+    // 图标块的底是 onColor 淡涂 20%，所以图标色要按涂后的底重算 ——
+    // 直接用 onColor 会在黑白切换点附近掉到 3.6:1。
+    final iconChipBg = AppSemanticColors.tint(onColor, color, 0.2);
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: color,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: AppRadius.cardAll,
       ),
       child: Row(
         children: [
@@ -360,10 +368,11 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
             width: 52,
             height: 52,
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(14),
+              color: iconChipBg,
+              borderRadius: AppRadius.cardAll,
             ),
-            child: Icon(icon, color: Colors.white, size: 28),
+            child: Icon(icon,
+                color: AppSemanticColors.onColor(iconChipBg), size: 28),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -372,10 +381,10 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
               children: [
                 Text(
                   name,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                    color: onColor,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -383,7 +392,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
                   '${_period.label} ${_countController.text.isEmpty ? "1" : _countController.text} 次',
                   style: TextStyle(
                     fontSize: 13,
-                    color: Colors.white.withValues(alpha: 0.85),
+                    color: onColor.withValues(alpha: 0.85),
                   ),
                 ),
               ],

@@ -33,8 +33,16 @@ const _localPreferences = <String, Object>{
   ],
 };
 
+/// 远端日程夹具里那个时间块的颜色。
+///
+/// 必须是 `0xFF` 开头的不透明 ARGB：时间块颜色只可能来自分类色，
+/// 而分类色在所有入口（十六进制输入框、`Category/Target/CheckInGoal.fromJson`、
+/// 以及读取 `daily_slots` 时）都已统一把 alpha 收成 FF —— 半透明的块底色会让
+/// 上面的文字对比度取决于它压在什么上面，见 `AppSemanticColors.opaque`。
+const int kRemoteSlotColorArgb = 0xFF9CB86A;
+
 const _remoteCanonicalContent =
-    '{"updated_at":2000,"slots":[{"i":0,"l":"远端","c":1,"cid":"g-category","ts":2000}]}';
+    '{"updated_at":2000,"slots":[{"i":0,"l":"远端","c":$kRemoteSlotColorArgb,"cid":"g-category","ts":2000}]}';
 
 ScheduleSyncDependencies _fakeDependencies({
   required bool failPull,
@@ -385,7 +393,9 @@ void main() {
     final replaced = provider.getSlotsForDate('2026-09-06');
     expect(replaced, isNotNull);
     expect(replaced![0].label, '远端');
-    expect(replaced[0].color?.toARGB32(), 1);
+    expect(replaced[0].color?.toARGB32(), kRemoteSlotColorArgb);
+    // 颜色经过覆盖落盘/读回后仍然不透明
+    expect(replaced[0].color?.a, 1.0);
     expect(provider.pendingGiteeSyncDates, isEmpty);
     expect(provider.pendingGoogleSyncDates, isEmpty);
     final prefs = await SharedPreferences.getInstance();

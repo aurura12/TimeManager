@@ -5,6 +5,9 @@ import '../models/check_in_goal.dart';
 import '../services/check_in_sync_service.dart';
 import 'check_in_detail_screen.dart';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 class CheckInArchiveScreen extends StatefulWidget {
   const CheckInArchiveScreen({super.key, required this.syncService});
 
@@ -94,9 +97,9 @@ class _CheckInArchiveScreenState extends State<CheckInArchiveScreen> {
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 0,
       color: colorScheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(borderRadius: AppRadius.controlAll),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: AppRadius.controlAll,
         onTap: () async {
           await Navigator.push(
             context,
@@ -117,10 +120,16 @@ class _CheckInArchiveScreenState extends State<CheckInArchiveScreen> {
                 width: 44,
                 height: 44,
                 decoration: BoxDecoration(
-                  color: goal.color.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
+                  color: AppSemanticColors.tint(
+                      goal.color, AppSurfaces.of(context).page, 0.2),
+                  borderRadius: AppRadius.controlAll,
                 ),
-                child: Icon(goal.icon, color: goal.color, size: 24),
+                child: Icon(
+                    goal.icon,
+                    color: AppSemanticColors.onTint(
+                        goal.color, AppSurfaces.of(context).page,
+                        alpha: 0.2),
+                    size: 24),
               ),
               const SizedBox(width: 12),
               Expanded(

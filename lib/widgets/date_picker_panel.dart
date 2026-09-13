@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
+
 /// 顶部展开的日期选择器，支持月历网格与跨年月份滑动切换。
 class DatePickerPanel extends StatefulWidget {
   final DateTime initialDate;
@@ -16,7 +19,6 @@ class DatePickerPanel extends StatefulWidget {
   static const int startYear = 2000;
   static const int endYear = 2100;
   static const int totalMonths = (endYear - startYear + 1) * 12;
-  static const Color themeGreen = Color(0xFFADD896);
 
   @override
   State<DatePickerPanel> createState() => _DatePickerPanelState();
@@ -177,25 +179,21 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
       widget.initialDate.day,
     );
 
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final panelBg = isDark ? const Color(0xFF2D3A2E) : DatePickerPanel.themeGreen;
-    final selectedDayColor = isDark ? const Color(0xFF6B7B6C) : Colors.white;
-    final todayColor = isDark ? const Color(0xFF6B8F5A) : const Color(0xFF8AAF6A);
-    final textColor = isDark ? Colors.white70 : Colors.black87;
-    final textColorSecondary = isDark ? Colors.white54 : Colors.black54;
-    final monthActiveBg = isDark
-        ? Colors.white.withValues(alpha: 0.12)
-        : Colors.black.withValues(alpha: 0.12);
-    final monthBorderColor = isDark
-        ? Colors.white.withValues(alpha: 0.25)
-        : Colors.black.withValues(alpha: 0.25);
+    final colorScheme = Theme.of(context).colorScheme;
+    final surfaces = AppSurfaces.of(context);
+    final textColor = colorScheme.onSurface;
+    final textColorSecondary = colorScheme.onSurfaceVariant;
 
     return Material(
-      color: panelBg,
-      elevation: 8,
-      borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
+      color: surfaces.card,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: AppRadius.panelBottom,
+        side: BorderSide(color: surfaces.border),
+      ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.lg),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -207,7 +205,7 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
                         child: Text(
                           d,
                           textAlign: TextAlign.center,
-                          style: TextStyle(
+                          style: AppText.caption.copyWith(
                             color: textColorSecondary,
                             fontSize: 13,
                           ),
@@ -215,7 +213,7 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
                       ))
                   .toList(),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             GestureDetector(
               onHorizontalDragEnd: (details) {
                 if (details.primaryVelocity == null) return;
@@ -240,13 +238,13 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
                   final isCurrent = _isSameDay(date, currentDate);
                   final isToday = _isSameDay(date, _today);
 
-                  Color? bgColor;
-                  Color cellTextColor = textColor;
-                  if (isCurrent) {
-                    bgColor = selectedDayColor;
-                  } else if (isToday) {
-                    bgColor = todayColor;
-                  }
+                  // 选中：主色实心填充；今天：主色细边框（不填充，避免和选中撞色）
+                  final Color? bgColor = isCurrent ? colorScheme.primary : null;
+                  final Border? border = !isCurrent && isToday
+                      ? Border.all(color: colorScheme.primary)
+                      : null;
+                  final cellTextColor =
+                      isCurrent ? colorScheme.onPrimary : textColor;
 
                   return GestureDetector(
                     onTap: () => _selectDay(day),
@@ -258,6 +256,7 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
                           color: bgColor,
+                          border: border,
                           shape: BoxShape.circle,
                         ),
                         child: Text(
@@ -275,9 +274,9 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
                 },
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.lg),
             SizedBox(
-              height: 40,
+              height: AppSizes.iconButton,
               child: ListView.builder(
                 controller: _monthScrollController,
                 scrollDirection: Axis.horizontal,
@@ -287,15 +286,14 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
 
                   if (item.type == _StripItemType.year) {
                     return Padding(
-                      padding: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.only(right: AppSpacing.sm),
                       child: SizedBox(
                         width: _yearItemWidth,
                         child: Center(
                           child: Text(
                             '${item.year}',
-                            style: TextStyle(
+                            style: AppText.body.copyWith(
                               color: textColor,
-                              fontSize: 14,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -306,29 +304,31 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
 
                   final isActive = item.year == year && item.month == month;
                   return Padding(
-                    padding: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.only(right: AppSpacing.sm),
                     child: GestureDetector(
                       onTap: () => _selectMonth(item.monthGlobalIndex!),
                       child: Container(
                         width: _monthItemWidth,
-                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                            vertical: AppSpacing.sm),
                         decoration: BoxDecoration(
                           color: isActive
-                              ? monthActiveBg
+                              ? colorScheme.primaryContainer
                               : Colors.transparent,
-                          borderRadius: BorderRadius.circular(20),
+                          borderRadius: AppRadius.sheetAll,
                           border: Border.all(
                             color: isActive
                                 ? Colors.transparent
-                                : monthBorderColor,
+                                : surfaces.border,
                           ),
                         ),
                         alignment: Alignment.center,
                         child: Text(
                           '${item.month}月',
-                          style: TextStyle(
-                            color: textColor,
-                            fontSize: 14,
+                          style: AppText.body.copyWith(
+                            color: isActive
+                                ? colorScheme.onPrimaryContainer
+                                : textColor,
                             fontWeight:
                                 isActive ? FontWeight.w600 : FontWeight.normal,
                           ),
@@ -340,27 +340,12 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
               ),
             ),
             if (!_isCurrentMonth) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Center(
                 child: TextButton.icon(
                   onPressed: _goToToday,
-                  icon: Icon(Icons.today, size: 16, color: textColor),
-                  label: Text(
-                    '返回今天',
-                    style: TextStyle(
-                      color: textColor,
-                      fontSize: 13,
-                    ),
-                  ),
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    backgroundColor: isDark
-                        ? Colors.white.withValues(alpha: 0.1)
-                        : Colors.black.withValues(alpha: 0.05),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
+                  icon: const Icon(Icons.today, size: 16),
+                  label: const Text('返回今天'),
                 ),
               ),
             ],

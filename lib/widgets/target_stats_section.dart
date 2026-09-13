@@ -4,6 +4,9 @@ import 'package:intl/intl.dart';
 import '../models/target.dart';
 import '../providers/time_provider.dart';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 class TargetStatsSection extends StatefulWidget {
   final Target target;
   final TimeProvider provider;
@@ -291,16 +294,17 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
   }
 
   Widget _buildTimePointTodayRow(TimePointStatus status, ColorScheme colorScheme) {
+    final surface = AppSurfaces.of(context).card;
     String text;
     Color color;
     switch (status) {
       case TimePointStatus.onTime:
         text = '准时';
-        color = Colors.green;
+        color = AppSemanticColors.success;
         break;
       case TimePointStatus.late:
         text = '迟到';
-        color = Colors.orange;
+        color = AppSemanticColors.warning;
         break;
       case TimePointStatus.notDone:
         text = '未做';
@@ -319,8 +323,8 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
             child: Container(
               height: 24,
               decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(4),
+                color: AppSemanticColors.tint(color, surface),
+                borderRadius: AppRadius.gridAll,
               ),
               alignment: Alignment.center,
               child: Text(
@@ -328,7 +332,8 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.bold,
-                  color: color,
+                  // 同色系文字压在同色淡底上会糊，压深到可读
+                  color: AppSemanticColors.onTint(color, surface),
                 ),
               ),
             ),
@@ -364,7 +369,7 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                   height: 24,
                   decoration: BoxDecoration(
                     color: colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: AppRadius.gridAll,
                   ),
                 ),
                 FractionallySizedBox(
@@ -373,7 +378,7 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                     height: 24,
                     decoration: BoxDecoration(
                       color: colorScheme.primary,
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: AppRadius.gridAll,
                     ),
                   ),
                 ),
@@ -384,7 +389,9 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        color: progress > 0.5 ? Colors.white : colorScheme.onSurface,
+                        color: progress > 0.5
+                            ? AppSemanticColors.onColor(colorScheme.primary)
+                            : colorScheme.onSurface,
                       ),
                     ),
                   ),
@@ -483,12 +490,13 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                   borderData: FlBorderData(show: false),
                   lineTouchData: LineTouchData(
                     touchTooltipData: LineTouchTooltipData(
+                      getTooltipColor: (_) => colorScheme.inverseSurface,
                       getTooltipItems: (touchedSpots) {
                         return touchedSpots.map((spot) {
                           return LineTooltipItem(
                             '${spot.y.toStringAsFixed(2)}%',
                             TextStyle(
-                              color: Colors.white,
+                              color: colorScheme.onInverseSurface,
                               fontWeight: FontWeight.bold,
                               fontSize: 12,
                             ),
@@ -510,7 +518,7 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                             radius: 4,
                             color: colorScheme.primary,
                             strokeWidth: 2,
-                            strokeColor: Colors.white,
+                            strokeColor: colorScheme.surface,
                           );
                         },
                       ),
@@ -562,7 +570,7 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
             toY: value,
             color: colorScheme.primary,
             width: 20,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+            borderRadius: const BorderRadius.vertical(top: AppRadius.rGrid),
           ),
         ],
       ));
@@ -593,6 +601,7 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                   maxY: maxValue > 0 ? (maxValue * 1.2) : 10,
                   barTouchData: BarTouchData(
                     touchTooltipData: BarTouchTooltipData(
+                      getTooltipColor: (_) => colorScheme.inverseSurface,
                       getTooltipItem: (group, groupIndex, rod, rodIndex) {
                         final displayValue = target.type == TargetType.timePoint
                             ? '${rod.toY.toStringAsFixed(1)}%'
@@ -601,7 +610,9 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                                 : '${rod.toY.toInt()}';
                         return BarTooltipItem(
                           displayValue,
-                          TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                          TextStyle(
+                              color: colorScheme.onInverseSurface,
+                              fontWeight: FontWeight.bold),
                         );
                       },
                     ),
@@ -766,12 +777,12 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
 
     switch (status) {
       case TimePointStatus.onTime:
-        bgColor = Colors.green;
-        textColor = Colors.white;
+        bgColor = AppSemanticColors.success;
+        textColor = AppSemanticColors.onColor(bgColor);
         break;
       case TimePointStatus.late:
-        bgColor = Colors.orange;
-        textColor = Colors.white;
+        bgColor = AppSemanticColors.warning;
+        textColor = AppSemanticColors.onColor(bgColor);
         break;
       case TimePointStatus.notDone:
         bgColor = isToday ? colorScheme.primary.withValues(alpha: 0.2) : Colors.transparent;
@@ -785,7 +796,7 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
       margin: const EdgeInsets.all(2),
       decoration: BoxDecoration(
         color: bgColor,
-        borderRadius: BorderRadius.circular(3),
+        borderRadius: AppRadius.gridAll,
         border: isToday && status == TimePointStatus.notDone
             ? Border.all(color: colorScheme.primary, width: 1)
             : null,
@@ -813,7 +824,7 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
             : isToday
                 ? colorScheme.primary.withValues(alpha: 0.2)
                 : Colors.transparent,
-        borderRadius: BorderRadius.circular(3),
+        borderRadius: AppRadius.gridAll,
         border: isToday && !isCompleted
             ? Border.all(color: colorScheme.primary, width: 1)
             : null,
@@ -823,7 +834,9 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
         '$day',
         style: TextStyle(
           fontSize: 10,
-          color: isCompleted ? Colors.white : colorScheme.onSurfaceVariant,
+          color: isCompleted
+              ? AppSemanticColors.onColor(colorScheme.primary)
+              : colorScheme.onSurfaceVariant,
           fontWeight: isToday ? FontWeight.bold : FontWeight.normal,
         ),
       ),
@@ -849,6 +862,9 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
               ...streaks.take(5).map((streak) {
                 final maxDays = streaks.first.days;
                 final progress = maxDays > 0 ? streak.days / maxDays : 0.0;
+                final barColor = streak.days >= 7
+                    ? colorScheme.primary
+                    : colorScheme.secondary;
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   child: Row(
@@ -867,7 +883,7 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                               height: 24,
                               decoration: BoxDecoration(
                                 color: colorScheme.surfaceContainerHighest,
-                                borderRadius: BorderRadius.circular(4),
+                                borderRadius: AppRadius.gridAll,
                               ),
                             ),
                             FractionallySizedBox(
@@ -875,8 +891,8 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                               child: Container(
                                 height: 24,
                                 decoration: BoxDecoration(
-                                  color: streak.days >= 7 ? colorScheme.primary : colorScheme.secondary,
-                                  borderRadius: BorderRadius.circular(4),
+                                  color: barColor,
+                                  borderRadius: AppRadius.gridAll,
                                 ),
                               ),
                             ),
@@ -887,7 +903,9 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                                   style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.bold,
-                                    color: progress > 0.3 ? Colors.white : colorScheme.onSurface,
+                                    color: progress > 0.3
+                                      ? AppSemanticColors.onColor(barColor)
+                                      : colorScheme.onSurface,
                                   ),
                                 ),
                               ),

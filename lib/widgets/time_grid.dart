@@ -3,6 +3,9 @@ import 'package:provider/provider.dart';
 
 import '../models/time_slot.dart';
 import '../providers/time_provider.dart';
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 import '../utils/time_slot_segment.dart';
 
 /// 时间网格的渲染与手势层。
@@ -57,9 +60,9 @@ class TimeGrid extends StatelessWidget {
           key: gridKey,
           controller: controller,
           physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.symmetric(vertical: 8),
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
           itemCount: 24,
-          itemExtent: 45,
+          itemExtent: AppSizes.gridRow,
           itemBuilder: (context, hour) =>
               _buildGridRow(context, hour, provider),
         );
@@ -93,16 +96,15 @@ class TimeGrid extends StatelessWidget {
   Widget _buildGridRowContent(
       BuildContext context, int hour, TimeProvider provider) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final surfaces = AppSurfaces.of(context);
     final highlightColor = colorScheme.primary.withValues(alpha: 0.28);
-    final emptyCellColor = isDark
-        ? colorScheme.surfaceContainerHigh
-        : const Color.fromARGB(255, 188, 186, 186);
+    // 空白格用主题的次级表面色，浅色下比原灰色更浅，深色下不刺眼
+    final emptyCellColor = surfaces.gridEmpty;
     final daySlots =
         date == null ? provider.slots : provider.slotsForDate(date!);
 
     return Container(
-      height: 45,
+      height: AppSizes.gridRow,
       padding: const EdgeInsets.symmetric(vertical: 1),
       child: Row(
         children: () {
@@ -148,10 +150,14 @@ class TimeGrid extends StatelessWidget {
                   child: Center(
                     child: Text(
                       label,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
+                      style: AppText.gridLabel.copyWith(
+                        // 高亮时底色是主色半透明，未高亮时是分类实色。
+                        // 分类色理论上已被 opaque() 收成不透明，这里仍传底面：
+                        // 万一有历史脏数据（8 位 ARGB 存下来的半透明色）也不会算错色。
+                        color: highlighted
+                            ? colorScheme.onSurface
+                            : AppSemanticColors.onColor(slot.color!,
+                                over: surfaces.page),
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -166,7 +172,7 @@ class TimeGrid extends StatelessWidget {
                   margin: const EdgeInsets.all(1),
                   decoration: BoxDecoration(
                     color: highlighted ? highlightColor : emptyCellColor,
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: AppRadius.gridAll,
                   ),
                   child: const SizedBox.expand(),
                 ),
@@ -188,7 +194,7 @@ class TimeGrid extends StatelessWidget {
 
   BorderRadius _computeSegmentBorderRadius(List<TimeSlot> daySlots, int hour,
       int startMinute, int span, bool isHighlighted) {
-    if (isHighlighted) return BorderRadius.circular(4);
+    if (isHighlighted) return AppRadius.gridAll;
     final startIndex = hour * 6 + startMinute;
     final endIndex = startIndex + span - 1;
     final leftRounded = startIndex % 6 == 0 ||
@@ -197,11 +203,12 @@ class TimeGrid extends StatelessWidget {
     final rightRounded = endIndex % 6 == 5 ||
         endIndex >= daySlots.length - 1 ||
         !canJoinTimeSlots(daySlots[endIndex], daySlots[endIndex + 1]);
+    // 相接的一侧圆角必须为 0（AppRadius.joined），否则连续时间块会出现缺口
     return BorderRadius.only(
-      topLeft: leftRounded ? const Radius.circular(4) : Radius.zero,
-      bottomLeft: leftRounded ? const Radius.circular(4) : Radius.zero,
-      topRight: rightRounded ? const Radius.circular(4) : Radius.zero,
-      bottomRight: rightRounded ? const Radius.circular(4) : Radius.zero,
+      topLeft: leftRounded ? AppRadius.rGrid : AppRadius.rJoined,
+      bottomLeft: leftRounded ? AppRadius.rGrid : AppRadius.rJoined,
+      topRight: rightRounded ? AppRadius.rGrid : AppRadius.rJoined,
+      bottomRight: rightRounded ? AppRadius.rGrid : AppRadius.rJoined,
     );
   }
 }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'check_in_record.dart';
 
 import 'known_google_users.dart';
+import '../theme/app_semantic_colors.dart';
 
 /// 打卡目标周期
 enum CheckInPeriod {
@@ -269,7 +270,9 @@ class CheckInGoal {
       ownerDisplayName: json['owner_display_name']?.toString(),
       name: json['name']?.toString() ?? '',
       description: json['description']?.toString() ?? '',
-      color: Color(json['color'] as int? ?? 0xFF96B462),
+      // 与 Category 同理：颜色只能是不透明实色
+      color: AppSemanticColors.opaque(Color(json['color'] as int? ??
+          AppSemanticColors.brandSurface.toARGB32())),
       icon: CheckInGoalIcons.fromCodePoint(json['icon'] as int?),
       period: CheckInPeriod.fromKey(json['period']?.toString()),
       targetCount: json['target_count'] as int? ?? 1,

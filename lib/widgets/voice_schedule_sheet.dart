@@ -149,7 +149,9 @@ class _VoiceScheduleSheetState extends State<VoiceScheduleSheet> {
             const SizedBox(height: 4),
             Text(
               '请点击系统键盘上的麦克风输入语音，识别结果会自动填入这里。没有匹配到的事项会作为临时事件。',
-              style: TextStyle(color: Colors.grey[600], fontSize: 13),
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 13),
             ),
             const SizedBox(height: 12),
             TextField(

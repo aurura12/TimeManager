@@ -9,6 +9,7 @@ import '../providers/time_provider.dart';
 import '../services/diary_local_store.dart';
 import '../services/diary_search_service.dart';
 import '../services/on_this_day_service.dart';
+import '../theme/app_theme.dart';
 import '../utils/adaptive.dart';
 import '../widgets/on_this_day_sheet.dart';
 import '../widgets/schedule_sync_progress_banner.dart';
@@ -17,6 +18,20 @@ import 'diary_screen.dart';
 import 'home_screen.dart';
 import 'target_screen.dart';
 import 'travel_screen.dart';
+
+/// 底部导航 / 侧边导航的一项。图标分选中态与未选中态，
+/// 保证浅色、深色下选中状态都清晰。
+class _NavEntry {
+  const _NavEntry({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
+}
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -154,20 +169,37 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     const ProfileScreen(),
   ];
 
-  static final List<BottomNavigationBarItem> _navItems =
-      <BottomNavigationBarItem>[
-    const BottomNavigationBarItem(icon: Icon(Icons.home), label: '记录'),
-    const BottomNavigationBarItem(
-      icon: Icon(Icons.menu_book_outlined),
+  static final List<_NavEntry> _navItems = <_NavEntry>[
+    const _NavEntry(
+      icon: Icons.home_outlined,
+      selectedIcon: Icons.home,
+      label: '记录',
+    ),
+    const _NavEntry(
+      icon: Icons.menu_book_outlined,
+      selectedIcon: Icons.menu_book,
       label: '日记',
     ),
-    const BottomNavigationBarItem(icon: Icon(Icons.card_travel), label: '出行'),
-    const BottomNavigationBarItem(
-      icon: Icon(Icons.check_circle_outline),
+    const _NavEntry(
+      icon: Icons.card_travel_outlined,
+      selectedIcon: Icons.card_travel,
+      label: '出行',
+    ),
+    const _NavEntry(
+      icon: Icons.check_circle_outline,
+      selectedIcon: Icons.check_circle,
       label: '打卡',
     ),
-    const BottomNavigationBarItem(icon: Icon(Icons.flag), label: '目标'),
-    const BottomNavigationBarItem(icon: Icon(Icons.person), label: '我的'),
+    const _NavEntry(
+      icon: Icons.flag_outlined,
+      selectedIcon: Icons.flag,
+      label: '目标',
+    ),
+    const _NavEntry(
+      icon: Icons.person_outline,
+      selectedIcon: Icons.person,
+      label: '我的',
+    ),
   ];
 
   void _onItemTapped(int index) {
@@ -178,10 +210,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final surfaces = AppSurfaces.of(context);
     // Windows 上隐藏"目标"tab，安卓保持完整 6 个 tab
     final List<Widget> options = List.of(_widgetOptions);
-    final List<BottomNavigationBarItem> items = List.of(_navItems);
+    final List<_NavEntry> items = List.of(_navItems);
     if (isDesktopPlatform) {
       options.removeAt(4); // 移除 TargetScreen
       items.removeAt(4); // 移除"目标"tab
@@ -203,13 +235,17 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               destinations: [
                 for (final item in items)
                   NavigationRailDestination(
-                    icon: item.icon,
-                    selectedIcon: item.activeIcon,
-                    label: Text(item.label ?? ''),
+                    icon: Icon(item.icon),
+                    selectedIcon: Icon(item.selectedIcon),
+                    label: Text(item.label),
                   ),
               ],
             ),
-            const VerticalDivider(width: 1, thickness: 1),
+            VerticalDivider(
+              width: 1,
+              thickness: 1,
+              color: surfaces.border,
+            ),
             Expanded(
               child: _buildContentStack(
                 options: options,
@@ -227,14 +263,25 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         safeIndex: safeIndex,
         progress: scheduleSyncProgress,
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed,
-        showUnselectedLabels: true,
-        items: items,
-        currentIndex: safeIndex,
-        selectedItemColor: colorScheme.primary,
-        unselectedItemColor: colorScheme.onSurfaceVariant,
-        onTap: _onItemTapped,
+      // 顶部一条弱边框，和内容区拉开层级（颜色与圆角统一走主题）
+      bottomNavigationBar: Container(
+        decoration: BoxDecoration(
+          color: surfaces.panel,
+          border: Border(top: BorderSide(color: surfaces.border)),
+        ),
+        child: NavigationBar(
+          selectedIndex: safeIndex,
+          onDestinationSelected: _onItemTapped,
+          destinations: [
+            for (final item in items)
+              NavigationDestination(
+                icon: Icon(item.icon),
+                selectedIcon: Icon(item.selectedIcon),
+                label: item.label,
+                tooltip: item.label,
+              ),
+          ],
+        ),
       ),
     );
   }

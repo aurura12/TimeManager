@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
+import 'package:time_manager/theme/app_semantic_colors.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'providers/time_provider.dart';
 import 'package:time_manager/screens/main_screen.dart';
@@ -86,7 +87,8 @@ void main() async {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                const Icon(Icons.error_outline,
+            size: 48, color: AppSemanticColors.dangerDeep),
                 const SizedBox(height: 16),
                 const Text('应用遇到了问题',
                     style:
@@ -127,7 +129,8 @@ void main() async {
     runApp(MaterialApp(
       home: Scaffold(
         body: Center(
-          child: Text('启动失败: $e', style: const TextStyle(color: Colors.red)),
+          child: Text('启动失败: $e',
+              style: const TextStyle(color: AppSemanticColors.dangerDeep)),
         ),
       ),
     ));

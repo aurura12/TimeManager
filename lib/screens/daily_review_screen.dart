@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/daily_review_summary.dart';
 import '../widgets/daily_review_chat_sheet.dart';
 
+import '../theme/app_tokens.dart';
 class DailyReviewScreen extends StatefulWidget {
   final DateTime date;
 
@@ -296,9 +297,9 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
               color: selected
                   ? colorScheme.primaryContainer
                   : Colors.transparent,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: AppRadius.controlAll,
               child: InkWell(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: AppRadius.controlAll,
                 onTap: () => _jumpToDate(date),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -412,7 +413,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: AppRadius.cardAll,
         border: selected
             ? Border.all(color: colorScheme.primary, width: 1.2)
             : null,
@@ -480,7 +481,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                       ),
                       decoration: BoxDecoration(
                         color: colorScheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(20),
+                        borderRadius: AppRadius.sheetAll,
                       ),
                       child: Text(
                         'AI 生成',

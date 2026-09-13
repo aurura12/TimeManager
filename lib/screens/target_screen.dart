@@ -7,22 +7,18 @@ import 'add_target_screen.dart';
 import '../models/target.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 class TargetScreen extends StatelessWidget {
   const TargetScreen({super.key});
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      backgroundColor: isDark ? colorScheme.surface : Colors.white,
       appBar: AppBar(
-        title: const Text('我的计划', style: TextStyle(fontSize: 18)),
+        title: const Text('我的计划'),
         centerTitle: true,
-        backgroundColor:
-            isDark ? colorScheme.surface : const Color(0xFF96B462),
-        foregroundColor: isDark ? colorScheme.onSurface : Colors.white,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
         // 如果是在底部导航栏的主页，通常不需要 leading 返回键，如有需要可自行开启
         actions: [
           IconButton(
@@ -58,18 +54,9 @@ class TargetScreen extends StatelessWidget {
               // 动态计算进度 (目前主要实现时长类型的计算)
               String progressText = "";
               String title = "";
-              final cardColor = isDark
-                  ? Color.lerp(
-                      target.color,
-                      colorScheme.surfaceContainerHigh,
-                      0.45,
-                    )!
-                  : target.color;
+              final cardColor = context.adaptSemanticColor(target.color);
               final onCardColor =
-                  ThemeData.estimateBrightnessForColor(cardColor) ==
-                          Brightness.dark
-                      ? Colors.white
-                      : Colors.black;
+                  AppSemanticColors.onColor(cardColor);
 
               // 使用 Provider 计算当前周期的进度
               double currentValue =
@@ -182,9 +169,11 @@ class TargetScreen extends StatelessWidget {
                             child: InkWell(
                               onTap: () =>
                                   _confirmDelete(context, timeProvider, target),
-                              child: const Center(
+                              child: Center(
                                 child: Icon(Icons.delete_forever,
-                                    color: Colors.redAccent),
+                                    color: AppSemanticColors.readableOn(
+                                        AppSemanticColors.danger,
+                                        AppSurfaces.of(context).page)),
                               ),
                             ),
                           ),
@@ -231,13 +220,9 @@ class TargetScreen extends StatelessWidget {
     VoidCallback? onTap,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor =
-        isDark ? Color.lerp(color, colorScheme.surfaceContainerHigh, 0.45)! : color;
+    final cardColor = context.adaptSemanticColor(color);
     final onCardColor =
-        ThemeData.estimateBrightnessForColor(cardColor) == Brightness.dark
-            ? Colors.white
-            : Colors.black;
+        AppSemanticColors.onColor(cardColor);
 
     return GestureDetector(
       key: key,
@@ -247,17 +232,10 @@ class TargetScreen extends StatelessWidget {
         padding: const EdgeInsets.all(20.0),
         decoration: BoxDecoration(
           color: cardColor,
-          borderRadius: BorderRadius.circular(12.0),
-          border: isDark
-              ? Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.35))
-              : null,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.05),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
-            ),
-          ],
+          borderRadius: AppRadius.cardAll,
+          // 卡片：弱边框、少阴影
+          border: Border.all(
+              color: colorScheme.outlineVariant.withValues(alpha: 0.35)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -319,7 +297,10 @@ class TargetScreen extends StatelessWidget {
               provider.deleteTarget(target); // 请确保你的 TimeProvider 中有这个方法
               Navigator.pop(context);
             },
-            child: const Text('确认', style: TextStyle(color: Colors.red)),
+            child: Text('确认',
+                style: TextStyle(
+                    color: AppSemanticColors.readableOn(AppSemanticColors.danger,
+                        AppSurfaces.of(context).card))),
           ),
         ],
       ),

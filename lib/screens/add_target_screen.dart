@@ -3,6 +3,10 @@ import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 import '../models/target.dart';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
+
 class AddTargetScreen extends StatefulWidget {
   final Target? target; // 接收可选的目标对象用于编辑
 
@@ -14,7 +18,7 @@ class AddTargetScreen extends StatefulWidget {
 
 class _AddTargetScreenState extends State<AddTargetScreen> {
   TargetType _selectedType = TargetType.duration;
-  Color _selectedColor = const Color(0xFFF16B77);
+  Color _selectedColor = AppSemanticColors.palette.first;
   String _selectedPeriod = "每周";
 
   // --- 可编辑的表单数据 ---
@@ -27,15 +31,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
   String _startTime = "16:00";
   String _endTime = "24:00";
 
-  final List<Color> _themeColors = [
-    const Color(0xFFF16B77),
-    const Color(0xFFF98E45),
-    const Color(0xFFD9BD2E),
-    const Color(0xFF96B462),
-    const Color(0xFF4DA8EE),
-    const Color(0xFF9575CD),
-    const Color(0xFFE91E63),
-  ];
+  final List<Color> _themeColors = AppSemanticColors.palette;
 
   @override
   void initState() {
@@ -127,6 +123,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
     showDialog(
       context: context,
       builder: (context) {
+        final dialogSurface = AppSurfaces.of(context).card;
         return AlertDialog(
           title: const Text("选择事件"),
           content: SizedBox(
@@ -141,6 +138,11 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                     itemCount: provider.categories.length,
                     itemBuilder: (context, index) {
                       final category = provider.categories[index];
+                      final chipBg = AppSemanticColors.tint(
+                          category.color, dialogSurface, 0.2);
+                      final chipFg = AppSemanticColors.onTint(
+                          category.color, dialogSurface,
+                          alpha: 0.2);
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -168,9 +170,9 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                                 children: category.subCategories.map((sub) {
                                   return ActionChip(
                                     label: Text(sub,
-                                        style: const TextStyle(fontSize: 12)),
-                                    backgroundColor:
-                                        category.color.withValues(alpha: 0.2),
+                                        style: TextStyle(
+                                            fontSize: 12, color: chipFg)),
+                                    backgroundColor: chipBg,
                                     visualDensity: VisualDensity.compact,
                                     onPressed: () {
                                       setState(() {
@@ -203,17 +205,10 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     Color activeColor = _selectedColor;
 
     return Scaffold(
-      backgroundColor: colorScheme.surface,
       appBar: AppBar(
-        backgroundColor:
-            isDark ? colorScheme.surface : const Color(0xFF96B462),
-        foregroundColor: isDark ? colorScheme.onSurface : Colors.white,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
         leadingWidth: 80,
         leading: TextButton(
           onPressed: () {
@@ -223,9 +218,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                 : (provider.resolveCategoryIdForLabel(_eventName) ?? '');
             final newTarget = Target(
               id: widget.target?.id ??
-                  DateTime.now()
-                      .millisecondsSinceEpoch
-                      .toString(),
+                  DateTime.now().millisecondsSinceEpoch.toString(),
               name: _eventName,
               categoryId: categoryId,
               type: _selectedType,
@@ -246,7 +239,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
             Navigator.pop(context);
           },
           style: TextButton.styleFrom(
-            foregroundColor: isDark ? colorScheme.onSurface : Colors.white,
+            foregroundColor: colorScheme.onSurface,
           ),
           child: const Text("确定", style: TextStyle(fontSize: 16)),
         ),
@@ -266,11 +259,11 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
               children: [
                 Text(_getTypeName(_selectedType),
                     style: TextStyle(
-                      color: isDark ? colorScheme.onSurface : Colors.white,
+                      color: colorScheme.onSurface,
                     )),
                 Icon(
                   Icons.arrow_drop_down,
-                  color: isDark ? colorScheme.onSurface : Colors.white,
+                  color: colorScheme.onSurface,
                 ),
                 const SizedBox(width: 10),
               ],
@@ -320,22 +313,15 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
   }
 
   Widget _buildPreviewCard(Color activeColor) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = isDark
-        ? Color.lerp(activeColor, colorScheme.surfaceContainerHigh, 0.45)!
-        : activeColor;
-    final onCardColor = ThemeData.estimateBrightnessForColor(cardColor) ==
-            Brightness.dark
-        ? Colors.white
-        : Colors.black;
+    final cardColor = context.adaptSemanticColor(activeColor);
+    final onCardColor = AppSemanticColors.onColor(cardColor);
 
     return Container(
       margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(20),
       width: double.infinity,
-      decoration: BoxDecoration(
-          color: cardColor, borderRadius: BorderRadius.circular(12)),
+      decoration:
+          BoxDecoration(color: cardColor, borderRadius: AppRadius.controlAll),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -387,8 +373,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                 () => _pickTime(_targetTime, (v) => _targetTime = v)),
             const SizedBox(height: 10),
             // 现在这个 Text 会受到上面 crossAxisAlignment.start 的影响而居左
-            const Text("有效时间区间:",
-                style: TextStyle(fontSize: 16)),
+            const Text("有效时间区间:", style: TextStyle(fontSize: 16)),
             const SizedBox(height: 10),
             Row(
               // 同时也确保这个 Row 内部的按钮也是从左开始
@@ -418,8 +403,9 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
         children: [
           SizedBox(
               width: 80,
-              child:
-                  Text(label, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))),
+              child: Text(label,
+                  style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant))),
           _buildSmallBtn(value, onTap),
         ],
       ),
@@ -428,20 +414,16 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
 
   Widget _buildSmallBtn(String text, VoidCallback onTap) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         decoration: BoxDecoration(
-            color:
-                isDark ? colorScheme.primaryContainer : const Color(0xFF96B462),
-            borderRadius: BorderRadius.circular(6)),
+            color: colorScheme.primaryContainer,
+            borderRadius: AppRadius.badgeAll),
         child: Text(
           text,
-          style: TextStyle(
-            color: isDark ? colorScheme.onPrimaryContainer : Colors.white,
-          ),
+          style: TextStyle(color: colorScheme.onPrimaryContainer),
         ),
       ),
     );
@@ -472,8 +454,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
   Widget _buildSectionTitle(String title, {double padding = 16}) {
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: padding, vertical: 8),
-      child: Text(title,
-          style: const TextStyle(fontSize: 16)),
+      child: Text(title, style: const TextStyle(fontSize: 16)),
     );
   }
 
@@ -492,7 +473,9 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                 radius: 14,
                 backgroundColor: _themeColors[index],
                 child: _selectedColor == _themeColors[index]
-                    ? const Icon(Icons.check, size: 16, color: Colors.white)
+                    ? Icon(Icons.check,
+                        size: 16,
+                        color: AppSemanticColors.onColor(_themeColors[index]))
                     : null,
               ),
             ),

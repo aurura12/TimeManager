@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../theme/app_semantic_colors.dart';
 
 class Category {
   final String id;
@@ -53,7 +54,10 @@ class Category {
     return Category(
       id: map['id'] as String?,
       name: map['name'] as String? ?? '',
-      color: Color((map['color'] as num?)?.toInt() ?? 0xFF9E9E9E),
+      // 历史数据里可能存过半透明色（十六进制输入框曾接受 8 位 ARGB），
+      // 这里统一收成不透明，否则时间块底色会跟着半透明。
+      color: AppSemanticColors.opaque(Color((map['color'] as num?)?.toInt() ??
+          AppSemanticColors.neutral.toARGB32())),
       subCategories:
           map['subCategories'] is List ? List<String>.from(map['subCategories'] as List) : const [],
       hiddenSubCategories: map['hiddenSubCategories'] is List

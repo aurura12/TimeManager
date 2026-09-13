@@ -9,6 +9,8 @@ import '../models/check_in_record.dart';
 import '../models/coord_transform.dart';
 import '../models/known_google_users.dart';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_tokens.dart';
 /// 打卡地图（高德瓦片 + 标记点，WGS-84 → GCJ-02 坐标转换）
 class CheckInMapPreview extends StatelessWidget {
   const CheckInMapPreview({
@@ -38,7 +40,7 @@ class CheckInMapPreview extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: AppRadius.cardAll,
         child: SizedBox(
           height: height,
           width: double.infinity,
@@ -92,7 +94,7 @@ class CheckInMapPreview extends StatelessWidget {
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
                       color: colorScheme.surface.withValues(alpha: 0.92),
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: AppRadius.controlAll,
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -199,12 +201,12 @@ class CheckInMapPreview extends StatelessWidget {
   static Color _colorForEmail(String email) {
     final normalized = KnownGoogleUsers.normalizeEmail(email);
     if (normalized == KnownGoogleUsers.guaiGuaiEmail) {
-      return const Color(0xFF4DA8EE);
+      return AppSemanticColors.identityGuaiGuai;
     }
     if (normalized == KnownGoogleUsers.jingJingEmail) {
-      return const Color(0xFFF16B77);
+      return AppSemanticColors.identityJingJing;
     }
-    return const Color(0xFF96B462);
+    return AppSemanticColors.brandSurface;
   }
 }
 
@@ -249,8 +251,8 @@ class _MapPin extends StatelessWidget {
           alignment: Alignment.center,
           child: Text(
             count > 1 ? '$count' : '',
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: AppSemanticColors.onColor(color),
               fontSize: 12,
               fontWeight: FontWeight.bold,
             ),

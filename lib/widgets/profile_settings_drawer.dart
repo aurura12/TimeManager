@@ -16,6 +16,8 @@ import '../screens/on_this_day_screen.dart';
 import '../services/google_calendar_service.dart';
 import '../services/app_identity_service.dart';
 import '../models/diary_kind.dart';
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
 
 class ProfileSettingsDrawer extends StatefulWidget {
   final VoidCallback onChanged;
@@ -438,6 +440,12 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     TimeProvider provider,
   ) {
     if (googleUser != null) {
+      final surface = AppSurfaces.of(context).card;
+      final avatarBg = AppSemanticColors.tint(
+          Theme.of(context).colorScheme.primary, surface, 0.12);
+      final onAvatarBg = AppSemanticColors.onTint(
+          Theme.of(context).colorScheme.primary, surface,
+          alpha: 0.12);
       return Padding(
         padding: const EdgeInsets.fromLTRB(16, 0, 8, 12),
         child: Column(
@@ -447,10 +455,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               children: [
                 CircleAvatar(
                   radius: 28,
-                  backgroundColor: Theme.of(context)
-                      .colorScheme
-                      .primary
-                      .withValues(alpha: 0.12),
+                  backgroundColor: avatarBg,
                   backgroundImage: googleUser.photoUrl != null
                       ? NetworkImage(googleUser.photoUrl!)
                       : null,
@@ -458,7 +463,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                       ? Icon(
                           Icons.person,
                           size: 28,
-                          color: Theme.of(context).colorScheme.primary,
+                          color: onAvatarBg,
                         )
                       : null,
                 ),

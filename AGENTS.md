@@ -31,9 +31,9 @@ Flutter time management app (v1.93.6+7, package name `time_manager`) with Google
   - **应用日志**：`AppLogService` (全局错误捕获)、`AppLogStore` (持久化)、`AppLogExportService` (导出)
   - **工具**：`DataBackupService` (JSON 导入导出)、`DiarySearchService` (全文搜索)、`OnThisDayService` (当年今日回顾)、`UpdateService`
   - 各数据域有对应的 `*_local_store.dart` 本地存储封装
-- **Widgets**: `lib/widgets/` (16 个) — `DatePickerPanel`, `TemplateBar`, `TimeGridTile`, `TimeGrid`, `CalendarSyncStatusBadge`, `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, OnThisDay 相关组件、打卡照片相关组件等
+- **Widgets**: `lib/widgets/` (15 个) — `DatePickerPanel`, `TemplateBar`, `TimeGrid`, `CalendarSyncStatusBadge`, `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, OnThisDay 相关组件、打卡照片相关组件等
 - **Utils**: `lib/utils/` — `adaptive` (平台自适应)、`calendar_time_range`、`desktop_selection`、`local_day_range`、`platform_features` (按平台开关功能)、`schedule_view_dates`、`time_slot_segment`
-- **Theme**: `lib/theme/app_theme.dart`
+- **Theme**: `lib/theme/` — `app_tokens.dart` (间距/圆角/控件高度/文字层级)、`app_theme.dart` (`ColorScheme` + `AppSurfaces` 表面层级扩展 + 全套组件主题)、`app_semantic_colors.dart` (身份色/分类色/图表色/奖牌色/状态色白名单)。规范见 `docs/design-system.md`
 - **Config**: `lib/config/` — API keys and service configs (`.gitignore`d，**无 .example.dart 模板**，结构需直接查看引用方代码)
 
 ## 数据流与关键模式

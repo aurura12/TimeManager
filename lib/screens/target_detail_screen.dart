@@ -5,6 +5,9 @@ import '../models/target.dart';
 import 'add_target_screen.dart';
 import '../widgets/target_stats_section.dart';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 class TargetDetailScreen extends StatefulWidget {
   final Target target;
 
@@ -20,18 +23,12 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final target = widget.target;
 
     return Scaffold(
-      backgroundColor: isDark ? colorScheme.surface : Colors.white,
       appBar: AppBar(
-        title: Text(target.name, style: TextStyle(color: isDark ? colorScheme.onSurface : Colors.white)),
+        title: Text(target.name),
         centerTitle: true,
-        backgroundColor: isDark ? colorScheme.surface : const Color(0xFF96B462),
-        foregroundColor: isDark ? colorScheme.onSurface : Colors.white,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.chevron_left, size: 30),
           onPressed: () => Navigator.pop(context),
@@ -68,7 +65,10 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                         Navigator.pop(context);
                         Navigator.pop(context);
                       },
-                      style: TextButton.styleFrom(foregroundColor: Colors.red),
+                      style: TextButton.styleFrom(
+                          foregroundColor: AppSemanticColors.readableOn(
+                              AppSemanticColors.danger,
+                              AppSurfaces.of(context).card)),
                       child: const Text("删除"),
                     ),
                   ],
@@ -106,6 +106,9 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
   }
 
   Widget _buildTargetInfoCard(Target target, ColorScheme colorScheme) {
+    final surface = AppSurfaces.of(context).card;
+    final iconBg = AppSemanticColors.tint(target.color, surface);
+    final onIconBg = AppSemanticColors.onTint(target.color, surface);
     final previewText = _getPreviewText(target);
 
     return Card(
@@ -117,13 +120,13 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: target.color.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(12),
+                color: iconBg,
+                borderRadius: AppRadius.controlAll,
               ),
               alignment: Alignment.center,
               child: Icon(
                 _getTypeIcon(target.type),
-                color: target.color,
+                color: onIconBg,
                 size: 24,
               ),
             ),
@@ -155,7 +158,7 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: AppRadius.badgeAll,
               ),
               child: Text(
                 target.period,
@@ -182,7 +185,7 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                 _historyExpanded = !_historyExpanded;
               });
             },
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+            borderRadius: const BorderRadius.vertical(top: AppRadius.rControl),
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Row(

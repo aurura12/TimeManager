@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_tokens.dart';
 class WordCloudScreen extends StatefulWidget {
   const WordCloudScreen({super.key});
 
@@ -13,6 +15,16 @@ class WordCloudScreen extends StatefulWidget {
     );
   }
 
+  /// 词云第 [index] 个词在底色 [backdrop] 上该用的文字色。
+  ///
+  /// 公开成静态方法是为了让测试直接断言"换底色就换颜色"，
+  /// 不必把整个页面（含 Provider）跑起来。
+  static Color wordColor(Color backdrop, int index) =>
+      AppSemanticColors.readableOn(
+        AppSemanticColors.wordCloud[index % AppSemanticColors.wordCloud.length],
+        backdrop,
+      );
+
   @override
   State<WordCloudScreen> createState() => _WordCloudScreenState();
 }
@@ -20,8 +32,11 @@ class WordCloudScreen extends StatefulWidget {
 class _WordCloudScreenState extends State<WordCloudScreen> {
   _WordCloudShape _shape = _WordCloudShape.whale;
 
-  // 布局缓存：_layoutWords 用固定随机种子，同输入结果相同；
-  // 避免每次 build/layout 都重跑 TextPainter + 420 次放置尝试
+  /// 布局缓存：`_layoutWords` 用固定随机种子，同输入结果相同；
+  /// 避免每次 build/layout 都重跑 TextPainter + 420 次放置尝试。
+  ///
+  /// 缓存里**只有几何**（位置/字号/色板下标），没有任何与主题相关的量，
+  /// 所以键只需要"词数据 + 尺寸 + 形状"。
   int _wordsSignature = -1;
   final Map<String, List<_PlacedWord>> _layoutCache = {};
 
@@ -83,7 +98,7 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
                       const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   decoration: BoxDecoration(
                     color: colorScheme.surfaceContainerLowest,
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: AppRadius.cardAll,
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -124,12 +139,15 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
 
   Widget _buildWordCloudCard(List<_WordCloudItem> words) {
     final colorScheme = Theme.of(context).colorScheme;
+    // 卡片实际底色就是文字要压的那个面；布局缓存不含颜色，
+    // 所以主题一变，这里重算出来的文字色自然跟着变。
+    final backdrop = colorScheme.surfaceContainerLowest;
     return Container(
       height: 430,
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(20),
+        color: backdrop,
+        borderRadius: AppRadius.sheetAll,
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -149,7 +167,8 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
                       word.item.label,
                       style: TextStyle(
                         fontSize: word.fontSize,
-                        color: word.color,
+                        // 颜色在这里现算，不在布局缓存里（否则换主题不会更新）
+                        color: WordCloudScreen.wordColor(backdrop, word.colorIndex),
                         fontWeight: word.fontSize > 24
                             ? FontWeight.w700
                             : FontWeight.w500,
@@ -187,18 +206,15 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
           : ((item.weight - minWeight) / (maxWeight - minWeight))
               .clamp(0.0, 1.0);
       final baseFont = 12.0 + normalized * 26.0;
-      final color = Color.lerp(
-        const Color(0xFF6B8E3A),
-        const Color(0xFF4A90E2),
-        (i % 6) / 5,
-      )!;
+      // 只记录色板下标，不记颜色 —— 颜色由 build 时按当前主题底色算
+      final colorIndex = i % AppSemanticColors.wordCloud.length;
 
       _PlacedWord? word;
       for (final scale in [1.0, 0.9, 0.8]) {
         word = _tryPlaceWord(
           item: item,
           fontSize: baseFont * scale,
-          color: color,
+          colorIndex: colorIndex,
           size: size,
           shape: shape,
           placed: placed,
@@ -215,7 +231,7 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
   _PlacedWord? _tryPlaceWord({
     required _WordCloudItem item,
     required double fontSize,
-    required Color color,
+    required int colorIndex,
     required Size size,
     required _WordCloudShape shape,
     required List<_PlacedWord> placed,
@@ -271,7 +287,7 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
           item: item,
           rect: rect,
           fontSize: fontSize,
-          color: color,
+          colorIndex: colorIndex,
         );
       }
     }
@@ -349,7 +365,7 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
     return Container(
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: AppRadius.sheetAll,
       ),
       child: ListView.separated(
         itemCount: top.length,
@@ -441,13 +457,19 @@ class _PlacedWord {
   final _WordCloudItem item;
   final Rect rect;
   final double fontSize;
-  final Color color;
+
+  /// 在 `AppSemanticColors.wordCloud` 里的下标，而不是最终颜色。
+  ///
+  /// 颜色**不能烘进布局缓存**：它取决于当前主题的卡片底色，一旦缓存下来，
+  /// 切换浅色/深色就会继续用上一次算出的文字色。这里只存下标，
+  /// 颜色在 build 时按 `WordCloudScreen.wordColor(backdrop, index)` 现算。
+  final int colorIndex;
 
   _PlacedWord({
     required this.item,
     required this.rect,
     required this.fontSize,
-    required this.color,
+    required this.colorIndex,
   });
 }
 

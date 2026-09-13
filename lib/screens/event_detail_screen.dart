@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
 class EventDetailScreen extends StatelessWidget {
   final String eventName;
   final int tabIndex;
@@ -12,7 +14,6 @@ class EventDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<TimeProvider>(context);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final colorScheme = Theme.of(context).colorScheme;
 
     // 获取筛选后的历史数据：Map<日期, List<{range, label}>>
@@ -21,13 +22,8 @@ class EventDetailScreen extends StatelessWidget {
         provider.getEventHistory(eventName, tabIndex);
 
     return Scaffold(
-      backgroundColor: isDark ? colorScheme.surface : const Color(0xFFF8F9FA),
       appBar: AppBar(
         title: Text(eventName),
-        elevation: 0,
-        backgroundColor:
-            isDark ? colorScheme.surfaceContainerHighest : Colors.white,
-        foregroundColor: isDark ? colorScheme.onSurface : Colors.black,
       ),
       body: SingleChildScrollView(
         child: Padding(
@@ -44,9 +40,7 @@ class EventDetailScreen extends StatelessWidget {
                   child: Center(
                     child: Text("暂无记录",
                         style: TextStyle(
-                          color: isDark
-                              ? colorScheme.onSurfaceVariant
-                              : Colors.grey,
+                          color: colorScheme.onSurfaceVariant,
                         )),
                   ),
                 )
@@ -62,9 +56,9 @@ class EventDetailScreen extends StatelessWidget {
                             style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
-                                color: isDark
-                                    ? const Color(0xFFB5D390)
-                                    : const Color(0xFF9CB86A))),
+                                color: AppSemanticColors.readableOn(
+                                    AppSemanticColors.brand,
+                                    AppSurfaces.of(context).card))),
                         const SizedBox(height: 8),
                         // 该日期下的所有时间段
                         ...entry.value.map((item) => Padding(
@@ -74,25 +68,19 @@ class EventDetailScreen extends StatelessWidget {
                                 children: [
                                   Icon(Icons.access_time,
                                       size: 14,
-                                      color: isDark
-                                          ? colorScheme.onSurfaceVariant
-                                          : Colors.grey),
+                                      color: colorScheme.onSurfaceVariant),
                                   const SizedBox(width: 8),
                                   Text(item.range,
                                       style: TextStyle(
                                           fontSize: 15,
-                                          color: isDark
-                                              ? colorScheme.onSurface
-                                              : Colors.black87)),
+                                          color: colorScheme.onSurface)),
                                   const SizedBox(width: 8),
                                   Flexible(
                                     child: Text(item.label,
                                         overflow: TextOverflow.ellipsis,
                                         style: TextStyle(
                                             fontSize: 14,
-                                            color: isDark
-                                                ? colorScheme.onSurfaceVariant
-                                                : Colors.grey)),
+                                            color: colorScheme.onSurfaceVariant)),
                                   ),
                                 ],
                               ),

@@ -5,6 +5,8 @@ import '../providers/time_provider.dart';
 import '../theme/app_theme.dart';
 import 'dart:async';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_tokens.dart';
 enum _SearchDateRange { all, week, month, year }
 
 class GlobalSearchScreen extends StatefulWidget {
@@ -111,35 +113,28 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
     final suggestions = provider.getSearchableLabels();
     final totalMinutes =
         _results.fold(0, (sum, g) => sum + g.totalMinutes);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      backgroundColor: isDark ? colorScheme.surface : const Color(0xFFF8F9FA),
       appBar: AppBar(
-        backgroundColor: isDark ? colorScheme.primary : const Color(0xFF9CB86A),
-        foregroundColor: isDark ? colorScheme.onPrimary : Colors.white,
         title: TextField(
           controller: _controller,
           autofocus: true,
           style: TextStyle(
-            color: isDark ? colorScheme.onPrimary : Colors.white,
+            color: colorScheme.onSurface,
             fontSize: 16,
           ),
           decoration: InputDecoration(
             hintText: '搜索事件或分类…',
             hintStyle: TextStyle(
-              color: (isDark ? colorScheme.onPrimary : Colors.white)
-                  .withValues(alpha: 0.7),
+              color: colorScheme.onSurfaceVariant,
             ),
             border: InputBorder.none,
             suffixIcon: _query.isNotEmpty
                 ? IconButton(
                     icon: Icon(
                       Icons.clear,
-                      color: isDark
-                          ? colorScheme.onPrimary.withValues(alpha: 0.7)
-                          : Colors.white70,
+                      color: colorScheme.onSurfaceVariant,
                     ),
                     onPressed: () => _controller.clear(),
                   )
@@ -155,10 +150,10 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
             child: Row(
               children: [
-                _rangeChip('全部', _SearchDateRange.all, isDark, colorScheme),
-                _rangeChip('近7天', _SearchDateRange.week, isDark, colorScheme),
-                _rangeChip('近30天', _SearchDateRange.month, isDark, colorScheme),
-                _rangeChip('近一年', _SearchDateRange.year, isDark, colorScheme),
+                _rangeChip('全部', _SearchDateRange.all, colorScheme),
+                _rangeChip('近7天', _SearchDateRange.week, colorScheme),
+                _rangeChip('近30天', _SearchDateRange.month, colorScheme),
+                _rangeChip('近一年', _SearchDateRange.year, colorScheme),
               ],
             ),
           ),
@@ -168,19 +163,17 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
               child: Text(
                 '共 ${_results.length} 天 · ${_formatDuration(totalMinutes)}',
                 style: TextStyle(
-                  color: isDark
-                      ? colorScheme.onSurfaceVariant
-                      : Colors.grey[600],
+                  color: colorScheme.onSurfaceVariant,
                   fontSize: 13,
                 ),
               ),
             ),
           Expanded(
             child: _query.trim().isEmpty
-                ? _buildSuggestions(suggestions, isDark, colorScheme)
+                ? _buildSuggestions(suggestions, colorScheme)
                 : _results.isEmpty
-                    ? _buildEmpty(isDark, colorScheme)
-                    : _buildResults(isDark, colorScheme),
+                    ? _buildEmpty(colorScheme)
+                    : _buildResults(colorScheme),
           ),
         ],
       ),
@@ -190,7 +183,6 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
   Widget _rangeChip(
     String label,
     _SearchDateRange range,
-    bool isDark,
     ColorScheme colorScheme,
   ) {
     final selected = _dateRange == range;
@@ -205,30 +197,23 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
             _runSearch();
           });
         },
-        selectedColor: isDark
-            ? AppTheme.seedColor.withValues(alpha: 0.3)
-            : const Color(0xFF9CB86A).withValues(alpha: 0.25),
-        checkmarkColor: isDark
-            ? const Color(0xFFB5D390)
-            : const Color(0xFF9CB86A),
+        selectedColor: colorScheme.primaryContainer,
+        checkmarkColor: colorScheme.onPrimaryContainer,
         labelStyle: TextStyle(
-          color: selected
-              ? const Color(0xFF5A7A32)
-              : (isDark ? colorScheme.onSurface : Colors.black87),
+          color:
+              selected ? colorScheme.onPrimaryContainer : colorScheme.onSurface,
           fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
         ),
       ),
     );
   }
 
-  Widget _buildSuggestions(List<String> labels, bool isDark, ColorScheme colorScheme) {
+  Widget _buildSuggestions(List<String> labels, ColorScheme colorScheme) {
     if (labels.isEmpty) {
       return Center(
         child: Text('暂无记录，先去首页记录时间吧',
             style: TextStyle(
-              color: isDark
-                  ? colorScheme.onSurfaceVariant
-                  : Colors.grey[500],
+              color: colorScheme.onSurfaceVariant,
             )),
       );
     }
@@ -237,9 +222,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
       children: [
         Text('快速搜索',
             style: TextStyle(
-                color: isDark
-                    ? colorScheme.onSurfaceVariant
-                    : Colors.grey[600],
+                color: colorScheme.onSurfaceVariant,
                 fontSize: 13,
                 fontWeight: FontWeight.w600)),
         const SizedBox(height: 12),
@@ -251,15 +234,13 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
               label: Text(
                 label,
                 style: TextStyle(
-                  color: isDark ? colorScheme.onSurface : Colors.black87,
+                  color: colorScheme.onSurface,
                 ),
               ),
               backgroundColor:
-                  isDark ? colorScheme.surfaceContainerHigh : Colors.white,
+                  AppSurfaces.of(context).card,
               side: BorderSide(
-                color: isDark
-                    ? colorScheme.outlineVariant
-                    : Colors.grey[300]!,
+                color: colorScheme.outlineVariant,
               ),
               onPressed: () => _selectLabel(label),
             );
@@ -269,7 +250,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
     );
   }
 
-  Widget _buildEmpty(bool isDark, ColorScheme colorScheme) {
+  Widget _buildEmpty(ColorScheme colorScheme) {
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -277,23 +258,19 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
           Icon(
             Icons.search_off,
             size: 48,
-            color: isDark
-                ? colorScheme.outlineVariant
-                : Colors.grey[300],
+            color: colorScheme.outlineVariant,
           ),
           const SizedBox(height: 12),
           Text('未找到「$_query」的相关记录',
               style: TextStyle(
-                color: isDark
-                    ? colorScheme.onSurfaceVariant
-                    : Colors.grey[500],
+                color: colorScheme.onSurfaceVariant,
               )),
         ],
       ),
     );
   }
 
-  Widget _buildResults(bool isDark, ColorScheme colorScheme) {
+  Widget _buildResults(ColorScheme colorScheme) {
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       itemCount: _results.length,
@@ -302,17 +279,10 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
           decoration: BoxDecoration(
-            color: isDark
-                ? colorScheme.surfaceContainerHighest
-                : Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: (isDark ? Colors.white : Colors.black)
-                    .withValues(alpha: isDark ? 0.02 : 0.03),
-                blurRadius: 8,
-              ),
-            ],
+            color: AppSurfaces.of(context).card,
+            borderRadius: AppRadius.cardAll,
+            // 卡片：弱边框、少阴影
+            border: Border.all(color: AppSurfaces.of(context).border),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -320,7 +290,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
               InkWell(
                 onTap: () => _openDate(group.date),
                 borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(16)),
+                    const BorderRadius.vertical(top: AppRadius.rCard),
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
                   child: Row(
@@ -331,18 +301,14 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 15,
-                            color: isDark
-                                ? const Color(0xFFB5D390)
-                                : const Color(0xFF9CB86A),
+                            color: colorScheme.primary,
                           ),
                         ),
                       ),
                       Text(
                         _formatDuration(group.totalMinutes),
                         style: TextStyle(
-                          color: isDark
-                              ? colorScheme.onSurfaceVariant
-                              : Colors.grey[500],
+                          color: colorScheme.onSurfaceVariant,
                           fontSize: 13,
                         ),
                       ),
@@ -350,9 +316,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
                       Icon(
                         Icons.chevron_right,
                         size: 18,
-                        color: isDark
-                            ? colorScheme.onSurfaceVariant
-                            : Colors.grey[400],
+                        color: colorScheme.onSurfaceVariant,
                       ),
                     ],
                   ),
@@ -368,7 +332,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
                         width: 8,
                         height: 8,
                         decoration: BoxDecoration(
-                          color: entry.color ?? const Color(0xFF9CB86A),
+                          color: entry.color ?? AppSemanticColors.brand,
                           shape: BoxShape.circle,
                         ),
                       ),
@@ -378,18 +342,14 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
                           entry.label,
                           style: TextStyle(
                             fontSize: 14,
-                            color: isDark
-                                ? colorScheme.onSurface
-                                : Colors.black87,
+                            color: colorScheme.onSurface,
                           ),
                         ),
                       ),
                       Text(
                         entry.timeRange,
                         style: TextStyle(
-                          color: isDark
-                              ? colorScheme.onSurfaceVariant
-                              : Colors.grey[600],
+                          color: colorScheme.onSurfaceVariant,
                           fontSize: 13,
                         ),
                       ),
@@ -397,9 +357,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
                       Text(
                         _formatDuration(entry.durationMinutes),
                         style: TextStyle(
-                          color: isDark
-                              ? colorScheme.onSurfaceVariant
-                              : Colors.grey[400],
+                          color: colorScheme.onSurfaceVariant,
                           fontSize: 12,
                         ),
                       ),

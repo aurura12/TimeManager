@@ -7,6 +7,9 @@ import '../models/check_in_goal.dart';
 import '../services/check_in_location_service.dart';
 import '../services/check_in_sync_service.dart';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 /// 拍照 / 相册打卡底部弹窗
 class CheckInPhotoSheet extends StatefulWidget {
   const CheckInPhotoSheet({
@@ -187,7 +190,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                 height: 4,
                 decoration: BoxDecoration(
                   color: colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(2),
+                  borderRadius: AppRadius.gridAll,
                 ),
               ),
               const SizedBox(height: 16),
@@ -197,11 +200,15 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                     width: 36,
                     height: 36,
                     decoration: BoxDecoration(
-                      color: widget.goal.color.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(10),
+                      color: AppSemanticColors.tint(widget.goal.color,
+                          AppSurfaces.of(context).card, 0.2),
+                      borderRadius: AppRadius.controlAll,
                     ),
                     child: Icon(widget.goal.icon,
-                        color: widget.goal.color, size: 20),
+                        color: AppSemanticColors.onTint(widget.goal.color,
+                            AppSurfaces.of(context).card,
+                            alpha: 0.2),
+                        size: 20),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -236,7 +243,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
               const SizedBox(height: 16),
               // 日期选择行（补打卡时显示橙色标记）
               InkWell(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: AppRadius.controlAll,
                 onTap: _uploading
                     ? null
                     : () async {
@@ -260,7 +267,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                   decoration: BoxDecoration(
                     color: colorScheme.surfaceContainerHighest
                         .withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: AppRadius.controlAll,
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -278,17 +285,30 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                       ),
                       if (_isBackfill) ...[
                         const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 5, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: Colors.orange.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: const Text('补',
-                              style: TextStyle(
-                                  fontSize: 10, color: Colors.orange)),
-                        ),
+                        Builder(builder: (context) {
+                          // 徽标下面还压着一层 surfaceContainerHighest@50%，
+                          // 先合成成不透明底面再算同色淡底上的文字色。
+                          final badgeBg = AppSemanticColors.compose(
+                            colorScheme.surfaceContainerHighest
+                                .withValues(alpha: 0.5),
+                            AppSurfaces.of(context).card,
+                          );
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: AppSemanticColors.tint(
+                                  AppSemanticColors.warning, badgeBg, 0.2),
+                              borderRadius: AppRadius.gridAll,
+                            ),
+                            child: Text('补',
+                                style: TextStyle(
+                                    fontSize: 10,
+                                    color: AppSemanticColors.onTint(
+                                        AppSemanticColors.warning, badgeBg,
+                                        alpha: 0.2))),
+                          );
+                        }),
                       ],
                       const SizedBox(width: 6),
                       Icon(Icons.arrow_drop_down,
@@ -303,7 +323,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                 child: Container(
                   decoration: BoxDecoration(
                     color: Colors.black87,
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: AppRadius.cardAll,
                   ),
                   clipBehavior: Clip.antiAlias,
                   child: Stack(
@@ -357,7 +377,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                               horizontal: 12, vertical: 8),
                           decoration: BoxDecoration(
                             color: Colors.black.withValues(alpha: 0.55),
-                            borderRadius: BorderRadius.circular(10),
+                            borderRadius: AppRadius.controlAll,
                           ),
                           child: Row(
                             children: [
@@ -369,8 +389,8 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                                         : Icons.location_on,
                                 size: 16,
                                 color: _locationFailed
-                                    ? Colors.orange
-                                    : const Color(0xFF96B462),
+                                    ? AppSemanticColors.warning
+                                    : AppSemanticColors.brandSurface,
                               ),
                               const SizedBox(width: 6),
                               Expanded(

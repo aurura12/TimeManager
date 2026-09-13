@@ -6,6 +6,7 @@ import '../services/daily_review_chat_store.dart';
 import '../services/daily_review_summary.dart';
 import '../services/siliconflow_ai_service.dart';
 
+import '../theme/app_tokens.dart';
 class DailyReviewChatSheet extends StatefulWidget {
   final DateTime date;
   final String? reviewBody;
@@ -318,7 +319,7 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
                         filled: true,
                         fillColor: colorScheme.surfaceContainerHighest,
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
+                          borderRadius: AppRadius.sheetAll,
                           borderSide: BorderSide.none,
                         ),
                         contentPadding: const EdgeInsets.symmetric(
@@ -373,8 +374,8 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
         decoration: BoxDecoration(
           color: bg,
           borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
+            topLeft: AppRadius.rCard,
+            topRight: AppRadius.rCard,
             bottomLeft: Radius.circular(isUser ? 16 : 4),
             bottomRight: Radius.circular(isUser ? 4 : 16),
           ),
@@ -424,7 +425,7 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
           color: colorScheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: AppRadius.cardAll,
         ),
         child: SizedBox(
           width: 18,

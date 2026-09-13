@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../models/app_log_entry.dart';
 import '../services/app_log_export_service.dart';
 import '../services/app_log_service.dart';
+import '../theme/app_semantic_colors.dart';
 
 class AppLogScreen extends StatefulWidget {
   const AppLogScreen({super.key, this.service});
@@ -206,7 +207,11 @@ class _AppLogScreenState extends State<AppLogScreen> {
       case AppLogLevel.info:
         return colorScheme.primary;
       case AppLogLevel.warning:
-        return Colors.orange.shade700;
+        return AppSemanticColors.readableOn(
+          AppSemanticColors.warning,
+          colorScheme.surfaceContainerLowest,
+          minRatio: 3.0,
+        );
       case AppLogLevel.error:
         return colorScheme.error;
     }

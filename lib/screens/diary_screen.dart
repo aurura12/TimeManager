@@ -12,6 +12,8 @@ import '../services/diary_search_service.dart';
 import '../services/app_identity_service.dart';
 import 'diary_search_screen.dart';
 
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_tokens.dart';
 enum _DiarySyncAction { pull, push }
 
 class DiaryScreen extends StatefulWidget {
@@ -818,7 +820,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: AppRadius.controlAll,
       ),
       child: Row(
         children: [
@@ -990,12 +992,15 @@ class _DiaryScreenState extends State<DiaryScreen> {
                           horizontal: 12, vertical: 10),
                       decoration: BoxDecoration(
                         color: colorScheme.secondaryContainer,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: AppRadius.controlAll,
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.visibility_outlined,
-                              size: 16, color: Colors.orange),
+                          Icon(Icons.visibility_outlined,
+                              size: 16,
+                              color: AppSemanticColors.readableOn(
+                                  AppSemanticColors.warning,
+                                  colorScheme.secondaryContainer)),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
@@ -1032,7 +1037,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                               bottom: 12,
                             ),
                             border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: AppRadius.controlAll,
                             ),
                           ),
                         ),
@@ -1072,7 +1077,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                       child: LinearProgressIndicator(
                         value: value > 0 ? value : null,
                         minHeight: 4,
-                        borderRadius: BorderRadius.circular(2),
+                        borderRadius: AppRadius.gridAll,
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -1165,7 +1170,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       decoration: BoxDecoration(
         color: colorScheme.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: const BorderRadius.vertical(top: AppRadius.rSheet),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1175,7 +1180,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
             height: 4,
             decoration: BoxDecoration(
               color: colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
-              borderRadius: BorderRadius.circular(2),
+              borderRadius: AppRadius.gridAll,
             ),
           ),
           const SizedBox(height: 16),
@@ -1246,7 +1251,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
                     border: isToday
                         ? Border.all(color: colorScheme.primary, width: 1.5)
                         : null,
-                    borderRadius: BorderRadius.circular(6),
+                    borderRadius: AppRadius.badgeAll,
                   ),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -1272,7 +1277,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
                                 width: 5,
                                 height: 5,
                                 decoration: const BoxDecoration(
-                                  color: Color(0xFF4DA8EE),
+                                  color: AppSemanticColors.identityGuaiGuai,
                                   shape: BoxShape.circle,
                                 ),
                               ),
@@ -1282,7 +1287,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
                                 width: 5,
                                 height: 5,
                                 decoration: const BoxDecoration(
-                                  color: Color(0xFFF16B77),
+                                  color: AppSemanticColors.identityJingJing,
                                   shape: BoxShape.circle,
                                 ),
                               ),
@@ -1302,7 +1307,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
                 width: 8,
                 height: 8,
                 decoration: const BoxDecoration(
-                  color: Color(0xFF4DA8EE),
+                  color: AppSemanticColors.identityGuaiGuai,
                   shape: BoxShape.circle,
                 ),
               ),
@@ -1313,7 +1318,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
                 width: 8,
                 height: 8,
                 decoration: const BoxDecoration(
-                  color: Color(0xFFF16B77),
+                  color: AppSemanticColors.identityJingJing,
                   shape: BoxShape.circle,
                 ),
               ),

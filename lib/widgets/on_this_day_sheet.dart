@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/on_this_day_entry.dart';
 import 'on_this_day_year_card.dart';
 
+import '../theme/app_tokens.dart';
 /// 打开"那年今日"底部弹窗
 ///
 /// [onShown]：弹窗完成入场动画后回调，用于"真正显示后再落盘"。
@@ -19,7 +20,7 @@ Future<void> showOnThisDaySheet(
     useSafeArea: true,
     showDragHandle: true,
     shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      borderRadius: BorderRadius.vertical(top: AppRadius.rCard),
     ),
     builder: (ctx) => _OnThisDayContent(
       entries: entries,

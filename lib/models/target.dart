@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_semantic_colors.dart';
 enum TargetType { duration, timePoint, frequency }
 
 class Target {
@@ -99,7 +100,9 @@ class Target {
               typeIndex < TargetType.values.length)
           ? TargetType.values[typeIndex]
           : TargetType.duration,
-      color: Color(json['color'] as int? ?? 0xFF9CB86A),
+      // 与 Category 同理：颜色只能是不透明实色
+      color: AppSemanticColors.opaque(Color(json['color'] as int? ??
+          AppSemanticColors.brand.toARGB32())),
       period: json['period']?.toString() ?? '每天',
       compareType: json['compareType']?.toString() ?? "超过",
       durationHours: (json['durationHours'] as num?)?.toDouble() ?? 0.0,

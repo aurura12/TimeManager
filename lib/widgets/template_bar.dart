@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../models/schedule_template.dart';
 import '../providers/time_provider.dart';
+import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 
 class TemplateBar extends StatelessWidget {
   final TimeProvider provider;
@@ -18,15 +20,15 @@ class TemplateBar extends StatelessWidget {
     this.onVoiceTap,
   });
 
-  static const double _chipHeight = 30;
-  static const double _chipGap = 3;
+  static const double _chipHeight = AppSizes.chip;
+  static const double _chipGap = AppSpacing.xs;
   static const double _maxListHeight = 126;
 
   @override
   Widget build(BuildContext context) {
     final templates = provider.templates;
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final surfaces = AppSurfaces.of(context);
     final chipCount = templates.length + 1;
     final listHeight = (chipCount * _chipHeight + (chipCount - 1) * _chipGap)
         .clamp(_chipHeight, _maxListHeight)
@@ -36,8 +38,8 @@ class TemplateBar extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(6, 8, 2, 6),
       decoration: BoxDecoration(
-        color: isDark ? colorScheme.surfaceContainerHigh : Colors.grey[200],
-        border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
+        color: surfaces.subtle,
+        border: Border(bottom: BorderSide(color: surfaces.border)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -47,21 +49,16 @@ class TemplateBar extends StatelessWidget {
             children: [
               Text(
                 '模板',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: isDark ? colorScheme.onSurface : Colors.grey[800],
+                style: AppText.body.copyWith(
+                  color: colorScheme.onSurface,
                   fontWeight: FontWeight.w700,
                 ),
               ),
               const Spacer(),
               IconButton(
                 onPressed: onManageTap,
-                icon: Icon(
-                  Icons.settings,
-                  size: 22,
-                  color:
-                      isDark ? colorScheme.onSurfaceVariant : Colors.grey[700],
-                ),
+                icon: const Icon(Icons.settings, size: 22),
+                color: colorScheme.onSurfaceVariant,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 tooltip: '管理模板',
@@ -74,11 +71,11 @@ class TemplateBar extends StatelessWidget {
               button: true,
               label: '语音添加日程',
               child: Material(
-                color: isDark ? colorScheme.secondaryContainer : Colors.white,
-                borderRadius: BorderRadius.circular(6),
+                color: surfaces.card,
+                borderRadius: AppRadius.badgeAll,
                 child: InkWell(
                   onTap: onVoiceTap,
-                  borderRadius: BorderRadius.circular(6),
+                  borderRadius: AppRadius.badgeAll,
                   child: SizedBox(
                     height: _chipHeight,
                     child: Row(
@@ -87,18 +84,13 @@ class TemplateBar extends StatelessWidget {
                         Icon(
                           Icons.mic_none,
                           size: 16,
-                          color: isDark
-                              ? colorScheme.onSecondaryContainer
-                              : colorScheme.primary,
+                          color: colorScheme.primary,
                         ),
                         const SizedBox(width: 3),
                         Text(
                           '语音添加',
-                          style: TextStyle(
-                            color: isDark
-                                ? colorScheme.onSecondaryContainer
-                                : colorScheme.primary,
-                            fontSize: 11,
+                          style: AppText.badge.copyWith(
+                            color: colorScheme.primary,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -145,19 +137,14 @@ class TemplateBar extends StatelessWidget {
                 height: _chipHeight,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: isDark
-                      ? colorScheme.surfaceContainerHighest
-                      : Colors.white,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: colorScheme.outlineVariant),
+                  color: surfaces.card,
+                  borderRadius: AppRadius.badgeAll,
+                  border: Border.all(color: surfaces.border),
                 ),
                 child: Text(
                   '添加模板',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isDark
-                        ? colorScheme.onSurfaceVariant
-                        : Colors.grey[700],
+                  style: AppText.caption.copyWith(
+                    color: colorScheme.onSurfaceVariant,
                   ),
                 ),
               ),
@@ -178,16 +165,16 @@ class _TemplateChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Tooltip(
       message: name,
       child: Material(
-        color: isDark ? colorScheme.primaryContainer : const Color(0xFF9CB86A),
-        borderRadius: BorderRadius.circular(6),
+        // 模板 chip 统一用 primaryContainer，浅色/深色一致，不再各写一套
+        color: colorScheme.primaryContainer,
+        borderRadius: AppRadius.badgeAll,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: AppRadius.badgeAll,
           child: Container(
             height: TemplateBar._chipHeight,
             padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -196,10 +183,8 @@ class _TemplateChip extends StatelessWidget {
               name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: isDark ? colorScheme.onPrimaryContainer : Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
+              style: AppText.badge.copyWith(
+                color: colorScheme.onPrimaryContainer,
               ),
             ),
           ),
