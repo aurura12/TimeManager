@@ -16,10 +16,10 @@ class EventDetailScreen extends StatelessWidget {
     final provider = Provider.of<TimeProvider>(context);
     final colorScheme = Theme.of(context).colorScheme;
 
-    // 获取筛选后的历史数据：Map<日期, List<{range, label}>>
-    // 例如：{"2月15日": [(range: "08:00 - 09:00", label: "编程"), (range: "14:20 - 15:00", label: "开会")]}
-    final Map<String, List<({String range, String label})>> history =
+    // 普通详情仍按时间平铺；“已删除”详情额外携带父事件关系。
+    final Map<String, List<EventHistoryItem>> history =
         provider.getEventHistory(eventName, tabIndex);
+    final showDeletedRelations = provider.isDeletedEventName(eventName);
 
     return Scaffold(
       appBar: AppBar(
@@ -46,6 +46,15 @@ class EventDetailScreen extends StatelessWidget {
                 )
               else
                 ...history.entries.map((entry) {
+                  final groupedRelations = <String, List<EventHistoryItem>>{};
+                  if (showDeletedRelations) {
+                    for (final item in entry.value) {
+                      final parentName = item.parentName ?? '父事件关系不明确';
+                      groupedRelations
+                          .putIfAbsent(parentName, () => [])
+                          .add(item);
+                    }
+                  }
                   return SizedBox(
                     width: double.infinity,
                     child: Column(
@@ -60,31 +69,56 @@ class EventDetailScreen extends StatelessWidget {
                                     AppSemanticColors.brand,
                                     AppSurfaces.of(context).card))),
                         const SizedBox(height: 8),
-                        // 该日期下的所有时间段
-                        ...entry.value.map((item) => Padding(
-                              padding:
-                                  const EdgeInsets.only(bottom: 6.0, left: 8.0),
-                              child: Row(
+                        if (showDeletedRelations)
+                          ...groupedRelations.entries.map(
+                            (group) => Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Icon(Icons.access_time,
-                                      size: 14,
-                                      color: colorScheme.onSurfaceVariant),
-                                  const SizedBox(width: 8),
-                                  Text(item.range,
-                                      style: TextStyle(
-                                          fontSize: 15,
-                                          color: colorScheme.onSurface)),
-                                  const SizedBox(width: 8),
-                                  Flexible(
-                                    child: Text(item.label,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                            fontSize: 14,
-                                            color: colorScheme.onSurfaceVariant)),
+                                  Row(
+                                    children: [
+                                      Icon(Icons.account_tree_outlined,
+                                          size: 15,
+                                          color: colorScheme.onSurface),
+                                      const SizedBox(width: 6),
+                                      Flexible(
+                                        child: Text(
+                                          group.key,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.bold,
+                                            color: colorScheme.onSurface,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 4),
+                                  ...group.value.map(
+                                    (item) => _buildHistoryRow(
+                                      item,
+                                      colorScheme,
+                                      indent: 24,
+                                      label: item.isParentEvent
+                                          ? '父事件本身'
+                                          : item.label,
+                                    ),
                                   ),
                                 ],
                               ),
-                            )),
+                            ),
+                          )
+                        else
+                          ...entry.value.map(
+                            (item) => _buildHistoryRow(
+                              item,
+                              colorScheme,
+                              indent: 8,
+                              label: item.label,
+                            ),
+                          ),
                         const SizedBox(height: 20),
                       ],
                     ),
@@ -93,6 +127,35 @@ class EventDetailScreen extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildHistoryRow(
+    EventHistoryItem item,
+    ColorScheme colorScheme, {
+    required double indent,
+    required String label,
+  }) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: 6.0, left: indent),
+      child: Row(
+        children: [
+          Icon(Icons.access_time,
+              size: 14, color: colorScheme.onSurfaceVariant),
+          const SizedBox(width: 8),
+          Text(item.range,
+              style: TextStyle(fontSize: 15, color: colorScheme.onSurface)),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style:
+                  TextStyle(fontSize: 14, color: colorScheme.onSurfaceVariant),
+            ),
+          ),
+        ],
       ),
     );
   }

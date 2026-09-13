@@ -202,7 +202,7 @@ void main() {
     expect(labels.contains('做饭'), isFalse);
   });
 
-  test('删除父事件后，原父事件和子事件都归入临时', () async {
+  test('删除父事件后，原父事件和子事件归入已删除并保留父子关系', () async {
     final provider = await _createProvider();
     provider.addCategory(Category(
       name: '项目',
@@ -210,25 +210,70 @@ void main() {
       subCategories: ['开发'],
       updatedAt: 1,
     ));
+    final project = provider.categories.firstWhere((cat) => cat.name == '项目');
 
     final yesterday = DateTime.now().subtract(const Duration(days: 1));
-    provider.assignCategoryToSlots(
-        {0}, Category(name: '项目', color: Colors.red), date: yesterday);
-    provider.assignCategoryToSlots(
-        {1}, Category(name: '开发', color: Colors.red), date: yesterday);
+    provider.assignCategoryToSlots({0}, project, date: yesterday);
+    provider
+        .assignCategoryToSlots({1}, project, subLabel: '开发', date: yesterday);
 
     final index = provider.categories.indexWhere((cat) => cat.name == '项目');
     provider.deleteCategory(index);
 
     final stats = provider.getParentStatistics(yesterday, yesterday);
-    expect(stats[TimeProvider.temporaryCategoryName], closeTo(1 / 3, 1e-9));
+    expect(stats[TimeProvider.deletedCategoryName], closeTo(1 / 3, 1e-9));
+    expect(stats.containsKey(TimeProvider.temporaryCategoryName), isFalse);
     expect(stats.length, 1);
 
-    final history = provider.getEventHistory(
-        TimeProvider.temporaryCategoryName, 3);
+    final history =
+        provider.getEventHistory(TimeProvider.deletedCategoryName, 3);
     final ranges = history['${yesterday.month}月${yesterday.day}日'];
     expect(ranges, isNotNull);
     expect(ranges!.map((range) => range.label), containsAll(['项目', '开发']));
+    final parentRange = ranges.firstWhere((range) => range.label == '项目');
+    final childRange = ranges.firstWhere((range) => range.label == '开发');
+    expect(parentRange.parentName, '项目');
+    expect(parentRange.isParentEvent, isTrue);
+    expect(childRange.parentName, '项目');
+    expect(childRange.isParentEvent, isFalse);
+  });
+
+  test('删除子事件后归入已删除且明细保留父事件关系', () async {
+    final provider = await _createProvider();
+    provider.addCategory(Category(
+      name: '专项工作',
+      color: Colors.blue,
+      subCategories: ['写作', '会议'],
+      updatedAt: 1,
+    ));
+    final categoryIndex =
+        provider.categories.indexWhere((cat) => cat.name == '专项工作');
+    final category = provider.categories[categoryIndex];
+    final yesterday = DateTime.now().subtract(const Duration(days: 1));
+    provider.assignCategoryToSlots(
+      {0},
+      category,
+      subLabel: '写作',
+      date: yesterday,
+    );
+
+    provider.updateCategory(
+      categoryIndex,
+      category.copyWith(subCategories: ['会议']),
+    );
+
+    final stats = provider.getParentStatistics(yesterday, yesterday);
+    expect(stats[TimeProvider.deletedCategoryName], closeTo(1 / 6, 1e-9));
+    expect(stats.containsKey(TimeProvider.temporaryCategoryName), isFalse);
+
+    final history =
+        provider.getEventHistory(TimeProvider.deletedCategoryName, 3);
+    final ranges = history['${yesterday.month}月${yesterday.day}日'];
+    expect(ranges, isNotNull);
+    expect(ranges, hasLength(1));
+    expect(ranges!.single.label, '写作');
+    expect(ranges.single.parentName, '专项工作');
+    expect(ranges.single.isParentEvent, isFalse);
   });
 
   test('全部事件统计只将无归属标签合并为临时', () async {

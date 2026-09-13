@@ -22,6 +22,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   int _groupValue = 0; // 0: 列表, 1: 饼图
   int _touchedIndex = -1;
   bool _showParentOnly = false; // false: 全部事件, true: 只显示父事件
+  bool _groupDeletedEvents = true; // 全部事件视图中是否合并已删除标签
 
   @override
   void initState() {
@@ -72,14 +73,40 @@ class _ProfileScreenState extends State<ProfileScreen>
           _buildSummaryCards(provider, _tabController.index),
           const SizedBox(height: 20),
 
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            runSpacing: AppSpacing.sm,
             children: [
               const Text("分类统计",
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-              Row(
+              Wrap(
+                spacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  // 切换显示模式
+                  if (!_showParentOnly)
+                    GestureDetector(
+                      onTap: () => setState(() =>
+                          _groupDeletedEvents = !_groupDeletedEvents),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: _groupDeletedEvents
+                              ? colorScheme.primary
+                              : colorScheme.surfaceContainerHighest,
+                          borderRadius: AppRadius.cardAll,
+                        ),
+                        child: Text(
+                          _groupDeletedEvents ? '合并已删除' : '已删除独立',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: _groupDeletedEvents
+                                ? colorScheme.onPrimary
+                                : colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ),
                   GestureDetector(
                     onTap: () => setState(() => _showParentOnly = !_showParentOnly),
                     child: Container(
@@ -101,7 +128,6 @@ class _ProfileScreenState extends State<ProfileScreen>
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
                   CupertinoSegmentedControl<int>(
                     groupValue: _groupValue,
                     borderColor: colorScheme.primary,
@@ -124,7 +150,6 @@ class _ProfileScreenState extends State<ProfileScreen>
             ],
           ),
           const SizedBox(height: 12),
-
           _groupValue == 0
               ? _buildDetailList(provider, _tabController.index)
               : _buildPieChart(provider, _tabController.index),
@@ -587,7 +612,11 @@ class _ProfileScreenState extends State<ProfileScreen>
     if (_showParentOnly) {
       return provider.getParentStatistics(start, now);
     }
-    return provider.getStatisticsWithTemporaryGrouped(start, now);
+    return provider.getStatisticsWithTemporaryGrouped(
+      start,
+      now,
+      groupDeleted: _groupDeletedEvents,
+    );
   }
 
   // 一次遍历最近 30 天，同时得到每日总时长与事件数，

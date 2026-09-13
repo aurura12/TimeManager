@@ -13,6 +13,7 @@ import '../models/search_result.dart';
 import '../models/voice_schedule_draft.dart';
 import '../models/pending_sync_state.dart';
 import '../models/schedule_sync_progress.dart';
+import '../models/deleted_event_relation.dart';
 import '../services/home_widget_service.dart';
 import '../utils/platform_features.dart';
 import '../services/schedule_day_merge.dart';
@@ -54,6 +55,13 @@ class BackupPreview {
     required this.templateCount,
   });
 }
+
+typedef EventHistoryItem = ({
+  String range,
+  String label,
+  String? parentName,
+  bool isParentEvent,
+});
 
 /// An immutable full replacement used by the serialized save queue.
 /// It keeps an overwrite candidate invisible to listeners until the save and
@@ -181,13 +189,23 @@ class _ScheduleOverwriteJournal {
 }
 
 class TimeProvider with ChangeNotifier {
-  static const int backupVersion = 1;
+  static const int backupVersion = 2;
   static const Color calendarImportColor = AppSemanticColors.calendarImport;
   static const String _scheduleOverwriteJournalKey =
       'schedule_overwrite_transaction_journal';
 
   /// 临时事件保留名：首页"临时"按钮分类，也是父事件视图中无归属事件的聚合项名称
   static const String temporaryCategoryName = '临时';
+
+  /// 已删除事件的聚合展示名，禁止作为真实分类或子事件名
+  static const String deletedCategoryName = '已删除';
+
+  static bool isReservedCategoryLabel(String label) {
+    final normalized = label.trim();
+    return normalized == temporaryCategoryName ||
+        normalized == deletedCategoryName;
+  }
+
   Timer? _debounceTimer;
   Future<bool>? _ongoingSave;
   int _saveRequestRevision = 0;
@@ -508,6 +526,7 @@ class TimeProvider with ChangeNotifier {
   static const List<String> _identityScopedPreferenceBases = [
     'categories',
     'deleted_categories',
+    'deleted_relations',
     'categories_doc_updated_at',
     'targets',
     'deleted_targets',
@@ -673,6 +692,7 @@ class TimeProvider with ChangeNotifier {
     _templates.clear();
     _ignoredCalendarImports.clear();
     _deletedCategories.clear();
+    _deletedRelations.clear();
     _deletedTargets.clear();
     _categoryExpandStates.clear();
     _pendingSyncState.replace();
@@ -1616,11 +1636,12 @@ class TimeProvider with ChangeNotifier {
     // 未指定日期时维持原有行为（操作当前日期，走完整同步链路）
     final targetDate = date ?? _currentDate;
     final dateKey = _getDateKey(targetDate);
+    final label = subLabel ?? category.name;
+    if (label.trim() == deletedCategoryName) return;
     final daySlots = slotsForDate(targetDate);
 
     _saveSnapshot(dateKey);
 
-    final label = subLabel ?? category.name;
     final now = DateTime.now();
     for (var index in indices) {
       daySlots[index].recorded = true;
@@ -2165,6 +2186,9 @@ class TimeProvider with ChangeNotifier {
 
   /// 分类删除墓碑：id → 删除时间戳（毫秒）
   final Map<String, int> _deletedCategories = {};
+
+  /// 已删除事件的本地父子关系快照；不参与远端分类文档同步。
+  final List<DeletedEventRelation> _deletedRelations = [];
 
   /// 分类文档最后修改时间（毫秒），用于合并顺序基准与首次同步判断
   int _categoriesDocUpdatedAt = 0;
@@ -3299,6 +3323,7 @@ class TimeProvider with ChangeNotifier {
     _deletedCategories
       ..clear()
       ..addAll(merged.deletedCategories);
+    _removeDeletedRelationsForLiveLabels();
     _categoriesDocUpdatedAt = merged.updatedAt;
     _markCategoriesChanged();
     _saveData();
@@ -4898,41 +4923,85 @@ class TimeProvider with ChangeNotifier {
 
   // --- 分类管理方法 (从 HomeScreen 移入) ---
 
-  void addCategory(Category category) {
-    if (!_allowScheduleMutation()) return;
+  bool addCategory(Category category) {
+    if (!_allowScheduleMutation()) return false;
+    if (_containsReservedCategoryLabel(category)) return false;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     _categories.add(category.updatedAt <= 0
         ? category.copyWith(updatedAt: nowMs)
         : category);
+    _removeDeletedRelationsForEvent(category.name);
+    for (final sub in {
+      ...category.subCategories,
+      ...category.hiddenSubCategories,
+    }) {
+      _removeDeletedRelationsForEvent(sub);
+    }
     _markCategoriesChanged();
     _markCategoriesGiteePending();
     _invalidateLabelCategoryIdCache(); // 清除缓存
     _saveData();
     notifyListeners();
+    return true;
   }
 
-  void updateCategory(int index, Category newCategory) {
-    if (!_allowScheduleMutation()) return;
-    if (index < 0 || index >= _categories.length) return;
+  bool updateCategory(int index, Category newCategory) {
+    if (!_allowScheduleMutation()) return false;
+    if (index < 0 || index >= _categories.length) return false;
 
     final oldCategory = _categories[index];
     final updated = newCategory.id.isEmpty
         ? newCategory.copyWith(id: oldCategory.id)
         : newCategory;
     final categoryId = oldCategory.id;
+    if (_containsReservedCategoryLabel(updated)) return false;
 
     if (oldCategory.name != updated.name) {
       _propagateLabelRename(categoryId, oldCategory.name, updated.name);
+      _renameDeletedRelationsParent(
+        categoryId,
+        oldCategory.name,
+        updated.name,
+      );
+      _removeDeletedRelationsForEvent(updated.name);
     }
 
-    final oldSubs = oldCategory.subCategories;
-    final newSubs = updated.subCategories;
-    if (oldSubs.length == newSubs.length) {
-      for (int i = 0; i < oldSubs.length; i++) {
-        if (oldSubs[i] != newSubs[i]) {
-          _propagateLabelRename(categoryId, oldSubs[i], newSubs[i]);
+    final oldVisibleSubs = oldCategory.subCategories;
+    final newVisibleSubs = updated.subCategories;
+    final renamedOldSubs = <String>{};
+    if (oldVisibleSubs.length == newVisibleSubs.length) {
+      for (int i = 0; i < oldVisibleSubs.length; i++) {
+        if (oldVisibleSubs[i] != newVisibleSubs[i]) {
+          _propagateLabelRename(
+            categoryId,
+            oldVisibleSubs[i],
+            newVisibleSubs[i],
+          );
+          renamedOldSubs.add(oldVisibleSubs[i]);
         }
       }
+    }
+
+    final oldActiveSubs = <String>{
+      ...oldCategory.subCategories,
+      ...oldCategory.hiddenSubCategories,
+    };
+    final newActiveSubs = <String>{
+      ...updated.subCategories,
+      ...updated.hiddenSubCategories,
+    };
+    for (final sub in oldActiveSubs.difference(newActiveSubs)) {
+      if (!renamedOldSubs.contains(sub)) {
+        _upsertDeletedRelation(
+          categoryId: categoryId,
+          parentName: updated.name,
+          eventName: sub,
+          isParentEvent: false,
+        );
+      }
+    }
+    for (final sub in newActiveSubs) {
+      _removeDeletedRelationsForEvent(sub);
     }
 
     _categories[index] =
@@ -4942,6 +5011,7 @@ class TimeProvider with ChangeNotifier {
     _invalidateLabelCategoryIdCache(); // 清除缓存
     _saveData();
     notifyListeners();
+    return true;
   }
 
   void hideSubCategory(int catIndex, String subCategory) {
@@ -4956,6 +5026,7 @@ class TimeProvider with ChangeNotifier {
       hiddenSubCategories: newHidden,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
+    _removeDeletedRelationsForEvent(subCategory);
     _markCategoriesChanged(); // 标记分类为脏
     _markCategoriesGiteePending();
     _saveData();
@@ -4974,6 +5045,7 @@ class TimeProvider with ChangeNotifier {
       hiddenSubCategories: newHidden,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
+    _removeDeletedRelationsForEvent(subCategory);
     _markCategoriesChanged(); // 标记分类为脏
     _markCategoriesGiteePending();
     _saveData();
@@ -5159,6 +5231,134 @@ class TimeProvider with ChangeNotifier {
     _categoriesRevision++;
   }
 
+  void _upsertDeletedRelation({
+    required String categoryId,
+    required String parentName,
+    required String eventName,
+    required bool isParentEvent,
+    int? deletedAt,
+  }) {
+    if (categoryId.isEmpty || parentName.isEmpty || eventName.isEmpty) {
+      return;
+    }
+    final relation = DeletedEventRelation(
+      categoryId: categoryId,
+      parentName: parentName,
+      eventName: eventName,
+      isParentEvent: isParentEvent,
+      deletedAt: deletedAt ?? DateTime.now().millisecondsSinceEpoch,
+    );
+    final index = _deletedRelations.indexWhere(
+      (existing) =>
+          existing.categoryId == categoryId &&
+          existing.eventName == eventName &&
+          existing.isParentEvent == isParentEvent,
+    );
+    if (index == -1) {
+      _deletedRelations.add(relation);
+    } else {
+      _deletedRelations[index] = relation;
+    }
+  }
+
+  bool _removeDeletedRelationsForEvent(String eventName) {
+    final before = _deletedRelations.length;
+    _deletedRelations
+        .removeWhere((relation) => relation.eventName == eventName);
+    return before != _deletedRelations.length;
+  }
+
+  bool _removeDeletedRelationsForLiveLabels() {
+    final liveLabels = _liveCategoryLabels();
+    final before = _deletedRelations.length;
+    _deletedRelations.removeWhere(
+      (relation) => liveLabels.contains(relation.eventName),
+    );
+    return before != _deletedRelations.length;
+  }
+
+  void _renameDeletedRelationsParent(
+      String categoryId, String oldName, String newName) {
+    for (var i = 0; i < _deletedRelations.length; i++) {
+      final relation = _deletedRelations[i];
+      if (relation.categoryId != categoryId) continue;
+      _deletedRelations[i] = relation.copyWith(
+        parentName: newName,
+        eventName: relation.isParentEvent && relation.eventName == oldName
+            ? newName
+            : relation.eventName,
+      );
+    }
+  }
+
+  Set<String> _liveCategoryLabels() {
+    final labels = <String>{};
+    for (final category in _categories) {
+      labels.add(category.name);
+      labels.addAll(category.subCategories);
+      labels.addAll(category.hiddenSubCategories);
+    }
+    return labels;
+  }
+
+  List<DeletedEventRelation> _effectiveDeletedRelations() {
+    final liveLabels = _liveCategoryLabels();
+    return _deletedRelations
+        .where((relation) => !liveLabels.contains(relation.eventName))
+        .toList(growable: false);
+  }
+
+  Set<String> _effectiveDeletedLabels() {
+    return _effectiveDeletedRelations()
+        .map((relation) => relation.eventName)
+        .toSet();
+  }
+
+  String _deletedRelationParentName(DeletedEventRelation relation) {
+    for (final category in _categories) {
+      if (category.id == relation.categoryId) return category.name;
+    }
+    return relation.parentName;
+  }
+
+  bool isDeletedEventName(String eventName) {
+    return eventName == deletedCategoryName ||
+        _effectiveDeletedLabels().contains(eventName);
+  }
+
+  bool _containsReservedCategoryLabel(Category category) {
+    final labels = <String>{
+      category.name,
+      ...category.subCategories,
+      ...category.hiddenSubCategories,
+    };
+    return labels.any(isReservedCategoryLabel);
+  }
+
+  DeletedEventRelation? _findDeletedRelationForSlot(
+      TimeSlot slot, List<DeletedEventRelation> relations) {
+    final label = slot.label;
+    if (label == null || label.isEmpty) return null;
+
+    final sameCategory = relations
+        .where((relation) =>
+            relation.categoryId == slot.categoryId &&
+            relation.eventName == label)
+        .toList();
+    if (sameCategory.length == 1) return sameCategory.first;
+    if (sameCategory.length > 1) {
+      final parentRelation = sameCategory.where(
+        (relation) => relation.isParentEvent && relation.parentName == label,
+      );
+      if (parentRelation.length == 1) return parentRelation.first;
+      return null;
+    }
+
+    final sameLabel =
+        relations.where((relation) => relation.eventName == label).toList();
+    return sameLabel.length == 1 ? sameLabel.first : null;
+  }
+
   void _markTemplatesChanged() {
     _templatesDirty = true;
     _templatesRevision++;
@@ -5290,6 +5490,15 @@ class TimeProvider with ChangeNotifier {
       if (!canPersist() ||
           !await prefs.setString(_identityDataKey('deleted_categories'),
               json.encode(_deletedCategories)) ||
+          !canPersist()) {
+        return false;
+      }
+      final deletedRelationList = _deletedRelations
+          .map((relation) => json.encode(relation.toJson()))
+          .toList();
+      if (!canPersist() ||
+          !await prefs.setStringList(
+              _identityDataKey('deleted_relations'), deletedRelationList) ||
           !canPersist()) {
         return false;
       }
@@ -5944,6 +6153,8 @@ class TimeProvider with ChangeNotifier {
                 'hiddenSubCategories': c.hiddenSubCategories,
               })
           .toList(),
+      'deletedRelations':
+          _deletedRelations.map((relation) => relation.toJson()).toList(),
       'targets': _targets.map((t) => t.toJson()).toList(),
       'dailySlots': slotsJson,
       'scheduleTemplates': _templates.map((t) => t.toJson()).toList(),
@@ -6038,6 +6249,24 @@ class TimeProvider with ChangeNotifier {
       ));
     }
 
+    final parsedDeletedRelations = <DeletedEventRelation>[];
+    final rawDeletedRelations = data['deletedRelations'];
+    if (rawDeletedRelations is List) {
+      for (final raw in rawDeletedRelations) {
+        try {
+          if (raw is! Map) continue;
+          parsedDeletedRelations.add(
+            DeletedEventRelation.fromJson(
+              Map<String, dynamic>.from(raw),
+            ),
+          );
+        } catch (err, stackTrace) {
+          debugPrint('导入已删除事件关系出错: $err');
+          _recordAppError('导入已删除事件关系出错', err, stackTrace);
+        }
+      }
+    }
+
     final parsedTargets = <Target>[];
     final targets = data['targets'];
     if (targets is List) {
@@ -6118,6 +6347,9 @@ class TimeProvider with ChangeNotifier {
     );
 
     _categories = parsedCategories;
+    _deletedRelations
+      ..clear()
+      ..addAll(parsedDeletedRelations);
     _targets
       ..clear()
       ..addAll(parsedTargets);
@@ -6302,6 +6534,26 @@ class TimeProvider with ChangeNotifier {
         _recordAppError('加载分类删除记录出错', e, stackTrace);
       }
     }
+
+    final deletedRelationList =
+        prefs.getStringList(_identityDataKey('deleted_relations'));
+    if (deletedRelationList != null) {
+      for (final encoded in deletedRelationList) {
+        try {
+          final decoded = json.decode(encoded);
+          if (decoded is Map) {
+            _deletedRelations.add(
+              DeletedEventRelation.fromJson(
+                Map<String, dynamic>.from(decoded),
+              ),
+            );
+          }
+        } catch (e, stackTrace) {
+          debugPrint('加载已删除事件关系出错: $e');
+          _recordAppError('加载已删除事件关系出错', e, stackTrace);
+        }
+      }
+    }
     _categoriesDocUpdatedAt =
         prefs.getInt(_identityDataKey('categories_doc_updated_at')) ?? 0;
 
@@ -6461,6 +6713,9 @@ class TimeProvider with ChangeNotifier {
     }
 
     _migrateToCategoryIds();
+    if (_removeDeletedRelationsForLiveLabels()) {
+      _categoriesDirty = true;
+    }
   }
 
   /// 移动子分类到另一个分类
@@ -6484,6 +6739,7 @@ class TimeProvider with ChangeNotifier {
       subCategories: [...toCat.subCategories, subName],
       updatedAt: nowMs,
     );
+    _removeDeletedRelationsForEvent(subName);
 
     // 2. 更新所有相关时间块的 categoryId
     _dailySlots.forEach((_, daySlots) {
@@ -6538,8 +6794,34 @@ class TimeProvider with ChangeNotifier {
 
   void deleteCategory(int index) {
     if (!_allowScheduleMutation()) return;
-    final categoryId = _categories[index].id;
+    if (index < 0 || index >= _categories.length) return;
+    final category = _categories[index];
+    if (isReservedCategoryLabel(category.name)) {
+      return;
+    }
+    final categoryId = category.id;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
+
+    _upsertDeletedRelation(
+      categoryId: categoryId,
+      parentName: category.name,
+      eventName: category.name,
+      isParentEvent: true,
+      deletedAt: nowMs,
+    );
+    for (final sub in {
+      ...category.subCategories,
+      ...category.hiddenSubCategories,
+    }) {
+      _upsertDeletedRelation(
+        categoryId: categoryId,
+        parentName: category.name,
+        eventName: sub,
+        isParentEvent: false,
+        deletedAt: nowMs,
+      );
+    }
+
     // 写入带时间戳的删除墓碑，防止另一端已同步的分支复活
     _deletedCategories[categoryId] = nowMs;
     _categories.removeAt(index);
@@ -6547,14 +6829,8 @@ class TimeProvider with ChangeNotifier {
     _markCategoriesGiteePending();
     _invalidateLabelCategoryIdCache();
 
-    // Clean up orphaned slot references
-    for (final entry in _dailySlots.entries) {
-      for (final slot in entry.value) {
-        if (slot.categoryId == categoryId) {
-          slot.categoryId = null;
-        }
-      }
-    }
+    // 保留历史槽位的 categoryId 作为删除关系匹配依据；分类本身已从
+    // _categories 移除，findCategoryById 仍会返回 null，不影响现有显示。
 
     // Remove targets referencing this category and keep tombstones so another
     // device cannot resurrect the cascade-deleted targets.
@@ -6940,6 +7216,7 @@ class TimeProvider with ChangeNotifier {
     // 先获取详细统计
     final detailStats = getStatistics(start, end);
     Map<String, double> parentStats = {};
+    final deletedLabels = _effectiveDeletedLabels();
 
     // 建立子事件（含隐藏子事件）到父事件的映射；真正的父事件名集合
     final Map<String, String> childToParent = {};
@@ -6961,9 +7238,14 @@ class TimeProvider with ChangeNotifier {
         // 子事件：累加到父事件
         parentStats[parentName] = (parentStats[parentName] ?? 0) + hours;
       } else if (parentNames.contains(label) &&
-          label != temporaryCategoryName) {
-        // 父事件本身：直接添加（"临时"保留名除外，统一归入聚合项）
+          label != temporaryCategoryName &&
+          label != deletedCategoryName) {
+        // 父事件本身：直接添加（两个保留名除外，统一归入各自聚合项）
         parentStats[label] = (parentStats[label] ?? 0) + hours;
+      } else if (deletedLabels.contains(label)) {
+        // 已删除事件：统一归入"已删除"聚合项
+        parentStats[deletedCategoryName] =
+            (parentStats[deletedCategoryName] ?? 0) + hours;
       } else {
         // 临时事件（无归属，含恰好命名为"临时"的标签）：统一归入"临时"聚合项
         parentStats[temporaryCategoryName] =
@@ -6987,6 +7269,7 @@ class TimeProvider with ChangeNotifier {
       known.addAll(cat.subCategories);
       known.addAll(cat.hiddenSubCategories);
     }
+    known.addAll(_effectiveDeletedLabels());
     final temps = <String>{};
     if (start == null || end == null) {
       for (final slots in _dailySlots.values) {
@@ -7014,9 +7297,22 @@ class TimeProvider with ChangeNotifier {
   }
 
   /// 获取“全部事件”统计：当前有归属的事件保持独立，无归属历史标签合并为“临时”。
+  /// [groupDeleted] 为 true 时将有效已删除事件合并为“已删除”。
   Map<String, double> getStatisticsWithTemporaryGrouped(
-      DateTime start, DateTime end) {
+      DateTime start, DateTime end,
+      {bool groupDeleted = true}) {
     final stats = Map<String, double>.from(getStatistics(start, end));
+    final deletedLabels = _effectiveDeletedLabels();
+    if (groupDeleted) {
+      var deletedHours = 0.0;
+      for (final label in deletedLabels) {
+        deletedHours += stats.remove(label) ?? 0;
+      }
+      if (deletedHours > 0) {
+        stats[deletedCategoryName] = deletedHours;
+      }
+    }
+
     final temporaryLabels = getTemporaryLabels(start, end);
     var temporaryHours = 0.0;
 
@@ -7071,10 +7367,9 @@ class TimeProvider with ChangeNotifier {
     return Map.unmodifiable(counts);
   }
 
-  // 在 TimeProvider 类中添加
-  Map<String, List<({String range, String label})>> getEventHistory(
+  Map<String, List<EventHistoryItem>> getEventHistory(
       String eventName, int tabIndex) {
-    Map<String, List<({String range, String label})>> history = {};
+    final history = <String, List<EventHistoryItem>>{};
 
     // 确定起始日期
     DateTime now = DateTime.now();
@@ -7105,10 +7400,20 @@ class TimeProvider with ChangeNotifier {
     }
 
     // 确定有效的 label 集合：如果 eventName 是父分类名，则包含其所有子分类名；
-    // 若为"临时"聚合项，则展开为所有临时事件名
+    // 若为"临时"或"已删除"聚合项，则展开为对应的历史事件名。
     Set<String> validLabels;
+    var deletedRelations = const <DeletedEventRelation>[];
     if (eventName == temporaryCategoryName) {
       validLabels = getTemporaryLabels();
+    } else if (eventName == deletedCategoryName) {
+      deletedRelations = _effectiveDeletedRelations();
+      validLabels =
+          deletedRelations.map((relation) => relation.eventName).toSet();
+    } else if (_effectiveDeletedLabels().contains(eventName)) {
+      deletedRelations = _effectiveDeletedRelations()
+          .where((relation) => relation.eventName == eventName)
+          .toList(growable: false);
+      validLabels = {eventName};
     } else {
       validLabels = {eventName};
       for (final cat in _categories) {
@@ -7127,7 +7432,7 @@ class TimeProvider with ChangeNotifier {
 
       if (_dailySlots.containsKey(dateKey)) {
         List<TimeSlot> daySlots = _dailySlots[dateKey]!;
-        List<({String range, String label})> ranges = [];
+        final ranges = <EventHistoryItem>[];
 
         int j = 0;
         while (j < daySlots.length) {
@@ -7135,11 +7440,14 @@ class TimeProvider with ChangeNotifier {
               daySlots[j].label != null &&
               validLabels.contains(daySlots[j].label)) {
             final blockLabel = daySlots[j].label!;
+            final blockCategoryId = daySlots[j].categoryId;
             int startIdx = j;
             while (j < daySlots.length &&
                 daySlots[j].recorded &&
                 daySlots[j].label != null &&
-                daySlots[j].label == blockLabel) {
+                daySlots[j].label == blockLabel &&
+                (deletedRelations.isEmpty ||
+                    daySlots[j].categoryId == blockCategoryId)) {
               j++;
             }
             // 转换索引为时间字符串，例如 "08:00 - 08:30"
@@ -7147,7 +7455,18 @@ class TimeProvider with ChangeNotifier {
                 "${(startIdx ~/ 6).toString().padLeft(2, '0')}:${(startIdx % 6 * 10).toString().padLeft(2, '0')}";
             String endT =
                 "${(j ~/ 6).toString().padLeft(2, '0')}:${(j % 6 * 10).toString().padLeft(2, '0')}";
-            ranges.add((range: "$startT - $endT", label: blockLabel));
+            final relation = deletedRelations.isEmpty
+                ? null
+                : _findDeletedRelationForSlot(
+                    daySlots[startIdx], deletedRelations);
+            ranges.add((
+              range: "$startT - $endT",
+              label: blockLabel,
+              parentName: relation == null
+                  ? null
+                  : _deletedRelationParentName(relation),
+              isParentEvent: relation?.isParentEvent ?? false,
+            ));
           } else {
             j++;
           }

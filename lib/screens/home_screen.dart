@@ -492,22 +492,25 @@ class _HomeScreenState extends State<HomeScreen> {
                   key: ValueKey('slidable_${category.name}_$index'),
 
                   // 配置左滑删除按钮
-                  endActionPane: ActionPane(
-                    motion: const DrawerMotion(),
-                    extentRatio: 0.6, // 侧滑展开的宽度比例
-                    children: [
-                      SlidableAction(
-                        onPressed: (context) => _showDeleteConfirmDialog(
-                            context, index, category, provider),
-                        backgroundColor: AppSemanticColors.danger,
-                        foregroundColor:
-                            AppSemanticColors.onColor(AppSemanticColors.danger),
-                        icon: Icons.delete,
-                        label: '删除',
-                        borderRadius: AppRadius.badgeAll,
-                      ),
-                    ],
-                  ),
+                  endActionPane: category.name ==
+                          TimeProvider.temporaryCategoryName
+                      ? null
+                      : ActionPane(
+                          motion: const DrawerMotion(),
+                          extentRatio: 0.6, // 侧滑展开的宽度比例
+                          children: [
+                            SlidableAction(
+                              onPressed: (context) => _showDeleteConfirmDialog(
+                                  context, index, category, provider),
+                              backgroundColor: AppSemanticColors.danger,
+                              foregroundColor: AppSemanticColors.onColor(
+                                  AppSemanticColors.danger),
+                              icon: Icons.delete,
+                              label: '删除',
+                              borderRadius: AppRadius.badgeAll,
+                            ),
+                          ],
+                        ),
 
                   // 包装原有的分类 UI
                   child: _buildCategoryItem(index, category, provider),
@@ -736,7 +739,16 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             ElevatedButton(
               onPressed: () {
-                if (nameController.text.isNotEmpty) {
+                final name = nameController.text.trim();
+                if (name.isNotEmpty && name == TimeProvider.deletedCategoryName) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('“已删除”为系统保留名称，不能作为临时事件名称'),
+                    ),
+                  );
+                  return;
+                }
+                if (name.isNotEmpty) {
                   Category tempCat = Category(
                       name: nameController.text,
                       color: AppSemanticColors.neutral);
@@ -1181,9 +1193,17 @@ class _HomeScreenState extends State<HomeScreen> {
                       subCategories: tempSubCategories,
                       hiddenSubCategories: tempHiddenSubCategories,
                     );
-                    isEdit
+                    final saved = isEdit
                         ? provider.updateCategory(index, newCat)
                         : provider.addCategory(newCat);
+                    if (!saved) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('“临时”和“已删除”为系统保留名称，不能用于真实事件'),
+                        ),
+                      );
+                      return;
+                    }
                     Navigator.pop(context);
                   }
                 },
@@ -1756,13 +1776,15 @@ class _HomeScreenState extends State<HomeScreen> {
           child:
               Text(provider.getCategoryExpandState(cat.id) ? '折叠子事件' : '展开子事件'),
         ),
-        PopupMenuItem(
-          value: 'delete',
-          child: Text('删除事件',
-              style: TextStyle(
-                  color: AppSemanticColors.readableOn(
-                      AppSemanticColors.danger, AppSurfaces.of(context).card))),
-        ),
+        if (cat.name != TimeProvider.temporaryCategoryName)
+          PopupMenuItem(
+            value: 'delete',
+            child: Text('删除事件',
+                style: TextStyle(
+                    color: AppSemanticColors.readableOn(
+                        AppSemanticColors.danger,
+                        AppSurfaces.of(context).card))),
+          ),
       ],
     );
     if (!mounted) return;
