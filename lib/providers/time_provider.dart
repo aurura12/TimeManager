@@ -21,6 +21,7 @@ import '../services/schedule_overwrite.dart';
 import '../services/schedule_sync_dependencies.dart';
 import '../services/category_document_merge.dart';
 import '../services/category_gitee_service.dart';
+import '../services/category_sync_dependencies.dart';
 import '../services/target_document_merge.dart';
 import '../services/target_sync_dependencies.dart';
 import '../services/voice_schedule_slot_planner.dart';
@@ -497,7 +498,7 @@ class TimeProvider with ChangeNotifier {
       }
       _scheduleIdentityMutationInProgress = false;
       if (!persistenceNeedsRestore && !_isDisposed) {
-        unawaited(_pullTargetsFromGitee());
+        _pullIdentityScopedRemoteData();
       }
     }
   }
@@ -591,7 +592,7 @@ class TimeProvider with ChangeNotifier {
       }
       _scheduleIdentityMutationInProgress = false;
       if (committed && !_isDisposed) {
-        unawaited(_pullTargetsFromGitee());
+        _pullIdentityScopedRemoteData();
       }
     }
   }
@@ -649,6 +650,8 @@ class TimeProvider with ChangeNotifier {
     _scheduleGiteeTimer = null;
     _categoriesGiteeTimer?.cancel();
     _categoriesGiteeTimer = null;
+    _lastCategoryPullAt = null;
+    _lastCategoryPullUserCode = null;
     _targetsGiteeTimer?.cancel();
     _targetsGiteeTimer = null;
     _targetsUserCode = '';
@@ -735,6 +738,12 @@ class TimeProvider with ChangeNotifier {
         !_scheduleOverwriteInProgress &&
         !_scheduleOverwriteCleanupInProgress &&
         !_scheduleOverwriteJournalCleanupPending;
+  }
+
+  void _pullIdentityScopedRemoteData() {
+    if (_isDisposed || !_hasSelectedScheduleUser) return;
+    unawaited(pullCategoriesFromGitee(force: true));
+    unawaited(_pullTargetsFromGitee());
   }
 
   Future<bool> setGoogleCalendarSyncEnabled(bool enabled) async {
@@ -859,7 +868,7 @@ class TimeProvider with ChangeNotifier {
       }
       _scheduleIdentityMutationInProgress = false;
       if (committed && !_isDisposed) {
-        unawaited(_pullTargetsFromGitee());
+        _pullIdentityScopedRemoteData();
       }
     }
   }
@@ -937,7 +946,7 @@ class TimeProvider with ChangeNotifier {
       }
       _scheduleIdentityMutationInProgress = false;
       if (committed && !_isDisposed) {
-        unawaited(_pullTargetsFromGitee());
+        _pullIdentityScopedRemoteData();
       }
     }
   }
@@ -1070,6 +1079,8 @@ class TimeProvider with ChangeNotifier {
     bool? googleCalendarSyncPlatformOverride,
     bool? googleCalendarSignedInOverride,
     ScheduleSyncDependencies? scheduleSyncDependencies,
+    CategorySyncDependencies? categorySyncDependencies,
+    Duration categoryPullCooldown = _defaultCategoryPullCooldown,
     TargetSyncDependencies? targetSyncDependencies,
     AppLogService? appLogService,
     Future<bool> Function()? saveDataOverride,
@@ -1082,8 +1093,13 @@ class TimeProvider with ChangeNotifier {
         _googleCalendarSyncPlatformOverride =
             googleCalendarSyncPlatformOverride,
         _googleCalendarSignedInOverride = googleCalendarSignedInOverride,
+        _categoryPullCooldown = categoryPullCooldown,
         _scheduleSyncDependencies =
             scheduleSyncDependencies ?? ScheduleSyncDependencies.production(),
+        _categorySyncDependencies = categorySyncDependencies ??
+            (scheduleSyncDependencies == null
+                ? CategorySyncDependencies.production()
+                : CategorySyncDependencies.disabled()),
         _targetSyncDependencies = targetSyncDependencies ??
             (scheduleSyncDependencies == null
                 ? TargetSyncDependencies.production()
@@ -1179,7 +1195,7 @@ class TimeProvider with ChangeNotifier {
     } finally {
       _scheduleIdentityMutationInProgress = false;
       if (_hasSelectedScheduleUser && !_isDisposed) {
-        unawaited(_pullTargetsFromGitee());
+        _pullIdentityScopedRemoteData();
       }
     }
   }
@@ -1241,7 +1257,7 @@ class TimeProvider with ChangeNotifier {
     if (!_usesMobileIdentityFlow) await _loadScheduleUserFromStore();
     if (_isDisposed || _initializationFailed) return;
     // 拉取当前身份的分类（事件/子事件）到本地（安卓与 Windows 都执行）
-    unawaited(_pullCategoriesFromGitee());
+    unawaited(pullCategoriesFromGitee());
     // 拉取当前身份的目标，避免卸载重装后本地空目标覆盖远端数据
     unawaited(_pullTargetsFromGitee());
     // 各平台拉取当前日期自己的日程，补上另一平台推送的数据
@@ -2136,6 +2152,11 @@ class TimeProvider with ChangeNotifier {
   // --- 分类（事件/子事件）跨端同步 ---
   Timer? _categoriesGiteeTimer;
   bool _categoriesGiteeSyncing = false;
+  static const Duration _defaultCategoryPullCooldown = Duration(seconds: 30);
+  final Duration _categoryPullCooldown;
+  final CategorySyncDependencies _categorySyncDependencies;
+  DateTime? _lastCategoryPullAt;
+  String? _lastCategoryPullUserCode;
 
   // --- 目标跨端同步 ---
   Timer? _targetsGiteeTimer;
@@ -3126,7 +3147,7 @@ class TimeProvider with ChangeNotifier {
     final userCode =
         _categoriesUserCode.isEmpty ? _scheduleUser.code : _categoriesUserCode;
     try {
-      final token = await _scheduleSyncDependencies.loadToken();
+      final token = await _categorySyncDependencies.loadToken();
       if (!_isScheduleReady ||
           _scheduleOverwriteJournalCleanupPending ||
           !_hasSelectedScheduleUser ||
@@ -3136,8 +3157,10 @@ class TimeProvider with ChangeNotifier {
         return;
       }
 
-      final pullResult = await CategoryGiteeService.pullCategories(
-          token: token, userCode: userCode);
+      final pullResult = await _categorySyncDependencies.pullCategories(
+        token: token,
+        userCode: userCode,
+      );
       if (!_isScheduleReady ||
           _scheduleOverwriteJournalCleanupPending ||
           !_hasSelectedScheduleUser ||
@@ -3182,48 +3205,66 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
+  bool _canContinueCategoryPull(String userCode) {
+    return _isScheduleIdentityReady &&
+        !_scheduleIdentityMutationInProgress &&
+        !_scheduleOverwriteJournalCleanupPending &&
+        !_remoteViewEnabled &&
+        !_remoteViewTransitionInProgress &&
+        _hasSelectedScheduleUser &&
+        _scheduleUser.code == userCode;
+  }
+
   /// 从 Gitee 拉取当前身份的分类并合并到本地（只拉不推）。
-  Future<void> _pullCategoriesFromGitee() async {
-    if (!_isScheduleReady ||
+  ///
+  /// 普通后台恢复使用冷却时间，手动同步和身份切换可以强制刷新。
+  Future<bool> pullCategoriesFromGitee({bool force = false}) async {
+    if (!_isScheduleIdentityReady ||
+        _scheduleIdentityMutationInProgress ||
         _scheduleOverwriteJournalCleanupPending ||
         _remoteViewEnabled ||
-        _remoteViewTransitionInProgress) {
-      return;
+        _remoteViewTransitionInProgress ||
+        !_hasSelectedScheduleUser) {
+      return false;
     }
-    if (!_hasSelectedScheduleUser) return;
-    if (_categoriesGiteeSyncing) return;
-    _categoriesGiteeSyncing = true;
+
     final userCode = _scheduleUser.code;
+    final now = DateTime.now();
+    if (!force &&
+        _lastCategoryPullAt != null &&
+        _lastCategoryPullUserCode == userCode &&
+        now.difference(_lastCategoryPullAt!) < _categoryPullCooldown) {
+      return false;
+    }
+    if (_categoriesGiteeSyncing) return false;
+
+    _categoriesGiteeSyncing = true;
     try {
-      final token = await _scheduleSyncDependencies.loadToken();
-      if (!_isScheduleReady ||
-          _scheduleOverwriteJournalCleanupPending ||
-          _remoteViewEnabled ||
-          _remoteViewTransitionInProgress ||
-          !_hasSelectedScheduleUser ||
-          _scheduleUser.code != userCode ||
+      final token = await _categorySyncDependencies.loadToken();
+      if (!_canContinueCategoryPull(userCode) ||
           token == null ||
           token.isEmpty) {
-        return;
+        return false;
       }
-      final pullResult = await CategoryGiteeService.pullCategories(
-          token: token, userCode: userCode);
-      if (!_isScheduleReady ||
-          _scheduleOverwriteJournalCleanupPending ||
-          _remoteViewEnabled ||
-          _remoteViewTransitionInProgress ||
-          !_hasSelectedScheduleUser ||
-          _scheduleUser.code != userCode ||
-          !pullResult.success ||
-          pullResult.content == null) {
+
+      // 记录请求时间而不是成功时间，避免网络失败时连续恢复前台造成重试风暴。
+      _lastCategoryPullAt = DateTime.now();
+      _lastCategoryPullUserCode = userCode;
+      final pullResult = await _categorySyncDependencies.pullCategories(
+        token: token,
+        userCode: userCode,
+      );
+      if (!_canContinueCategoryPull(userCode)) return false;
+      if (!pullResult.success || pullResult.content == null) {
         _appLogService.warning(
           pullResult.notFound
               ? '分类拉取无数据：$userCode'
               : '分类拉取失败：${pullResult.error ?? '远端数据不可用'}',
           source: 'schedule_sync',
         );
-        return;
+        return false;
       }
+
       final localDoc = CategoryDocument(
         updatedAt: _categoriesDocUpdatedAt,
         categories: List.from(_categories),
@@ -3236,9 +3277,11 @@ class TimeProvider with ChangeNotifier {
         '分类拉取成功：$userCode（远端 ${remoteDoc.categories.length} 个，合并后 ${merged.categories.length} 个）',
         source: 'schedule_sync',
       );
+      return true;
     } catch (e, stackTrace) {
       debugPrint('分类拉取失败: $e');
       _recordAppError('分类拉取失败', e, stackTrace);
+      return false;
     } finally {
       _categoriesGiteeSyncing = false;
     }
@@ -3760,12 +3803,31 @@ class TimeProvider with ChangeNotifier {
     await _saveData();
   }
 
+  /// 应用回到前台：在冷却时间外刷新当前身份的分类。
+  Future<void> onAppResumed() async {
+    if (!_isInitialLoadFinished ||
+        !_scheduleUserLoadFinished ||
+        _initializationFailed ||
+        _isDisposed) {
+      return;
+    }
+    await pullCategoriesFromGitee();
+  }
+
   /// 统一同步：始终同步到 Gitee，若开启 Google 日历同步则同时同步 Google。
   Future<void> syncAll() async {
     if (!_isInitialLoadFinished ||
         !_scheduleUserLoadFinished ||
         _initializationFailed ||
         _isDisposed ||
+        _scheduleIdentityMutationInProgress ||
+        _scheduleOverwriteJournalCleanupPending ||
+        _remoteViewTransitionInProgress ||
+        _remoteViewEnabled) {
+      return;
+    }
+    await pullCategoriesFromGitee(force: true);
+    if (_isDisposed ||
         _scheduleIdentityMutationInProgress ||
         _scheduleOverwriteJournalCleanupPending ||
         _remoteViewTransitionInProgress ||

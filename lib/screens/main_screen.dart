@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../utils/platform_features.dart';
 
 import 'package:flutter/material.dart';
@@ -104,6 +106,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       // App 回到前台时检查日期变化：跨午夜时允许当天再次弹出
       _tryShowOnThisDay();
+      unawaited(_timeProvider.onAppResumed());
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _timeProvider.onAppBackgrounded();
