@@ -19,11 +19,24 @@ class TemplateSlot {
       };
 
   factory TemplateSlot.fromJson(Map<String, dynamic> json) => TemplateSlot(
-        index: json['i'] as int? ?? 0,
-        label: json['l']?.toString() ?? '',
-        categoryId: json['cid'] as String?,
-        colorArgb: json['c'] as int?,
+        index: _asInt(json['i']) ?? 0,
+        label: _asString(json['l']) ?? '',
+        categoryId: _asString(json['cid']),
+        colorArgb: _asInt(json['c']),
       );
+
+  static int? _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value.trim());
+    return null;
+  }
+
+  static String? _asString(dynamic value) {
+    if (value == null) return null;
+    if (value is String) return value;
+    return value.toString();
+  }
 }
 
 class ScheduleTemplate {
@@ -50,11 +63,30 @@ class ScheduleTemplate {
       ScheduleTemplate(
         id: json['id']?.toString() ?? '',
         name: json['name']?.toString() ?? '',
-        slots: (json['slots'] as List<dynamic>?)
-            ?.map((e) => TemplateSlot.fromJson(e as Map<String, dynamic>))
-            .toList() ?? [],
-        createdAt: json['createdAt'] as int? ?? 0,
+        slots: _slotsFromJson(json['slots']),
+        createdAt: _asInt(json['createdAt']) ?? 0,
       );
+
+  static int? _asInt(dynamic value) {
+    if (value is num) return value.toInt();
+    if (value is String) return num.tryParse(value.trim())?.toInt();
+    return null;
+  }
+
+  /// 单个槽位解析失败不影响其余槽位，整条模板仍然可用。
+  static List<TemplateSlot> _slotsFromJson(dynamic value) {
+    if (value is! List) return [];
+    final slots = <TemplateSlot>[];
+    for (final entry in value) {
+      if (entry is! Map) continue;
+      try {
+        slots.add(TemplateSlot.fromJson(Map<String, dynamic>.from(entry)));
+      } catch (_) {
+        // 忽略坏槽位
+      }
+    }
+    return slots;
+  }
 
   ScheduleTemplate copyWith({
     String? id,

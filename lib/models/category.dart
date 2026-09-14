@@ -52,18 +52,35 @@ class Category {
 
   factory Category.fromJson(Map<String, dynamic> map) {
     return Category(
-      id: map['id'] as String?,
-      name: map['name'] as String? ?? '',
+      id: _asString(map['id']),
+      name: _asString(map['name']) ?? '',
       // 历史数据里可能存过半透明色（十六进制输入框曾接受 8 位 ARGB），
       // 这里统一收成不透明，否则时间块底色会跟着半透明。
-      color: AppSemanticColors.opaque(Color((map['color'] as num?)?.toInt() ??
+      color: AppSemanticColors.opaque(Color(_asInt(map['color']) ??
           AppSemanticColors.neutral.toARGB32())),
-      subCategories:
-          map['subCategories'] is List ? List<String>.from(map['subCategories'] as List) : const [],
-      hiddenSubCategories: map['hiddenSubCategories'] is List
-          ? List<String>.from(map['hiddenSubCategories'] as List)
-          : const [],
-      updatedAt: (map['updatedAt'] as num?)?.toInt() ?? 0,
+      subCategories: _asStringList(map['subCategories']),
+      hiddenSubCategories: _asStringList(map['hiddenSubCategories']),
+      updatedAt: _asInt(map['updatedAt']) ?? 0,
     );
+  }
+
+  static num? _asNum(dynamic value) {
+    if (value is num) return value;
+    if (value is String) return num.tryParse(value.trim());
+    return null;
+  }
+
+  static int? _asInt(dynamic value) => _asNum(value)?.toInt();
+
+  static String? _asString(dynamic value) {
+    if (value == null) return null;
+    if (value is String) return value;
+    return value.toString();
+  }
+
+  /// 只取列表里的字符串项，忽略 null / 数字等非法项，避免整条分类解析失败。
+  static List<String> _asStringList(dynamic value) {
+    if (value is! List) return const [];
+    return value.whereType<String>().toList();
   }
 }

@@ -2172,7 +2172,7 @@ class TimeProvider with ChangeNotifier {
         }
         continue;
       }
-      final label = e['l'] as String?;
+      final label = e['l']?.toString();
       if (label == null || label.isEmpty) {
         // 深度防御：无标签的 live 条目按删除意图处理，绝不允许落入内存成为
         // "已记录但无内容"的槽位（避免后续再次导出 l:null 传播）。
@@ -2185,13 +2185,13 @@ class TimeProvider with ChangeNotifier {
       }
       slots[idx].recorded = true;
       slots[idx].label = label;
-      slots[idx].categoryId = e['cid'] as String?;
+      slots[idx].categoryId = e['cid']?.toString();
       final colorVal = _parseInt(e['c']);
       if (colorVal != null) {
         slots[idx].color = AppSemanticColors.opaque(Color(colorVal));
       }
       if (e['fc'] == true) slots[idx].isFromCalendar = true;
-      if (e['eid'] != null) slots[idx].calendarEventId = e['eid'] as String?;
+      if (e['eid'] != null) slots[idx].calendarEventId = e['eid']?.toString();
       final ts = _parseInt(e['ts']);
       if (ts != null && ts > 0) {
         slots[idx].modifiedAt = DateTime.fromMillisecondsSinceEpoch(ts);
@@ -3646,7 +3646,7 @@ class TimeProvider with ChangeNotifier {
                 }
                 continue;
               }
-              final label = map['l'] as String?;
+              final label = map['l']?.toString();
               if (label == null || label.isEmpty) {
                 // 与其它加载路径一致：无标签 live 条目按删除意图还原，
                 // 不落入"已记录但无内容"状态。
@@ -3661,7 +3661,7 @@ class TimeProvider with ChangeNotifier {
               }
               slots[idx].recorded = true;
               slots[idx].label = label;
-              slots[idx].categoryId = map['cid'] as String?;
+              slots[idx].categoryId = map['cid']?.toString();
               if (map['c'] != null) {
                 final colorVal = _parseInt(map['c']);
                 if (colorVal != null) {
@@ -3670,7 +3670,7 @@ class TimeProvider with ChangeNotifier {
               }
               if (map['fc'] == true) slots[idx].isFromCalendar = true;
               if (map['eid'] != null) {
-                slots[idx].calendarEventId = map['eid'] as String?;
+                slots[idx].calendarEventId = map['eid']?.toString();
               }
               final ts = _parseInt(map['ts']);
               if (ts != null && ts > 0) {
@@ -6814,71 +6814,80 @@ class TimeProvider with ChangeNotifier {
   }) {
     final migratedDates = <String>{};
     final target = destination ?? _dailySlots;
-    slotsJson.forEach((rawKey, value) {
-      final dateKey = _normalizeDateKey(rawKey);
-      // 若同一日期同时存在旧格式和新格式 key，合并两份数据（不丢失任一槽位）
-      final existing = target[dateKey];
-      final daySlots = existing ?? _generateInitialSlots();
-      for (final item in value is List ? value : const <dynamic>[]) {
-        if (item is! Map) continue;
-        final map = Map<String, dynamic>.from(item);
-        final idx = _parseInt(map['i']);
-        if (idx == null) continue;
-        if (idx >= 0 && idx < daySlots.length) {
-          if (map['del'] == true) {
-            // 删除墓碑：槽位保持清空，仅恢复删除时间
-            daySlots[idx].isFromCalendar = map['fc'] == true;
-            final delTs = _parseInt(map['ts']);
-            if (delTs != null && delTs > 0) {
+    // 逐天解析：单天数据损坏只跳过该天，不影响其余日期。否则一次异常会让
+    // 其后的所有日期都无法载入内存，下一次保存即把它们从磁盘抹掉。
+    for (final entry in slotsJson.entries) {
+      final rawKey = entry.key;
+      final value = entry.value;
+      try {
+        final dateKey = _normalizeDateKey(rawKey);
+        // 若同一日期同时存在旧格式和新格式 key，合并两份数据（不丢失任一槽位）
+        final existing = target[dateKey];
+        final daySlots = existing ?? _generateInitialSlots();
+        for (final item in value is List ? value : const <dynamic>[]) {
+          if (item is! Map) continue;
+          final map = Map<String, dynamic>.from(item);
+          final idx = _parseInt(map['i']);
+          if (idx == null) continue;
+          if (idx >= 0 && idx < daySlots.length) {
+            if (map['del'] == true) {
+              // 删除墓碑：槽位保持清空，仅恢复删除时间
+              daySlots[idx].isFromCalendar = map['fc'] == true;
+              final delTs = _parseInt(map['ts']);
+              if (delTs != null && delTs > 0) {
+                daySlots[idx].deletedAt =
+                    DateTime.fromMillisecondsSinceEpoch(delTs);
+              }
+              continue;
+            }
+            final label = map['l']?.toString();
+            if (label == null || label.isEmpty) {
+              // 历史坏数据迁移：无标签的 live 条目本质是"删除意图"（旧版 APK
+              // 无法识别 del:true 墓碑、将其误写成空标签存活条目所致）。
+              // 还原为删除状态（删除时间取原 ts，缺失时取当前时间），
+              // 使后续导出产出 del:true 墓碑而非继续传播 l:null。
+              daySlots[idx].recorded = false;
+              daySlots[idx].categoryId = null;
+              daySlots[idx].color = null;
+              daySlots[idx].calendarEventId = null;
+              if (map['fc'] == true) daySlots[idx].isFromCalendar = true;
+              final ts = _parseInt(map['ts']);
+              final delMs = (ts != null && ts > 0)
+                  ? ts
+                  : DateTime.now().millisecondsSinceEpoch;
               daySlots[idx].deletedAt =
-                  DateTime.fromMillisecondsSinceEpoch(delTs);
+                  DateTime.fromMillisecondsSinceEpoch(delMs);
+              migratedDates.add(dateKey);
+              continue;
             }
-            continue;
-          }
-          final label = map['l'] as String?;
-          if (label == null || label.isEmpty) {
-            // 历史坏数据迁移：无标签的 live 条目本质是"删除意图"（旧版 APK
-            // 无法识别 del:true 墓碑、将其误写成空标签存活条目所致）。
-            // 还原为删除状态（删除时间取原 ts，缺失时取当前时间），
-            // 使后续导出产出 del:true 墓碑而非继续传播 l:null。
-            daySlots[idx].recorded = false;
-            daySlots[idx].categoryId = null;
-            daySlots[idx].color = null;
-            daySlots[idx].calendarEventId = null;
-            if (map['fc'] == true) daySlots[idx].isFromCalendar = true;
-            final ts = _parseInt(map['ts']);
-            final delMs = (ts != null && ts > 0)
-                ? ts
-                : DateTime.now().millisecondsSinceEpoch;
-            daySlots[idx].deletedAt =
-                DateTime.fromMillisecondsSinceEpoch(delMs);
-            migratedDates.add(dateKey);
-            continue;
-          }
-          daySlots[idx].recorded = true;
-          daySlots[idx].label = label;
-          daySlots[idx].categoryId = map['cid'] as String?;
-          if (map['c'] != null) {
-            final colorVal = _parseInt(map['c']);
-            if (colorVal != null) {
-              daySlots[idx].color = AppSemanticColors.opaque(Color(colorVal));
+            daySlots[idx].recorded = true;
+            daySlots[idx].label = label;
+            daySlots[idx].categoryId = map['cid']?.toString();
+            if (map['c'] != null) {
+              final colorVal = _parseInt(map['c']);
+              if (colorVal != null) {
+                daySlots[idx].color =
+                    AppSemanticColors.opaque(Color(colorVal));
+              }
             }
-          }
-          if (map['fc'] == true) {
-            daySlots[idx].isFromCalendar = true;
-          }
-          if (map['eid'] != null) {
-            daySlots[idx].calendarEventId = map['eid'] as String?;
-          }
-          final modifiedTs = _parseInt(map['ts']);
-          if (modifiedTs != null && modifiedTs > 0) {
-            daySlots[idx].modifiedAt =
-                DateTime.fromMillisecondsSinceEpoch(modifiedTs);
+            if (map['fc'] == true) {
+              daySlots[idx].isFromCalendar = true;
+            }
+            if (map['eid'] != null) {
+              daySlots[idx].calendarEventId = map['eid']?.toString();
+            }
+            final modifiedTs = _parseInt(map['ts']);
+            if (modifiedTs != null && modifiedTs > 0) {
+              daySlots[idx].modifiedAt =
+                  DateTime.fromMillisecondsSinceEpoch(modifiedTs);
+            }
           }
         }
+        target[dateKey] = daySlots;
+      } catch (e, stackTrace) {
+        _recordAppError('加载时间块数据出错（$rawKey）', e, stackTrace);
       }
-      target[dateKey] = daySlots;
-    });
+    }
     return migratedDates;
   }
 
@@ -6892,7 +6901,7 @@ class TimeProvider with ChangeNotifier {
     // 1. 加载分类
     List<String>? catList = prefs.getStringList(_identityDataKey('categories'));
     if (catList != null && catList.isNotEmpty) {
-      _categories = [];
+      final parsedCategories = <Category>[];
       var needMigration = false;
       final nowMs = DateTime.now().millisecondsSinceEpoch;
       for (final str in catList) {
@@ -6904,13 +6913,25 @@ class TimeProvider with ChangeNotifier {
             cat = cat.copyWith(updatedAt: nowMs);
             needMigration = true;
           }
-          _categories.add(cat);
+          parsedCategories.add(cat);
         } catch (e, stackTrace) {
           debugPrint("加载分类数据出错: $e");
           _recordAppError('加载分类数据出错', e, stackTrace);
         }
       }
-      if (needMigration) _categoriesDirty = true;
+      if (parsedCategories.isEmpty) {
+        // 全部条目都无法解析：回退默认分类，避免进入"零分类"空状态被后续
+        // 保存固化。原始字符串仍留在磁盘上，必要时可人工恢复。
+        _categories = _defaultCategories();
+        _recordAppError(
+          '分类数据全部解析失败，已回退默认分类（共 ${catList.length} 条）',
+          StateError('categories 全部解析失败'),
+          StackTrace.current,
+        );
+      } else {
+        _categories = parsedCategories;
+        if (needMigration) _categoriesDirty = true;
+      }
     } else {
       _categories = _defaultCategories();
     }
@@ -6981,7 +7002,7 @@ class TimeProvider with ChangeNotifier {
     var targetNeedsMigration = false;
     final targetMigrationTimestamp = DateTime.now().millisecondsSinceEpoch;
     if (targetList != null) {
-      _targets.clear();
+      final parsedTargets = <Target>[];
       for (final str in targetList) {
         try {
           var target = Target.fromJson(json.decode(str));
@@ -6989,11 +7010,23 @@ class TimeProvider with ChangeNotifier {
             target = target.copyWith(updatedAt: targetMigrationTimestamp);
             targetNeedsMigration = true;
           }
-          _targets.add(target);
+          parsedTargets.add(target);
         } catch (e, stackTrace) {
           debugPrint("加载目标数据出错: $e");
           _recordAppError('加载目标数据出错', e, stackTrace);
         }
+      }
+      if (parsedTargets.isNotEmpty || targetList.isEmpty) {
+        _targets
+          ..clear()
+          ..addAll(parsedTargets);
+      } else {
+        // 全部条目都无法解析：保留内存中已加载的目标，绝不清空。
+        _recordAppError(
+          '目标数据全部解析失败，已保留原有目标（共 ${targetList.length} 条）',
+          StateError('targets 全部解析失败'),
+          StackTrace.current,
+        );
       }
     }
     if (_targetsDocUpdatedAt <= 0 && _targets.isNotEmpty) {
@@ -7008,11 +7041,27 @@ class TimeProvider with ChangeNotifier {
     // 3. 加载时间块
     String? slotsStr = prefs.getString(_identityDataKey('daily_slots'));
     if (slotsStr != null) {
+      Map<String, dynamic>? slotsJson;
       try {
+        final decoded = json.decode(slotsStr);
+        if (decoded is Map) {
+          slotsJson = Map<String, dynamic>.from(decoded);
+        } else {
+          _recordAppError(
+            '加载时间块数据出错：顶层结构不是 Map（${decoded.runtimeType}）',
+            StateError('daily_slots 顶层结构异常'),
+            StackTrace.current,
+          );
+        }
+      } catch (e, stackTrace) {
+        debugPrint("加载时间块数据出错: $e");
+        _recordAppError('加载时间块数据出错', e, stackTrace);
+      }
+      // 只有解析成功才清空并写入，避免解析失败后留下半空状态，
+      // 被下一次保存把未解析的日期从磁盘抹掉。
+      if (slotsJson != null) {
         _dailySlots.clear();
-        final migratedDates = _loadDailySlotsFromJson(
-          json.decode(slotsStr) as Map<String, dynamic>,
-        );
+        final migratedDates = _loadDailySlotsFromJson(slotsJson);
         // 历史空标签坏记录已还原为删除状态：标脏这些日期，让下一次保存
         // 落盘为 del:true 墓碑，而非继续保留 l:null。
         if (migratedDates.isNotEmpty) {
@@ -7024,9 +7073,6 @@ class TimeProvider with ChangeNotifier {
             source: 'schedule_sync',
           );
         }
-      } catch (e, stackTrace) {
-        debugPrint("加载时间块数据出错: $e");
-        _recordAppError('加载时间块数据出错', e, stackTrace);
       }
     }
 
@@ -7035,12 +7081,26 @@ class TimeProvider with ChangeNotifier {
         prefs.getString(_identityDataKey('schedule_templates'));
     if (templatesStr != null) {
       try {
-        final list = json.decode(templatesStr) as List<dynamic>;
-        _templates
-          ..clear()
-          ..addAll(list
-              .map((e) => ScheduleTemplate.fromJson(e as Map<String, dynamic>))
-              .toList());
+        final decoded = json.decode(templatesStr);
+        if (decoded is List) {
+          // 先整体解析到临时列表，全部处理完再替换 _templates：
+          // 避免解析中途抛异常时 _templates 已被清空、旧模板全部丢失。
+          final templates = <ScheduleTemplate>[];
+          for (final entry in decoded) {
+            if (entry is! Map) continue;
+            try {
+              templates.add(
+                ScheduleTemplate.fromJson(Map<String, dynamic>.from(entry)),
+              );
+            } catch (e, stackTrace) {
+              debugPrint("加载模板数据出错（已跳过单条）: $e");
+              _recordAppError('加载模板数据出错', e, stackTrace);
+            }
+          }
+          _templates
+            ..clear()
+            ..addAll(templates);
+        }
       } catch (e, stackTrace) {
         debugPrint("加载模板数据出错: $e");
         _recordAppError('加载模板数据出错', e, stackTrace);

@@ -89,28 +89,44 @@ class Target {
   }
 
   factory Target.fromJson(Map<String, dynamic> json) {
-    final typeIndex = json['type'] as int?;
+    // 历史数据/导入数据里数字字段可能是 String 或 double，
+    // 一律宽松解析，避免单条类型不符导致整个目标被丢弃。
+    final typeIndex = _asInt(json['type']);
     return Target(
-      id: json['id']?.toString() ??
+      id: _asString(json['id']) ??
           DateTime.now().millisecondsSinceEpoch.toString(),
-      name: json['name']?.toString() ?? '',
-      categoryId: json['categoryId'] as String? ?? '',
+      name: _asString(json['name']) ?? '',
+      categoryId: _asString(json['categoryId']) ?? '',
       type: (typeIndex != null &&
               typeIndex >= 0 &&
               typeIndex < TargetType.values.length)
           ? TargetType.values[typeIndex]
           : TargetType.duration,
       // 与 Category 同理：颜色只能是不透明实色
-      color: AppSemanticColors.opaque(Color(json['color'] as int? ??
-          AppSemanticColors.brand.toARGB32())),
-      period: json['period']?.toString() ?? '每天',
-      compareType: json['compareType']?.toString() ?? "超过",
-      durationHours: (json['durationHours'] as num?)?.toDouble() ?? 0.0,
-      frequencyCount: json['frequencyCount'] as int? ?? 0,
-      targetTime: json['targetTime']?.toString() ?? "",
-      startTime: json['startTime']?.toString() ?? "",
-      endTime: json['endTime']?.toString() ?? "",
-      updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
+      color: AppSemanticColors.opaque(Color(
+          _asInt(json['color']) ?? AppSemanticColors.brand.toARGB32())),
+      period: _asString(json['period']) ?? '每天',
+      compareType: _asString(json['compareType']) ?? "超过",
+      durationHours: _asNum(json['durationHours'])?.toDouble() ?? 0.0,
+      frequencyCount: _asInt(json['frequencyCount']) ?? 0,
+      targetTime: _asString(json['targetTime']) ?? "",
+      startTime: _asString(json['startTime']) ?? "",
+      endTime: _asString(json['endTime']) ?? "",
+      updatedAt: _asInt(json['updatedAt']) ?? 0,
     );
+  }
+
+  static num? _asNum(dynamic value) {
+    if (value is num) return value;
+    if (value is String) return num.tryParse(value.trim());
+    return null;
+  }
+
+  static int? _asInt(dynamic value) => _asNum(value)?.toInt();
+
+  static String? _asString(dynamic value) {
+    if (value == null) return null;
+    if (value is String) return value;
+    return value.toString();
   }
 }
