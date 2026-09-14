@@ -33,6 +33,9 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
   List<_StreakData>? _cachedStreaks;
   Map<int, int>? _cachedWeekdayStats;
 
+  /// 频率图矩阵：weekday → 最近 12 个月的完成次数（与 _cachedWeekdayStats 同步失效）
+  Map<int, List<int>>? _cachedFrequencyMatrix;
+
   bool get _statsStale =>
       _cachedTargetId != widget.target.id ||
       provider.targetStatsCache.revision != _statsRevision;
@@ -45,6 +48,7 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
     _cachedLatestMonth = _computeLatestRecordMonth();
     _cachedStreaks = _computeStreaks();
     _cachedWeekdayStats = _computeWeekdayStats();
+    _cachedFrequencyMatrix = _computeFrequencyMatrix();
   }
 
   @override
@@ -1019,12 +1023,48 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
     return weekdayStats;
   }
 
+  /// 频率图数据：行 = 有记录的那几个星期几，列 = 最近 12 个月。
+  ///
+  /// 原先在 build 里现算（7 星期 × 12 月 × 逐日），随 build/滚动反复重跑；
+  /// 现在与其它 365 天统计一起缓存，仅在 revision 变化时重算。
+  Map<int, List<int>> _computeFrequencyMatrix() {
+    final weekdayStats = _cachedWeekdayStats ?? const <int, int>{};
+    final now = DateTime.now();
+    final endMonth = _cachedLatestMonth ?? DateTime(now.year, now.month, 1);
+    final matrix = <int, List<int>>{};
+    for (final weekday in weekdayStats.keys) {
+      final row = <int>[];
+      for (var monthIndex = 0; monthIndex < 12; monthIndex++) {
+        final offset = 11 - monthIndex;
+        final month = DateTime(endMonth.year, endMonth.month - offset, 1);
+        final monthEnd = DateTime(endMonth.year, endMonth.month - offset + 1, 0);
+        var count = 0;
+        for (var d = month;
+            !d.isAfter(monthEnd);
+            d = d.add(const Duration(days: 1))) {
+          if (d.weekday != weekday) continue;
+          if (target.type == TargetType.timePoint) {
+            if (provider.getTimePointStatus(target, d) ==
+                TimePointStatus.onTime) {
+              count++;
+            }
+          } else {
+            if (_isTargetCompletedOnDate(target, d)) count++;
+          }
+        }
+        row.add(count);
+      }
+      matrix[weekday] = row;
+    }
+    return matrix;
+  }
+
   Widget _buildFrequencyChart(ColorScheme colorScheme) {
     _maybeRefreshStats();
     final now = DateTime.now();
     // 以最新记录月为 12 个月窗口终点；无记录时用当前月
     final endMonth = _cachedLatestMonth ?? DateTime(now.year, now.month, 1);
-    final weekdayStats = _cachedWeekdayStats!;
+    final frequencyMatrix = _cachedFrequencyMatrix!;
 
     final dayNames = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
@@ -1073,26 +1113,10 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                           )).toList(),
                         ),
                         const SizedBox(height: 4),
-                        ...weekdayStats.entries.map((entry) {
+                        ...frequencyMatrix.entries.map((entry) {
                           return Row(
                             children: List.generate(12, (monthIndex) {
-                              final month = DateTime(endMonth.year, endMonth.month - (11 - monthIndex), 1);
-                              final monthEnd = DateTime(endMonth.year, endMonth.month - (11 - monthIndex) + 1, 0);
-                              var monthWeekdayCount = 0;
-
-                              for (var d = month; !d.isAfter(monthEnd); d = d.add(const Duration(days: 1))) {
-                                if (d.weekday == entry.key) {
-                                  if (target.type == TargetType.timePoint) {
-                                    if (provider.getTimePointStatus(target, d) == TimePointStatus.onTime) {
-                                      monthWeekdayCount++;
-                                    }
-                                  } else {
-                                    if (_isTargetCompletedOnDate(target, d)) {
-                                      monthWeekdayCount++;
-                                    }
-                                  }
-                                }
-                              }
+                              final monthWeekdayCount = entry.value[monthIndex];
 
                               final monthProgress = monthWeekdayCount > 0 ? (monthWeekdayCount / 5).clamp(0.0, 1.0) : 0.0;
                               final size = 6.0 + (monthProgress * 14);

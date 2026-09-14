@@ -414,6 +414,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   // 核心：双曲线折线图组件
   Widget _buildTrendChart(TimeProvider provider) {
     final colorScheme = Theme.of(context).colorScheme;
+    final daily = _computeDaily30(provider); // 一次遍历，两条曲线共用
     return Container(
       height: 220,
       padding: const EdgeInsets.fromLTRB(10, 20, 20, 10),
@@ -476,7 +477,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                 lineBarsData: [
                   // 曲线 1: 投入时间 (绿色)
                   LineChartBarData(
-                    spots: _generateTimeSpots(provider), // 真实数据点
+                    spots: _generateTimeSpots(daily), // 真实数据点
                     isCurved: true,
                     color: AppSemanticColors.brand,
                     barWidth: 3,
@@ -487,7 +488,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                   ),
                   // 曲线 2: 事件数量 (橙色)
                   LineChartBarData(
-                    spots: _generateCountSpots(provider), // 真实数据点
+                    spots: _generateCountSpots(daily), // 真实数据点
                     isCurved: true,
                     color: AppSemanticColors.warning,
                     barWidth: 3,
@@ -893,14 +894,12 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   // 获取最近30天每天的 [时长] 数据点
-  List<FlSpot> _generateTimeSpots(TimeProvider provider) {
-    final daily = _computeDaily30(provider);
+  List<FlSpot> _generateTimeSpots(List<({double hours, int count})> daily) {
     return List.generate(30, (i) => FlSpot(i + 1.0, daily[i].hours));
   }
 
   // 获取最近30天每天的 [事件数量] 数据点
-  List<FlSpot> _generateCountSpots(TimeProvider provider) {
-    final daily = _computeDaily30(provider);
+  List<FlSpot> _generateCountSpots(List<({double hours, int count})> daily) {
     return List.generate(30, (i) => FlSpot(i + 1.0, daily[i].count.toDouble()));
   }
 }
