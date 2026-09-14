@@ -4923,17 +4923,53 @@ class TimeProvider with ChangeNotifier {
 
   // --- 分类管理方法 (从 HomeScreen 移入) ---
 
+  /// 返回分类输入的校验错误；返回 null 表示可以保存。
+  ///
+  /// 分类名是一级事件的显示键，必须在同一身份下唯一，否则按名称查找
+  /// 分类时会出现歧义。编辑已有分类时通过 [editingIndex] 排除自身。
+  String? categoryValidationError(
+    Category category, {
+    int? editingIndex,
+  }) {
+    final normalized = _normalizeCategoryForStorage(category);
+    if (normalized.name.isEmpty) return '事件名称不能为空';
+    if (_containsReservedCategoryLabel(normalized)) {
+      return '“临时”和“已删除”为系统保留名称，不能用于真实事件';
+    }
+
+    final nameKey = _categoryLabelKey(normalized.name);
+    for (var i = 0; i < _categories.length; i++) {
+      if (i == editingIndex) continue;
+      if (_categoryLabelKey(_categories[i].name) == nameKey) {
+        return '事件“${normalized.name}”已存在，请使用其他名称';
+      }
+    }
+
+    final subKeys = <String>{};
+    for (final subCategory in [
+      ...normalized.subCategories,
+      ...normalized.hiddenSubCategories,
+    ]) {
+      if (subCategory.isEmpty) return '子事件名称不能为空';
+      if (!subKeys.add(_categoryLabelKey(subCategory))) {
+        return '子事件“$subCategory”重复，请保留一个';
+      }
+    }
+    return null;
+  }
+
   bool addCategory(Category category) {
     if (!_allowScheduleMutation()) return false;
-    if (_containsReservedCategoryLabel(category)) return false;
+    final normalized = _normalizeCategoryForStorage(category);
+    if (categoryValidationError(normalized) != null) return false;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
-    _categories.add(category.updatedAt <= 0
-        ? category.copyWith(updatedAt: nowMs)
-        : category);
-    _removeDeletedRelationsForEvent(category.name);
+    _categories.add(normalized.updatedAt <= 0
+        ? normalized.copyWith(updatedAt: nowMs)
+        : normalized);
+    _removeDeletedRelationsForEvent(normalized.name);
     for (final sub in {
-      ...category.subCategories,
-      ...category.hiddenSubCategories,
+      ...normalized.subCategories,
+      ...normalized.hiddenSubCategories,
     }) {
       _removeDeletedRelationsForEvent(sub);
     }
@@ -4954,20 +4990,23 @@ class TimeProvider with ChangeNotifier {
         ? newCategory.copyWith(id: oldCategory.id)
         : newCategory;
     final categoryId = oldCategory.id;
-    if (_containsReservedCategoryLabel(updated)) return false;
+    final normalized = _normalizeCategoryForStorage(updated);
+    if (categoryValidationError(normalized, editingIndex: index) != null) {
+      return false;
+    }
 
-    if (oldCategory.name != updated.name) {
-      _propagateLabelRename(categoryId, oldCategory.name, updated.name);
+    if (oldCategory.name != normalized.name) {
+      _propagateLabelRename(categoryId, oldCategory.name, normalized.name);
       _renameDeletedRelationsParent(
         categoryId,
         oldCategory.name,
-        updated.name,
+        normalized.name,
       );
-      _removeDeletedRelationsForEvent(updated.name);
+      _removeDeletedRelationsForEvent(normalized.name);
     }
 
     final oldVisibleSubs = oldCategory.subCategories;
-    final newVisibleSubs = updated.subCategories;
+    final newVisibleSubs = normalized.subCategories;
     final renamedOldSubs = <String>{};
     if (oldVisibleSubs.length == newVisibleSubs.length) {
       for (int i = 0; i < oldVisibleSubs.length; i++) {
@@ -4987,14 +5026,14 @@ class TimeProvider with ChangeNotifier {
       ...oldCategory.hiddenSubCategories,
     };
     final newActiveSubs = <String>{
-      ...updated.subCategories,
-      ...updated.hiddenSubCategories,
+      ...normalized.subCategories,
+      ...normalized.hiddenSubCategories,
     };
     for (final sub in oldActiveSubs.difference(newActiveSubs)) {
       if (!renamedOldSubs.contains(sub)) {
         _upsertDeletedRelation(
           categoryId: categoryId,
-          parentName: updated.name,
+          parentName: normalized.name,
           eventName: sub,
           isParentEvent: false,
         );
@@ -5005,7 +5044,7 @@ class TimeProvider with ChangeNotifier {
     }
 
     _categories[index] =
-        updated.copyWith(updatedAt: DateTime.now().millisecondsSinceEpoch);
+        normalized.copyWith(updatedAt: DateTime.now().millisecondsSinceEpoch);
     _markCategoriesChanged();
     _markCategoriesGiteePending();
     _invalidateLabelCategoryIdCache(); // 清除缓存
@@ -5333,6 +5372,18 @@ class TimeProvider with ChangeNotifier {
       ...category.hiddenSubCategories,
     };
     return labels.any(isReservedCategoryLabel);
+  }
+
+  static String _categoryLabelKey(String value) => value.trim().toLowerCase();
+
+  Category _normalizeCategoryForStorage(Category category) {
+    return category.copyWith(
+      name: category.name.trim(),
+      subCategories:
+          category.subCategories.map((value) => value.trim()).toList(),
+      hiddenSubCategories:
+          category.hiddenSubCategories.map((value) => value.trim()).toList(),
+    );
   }
 
   DeletedEventRelation? _findDeletedRelationForSlot(

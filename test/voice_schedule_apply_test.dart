@@ -79,7 +79,7 @@ void main() {
     addTearDown(provider.dispose);
     provider.addCategory(Category(
       id: 'work',
-      name: '工作',
+      name: '语音工作',
       color: Colors.blue,
       subCategories: ['开会'],
     ));

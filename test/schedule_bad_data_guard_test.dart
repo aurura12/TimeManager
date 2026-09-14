@@ -298,6 +298,8 @@ void main() {
       addTearDown(provider.dispose);
 
       await provider.setScheduleUser(DiaryKind.j);
+      // 身份切换完成后仍会异步刷新身份范围数据，等待这次刷新释放同步锁。
+      await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(provider.scheduleUser, DiaryKind.j);
 
       provider.assignCategoryToSlots(

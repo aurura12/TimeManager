@@ -148,4 +148,69 @@ void main() {
     await _waitUntil(() => state.pullRequests.length >= 2);
     expect(state.pullRequests, ['g', 'g']);
   });
+
+  test('新增和重命名分类时阻止重复名称，并规范首尾空白', () async {
+    final state = _CategoryRemoteState();
+    final provider = await _createProvider(state);
+    addTearDown(provider.dispose);
+
+    expect(
+      provider.addCategory(
+        Category(
+          name: '  新分类  ',
+          color: Colors.blue,
+          subCategories: [' 子事件 '],
+        ),
+      ),
+      isTrue,
+    );
+    final added = provider.categories.last;
+    expect(added.name, '新分类');
+    expect(added.subCategories, ['子事件']);
+
+    expect(
+      provider.addCategory(Category(name: '新分类', color: Colors.red)),
+      isFalse,
+    );
+    expect(
+      provider.categories.where((category) => category.name == '新分类'),
+      hasLength(1),
+    );
+
+    expect(
+      provider.addCategory(Category(name: '另一个分类', color: Colors.green)),
+      isTrue,
+    );
+    final secondIndex = provider.categories
+        .lastIndexWhere((category) => category.name == '另一个分类');
+    final second = provider.categories[secondIndex];
+    expect(
+      provider.updateCategory(
+        secondIndex,
+        Category(id: second.id, name: ' 新分类 ', color: Colors.green),
+      ),
+      isFalse,
+    );
+    expect(provider.categories[secondIndex].name, '另一个分类');
+  });
+
+  test('同一分类内阻止重复子事件（包括可见和隐藏列表）', () async {
+    final state = _CategoryRemoteState();
+    final provider = await _createProvider(state);
+    addTearDown(provider.dispose);
+
+    expect(
+      provider.addCategory(
+        Category(
+          name: '父事件',
+          color: Colors.blue,
+          subCategories: ['会议'],
+          hiddenSubCategories: [' 会议 '],
+        ),
+      ),
+      isFalse,
+    );
+    expect(
+        provider.categories.any((category) => category.name == '父事件'), isFalse);
+  });
 }

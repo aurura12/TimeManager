@@ -1185,27 +1185,34 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: const Text('取消')),
               ElevatedButton(
                 onPressed: () {
-                  if (catName.isNotEmpty) {
-                    Category newCat = Category(
-                      id: isEdit ? provider.categories[index].id : null,
-                      name: catName,
-                      color: selectedColor,
-                      subCategories: tempSubCategories,
-                      hiddenSubCategories: tempHiddenSubCategories,
+                  final newCat = Category(
+                    id: isEdit ? provider.categories[index].id : null,
+                    name: catName,
+                    color: selectedColor,
+                    subCategories: tempSubCategories,
+                    hiddenSubCategories: tempHiddenSubCategories,
+                  );
+                  final validationError = provider.categoryValidationError(
+                    newCat,
+                    editingIndex: isEdit ? index : null,
+                  );
+                  if (validationError != null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(validationError)),
                     );
-                    final saved = isEdit
-                        ? provider.updateCategory(index, newCat)
-                        : provider.addCategory(newCat);
-                    if (!saved) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('“临时”和“已删除”为系统保留名称，不能用于真实事件'),
-                        ),
-                      );
-                      return;
-                    }
-                    Navigator.pop(context);
+                    return;
                   }
+
+                  final saved = isEdit
+                      ? provider.updateCategory(index, newCat)
+                      : provider.addCategory(newCat);
+                  if (!saved) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('事件保存失败，请稍后重试')),
+                    );
+                    return;
+                  }
+                  Navigator.pop(context);
                 },
                 child: Text(isEdit ? '保存修改' : '确认添加'),
               ),
