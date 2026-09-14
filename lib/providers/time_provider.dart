@@ -1090,11 +1090,6 @@ class TimeProvider with ChangeNotifier {
   Map<String, String>? _labelCategoryIdCache;
   Map<String, Category>? _categoryIdMapCache;
 
-  // --- 目标统计变化通知（仅在目标相关数据变化时通知） ---
-  final StreamController<void> _targetStatsChangedController =
-      StreamController<void>.broadcast();
-  Stream<void> get targetStatsChanged => _targetStatsChangedController.stream;
-
   // 用于发送同步状态消息的 Stream
   final StreamController<String> _syncStatusController =
       StreamController<String>.broadcast();
@@ -1114,7 +1109,6 @@ class TimeProvider with ChangeNotifier {
     _googleAuthSubscription?.cancel();
     _syncStatusController.close();
     _scheduleGiteeSyncController?.close();
-    _targetStatsChangedController.close();
     super.dispose();
   }
 
@@ -1567,7 +1561,6 @@ class TimeProvider with ChangeNotifier {
     _markPendingSync(dateKey);
     _saveData();
     notifyListeners();
-    _addTargetStatsChanged(); // 通知目标统计变化
   }
 
   void clearAll() {
@@ -1587,7 +1580,6 @@ class TimeProvider with ChangeNotifier {
     _markPendingSync();
     _saveData();
     notifyListeners();
-    _addTargetStatsChanged(); // 通知目标统计变化
     _scheduleCalendarSync();
   }
 
@@ -1696,7 +1688,6 @@ class TimeProvider with ChangeNotifier {
     }
     _saveData();
     notifyListeners();
-    _addTargetStatsChanged(); // 通知目标统计变化
   }
 
   /// 应用语音解析出的日程草稿。
@@ -1851,9 +1842,12 @@ class TimeProvider with ChangeNotifier {
     _syncStatusController.add(message);
   }
 
-  void _addTargetStatsChanged() {
-    if (_isDisposed || _targetStatsChangedController.isClosed) return;
-    _targetStatsChangedController.add(null);
+  /// 目标"本身"发生变化（新增/改名/改类别/删除）时调用。
+  ///
+  /// 统计结果以 `目标id_日期` 为缓存键，目标结构一变，此前缓存的所有日期都
+  /// 不再可靠，因此这里必须整体失效（只改某天的时间块走 invalidateDate 即可）。
+  void _invalidateTargetStats() {
+    _targetStatsCache.invalidate();
   }
 
   Timer? _scheduleGiteeTimer;
@@ -3180,7 +3174,7 @@ class TimeProvider with ChangeNotifier {
     _targetsDocUpdatedAt = merged.updatedAt;
     _targetsDirty = true;
     _saveData();
-    _addTargetStatsChanged();
+    _invalidateTargetStats();
     notifyListeners();
   }
 
@@ -4330,7 +4324,6 @@ class TimeProvider with ChangeNotifier {
           }
           _saveData();
           notifyListeners();
-          _addTargetStatsChanged(); // 通知目标统计变化
         }
       }
     }
@@ -5012,7 +5005,6 @@ class TimeProvider with ChangeNotifier {
     _markPendingSync();
     _saveData();
     notifyListeners();
-    _addTargetStatsChanged(); // 通知目标统计变化
     _scheduleCalendarSync();
   }
 
@@ -5370,7 +5362,6 @@ class TimeProvider with ChangeNotifier {
     _markTemplatesChanged();
     _targetStatsCache.invalidate();
     _invalidateLabelCategoryIdCache();
-    _addTargetStatsChanged(); // 通知目标统计变化
   }
 
   void _migrateToCategoryIds() {
@@ -5731,6 +5722,10 @@ class TimeProvider with ChangeNotifier {
     if (templatesChanged) _markTemplatesChanged();
     if (relationsChanged) _categoriesDirty = true;
     if (expandStatesChanged) _categoryExpandDirty = true;
+    if (slotsChanged || targetsChanged) {
+      // 分类归属变化会改变"某目标在某天的完成量"，统计缓存必须整表失效。
+      _targetStatsCache.invalidate();
+    }
     if (slotsChanged ||
         targetsChanged ||
         templatesChanged ||
@@ -7291,7 +7286,6 @@ class TimeProvider with ChangeNotifier {
     _markAllSlotsDirty();
     _invalidateLabelCategoryIdCache();
     _targetStatsCache.invalidate();
-    _addTargetStatsChanged();
     _saveData();
     notifyListeners();
   }
@@ -7365,7 +7359,7 @@ class TimeProvider with ChangeNotifier {
 
     notifyListeners();
     _saveData();
-    _addTargetStatsChanged();
+    _invalidateTargetStats();
   }
 
   void addTarget(Target target) {
@@ -7379,7 +7373,7 @@ class TimeProvider with ChangeNotifier {
     _markTargetsGiteePending();
     _saveData();
     notifyListeners();
-    _addTargetStatsChanged(); // 通知目标统计变化
+    _invalidateTargetStats(); // 目标统计缓存整体失效
   }
 
   void updateTarget(Target newTarget) {
@@ -7394,7 +7388,7 @@ class TimeProvider with ChangeNotifier {
       _markTargetsGiteePending();
       _saveData();
       notifyListeners();
-      _addTargetStatsChanged(); // 通知目标统计变化
+      _invalidateTargetStats(); // 目标统计缓存整体失效
     }
   }
 
@@ -7410,7 +7404,7 @@ class TimeProvider with ChangeNotifier {
     _markTargetsGiteePending();
     _saveData();
     notifyListeners();
-    _addTargetStatsChanged(); // 通知目标统计变化
+    _invalidateTargetStats(); // 目标统计缓存整体失效
   }
 
   void reorderTargets(int oldIndex, int newIndex) {
