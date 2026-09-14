@@ -108,10 +108,19 @@ class CheckInGoal {
           KnownGoogleUsers.normalizeEmail(ownerEmail) ==
               KnownGoogleUsers.normalizeEmail(email));
 
-  bool get isActive =>
-      !isArchived && (endDate == null || endDate!.isAfter(DateTime.now()));
+  /// 是否已过期。
+  ///
+  /// [endDate] 是"结束日期"（只含年月日），按含当天处理：结束日当天仍可打卡，
+  /// 只有过了结束日 24:00 才算过期。此前直接用 `endDate.isBefore(now)` 比较时刻，
+  /// 而 endDate 存的是结束日 00:00，导致结束日当天目标就被判过期、从活动列表消失。
+  bool get isExpired {
+    final end = endDate;
+    if (end == null) return false;
+    final endOfDayExclusive = DateTime(end.year, end.month, end.day + 1);
+    return !DateTime.now().isBefore(endOfDayExclusive);
+  }
 
-  bool get isExpired => endDate != null && endDate!.isBefore(DateTime.now());
+  bool get isActive => !isArchived && !isExpired;
 
   int get totalCheckIns => records.length;
 

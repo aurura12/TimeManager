@@ -43,20 +43,38 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
     _DurationOption(label: '1年', days: 365),
   ];
 
+  /// 生效的开始日期：未选择时界面显示"今天"，这里必须用同一语义，
+  /// 否则选了时长却算不出结束日期，选择会被静默丢弃。
+  DateTime _effectiveStartDate() {
+    final start = _startDate;
+    final base = start ?? DateTime.now();
+    return DateTime(base.year, base.month, base.day);
+  }
+
   void _onDurationSelected(int? days) {
     setState(() {
       _selectedDurationDays = days;
-      if (days != null && _startDate != null) {
-        _endDate = _startDate!.add(Duration(days: days));
+      if (days == null) {
+        // 取消选择时长 = 不再限制结束日期，避免留下"未选中却仍显示结束日期"
+        _endDate = null;
+        return;
       }
+      final start = _effectiveStartDate();
+      // 把"今天"落成具体日期，保证开始/结束/时长三者一致
+      _startDate = start;
+      _endDate = start.add(Duration(days: days));
     });
   }
 
   void _onStartDateChanged(DateTime? date) {
     setState(() {
-      _startDate = date;
-      if (date != null && _selectedDurationDays != null) {
-        _endDate = date.add(Duration(days: _selectedDurationDays!));
+      _startDate = date == null
+          ? null
+          : DateTime(date.year, date.month, date.day);
+      if (_selectedDurationDays != null) {
+        // 开始日期变化（或清空回"今天"）时按选定时长重算结束日期
+        _endDate =
+            _effectiveStartDate().add(Duration(days: _selectedDurationDays!));
       }
     });
   }
