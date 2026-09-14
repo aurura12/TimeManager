@@ -165,10 +165,34 @@ class CheckInSyncService {
       _lastError = null;
       try {
         return await _pushToGitHubInternal();
+      } catch (e) {
+        return CheckInSyncResult.fail('同步失败: $e');
       } finally {
         _syncing = false;
       }
     });
+  }
+
+  /// 写操作（推送/删除）前先拉取远端并合并进 [_document]。
+  ///
+  /// 成功（含"远端文件尚不存在"）返回 null；返回非 null 表示远端不可读或
+  /// 格式异常，调用方必须中止本次写操作，绝不能用本地内容覆盖远端。
+  Future<String?> _pullAndMergeForWrite(String token) async {
+    final pull = await CheckInGiteeService.pullText(
+      token: token,
+      path: CheckInDocument.filePath,
+    );
+    if (pull.notFound) return null;
+    if (!pull.success || pull.content == null) {
+      return '远端读取失败，已中止同步：${pull.error ?? '未知错误'}';
+    }
+    try {
+      final remote = CheckInDocument.fromMarkdown(pull.content!);
+      _document = CheckInDocument.merge(_document, remote);
+    } catch (e) {
+      return '远端打卡数据格式异常，已中止同步以保护数据：$e';
+    }
+    return null;
   }
 
   Future<CheckInSyncResult> _pushToGitHubInternal() async {
@@ -178,13 +202,9 @@ class CheckInSyncService {
     }
 
     // 先拉远端合并，避免覆盖对方的打卡
-    final pull = await CheckInGiteeService.pullText(
-      token: token,
-      path: CheckInDocument.filePath,
-    );
-    if (pull.success && pull.content != null) {
-      final remote = CheckInDocument.fromMarkdown(pull.content!);
-      _document = CheckInDocument.merge(_document, remote);
+    final pullError = await _pullAndMergeForWrite(token);
+    if (pullError != null) {
+      return CheckInSyncResult.fail(pullError);
     }
 
     final userLabel = currentUser?.label ?? '?';
@@ -238,13 +258,9 @@ class CheckInSyncService {
           return CheckInSyncResult.fail('未配置当前平台同步 Token');
         }
 
-        final pull = await CheckInGiteeService.pullText(
-          token: token,
-          path: CheckInDocument.filePath,
-        );
-        if (pull.success && pull.content != null) {
-          final remote = CheckInDocument.fromMarkdown(pull.content!);
-          _document = CheckInDocument.merge(_document, remote);
+        final pullError = await _pullAndMergeForWrite(token);
+        if (pullError != null) {
+          return CheckInSyncResult.fail(pullError);
         }
 
         _document = _document.tombstoneGoal(goal.id);
@@ -291,13 +307,9 @@ class CheckInSyncService {
         }
 
         // Step 1: Pull remote and merge to avoid overwriting others' data
-        final pull = await CheckInGiteeService.pullText(
-          token: token,
-          path: CheckInDocument.filePath,
-        );
-        if (pull.success && pull.content != null) {
-          final remote = CheckInDocument.fromMarkdown(pull.content!);
-          _document = CheckInDocument.merge(_document, remote);
+        final pullError = await _pullAndMergeForWrite(token);
+        if (pullError != null) {
+          return CheckInSyncResult.fail(pullError);
         }
 
         // Step 2: Delete photo from GitHub if present

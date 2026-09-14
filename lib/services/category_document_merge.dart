@@ -197,6 +197,21 @@ CategoryNormalizationResult normalizeCategoriesForStorage(
   );
 }
 
+/// 判断远端内容是否为结构合法的分类文档。
+///
+/// [parseCategoryDocument] 对坏格式会静默返回空文档，无法与"远端真的没有分类"
+/// 区分。因此在"写回远端"的路径上必须先用它拦截，避免把空文档推回去覆盖掉
+/// 对方的数据。
+bool isCategoryDocumentPayload(String? content) {
+  if (content == null || content.trim().isEmpty) return false;
+  try {
+    final data = json.decode(content);
+    return data is Map && data['categories'] is List;
+  } catch (_) {
+    return false;
+  }
+}
+
 /// 解析分类同步文档；失败或空返回空文档（updatedAt=0）。
 CategoryDocument parseCategoryDocument(String? content) {
   if (content == null || content.trim().isEmpty) {

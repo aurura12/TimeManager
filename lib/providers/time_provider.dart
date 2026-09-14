@@ -2075,6 +2075,16 @@ class TimeProvider with ChangeNotifier {
       userCode: userCode,
     );
     if (!_canContinueScheduleSync(userCode)) return false;
+    if (!pullResult.success && !pullResult.notFound) {
+      // 远端读不到（网络/限流/权限）时不能当成"远端为空"继续推送，
+      // 否则会用本地内容覆盖远端的更新。
+      _addScheduleSyncStatus('远端日程读取失败（$dateKey），已中止同步');
+      _appLogService.warning(
+        '日程推送中止：$dateKey 远端读取失败：${pullResult.error ?? '未知错误'}',
+        source: 'schedule_sync',
+      );
+      return false;
+    }
     final remoteContent = pullResult.success ? pullResult.content : null;
 
     // 2) 合并（后写覆盖：同槽 ts 大者胜，仅一侧有则保留）
@@ -3228,18 +3238,46 @@ class TimeProvider with ChangeNotifier {
         categories: List.from(_categories),
         deletedCategories: Map.from(_deletedCategories),
       );
-      final remoteDoc = pullResult.success && pullResult.content != null
-          ? parseCategoryDocument(pullResult.content)
-          : const CategoryDocument();
+      final CategoryDocument remoteDoc;
+      if (pullResult.success && pullResult.content != null) {
+        if (!isCategoryDocumentPayload(pullResult.content)) {
+          _appLogService.warning(
+            '分类同步中止：远端分类文件格式无效',
+            source: 'schedule_sync',
+          );
+          _addScheduleSyncStatus('分类同步中止：远端数据格式无效');
+          return;
+        }
+        remoteDoc = parseCategoryDocument(pullResult.content);
+      } else if (pullResult.notFound) {
+        remoteDoc = const CategoryDocument();
+      } else {
+        // 拉取失败（网络/限流/权限）时绝不能继续推送，否则会用本地内容
+        // 覆盖掉远端可能存在的更新。
+        _appLogService.warning(
+          '分类同步中止：${pullResult.error ?? '远端分类不可读'}',
+          source: 'schedule_sync',
+        );
+        _addScheduleSyncStatus('分类同步中止：远端读取失败');
+        return;
+      }
       final merged = mergeCategoryDocuments(local: localDoc, remote: remoteDoc);
 
       final nowMs = DateTime.now().millisecondsSinceEpoch;
-      await CategoryGiteeService.pushCategories(
+      final pushResult = await CategoryGiteeService.pushCategories(
         token: token,
         userCode: userCode,
         content: encodeCategoryDocument(merged, nowMs: nowMs),
         commitMessage: 'categories($userCode): sync',
       );
+      if (!pushResult.success) {
+        _appLogService.warning(
+          '分类同步失败：${pushResult.error ?? '推送失败'}',
+          source: 'schedule_sync',
+        );
+        _addScheduleSyncStatus('分类推送失败：${pushResult.error ?? '未知错误'}');
+        return;
+      }
       if (!_isScheduleReady ||
           _scheduleOverwriteJournalCleanupPending ||
           !_hasSelectedScheduleUser ||

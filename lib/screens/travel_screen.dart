@@ -73,6 +73,46 @@ class _TravelScreenState extends State<TravelScreen> {
   Set<String> get _recordDateKeys =>
       _document.records.map((e) => e.dateKey).toSet();
 
+  /// 本地有、远端没有的日期。
+  Set<String> _localOnlyDateKeys(TravelRecordsDocument remote) =>
+      _recordDateKeys.difference(remote.records.map((e) => e.dateKey).toSet());
+
+  /// 远端有、本地没有的日期。
+  Set<String> _remoteOnlyDateKeys(TravelRecordsDocument remote) => remote
+      .records
+      .map((e) => e.dateKey)
+      .toSet()
+      .difference(_recordDateKeys);
+
+  Future<bool> _confirmOverwriteLocal(Set<String> localOnlyKeys) async {
+    if (!mounted) return false;
+    final preview = localOnlyKeys.take(5).join('、');
+    final suffix = localOnlyKeys.length > 5 ? ' 等' : '';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('覆盖本地记录'),
+          content: Text(
+            '本地有 ${localOnlyKeys.length} 天记录不在远端（$preview$suffix），'
+            '继续拉取会丢失这些记录。确认覆盖吗？',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('确认覆盖'),
+            ),
+          ],
+        );
+      },
+    );
+    return confirmed == true;
+  }
+
   Future<void> _saveDraft() async {
     await TravelLocalStore.saveDraft(_document.toMarkdown());
   }
@@ -344,6 +384,21 @@ class _TravelScreenState extends State<TravelScreen> {
     if (result.success) {
       try {
         final doc = TravelRecordsDocument.fromMarkdown(result.content!);
+        // 远端缺了本地已有的日期时，覆盖会丢掉本地未同步的记录。
+        // 静默拉取（进页面自动触发）一律保留本地；手动拉取需用户确认。
+        final localOnly = _localOnlyDateKeys(doc);
+        if (localOnly.isNotEmpty) {
+          if (silent) {
+            setState(() => _processing = false);
+            return;
+          }
+          final confirmed = await _confirmOverwriteLocal(localOnly);
+          if (!confirmed || !mounted) {
+            setState(() => _processing = false);
+            _showMessage('已取消拉取，本地记录保持不变');
+            return;
+          }
+        }
         _document = doc;
         await _saveDraft();
         if (!silent) {
@@ -374,6 +429,37 @@ class _TravelScreenState extends State<TravelScreen> {
     if (!ok) return;
     await _saveDraft();
     setState(() => _processing = true);
+
+    // 先读远端：读不到就中止，绝不用本地内容覆盖一个未知状态的远端。
+    final pull = await TravelGiteeService.pullFile(
+      token: _token!,
+      path: TravelRecordsDocument.filePath,
+    );
+    if (!mounted) return;
+    if (!pull.success && !pull.notFound) {
+      setState(() => _processing = false);
+      _showMessage('远端读取失败，已中止同步：${pull.error ?? '未知错误'}');
+      return;
+    }
+    if (pull.success && pull.content != null) {
+      try {
+        final remote = TravelRecordsDocument.fromMarkdown(pull.content!);
+        final remoteOnly = _remoteOnlyDateKeys(remote);
+        if (remoteOnly.isNotEmpty) {
+          setState(() => _processing = false);
+          final preview = remoteOnly.take(5).join('、');
+          _showMessage(
+            '远端有本地没有的记录（$preview），已中止同步，请先执行「拉取」',
+          );
+          return;
+        }
+      } catch (_) {
+        setState(() => _processing = false);
+        _showMessage('远端记录格式无法解析，已中止同步以保护远端数据');
+        return;
+      }
+    }
+
     final content = _document.toMarkdown();
     final latest = _document.records.isEmpty ? null : _document.records.first;
     final result = await TravelGiteeService.pushFile(
