@@ -352,7 +352,29 @@ class CheckInSyncService {
           return CheckInSyncResult.fail(pull.error!);
         }
 
-        // Step 2: Delete photo from GitHub if present
+        // Step 2: Remove record from document
+        _document = _document.tombstoneRecord(record.id);
+
+        // Step 3: Save locally
+        await CheckInLocalStore.saveDraft(_document);
+
+        // Step 4: Push updated document to Gitee. The document version check must
+        // succeed before deleting the photo; otherwise a concurrent write could
+        // leave the remote document pointing at a photo that was already removed.
+        final push = await CheckInGiteeService.pushText(
+          token: token,
+          path: CheckInDocument.filePath,
+          content: _document.toMarkdown(),
+          commitMessage: 'check-in(${user.label}): delete record ${record.id}',
+          expectedSha: pull.sha,
+          expectNotFound: pull.notFound,
+        );
+        if (!push.success) {
+          return CheckInSyncResult.fail(push.error ?? '删除同步失败');
+        }
+
+        // Step 5: Delete the now-unreferenced photo from Gitee. Failure here is
+        // best-effort: an orphaned photo is safer than a broken remote record.
         if (record.photoPath != null && record.photoPath!.isNotEmpty) {
           await CheckInGiteeService.deleteFile(
             token: token,
@@ -368,25 +390,6 @@ class CheckInSyncService {
               await cached.delete();
             }
           } catch (_) {}
-        }
-
-        // Step 3: Remove record from document
-        _document = _document.tombstoneRecord(record.id);
-
-        // Step 4: Save locally
-        await CheckInLocalStore.saveDraft(_document);
-
-        // Step 5: Push updated document to GitHub
-        final push = await CheckInGiteeService.pushText(
-          token: token,
-          path: CheckInDocument.filePath,
-          content: _document.toMarkdown(),
-          commitMessage: 'check-in(${user.label}): delete record ${record.id}',
-          expectedSha: pull.sha,
-          expectNotFound: pull.notFound,
-        );
-        if (!push.success) {
-          return CheckInSyncResult.fail(push.error ?? '删除同步失败');
         }
 
         return CheckInSyncResult.ok(_document);

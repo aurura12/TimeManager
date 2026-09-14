@@ -13,10 +13,16 @@ class DiaryGiteePullResult {
   final String? sha;
   final String? error;
 
-  const DiaryGiteePullResult._({required this.success, required this.notFound, this.content, this.sha, this.error});
+  const DiaryGiteePullResult._(
+      {required this.success,
+      required this.notFound,
+      this.content,
+      this.sha,
+      this.error});
 
   factory DiaryGiteePullResult.success(String content, String sha) {
-    return DiaryGiteePullResult._(success: true, notFound: false, content: content, sha: sha);
+    return DiaryGiteePullResult._(
+        success: true, notFound: false, content: content, sha: sha);
   }
 
   factory DiaryGiteePullResult.notFound() {
@@ -24,23 +30,51 @@ class DiaryGiteePullResult {
   }
 
   factory DiaryGiteePullResult.error(String message) {
-    return DiaryGiteePullResult._(success: false, notFound: false, error: message);
+    return DiaryGiteePullResult._(
+        success: false, notFound: false, error: message);
   }
 }
 
 class DiaryGiteePushResult {
   final bool success;
   final bool created;
+  final String? sha;
+  final bool conflict;
   final String? error;
 
-  const DiaryGiteePushResult._({required this.success, required this.created, this.error});
+  const DiaryGiteePushResult._({
+    required this.success,
+    required this.created,
+    this.sha,
+    required this.conflict,
+    this.error,
+  });
 
-  factory DiaryGiteePushResult.success({required bool created}) {
-    return DiaryGiteePushResult._(success: true, created: created);
+  factory DiaryGiteePushResult.success({required bool created, String? sha}) {
+    return DiaryGiteePushResult._(
+      success: true,
+      created: created,
+      sha: sha,
+      conflict: false,
+    );
   }
 
   factory DiaryGiteePushResult.error(String message) {
-    return DiaryGiteePushResult._(success: false, created: false, error: message);
+    return DiaryGiteePushResult._(
+      success: false,
+      created: false,
+      conflict: false,
+      error: message,
+    );
+  }
+
+  factory DiaryGiteePushResult.conflict(String message) {
+    return DiaryGiteePushResult._(
+      success: false,
+      created: false,
+      conflict: true,
+      error: message,
+    );
   }
 }
 
@@ -49,14 +83,16 @@ class DiaryGiteeListResult {
   final List<String> paths;
   final String? error;
 
-  const DiaryGiteeListResult._({required this.success, required this.paths, this.error});
+  const DiaryGiteeListResult._(
+      {required this.success, required this.paths, this.error});
 
   factory DiaryGiteeListResult.success(List<String> paths) {
     return DiaryGiteeListResult._(success: true, paths: paths);
   }
 
   factory DiaryGiteeListResult.error(String message) {
-    return DiaryGiteeListResult._(success: false, paths: const [], error: message);
+    return DiaryGiteeListResult._(
+        success: false, paths: const [], error: message);
   }
 }
 
@@ -65,14 +101,16 @@ class DiaryGiteeListWithShaResult {
   final Map<String, String> pathShaMap;
   final String? error;
 
-  const DiaryGiteeListWithShaResult._({required this.success, required this.pathShaMap, this.error});
+  const DiaryGiteeListWithShaResult._(
+      {required this.success, required this.pathShaMap, this.error});
 
   factory DiaryGiteeListWithShaResult.success(Map<String, String> pathShaMap) {
     return DiaryGiteeListWithShaResult._(success: true, pathShaMap: pathShaMap);
   }
 
   factory DiaryGiteeListWithShaResult.error(String message) {
-    return DiaryGiteeListWithShaResult._(success: false, pathShaMap: const {}, error: message);
+    return DiaryGiteeListWithShaResult._(
+        success: false, pathShaMap: const {}, error: message);
   }
 }
 
@@ -107,15 +145,27 @@ class DiaryGiteeService {
     required String path,
     required String content,
     required String commitMessage,
+    String? expectedSha,
+    bool expectNotFound = false,
   }) async {
     final result = await _api.pushText(
       token: token,
       path: path,
       content: content,
       commitMessage: commitMessage,
+      expectedSha: expectedSha,
+      expectNotFound: expectNotFound,
     );
     if (result.success) {
-      return DiaryGiteePushResult.success(created: result.created);
+      return DiaryGiteePushResult.success(
+        created: result.created,
+        sha: result.sha,
+      );
+    }
+    if (result.conflict) {
+      return DiaryGiteePushResult.conflict(
+        result.error ?? '远端日记已更新，请先重新拉取',
+      );
     }
     return DiaryGiteePushResult.error(result.error ?? '推送失败');
   }
@@ -137,7 +187,8 @@ class DiaryGiteeService {
   }) async {
     try {
       final res = await requestWithRetry(
-        () => http.get(_api.treeUri('HEAD', token: token), headers: _api.headers(token)),
+        () => http.get(_api.treeUri('HEAD', token: token),
+            headers: _api.headers(token)),
       );
       if (res.statusCode != 200) {
         return DiaryGiteeListWithShaResult.error(extractErrorMessage(res));
@@ -153,7 +204,11 @@ class DiaryGiteeService {
         final type = item['type']?.toString();
         final path = item['path']?.toString();
         final sha = item['sha']?.toString();
-        if (type == 'blob' && path != null && path.isNotEmpty && sha != null && _looksLikeDiaryMd(path)) {
+        if (type == 'blob' &&
+            path != null &&
+            path.isNotEmpty &&
+            sha != null &&
+            _looksLikeDiaryMd(path)) {
           pathShaMap[path] = sha;
         }
       }

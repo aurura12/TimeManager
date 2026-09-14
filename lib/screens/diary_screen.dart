@@ -14,6 +14,7 @@ import 'diary_search_screen.dart';
 
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_tokens.dart';
+
 enum _DiarySyncAction { pull, push }
 
 class DiaryScreen extends StatefulWidget {
@@ -41,7 +42,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
   bool _remoteTreeLoading = false;
   String? _remoteTreeError;
   List<String> _remoteDiaryPaths = const [];
+  Map<String, String> _remoteDiaryPathShas = {};
   DateTime? _remoteDiaryPathsFetchedAt;
+  bool _remoteDiaryListingAvailable = false;
+  final Map<String, ({String? path, String? sha, bool notFound})>
+      _diaryRemoteBaselines = {};
   final Set<String> _expandedRemoteFolders = {};
   final Map<String, String> _contextRemotePathOverrides = {};
   bool _lastContextPathAmbiguous = false;
@@ -147,11 +152,42 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   bool _isRemotePathsCacheFresh() {
-    if (_remoteDiaryPathsFetchedAt == null || _remoteDiaryPaths.isEmpty) {
+    if (_remoteDiaryPathsFetchedAt == null) {
       return false;
     }
     return DateTime.now().difference(_remoteDiaryPathsFetchedAt!) <
         _remotePathsTtl;
+  }
+
+  void _applyRemoteDiaryListing(Map<String, String> pathShaMap) {
+    _remoteDiaryPathShas = Map<String, String>.from(pathShaMap);
+    _remoteDiaryPaths = _remoteDiaryPathShas.keys.toList()
+      ..sort((a, b) => b.compareTo(a));
+    _remoteDiaryPathsFetchedAt = DateTime.now();
+    _remoteDiaryListingAvailable = true;
+  }
+
+  void _rememberRemoteDiaryPathSha(String path, String sha) {
+    _remoteDiaryPathShas[path] = sha;
+    if (!_remoteDiaryPaths.contains(path)) {
+      _remoteDiaryPaths = [..._remoteDiaryPaths, path]
+        ..sort((a, b) => b.compareTo(a));
+    }
+    _remoteDiaryPathsFetchedAt = DateTime.now();
+    _remoteDiaryListingAvailable = true;
+  }
+
+  void _setCurrentDiaryBaseline({
+    required String? path,
+    required String? sha,
+    required bool notFound,
+  }) {
+    final key = _contextKey(_kind, _selectedDate);
+    _diaryRemoteBaselines[key] = (
+      path: notFound ? null : path,
+      sha: notFound ? null : sha,
+      notFound: notFound,
+    );
   }
 
   Future<void> _updateDiaryDateKeys() async {
@@ -190,12 +226,15 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (!forceRefresh && _isRemotePathsCacheFresh()) {
       return _remoteDiaryPaths;
     }
-    final listResult = await DiaryGiteeService.listDiaryPaths(token: token);
-    if (!listResult.success) return null;
-    _remoteDiaryPaths = listResult.paths;
-    _remoteDiaryPathsFetchedAt = DateTime.now();
+    final listResult =
+        await DiaryGiteeService.listDiaryPathsWithSha(token: token);
+    if (!listResult.success) {
+      _remoteDiaryListingAvailable = false;
+      return null;
+    }
+    _applyRemoteDiaryListing(listResult.pathShaMap);
     await _updateDiaryDateKeys();
-    return listResult.paths;
+    return _remoteDiaryPaths;
   }
 
   Future<String?> _findRemotePathForCurrentContext(
@@ -319,14 +358,25 @@ class _DiaryScreenState extends State<DiaryScreen> {
       remotePath = await _findRemotePathForCurrentContext(refresh: true);
       if (!mounted || requestId != _contextRequestId) return;
     }
-    if (remotePath == null) return;
+    if (remotePath == null) {
+      if (!_lastContextPathAmbiguous && _remoteDiaryListingAvailable) {
+        _setCurrentDiaryBaseline(path: null, sha: null, notFound: true);
+      }
+      return;
+    }
 
     // 直接从远端拉取，避免陈旧搜索缓存覆盖新内容
     final result =
         await DiaryGiteeService.pullDiary(token: token, path: remotePath);
-    if (!mounted || requestId != _contextRequestId) return;
     if (!result.success) return;
+    if (!mounted || requestId != _contextRequestId) return;
     if (_dirtySinceContextLoaded) return;
+    _rememberRemoteDiaryPathSha(remotePath, result.sha!);
+    _setCurrentDiaryBaseline(
+      path: remotePath,
+      sha: result.sha,
+      notFound: false,
+    );
     final raw = result.content!;
 
     if (_dirtySinceContextLoaded) return;
@@ -460,6 +510,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
           DateTime(parsedDate.year, parsedDate.month, parsedDate.day);
     }
     _contextRemotePathOverrides[_contextKey(_kind, _selectedDate)] = path;
+    _rememberRemoteDiaryPathSha(path, result.sha!);
+    _setCurrentDiaryBaseline(path: path, sha: result.sha, notFound: false);
     _contextRequestId++;
     _dirtySinceContextLoaded = false;
 
@@ -485,13 +537,18 @@ class _DiaryScreenState extends State<DiaryScreen> {
       _remoteTreeLoading = true;
       _remoteTreeError = null;
     });
-    final listResult = await DiaryGiteeService.listDiaryPaths(token: _token!);
+    final listResult = await DiaryGiteeService.listDiaryPathsWithSha(
+      token: _token!,
+    );
     if (!mounted) return;
+    if (listResult.success) {
+      _applyRemoteDiaryListing(listResult.pathShaMap);
+    } else {
+      _remoteDiaryListingAvailable = false;
+    }
     setState(() {
       _remoteTreeLoading = false;
       if (listResult.success) {
-        _remoteDiaryPaths = listResult.paths;
-        _remoteDiaryPathsFetchedAt = DateTime.now();
         _remoteTreeError = null;
       } else {
         _remoteTreeError = listResult.error ?? '读取远程列表失败';
@@ -691,6 +748,12 @@ class _DiaryScreenState extends State<DiaryScreen> {
       _bodyController.text = body;
       _suppressBodyListener = false;
       _startedAt = startedAt ?? DateTime.now();
+      _rememberRemoteDiaryPathSha(targetPath, result.sha!);
+      _setCurrentDiaryBaseline(
+        path: targetPath,
+        sha: result.sha,
+        notFound: false,
+      );
       _dirtySinceContextLoaded = false;
       await _saveDraftNow();
       // 刷新搜索缓存并落盘，避免重启后读到旧内容
@@ -703,6 +766,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
     setState(() => _processing = false);
     if (result.notFound) {
+      _setCurrentDiaryBaseline(path: null, sha: null, notFound: true);
       _showMessage('远端不存在该日记文件');
       return;
     }
@@ -742,6 +806,32 @@ class _DiaryScreenState extends State<DiaryScreen> {
       return;
     }
     final fileName = remotePath ?? _buildFileName();
+    final baseline = _diaryRemoteBaselines[_contextKey(_kind, _selectedDate)];
+    String? expectedSha;
+    var expectNotFound = false;
+    if (remotePath != null) {
+      if (baseline == null ||
+          baseline.notFound ||
+          baseline.path != fileName ||
+          baseline.sha == null) {
+        setState(() => _processing = false);
+        _showMessage('尚未取得这篇日记的编辑基线，请先拉取远端内容后再推送');
+        return;
+      }
+      expectedSha = baseline.sha;
+    } else {
+      if (baseline != null && !baseline.notFound) {
+        setState(() => _processing = false);
+        _showMessage('远端日记路径发生变化，请先拉取远端内容后再推送');
+        return;
+      }
+      if (baseline == null && !_remoteDiaryListingAvailable) {
+        setState(() => _processing = false);
+        _showMessage('尚未确认远端日记状态，请先刷新后再推送');
+        return;
+      }
+      expectNotFound = true;
+    }
     final markdown = _buildMarkdownContent();
     final userLabel = _kind == DiaryKind.g ? '乖乖' : '晶晶';
     final result = await DiaryGiteeService.pushDiary(
@@ -749,18 +839,39 @@ class _DiaryScreenState extends State<DiaryScreen> {
       path: fileName,
       content: markdown,
       commitMessage: 'diary($userLabel): update $fileName',
+      expectedSha: expectedSha,
+      expectNotFound: expectNotFound,
     );
     if (!mounted) return;
     setState(() => _processing = false);
 
     if (result.success) {
+      if (result.sha != null) {
+        _rememberRemoteDiaryPathSha(fileName, result.sha!);
+        _contextRemotePathOverrides[_contextKey(_kind, _selectedDate)] =
+            fileName;
+        _setCurrentDiaryBaseline(
+          path: fileName,
+          sha: result.sha,
+          notFound: false,
+        );
+      } else {
+        // 写入已经成功，但兼容接口没有返回新版本号。清掉基线，避免下次
+        // 编辑把未知版本当成已确认版本覆盖；下一次推送前会要求重新拉取。
+        _diaryRemoteBaselines.remove(_contextKey(_kind, _selectedDate));
+        await _fetchRemoteDiaryPathsSilently(forceRefresh: true);
+      }
       // 本地更新单文件搜索缓存并落盘，立即可搜到（无需重拉全仓库）
       await DiarySearchService.updateCache(_kind.code, _selectedDate, markdown);
       _dirtySinceContextLoaded = false;
       _showMessage(result.created ? '同步成功（已新建远端文件）' : '同步成功');
       return;
     }
-    _showMessage(result.error ?? '同步失败');
+    if (result.conflict) {
+      _showMessage('远端日记已被其他设备更新，请先拉取确认后再推送');
+    } else {
+      _showMessage(result.error ?? '同步失败');
+    }
   }
 
   void _showMessage(String text) {

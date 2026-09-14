@@ -8,8 +8,13 @@ import 'contents_api_common.dart';
 class GiteeContentsApi {
   final String owner;
   final String repo;
+  final http.Client? _client;
 
-  const GiteeContentsApi({required this.owner, required this.repo});
+  const GiteeContentsApi({
+    required this.owner,
+    required this.repo,
+    http.Client? client,
+  }) : _client = client;
 
   String get _baseHost => 'gitee.com';
   String get _repoPrefix => '/api/v5/repos';
@@ -20,6 +25,28 @@ class GiteeContentsApi {
       'Content-Type': 'application/json',
       'Authorization': 'token $token',
     };
+  }
+
+  Future<http.Response> _get(Uri uri, String token) {
+    final client = _client;
+    if (client != null) return client.get(uri, headers: headers(token));
+    return http.get(uri, headers: headers(token));
+  }
+
+  Future<http.Response> _post(Uri uri, String token, String body) {
+    final client = _client;
+    if (client != null) {
+      return client.post(uri, headers: headers(token), body: body);
+    }
+    return http.post(uri, headers: headers(token), body: body);
+  }
+
+  Future<http.Response> _put(Uri uri, String token, String body) {
+    final client = _client;
+    if (client != null) {
+      return client.put(uri, headers: headers(token), body: body);
+    }
+    return http.put(uri, headers: headers(token), body: body);
   }
 
   Uri contentsUri(String path, {String? token}) {
@@ -51,8 +78,7 @@ class GiteeContentsApi {
   }) async {
     try {
       final res = await requestWithRetry(
-        () =>
-            http.get(contentsUri(path, token: token), headers: headers(token)),
+        () => _get(contentsUri(path, token: token), token),
       );
       if (res.statusCode == 404) {
         return (
@@ -116,7 +142,14 @@ class GiteeContentsApi {
   }
 
   /// 推送文件内容。新文件用 POST，更新用 PUT。
-  Future<({bool success, bool created, String? error})> pushText({
+  Future<
+      ({
+        bool success,
+        bool created,
+        String? sha,
+        bool conflict,
+        String? error
+      })> pushText({
     required String token,
     required String path,
     required String content,
@@ -138,6 +171,8 @@ class GiteeContentsApi {
           return (
             success: false,
             created: false,
+            sha: null,
+            conflict: false,
             error: '远端文件已发生变化，请先重新拉取',
           );
         }
@@ -145,6 +180,8 @@ class GiteeContentsApi {
           return (
             success: false,
             created: false,
+            sha: null,
+            conflict: false,
             error: current.error ?? '读取远端文件失败',
           );
         }
@@ -156,6 +193,8 @@ class GiteeContentsApi {
           return (
             success: false,
             created: false,
+            sha: null,
+            conflict: false,
             error: current.error ?? '读取远端文件失败',
           );
         }
@@ -170,23 +209,51 @@ class GiteeContentsApi {
       // Gitee: 新文件用 POST，更新用 PUT
       final res = await requestWithRetry(
         () => sha == null
-            ? http.post(
-                contentsUri(path, token: token),
-                headers: headers(token),
-                body: json.encode(payload),
-              )
-            : http.put(
-                contentsUri(path, token: token),
-                headers: headers(token),
-                body: json.encode(payload),
-              ),
+            ? _post(
+                contentsUri(path, token: token), token, json.encode(payload))
+            : _put(
+                contentsUri(path, token: token), token, json.encode(payload)),
       );
       if (res.statusCode == 200 || res.statusCode == 201) {
-        return (success: true, created: res.statusCode == 201, error: null);
+        String? pushedSha;
+        try {
+          final body = json.decode(res.body);
+          if (body is Map<String, dynamic>) {
+            final content = body['content'];
+            if (content is Map) {
+              pushedSha = content['sha']?.toString();
+            }
+            pushedSha ??= body['sha']?.toString();
+          }
+        } catch (_) {
+          // 某些兼容实现可能返回空响应；写入已经成功，SHA 留空即可。
+        }
+        return (
+          success: true,
+          created: res.statusCode == 201,
+          sha: pushedSha,
+          conflict: false,
+          error: null,
+        );
       }
-      return (success: false, created: false, error: extractErrorMessage(res));
+      return (
+        success: false,
+        created: false,
+        sha: null,
+        conflict: expectedSha != null &&
+            (res.statusCode == 409 ||
+                res.statusCode == 412 ||
+                res.statusCode == 422),
+        error: extractErrorMessage(res),
+      );
     } catch (e) {
-      return (success: false, created: false, error: '推送失败: $e');
+      return (
+        success: false,
+        created: false,
+        sha: null,
+        conflict: false,
+        error: '推送失败: $e',
+      );
     }
   }
 }
