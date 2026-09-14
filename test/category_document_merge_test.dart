@@ -105,6 +105,24 @@ void main() {
     expect(result.idRemap, isEmpty);
   });
 
+  test('merge 不会按空 ID 折叠不同分类', () {
+    final merged = mergeCategoryDocuments(
+      local: CategoryDocument(
+        updatedAt: 100,
+        categories: [
+          cat('', '空 ID 本地分类', 100),
+          cat('', '另一条空 ID 分类', 100),
+        ],
+      ),
+      remote: const CategoryDocument(),
+    );
+
+    expect(
+      merged.categories.map((category) => category.name).toList(),
+      ['空 ID 本地分类', '另一条空 ID 分类'],
+    );
+  });
+
   test('删除时间新于分类更新时间 → 删除生效不复活', () {
     final local =
         CategoryDocument(updatedAt: 100, categories: [cat('a', '本地', 200)]);

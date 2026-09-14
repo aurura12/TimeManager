@@ -5534,9 +5534,8 @@ class TimeProvider with ChangeNotifier {
   ) {
     if (categoryId == null || categoryId.isEmpty) return categoryId;
     final resolved = _resolveCategoryId(categoryId, remap);
-    // Never erase a valid reference because malformed legacy data produced
-    // an empty remap target. The category normalizer also prevents this, but
-    // keeping the guard here protects every reference migration call site.
+    // 防止格式错误的历史数据产生空目标，误把有效引用抹掉。分类规范化器
+    // 也会阻止这种情况，但这里的兜底可以保护所有引用迁移调用点。
     return resolved.isEmpty ? categoryId : resolved;
   }
 

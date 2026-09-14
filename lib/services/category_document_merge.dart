@@ -146,9 +146,8 @@ CategoryNormalizationResult normalizeCategoriesForStorage(
     final categoryWins = category.updatedAt > existing.updatedAt;
     final winner = categoryWins ? category : existing;
     final loser = categoryWins ? existing : category;
-    // Empty IDs are legacy data rather than stable identities. Keep the
-    // newer payload, but inherit the other side's non-empty ID so a remap
-    // can never turn an existing reference into an empty string.
+    // 空 ID 是历史遗留数据，不是稳定身份。保留较新的载荷，但借用另一侧
+    // 的非空 ID，确保重映射不会把已有引用改成空串。
     final winnerId = winner.id.isNotEmpty
         ? winner.id
         : (loser.id.isNotEmpty ? loser.id : '');
@@ -275,9 +274,10 @@ CategoryDocument mergeCategoryDocuments({
 
   final byId = <String, Category>{};
   for (final c in localCategories) {
-    byId[c.id] = c;
+    if (c.id.isNotEmpty) byId[c.id] = c;
   }
   for (final c in remoteCategories) {
+    if (c.id.isEmpty) continue;
     final localCat = byId[c.id];
     if (localCat == null || (c.updatedAt > localCat.updatedAt)) {
       byId[c.id] = c;
@@ -301,14 +301,19 @@ CategoryDocument mergeCategoryDocuments({
       baseOrder == localCategories ? remoteCategories : localCategories;
 
   final merged = <Category>[];
-  final seen = <String>{};
+  final seenIds = <String>{};
   for (final c in baseOrder) {
-    if (surviving.containsKey(c.id) && seen.add(c.id)) {
+    if (c.id.isEmpty) {
+      // 空 ID 没有可用于合并的身份；保留每一条，交给最终按名称规范化。
+      merged.add(c);
+    } else if (surviving.containsKey(c.id) && seenIds.add(c.id)) {
       merged.add(surviving[c.id]!);
     }
   }
   for (final c in otherOrder) {
-    if (surviving.containsKey(c.id) && seen.add(c.id)) {
+    if (c.id.isEmpty) {
+      merged.add(c);
+    } else if (surviving.containsKey(c.id) && seenIds.add(c.id)) {
       merged.add(surviving[c.id]!);
     }
   }

@@ -264,6 +264,56 @@ void main() {
         provider.getSlotsForDate('2026-09-06')![0].categoryId, 'new-category');
   });
 
+  test('启动加载空 ID 同名分类时保留较新载荷和有效引用 ID', () async {
+    final state = _CategoryRemoteState();
+    final newerWithoutId = Category(
+      id: '',
+      name: '工作',
+      color: Colors.red,
+      updatedAt: 500,
+    );
+    final olderWithId = Category(
+      id: 'local1',
+      name: ' 工作 ',
+      color: Colors.blue,
+      updatedAt: 100,
+    );
+    final provider = await _createProvider(
+      state,
+      initialPreferences: {
+        AppIdentityResolver.dataKey(DiaryKind.g, 'categories'): [
+          jsonEncode(newerWithoutId.toJson()),
+          jsonEncode(olderWithId.toJson()),
+        ],
+        AppIdentityResolver.dataKey(DiaryKind.g, 'daily_slots'): jsonEncode({
+          '2026-09-06': [
+            {
+              'i': 0,
+              'l': '工作',
+              'cid': 'local1',
+              'c': Colors.blue.toARGB32(),
+              'ts': 300,
+            },
+          ],
+        }),
+      },
+    );
+    addTearDown(provider.dispose);
+
+    final workCategories =
+        provider.categories.where((category) => category.name == '工作').toList();
+    expect(workCategories, hasLength(1));
+    expect(workCategories.single.id, 'local1');
+    expect(
+      workCategories.single.color.toARGB32(),
+      Colors.red.toARGB32(),
+    );
+    expect(
+      provider.getSlotsForDate('2026-09-06')![0].categoryId,
+      'local1',
+    );
+  });
+
   test('备份导入会合并同名分类并迁移时间块分类 ID', () async {
     final state = _CategoryRemoteState();
     final provider = await _createProvider(state);
