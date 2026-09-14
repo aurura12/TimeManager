@@ -196,24 +196,37 @@ class CheckInSyncService {
 
   /// 写操作（推送/删除）前先拉取远端并合并进 [_document]。
   ///
-  /// 成功（含"远端文件尚不存在"）返回 null；返回非 null 表示远端不可读或
-  /// 格式异常，调用方必须中止本次写操作，绝不能用本地内容覆盖远端。
-  Future<String?> _pullAndMergeForWrite(String token) async {
+  /// [error] 非 null 表示远端不可读或格式异常，调用方必须中止本次写操作，
+  /// 绝不能用本地内容覆盖远端。[sha] / [notFound] 是这次读取到的远端版本，
+  /// 应原样交给随后的写入做乐观并发校验。
+  Future<({String? error, String? sha, bool notFound})> _pullAndMergeForWrite(
+    String token,
+  ) async {
     final pull = await CheckInGiteeService.pullText(
       token: token,
       path: CheckInDocument.filePath,
     );
-    if (pull.notFound) return null;
+    if (pull.notFound) {
+      return (error: null, sha: null, notFound: true);
+    }
     if (!pull.success || pull.content == null) {
-      return '远端读取失败，已中止同步：${pull.error ?? '未知错误'}';
+      return (
+        error: '远端读取失败，已中止同步：${pull.error ?? '未知错误'}',
+        sha: null,
+        notFound: false,
+      );
     }
     try {
       final remote = CheckInDocument.fromMarkdown(pull.content!);
       _document = CheckInDocument.merge(_document, remote);
     } catch (e) {
-      return '远端打卡数据格式异常，已中止同步以保护数据：$e';
+      return (
+        error: '远端打卡数据格式异常，已中止同步以保护数据：$e',
+        sha: null,
+        notFound: false,
+      );
     }
-    return null;
+    return (error: null, sha: pull.sha, notFound: false);
   }
 
   Future<CheckInSyncResult> _pushToGitHubInternal() async {
@@ -223,9 +236,9 @@ class CheckInSyncService {
     }
 
     // 先拉远端合并，避免覆盖对方的打卡
-    final pullError = await _pullAndMergeForWrite(token);
-    if (pullError != null) {
-      return CheckInSyncResult.fail(pullError);
+    final pull = await _pullAndMergeForWrite(token);
+    if (pull.error != null) {
+      return CheckInSyncResult.fail(pull.error!);
     }
 
     final userLabel = currentUser?.label ?? '?';
@@ -234,6 +247,8 @@ class CheckInSyncService {
       path: CheckInDocument.filePath,
       content: _document.toMarkdown(),
       commitMessage: 'check-in($userLabel): update data',
+      expectedSha: pull.sha,
+      expectNotFound: pull.notFound,
     );
     if (!push.success) {
       return CheckInSyncResult.fail(push.error ?? '推送失败');
@@ -281,9 +296,9 @@ class CheckInSyncService {
           return CheckInSyncResult.fail('未配置当前平台同步 Token');
         }
 
-        final pullError = await _pullAndMergeForWrite(token);
-        if (pullError != null) {
-          return CheckInSyncResult.fail(pullError);
+        final pull = await _pullAndMergeForWrite(token);
+        if (pull.error != null) {
+          return CheckInSyncResult.fail(pull.error!);
         }
 
         _document = _document.tombstoneGoal(goal.id);
@@ -294,6 +309,8 @@ class CheckInSyncService {
           path: CheckInDocument.filePath,
           content: _document.toMarkdown(),
           commitMessage: 'check-in(${user.label}): delete goal ${goal.name}',
+          expectedSha: pull.sha,
+          expectNotFound: pull.notFound,
         );
         if (!push.success) {
           return CheckInSyncResult.fail(push.error ?? '删除同步失败');
@@ -330,9 +347,9 @@ class CheckInSyncService {
         }
 
         // Step 1: Pull remote and merge to avoid overwriting others' data
-        final pullError = await _pullAndMergeForWrite(token);
-        if (pullError != null) {
-          return CheckInSyncResult.fail(pullError);
+        final pull = await _pullAndMergeForWrite(token);
+        if (pull.error != null) {
+          return CheckInSyncResult.fail(pull.error!);
         }
 
         // Step 2: Delete photo from GitHub if present
@@ -365,6 +382,8 @@ class CheckInSyncService {
           path: CheckInDocument.filePath,
           content: _document.toMarkdown(),
           commitMessage: 'check-in(${user.label}): delete record ${record.id}',
+          expectedSha: pull.sha,
+          expectNotFound: pull.notFound,
         );
         if (!push.success) {
           return CheckInSyncResult.fail(push.error ?? '删除同步失败');
