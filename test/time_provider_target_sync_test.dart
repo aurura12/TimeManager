@@ -100,6 +100,8 @@ void main() {
         required userCode,
         required content,
         required commitMessage,
+        String? expectedSha,
+        bool expectNotFound = false,
       }) async {
         pushCount++;
         return TargetGiteePushResult.success(created: false);
@@ -141,6 +143,8 @@ void main() {
         required userCode,
         required content,
         required commitMessage,
+        String? expectedSha,
+        bool expectNotFound = false,
       }) async {
         pushCount++;
         return TargetGiteePushResult.success(created: false);
@@ -172,6 +176,8 @@ void main() {
         required userCode,
         required content,
         required commitMessage,
+        String? expectedSha,
+        bool expectNotFound = false,
       }) async {
         pushedContents.add(content);
         return TargetGiteePushResult.success(created: true);
@@ -205,6 +211,8 @@ void main() {
         required userCode,
         required content,
         required commitMessage,
+        String? expectedSha,
+        bool expectNotFound = false,
       }) async {
         pushedContents.add(content);
         return TargetGiteePushResult.success(created: true);
@@ -239,6 +247,8 @@ void main() {
         required userCode,
         required content,
         required commitMessage,
+        String? expectedSha,
+        bool expectNotFound = false,
       }) async {
         pushCount++;
         return TargetGiteePushResult.success(created: false);
@@ -257,5 +267,82 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 150));
 
     expect(pushCount, 0);
+  });
+
+  test('目标推送带上本次拉取得到的 sha（乐观并发）', () async {
+    final remote = TargetDocument(
+      updatedAt: 200,
+      targets: [makeTarget('a', '远端目标', 300)],
+    );
+    final pushes = <({String? expectedSha, bool expectNotFound})>[];
+    final dependencies = TargetSyncDependencies(
+      loadToken: () async => 'token',
+      pullTargets: ({required token, required userCode}) async {
+        return TargetGiteePullResult.success(
+          encodeTargetDocument(remote, nowMs: remote.updatedAt),
+          'sha-target',
+        );
+      },
+      pushTargets: ({
+        required token,
+        required userCode,
+        required content,
+        required commitMessage,
+        String? expectedSha,
+        bool expectNotFound = false,
+      }) async {
+        pushes.add((expectedSha: expectedSha, expectNotFound: expectNotFound));
+        return TargetGiteePushResult.success(created: false);
+      },
+    );
+    final provider = await createProvider(
+      {
+        AppIdentityService.modeKey: 'manual',
+        AppIdentityService.legacyScheduleUserKey: 'j',
+      },
+      dependencies,
+    );
+    addTearDown(provider.dispose);
+
+    provider.addTarget(makeTarget('b', '新目标', 0));
+    await waitUntil(() => pushes.isNotEmpty);
+
+    expect(pushes.last.expectedSha, 'sha-target');
+    expect(pushes.last.expectNotFound, isFalse);
+  });
+
+  test('远端目标文件不存在时推送标记 expectNotFound', () async {
+    final pushes = <({String? expectedSha, bool expectNotFound})>[];
+    final dependencies = TargetSyncDependencies(
+      loadToken: () async => 'token',
+      pullTargets: ({required token, required userCode}) async {
+        return TargetGiteePullResult.notFound();
+      },
+      pushTargets: ({
+        required token,
+        required userCode,
+        required content,
+        required commitMessage,
+        String? expectedSha,
+        bool expectNotFound = false,
+      }) async {
+        pushes.add((expectedSha: expectedSha, expectNotFound: expectNotFound));
+        return TargetGiteePushResult.success(created: false);
+      },
+    );
+    final provider = await createProvider(
+      {
+        AppIdentityService.modeKey: 'manual',
+        AppIdentityService.legacyScheduleUserKey: 'j',
+      },
+      dependencies,
+    );
+    addTearDown(provider.dispose);
+
+    provider.addTarget(makeTarget('b', '新目标', 0));
+    await waitUntil(() => pushes.isNotEmpty);
+
+    expect(pushes.last.expectedSha, isNull);
+    expect(pushes.last.expectNotFound, isTrue);
   });
 }

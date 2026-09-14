@@ -78,17 +78,24 @@ class CategoryGiteeService {
   }
 
   /// 推送指定身份的日程分类文档。
+  ///
+  /// [expectedSha] / [expectNotFound] 来自本次"先拉取再合并"的那次读取，用于
+  /// 乐观并发控制：读取之后远端若被别的设备改过，服务端会拒绝写入。
   static Future<CategoryGiteePushResult> pushCategories({
     required String token,
     required String userCode,
     required String content,
     required String commitMessage,
+    String? expectedSha,
+    bool expectNotFound = false,
   }) async {
     final result = await _api.pushText(
       token: token,
       path: categoryPath(userCode),
       content: content,
       commitMessage: commitMessage,
+      expectedSha: expectedSha,
+      expectNotFound: expectNotFound,
     );
     if (result.success) {
       return CategoryGiteePushResult.success(created: result.created);

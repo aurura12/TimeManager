@@ -21,7 +21,6 @@ import '../services/schedule_gitee_service.dart';
 import '../services/schedule_overwrite.dart';
 import '../services/schedule_sync_dependencies.dart';
 import '../services/category_document_merge.dart';
-import '../services/category_gitee_service.dart';
 import '../services/category_sync_dependencies.dart';
 import '../services/target_document_merge.dart';
 import '../services/target_sync_dependencies.dart';
@@ -3064,6 +3063,9 @@ class TimeProvider with ChangeNotifier {
           nowMs: DateTime.now().millisecondsSinceEpoch,
         ),
         commitMessage: 'targets($userCode): sync',
+        // 用上面那次拉取拿到的版本做乐观并发校验，避免覆盖并发更新。
+        expectedSha: pullResult.success ? pullResult.sha : null,
+        expectNotFound: pullResult.notFound,
       );
       if (!_canContinueTargetSync(userCode)) return;
       if (!pushResult.success) {
@@ -3273,11 +3275,14 @@ class TimeProvider with ChangeNotifier {
       final merged = mergeCategoryDocuments(local: localDoc, remote: remoteDoc);
 
       final nowMs = DateTime.now().millisecondsSinceEpoch;
-      final pushResult = await CategoryGiteeService.pushCategories(
+      final pushResult = await _categorySyncDependencies.pushCategories(
         token: token,
         userCode: userCode,
         content: encodeCategoryDocument(merged, nowMs: nowMs),
         commitMessage: 'categories($userCode): sync',
+        // 用上面那次拉取拿到的版本做乐观并发校验，避免覆盖并发更新。
+        expectedSha: pullResult.success ? pullResult.sha : null,
+        expectNotFound: pullResult.notFound,
       );
       if (!pushResult.success) {
         _appLogService.warning(

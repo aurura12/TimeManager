@@ -34,6 +34,8 @@ TargetSyncDependencies _offlineTargetDependencies() {
       required userCode,
       required content,
       required commitMessage,
+      String? expectedSha,
+      bool expectNotFound = false,
     }) async {
       return TargetGiteePushResult.success(created: false);
     },

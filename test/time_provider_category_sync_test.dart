@@ -17,6 +17,8 @@ import 'package:time_manager/services/schedule_sync_dependencies.dart';
 class _CategoryRemoteState {
   final Map<String, String> contents = {};
   final List<String> pullRequests = [];
+  final List<({String userCode, String? expectedSha, bool expectNotFound})>
+      pushRequests = [];
 }
 
 ScheduleSyncDependencies _offlineScheduleDependencies() {
@@ -39,6 +41,21 @@ CategorySyncDependencies _categoryDependencies(_CategoryRemoteState state) {
       final content = state.contents[userCode];
       if (content == null) return CategoryGiteePullResult.notFound();
       return CategoryGiteePullResult.success(content, 'sha-$userCode');
+    },
+    pushCategories: ({
+      required token,
+      required userCode,
+      required content,
+      required commitMessage,
+      String? expectedSha,
+      bool expectNotFound = false,
+    }) async {
+      state.pushRequests.add((
+        userCode: userCode,
+        expectedSha: expectedSha,
+        expectNotFound: expectNotFound,
+      ));
+      return CategoryGiteePushResult.success(created: false);
     },
   );
 }
@@ -153,6 +170,24 @@ void main() {
 
     await _waitUntil(() => state.pullRequests.length >= 2);
     expect(state.pullRequests, ['g', 'g']);
+  });
+
+  test('分类推送带上本次拉取得到的 sha（乐观并发）', () async {
+    final state = _CategoryRemoteState();
+    state.contents['g'] = encodeCategoryDocument(
+      _remoteDocument('g-remote', '远端分类'),
+      nowMs: 200,
+    );
+    final provider = await _createProvider(state);
+    addTearDown(provider.dispose);
+
+    // 分类推送走 3 秒防抖，触发一次本地变更后等待它落地。
+    provider.addCategory(Category(name: '本地新分类', color: Colors.green));
+    await _waitUntil(() => state.pushRequests.isNotEmpty);
+
+    expect(state.pushRequests.last.userCode, 'g');
+    expect(state.pushRequests.last.expectedSha, 'sha-g');
+    expect(state.pushRequests.last.expectNotFound, isFalse);
   });
 
   test('新增和重命名分类时阻止重复名称，并规范首尾空白', () async {

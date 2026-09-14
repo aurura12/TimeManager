@@ -28,6 +28,8 @@ void main() {
         required userCode,
         required content,
         required commitMessage,
+        String? expectedSha,
+        bool expectNotFound = false,
       }) async {
         pushedToken = token;
         pushedUserCode = userCode;
