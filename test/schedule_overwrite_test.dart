@@ -101,6 +101,8 @@ ScheduleSyncDependencies _fakeDependencies({
       required userCode,
       required content,
       required commitMessage,
+      String? expectedSha,
+      bool expectNotFound = false,
     }) async {
       onGiteeUpload?.call();
       return ScheduleGiteePushResult.success(created: false);
@@ -1191,6 +1193,8 @@ void main() {
         required userCode,
         required content,
         required commitMessage,
+        String? expectedSha,
+        bool expectNotFound = false,
       }) async {
         giteeUploads++;
         return ScheduleGiteePushResult.success(created: false);
@@ -1294,6 +1298,8 @@ void main() {
         required userCode,
         required content,
         required commitMessage,
+        String? expectedSha,
+        bool expectNotFound = false,
       }) async {
         giteeUploads++;
         return ScheduleGiteePushResult.success(created: false);

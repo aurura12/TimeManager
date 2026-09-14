@@ -20,6 +20,10 @@ typedef ScheduleDayPusher = Future<ScheduleGiteePushResult> Function({
   required String userCode,
   required String content,
   required String commitMessage,
+  /// 读取远端时拿到的 sha；写入时交给服务端做版本校验。
+  String? expectedSha,
+  /// 读取时远端文件不存在（此时 expectedSha 为 null）。
+  bool expectNotFound,
 });
 typedef ScheduleGoogleDayPusher = Future<bool> Function(
   List<TimeSlot> slots,

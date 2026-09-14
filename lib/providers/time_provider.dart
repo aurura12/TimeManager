@@ -2080,6 +2080,10 @@ class TimeProvider with ChangeNotifier {
       return false;
     }
     final remoteContent = pullResult.success ? pullResult.content : null;
+    // 把这次读取到的版本交给写入端做乐观并发校验：从读到写之间若远端被
+    // 别的设备改过，服务端会拒绝写入，而不是静默覆盖掉对方的更新。
+    final expectedSha = pullResult.success ? pullResult.sha : null;
+    final remoteWasNotFound = pullResult.notFound;
 
     // 2) 合并（后写覆盖：同槽 ts 大者胜，仅一侧有则保留）
     final remote = parseScheduleContent(remoteContent);
@@ -2131,8 +2135,19 @@ class TimeProvider with ChangeNotifier {
       userCode: userCode,
       content: content,
       commitMessage: commitMessage,
+      expectedSha: expectedSha,
+      expectNotFound: remoteWasNotFound,
     );
-    if (!_canContinueScheduleSync(userCode) || !result.success) return false;
+    if (!_canContinueScheduleSync(userCode)) return false;
+    if (!result.success) {
+      // 现在推送可能因为"读到写之间远端被改过"而被服务端拒绝。这类失败必须
+      // 留痕：待同步标记不会被清除，下一轮会重新拉取合并后再推。
+      _appLogService.warning(
+        '日程推送失败：$dateKey ${result.error ?? '未知错误'}',
+        source: 'schedule_sync',
+      );
+      return false;
+    }
 
     // 5) 将合并结果写回本地（含远端更新的槽位），保证本地 == 远端。
     //    注意：拉取远端期间用户可能已继续编辑本地，写回前用最新本地

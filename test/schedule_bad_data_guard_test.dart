@@ -14,7 +14,17 @@ class _RemoteState {
   final Map<String, String> remoteContents = {}; // "userCode/dateKey" -> JSON
   final Set<String> notFound = {}; // "userCode/dateKey" -> 文件不存在
   final List<String> pullRequests = [];
-  final List<({String userCode, String dateKey, String content})> uploads = [];
+
+  /// 模拟服务端拒绝写入（例如版本校验失败）。
+  bool pushFails = false;
+  final List<
+      ({
+        String userCode,
+        String dateKey,
+        String content,
+        String? expectedSha,
+        bool expectNotFound,
+      })> uploads = [];
 }
 
 ScheduleSyncDependencies _fakeDependencies(
@@ -44,13 +54,19 @@ ScheduleSyncDependencies _fakeDependencies(
       required userCode,
       required content,
       required commitMessage,
+      String? expectedSha,
+      bool expectNotFound = false,
     }) async {
       state.uploads.add((
         userCode: userCode,
         dateKey: dateKey,
         content: content,
+        expectedSha: expectedSha,
+        expectNotFound: expectNotFound,
       ));
-      return ScheduleGiteePushResult.success(created: false);
+      return state.pushFails
+          ? ScheduleGiteePushResult.error('远端已被其他设备修改，请重新同步')
+          : ScheduleGiteePushResult.success(created: false);
     },
     pushGoogleDay: (slots, date) async => true,
     pullGoogleDay: (date) async => const [],
@@ -334,6 +350,74 @@ void main() {
       expect(state.pullRequests, contains('j/2026-09-06'));
       expect(state.pullRequests, isNot(contains('g/2026-09-06')));
       expect(provider.getSlotsForDate('2026-09-06')![60].label, '晶晶日程');
+    });
+  });
+
+  group('推送版本保护（乐观并发）', () {
+    test('远端已存在时，推送带上本次拉取得到的 sha', () async {
+      final state = _RemoteState();
+      final provider = await _createProvider(
+        initialPreferences: {
+          'daily_slots':
+              '{"2026-09-06":[{"i":60,"l":"跑步","c":1,"ts":1000}]}',
+        },
+        state: state,
+      );
+      addTearDown(provider.dispose);
+
+      state.remoteContents['g/2026-09-06'] =
+          '{"updated_at":2000,"slots":[{"i":60,"l":"旧内容","ts":900}]}';
+
+      await provider.syncScheduleToGitee(dateKey: '2026-09-06');
+
+      expect(state.uploads, hasLength(1));
+      expect(state.uploads.single.dateKey, '2026-09-06');
+      expect(state.uploads.single.expectedSha, 'sha-g/2026-09-06');
+      expect(state.uploads.single.expectNotFound, isFalse);
+    });
+
+    test('远端文件不存在时，推送标记 expectNotFound 且不带 sha', () async {
+      final state = _RemoteState();
+      final provider = await _createProvider(
+        initialPreferences: {
+          'daily_slots':
+              '{"2026-09-07":[{"i":60,"l":"跑步","c":1,"ts":1000}]}',
+        },
+        state: state,
+      );
+      addTearDown(provider.dispose);
+
+      // 不设置 remoteContents → pullDay 返回 notFound
+      await provider.syncScheduleToGitee(dateKey: '2026-09-07');
+
+      expect(state.uploads, hasLength(1));
+      expect(state.uploads.single.expectedSha, isNull);
+      expect(state.uploads.single.expectNotFound, isTrue);
+    });
+
+    test('推送被服务端拒绝时不会把远端内容应用到本地', () async {
+      final state = _RemoteState()..pushFails = true;
+      final provider = await _createProvider(
+        initialPreferences: {
+          'daily_slots':
+              '{"2026-09-08":[{"i":60,"l":"跑步","c":1,"ts":1000}]}',
+        },
+        state: state,
+      );
+      addTearDown(provider.dispose);
+
+      // 远端内容更新（ts 更大），合并本会采纳远端；但推送被拒后不应写回本地。
+      state.remoteContents['g/2026-09-08'] =
+          '{"updated_at":3000,"slots":[{"i":60,"l":"对方内容","ts":2000}]}';
+
+      await provider.syncScheduleToGitee(dateKey: '2026-09-08');
+
+      expect(state.uploads, hasLength(1));
+      expect(
+        provider.getSlotsForDate('2026-09-08')?[60].label,
+        '跑步',
+        reason: '推送失败时本地不能被远端内容覆盖',
+      );
     });
   });
 }

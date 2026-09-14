@@ -92,18 +92,26 @@ class ScheduleGiteeService {
   }
 
   /// 推送指定日期的日程文件。
+  ///
+  /// [expectedSha] / [expectNotFound] 由调用方在"先拉取再合并"的那次读取中获得，
+  /// 用于乐观并发控制：读取之后若远端被别的设备改过，服务端会拒绝写入，
+  /// 避免用本地内容覆盖掉对方的更新。
   static Future<ScheduleGiteePushResult> pushSchedule({
     required String token,
     required String dateKey,
     required String userCode,
     required String content,
     required String commitMessage,
+    String? expectedSha,
+    bool expectNotFound = false,
   }) async {
     final result = await _api.pushText(
       token: token,
       path: schedulePath(dateKey, userCode: userCode),
       content: content,
       commitMessage: commitMessage,
+      expectedSha: expectedSha,
+      expectNotFound: expectNotFound,
     );
     if (result.success) {
       return ScheduleGiteePushResult.success(created: result.created);
