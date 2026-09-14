@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -63,8 +65,12 @@ Future<void> _waitUntil(bool Function() condition) async {
   expect(condition(), isTrue);
 }
 
-Future<TimeProvider> _createProvider(_CategoryRemoteState state) async {
+Future<TimeProvider> _createProvider(
+  _CategoryRemoteState state, {
+  Map<String, Object> initialPreferences = const {},
+}) async {
   SharedPreferences.setMockInitialValues({
+    ...initialPreferences,
     AppIdentityService.modeKey: 'manual',
     AppIdentityService.legacyScheduleUserKey: DiaryKind.g.code,
   });
@@ -212,5 +218,93 @@ void main() {
     );
     expect(
         provider.categories.any((category) => category.name == '父事件'), isFalse);
+  });
+
+  test('启动加载会规范化存量同名分类并迁移时间块分类 ID', () async {
+    final state = _CategoryRemoteState();
+    final oldCategory = Category(
+      id: 'old-category',
+      name: ' 工作 ',
+      color: Colors.blue,
+      updatedAt: 100,
+    );
+    final newCategory = Category(
+      id: 'new-category',
+      name: '工作',
+      color: Colors.red,
+      updatedAt: 200,
+    );
+    final provider = await _createProvider(
+      state,
+      initialPreferences: {
+        AppIdentityResolver.dataKey(DiaryKind.g, 'categories'): [
+          jsonEncode(oldCategory.toJson()),
+          jsonEncode(newCategory.toJson())
+        ],
+        AppIdentityResolver.dataKey(DiaryKind.g, 'daily_slots'): jsonEncode({
+          '2026-09-06': [
+            {
+              'i': 0,
+              'l': '工作',
+              'cid': 'old-category',
+              'c': Colors.blue.toARGB32(),
+              'ts': 300,
+            },
+          ],
+        }),
+      },
+    );
+    addTearDown(provider.dispose);
+
+    final workCategories =
+        provider.categories.where((category) => category.name == '工作').toList();
+    expect(workCategories, hasLength(1));
+    expect(workCategories.single.id, 'new-category');
+    expect(
+        provider.getSlotsForDate('2026-09-06')![0].categoryId, 'new-category');
+  });
+
+  test('备份导入会合并同名分类并迁移时间块分类 ID', () async {
+    final state = _CategoryRemoteState();
+    final provider = await _createProvider(state);
+    addTearDown(provider.dispose);
+
+    final backup = {
+      'version': TimeProvider.backupVersion,
+      'categories': [
+        Category(
+          id: 'old-category',
+          name: ' 工作 ',
+          color: Colors.blue,
+          updatedAt: 100,
+        ).toJson(),
+        Category(
+          id: 'new-category',
+          name: '工作',
+          color: Colors.red,
+          updatedAt: 200,
+        ).toJson(),
+      ],
+      'dailySlots': {
+        '2026-09-06': [
+          {
+            'i': 0,
+            'l': '工作',
+            'cid': 'old-category',
+            'c': Colors.blue.toARGB32(),
+            'ts': 300,
+          },
+        ],
+      },
+    };
+
+    await provider.importBackupJson(jsonEncode(backup));
+
+    final workCategories =
+        provider.categories.where((category) => category.name == '工作').toList();
+    expect(workCategories, hasLength(1));
+    expect(workCategories.single.id, 'new-category');
+    expect(
+        provider.getSlotsForDate('2026-09-06')![0].categoryId, 'new-category');
   });
 }

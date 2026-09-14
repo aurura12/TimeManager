@@ -38,6 +38,7 @@ import '../utils/schedule_view_dates.dart';
 import '../utils/calendar_time_range.dart';
 
 import '../theme/app_semantic_colors.dart';
+
 enum TimePointStatus { onTime, late, notDone }
 
 class BackupPreview {
@@ -54,6 +55,33 @@ class BackupPreview {
     required this.categoryCount,
     required this.templateCount,
   });
+}
+
+enum CategoryMutationStatus { success, validationError, blocked, invalidIndex }
+
+/// 分类新增/编辑的明确结果。
+///
+/// `addCategory` / `updateCategory` 继续保留 bool 返回值供旧调用方使用；
+/// 新调用方应使用带 Result 后缀的方法，以区分输入错误、状态阻塞和非法索引。
+class CategoryMutationResult {
+  final CategoryMutationStatus status;
+  final String? error;
+
+  const CategoryMutationResult._(this.status, this.error);
+
+  const CategoryMutationResult.success()
+      : this._(CategoryMutationStatus.success, null);
+
+  const CategoryMutationResult.validationError(String message)
+      : this._(CategoryMutationStatus.validationError, message);
+
+  const CategoryMutationResult.blocked(String message)
+      : this._(CategoryMutationStatus.blocked, message);
+
+  const CategoryMutationResult.invalidIndex(String message)
+      : this._(CategoryMutationStatus.invalidIndex, message);
+
+  bool get isSuccess => status == CategoryMutationStatus.success;
 }
 
 typedef EventHistoryItem = ({
@@ -265,30 +293,31 @@ class TimeProvider with ChangeNotifier {
   bool get _isScheduleIdentityReady =>
       _isScheduleReady && _scheduleUserLoadFinished;
 
-  bool _allowScheduleMutation() {
-    if (!_isScheduleReady) return false;
+  String? _scheduleMutationBlockedMessage() {
+    if (!_isScheduleReady) return '日程尚未准备完成，请稍后重试';
     if (_scheduleIdentityMutationInProgress ||
         _scheduleOverwriteInProgress ||
         _scheduleOverwriteCleanupInProgress ||
         _scheduleOverwriteJournalCleanupPending ||
         _remoteViewTransitionInProgress ||
         _remoteViewEnabled) {
-      _addScheduleSyncStatus(
-        _scheduleOverwriteJournalCleanupPending
-            ? '覆盖日程清理未完成，修改已忽略'
-            : _remoteViewTransitionInProgress
-                ? '远程视图切换进行中，修改已忽略'
-                : _remoteViewEnabled
-                    ? '远程视图只读，修改已忽略'
-                    : '覆盖拉取进行中，修改已忽略',
-      );
-      return false;
+      return _scheduleOverwriteJournalCleanupPending
+          ? '覆盖日程清理未完成，修改已忽略'
+          : _remoteViewTransitionInProgress
+              ? '远程视图切换进行中，修改已忽略'
+              : _remoteViewEnabled
+                  ? '远程视图只读，修改已忽略'
+                  : '覆盖拉取进行中，修改已忽略';
     }
-    if (_usesMobileIdentityFlow && !_hasSelectedScheduleUser) {
-      _addScheduleSyncStatus('请先选择身份');
-      return false;
-    }
-    return true;
+    if (_usesMobileIdentityFlow && !_hasSelectedScheduleUser) return '请先选择身份';
+    return null;
+  }
+
+  bool _allowScheduleMutation() {
+    final message = _scheduleMutationBlockedMessage();
+    if (message == null) return true;
+    if (_isScheduleReady) _addScheduleSyncStatus(message);
+    return false;
   }
 
   bool _allowScheduleIdentityMutation() {
@@ -345,6 +374,9 @@ class TimeProvider with ChangeNotifier {
       _scheduleMergePullsInProgress > 0 ||
       _googleCalendarPullsInProgress > 0 ||
       _categoriesGiteeSyncing;
+
+  /// 当前是否仍有日程/分类同步任务在执行。
+  bool get hasScheduleSyncInFlight => _hasScheduleSyncInFlight;
 
   bool _canContinueRemoteViewPersistence(int epoch) {
     return _isScheduleReady &&
@@ -3215,7 +3247,7 @@ class TimeProvider with ChangeNotifier {
         return;
       }
 
-      _applyMergedCategories(merged);
+      _applyMergedCategories(merged, scheduleRemoteRepair: false);
       _addScheduleSyncStatus('分类已同步');
       Future.delayed(const Duration(seconds: 3), () {
         _addScheduleSyncStatus('');
@@ -3289,14 +3321,33 @@ class TimeProvider with ChangeNotifier {
         return false;
       }
 
+      final localCategories = List<Category>.from(_categories);
+      final localCategoryNormalization =
+          normalizeCategoriesForStorage(localCategories);
       final localDoc = CategoryDocument(
         updatedAt: _categoriesDocUpdatedAt,
-        categories: List.from(_categories),
+        categories: localCategories,
         deletedCategories: Map.from(_deletedCategories),
       );
       final remoteDoc = parseCategoryDocument(pullResult.content);
+      final remoteCategoryNormalization =
+          normalizeCategoriesForStorage(remoteDoc.categories);
       final merged = mergeCategoryDocuments(local: localDoc, remote: remoteDoc);
-      _applyMergedCategories(merged);
+      final localIdRemap = _categoryIdRemapForCanonicalCategories(
+        localCategories,
+        merged.categories,
+      );
+      final crossDocumentNameConflict = _hasCategoryNameConflict(
+        localCategories,
+        remoteCategoryNormalization.categories,
+      );
+      _applyMergedCategories(
+        merged,
+        scheduleRemoteRepair: localCategoryNormalization.changed ||
+            remoteCategoryNormalization.changed ||
+            localIdRemap.isNotEmpty ||
+            crossDocumentNameConflict,
+      );
       _appLogService.info(
         '分类拉取成功：$userCode（远端 ${remoteDoc.categories.length} 个，合并后 ${merged.categories.length} 个）',
         source: 'schedule_sync',
@@ -3312,20 +3363,32 @@ class TimeProvider with ChangeNotifier {
   }
 
   /// 将合并结果写回本地分类状态并持久化。
-  void _applyMergedCategories(CategoryDocument merged) {
+  void _applyMergedCategories(
+    CategoryDocument merged, {
+    bool scheduleRemoteRepair = false,
+  }) {
     if (!_isScheduleReady ||
         _scheduleOverwriteCleanupInProgress ||
         _remoteViewTransitionInProgress ||
         _remoteViewEnabled) {
       return;
     }
-    _categories = merged.categories;
+    final previousCategories = List<Category>.from(_categories);
+    final normalized = normalizeCategoriesForStorage(merged.categories);
+    final idRemap = _categoryIdRemapForCanonicalCategories(
+      previousCategories,
+      normalized.categories,
+    );
+    _remapCategoryReferences(idRemap);
+    _categories = List<Category>.from(normalized.categories);
     _deletedCategories
       ..clear()
       ..addAll(merged.deletedCategories);
     _removeDeletedRelationsForLiveLabels();
     _categoriesDocUpdatedAt = merged.updatedAt;
     _markCategoriesChanged();
+    _invalidateLabelCategoryIdCache();
+    if (scheduleRemoteRepair) _markCategoriesGiteePending();
     _saveData();
     notifyListeners();
   }
@@ -3587,8 +3650,7 @@ class TimeProvider with ChangeNotifier {
               if (map['c'] != null) {
                 final colorVal = _parseInt(map['c']);
                 if (colorVal != null) {
-                  slots[idx].color =
-                      AppSemanticColors.opaque(Color(colorVal));
+                  slots[idx].color = AppSemanticColors.opaque(Color(colorVal));
                 }
               }
               if (map['fc'] == true) slots[idx].isFromCalendar = true;
@@ -4926,7 +4988,8 @@ class TimeProvider with ChangeNotifier {
   /// 返回分类输入的校验错误；返回 null 表示可以保存。
   ///
   /// 分类名是一级事件的显示键，必须在同一身份下唯一，否则按名称查找
-  /// 分类时会出现歧义。编辑已有分类时通过 [editingIndex] 排除自身。
+  /// 分类时会出现歧义。编辑已有分类时，如果名称 key 没有改变，允许
+  /// 历史重复分类先修改其它属性，避免存量数据进入“完全无法编辑”状态。
   String? categoryValidationError(
     Category category, {
     int? editingIndex,
@@ -4938,30 +5001,58 @@ class TimeProvider with ChangeNotifier {
     }
 
     final nameKey = _categoryLabelKey(normalized.name);
-    for (var i = 0; i < _categories.length; i++) {
-      if (i == editingIndex) continue;
-      if (_categoryLabelKey(_categories[i].name) == nameKey) {
-        return '事件“${normalized.name}”已存在，请使用其他名称';
+    final existingCategory = editingIndex != null &&
+            editingIndex >= 0 &&
+            editingIndex < _categories.length
+        ? _normalizeCategoryForStorage(_categories[editingIndex])
+        : null;
+    final nameUnchanged = existingCategory != null &&
+        _categoryLabelKey(existingCategory.name) == nameKey;
+    if (!nameUnchanged) {
+      for (var i = 0; i < _categories.length; i++) {
+        if (i == editingIndex) continue;
+        if (_categoryLabelKey(_categories[i].name) == nameKey) {
+          return '事件“${normalized.name}”已存在，请使用其他名称';
+        }
       }
     }
 
-    final subKeys = <String>{};
-    for (final subCategory in [
-      ...normalized.subCategories,
-      ...normalized.hiddenSubCategories,
-    ]) {
-      if (subCategory.isEmpty) return '子事件名称不能为空';
-      if (!subKeys.add(_categoryLabelKey(subCategory))) {
-        return '子事件“$subCategory”重复，请保留一个';
+    final childrenUnchanged = existingCategory != null &&
+        _stringListEquals(
+          existingCategory.subCategories,
+          normalized.subCategories,
+        ) &&
+        _stringListEquals(
+          existingCategory.hiddenSubCategories,
+          normalized.hiddenSubCategories,
+        );
+    if (!childrenUnchanged) {
+      final subKeys = <String>{};
+      for (final subCategory in [
+        ...normalized.subCategories,
+        ...normalized.hiddenSubCategories,
+      ]) {
+        if (subCategory.isEmpty) return '子事件名称不能为空';
+        if (!subKeys.add(_categoryLabelKey(subCategory))) {
+          return '子事件“$subCategory”重复，请保留一个';
+        }
       }
     }
     return null;
   }
 
-  bool addCategory(Category category) {
-    if (!_allowScheduleMutation()) return false;
+  /// 返回分类新增的明确结果。
+  CategoryMutationResult addCategoryWithResult(Category category) {
+    if (!_allowScheduleMutation()) {
+      return CategoryMutationResult.blocked(
+        _scheduleMutationBlockedMessage() ?? '事件暂时无法修改，请稍后重试',
+      );
+    }
     final normalized = _normalizeCategoryForStorage(category);
-    if (categoryValidationError(normalized) != null) return false;
+    final validationError = categoryValidationError(normalized);
+    if (validationError != null) {
+      return CategoryMutationResult.validationError(validationError);
+    }
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     _categories.add(normalized.updatedAt <= 0
         ? normalized.copyWith(updatedAt: nowMs)
@@ -4978,12 +5069,26 @@ class TimeProvider with ChangeNotifier {
     _invalidateLabelCategoryIdCache(); // 清除缓存
     _saveData();
     notifyListeners();
-    return true;
+    return const CategoryMutationResult.success();
   }
 
-  bool updateCategory(int index, Category newCategory) {
-    if (!_allowScheduleMutation()) return false;
-    if (index < 0 || index >= _categories.length) return false;
+  /// 兼容旧调用方；新代码请使用 [addCategoryWithResult]。
+  bool addCategory(Category category) =>
+      addCategoryWithResult(category).isSuccess;
+
+  /// 返回分类编辑的明确结果。
+  CategoryMutationResult updateCategoryWithResult(
+    int index,
+    Category newCategory,
+  ) {
+    if (!_allowScheduleMutation()) {
+      return CategoryMutationResult.blocked(
+        _scheduleMutationBlockedMessage() ?? '事件暂时无法修改，请稍后重试',
+      );
+    }
+    if (index < 0 || index >= _categories.length) {
+      return const CategoryMutationResult.invalidIndex('事件不存在');
+    }
 
     final oldCategory = _categories[index];
     final updated = newCategory.id.isEmpty
@@ -4991,8 +5096,12 @@ class TimeProvider with ChangeNotifier {
         : newCategory;
     final categoryId = oldCategory.id;
     final normalized = _normalizeCategoryForStorage(updated);
-    if (categoryValidationError(normalized, editingIndex: index) != null) {
-      return false;
+    final validationError = categoryValidationError(
+      normalized,
+      editingIndex: index,
+    );
+    if (validationError != null) {
+      return CategoryMutationResult.validationError(validationError);
     }
 
     if (oldCategory.name != normalized.name) {
@@ -5050,8 +5159,12 @@ class TimeProvider with ChangeNotifier {
     _invalidateLabelCategoryIdCache(); // 清除缓存
     _saveData();
     notifyListeners();
-    return true;
+    return const CategoryMutationResult.success();
   }
+
+  /// 兼容旧调用方；新代码请使用 [updateCategoryWithResult]。
+  bool updateCategory(int index, Category newCategory) =>
+      updateCategoryWithResult(index, newCategory).isSuccess;
 
   void hideSubCategory(int catIndex, String subCategory) {
     if (!_allowScheduleMutation()) return;
@@ -5374,16 +5487,205 @@ class TimeProvider with ChangeNotifier {
     return labels.any(isReservedCategoryLabel);
   }
 
-  static String _categoryLabelKey(String value) => value.trim().toLowerCase();
+  static String _categoryLabelKey(String value) => categoryLabelKey(value);
 
   Category _normalizeCategoryForStorage(Category category) {
-    return category.copyWith(
-      name: category.name.trim(),
-      subCategories:
-          category.subCategories.map((value) => value.trim()).toList(),
-      hiddenSubCategories:
-          category.hiddenSubCategories.map((value) => value.trim()).toList(),
-    );
+    return trimCategoryForStorage(category);
+  }
+
+  static bool _stringListEquals(List<String> left, List<String> right) {
+    if (left.length != right.length) return false;
+    for (var i = 0; i < left.length; i++) {
+      if (left[i] != right[i]) return false;
+    }
+    return true;
+  }
+
+  String _resolveCategoryId(
+    String categoryId,
+    Map<String, String> remap,
+  ) {
+    var current = categoryId;
+    final visited = <String>{};
+    while (visited.add(current) && remap.containsKey(current)) {
+      current = remap[current]!;
+    }
+    return current;
+  }
+
+  String? _remappedCategoryId(
+    String? categoryId,
+    Map<String, String> remap,
+  ) {
+    if (categoryId == null || categoryId.isEmpty) return categoryId;
+    return _resolveCategoryId(categoryId, remap);
+  }
+
+  Map<String, String> _categoryIdRemapForCanonicalCategories(
+    Iterable<Category> previous,
+    Iterable<Category> canonical,
+  ) {
+    final winnerByName = <String, String>{};
+    for (final category in canonical) {
+      final key = _categoryLabelKey(category.name);
+      if (key.isNotEmpty) winnerByName[key] = category.id;
+    }
+
+    final remap = <String, String>{};
+    for (final category in previous) {
+      if (category.id.isEmpty) continue;
+      final winnerId = winnerByName[_categoryLabelKey(category.name)];
+      if (winnerId != null && winnerId != category.id) {
+        remap[category.id] = winnerId;
+      }
+    }
+    return remap.map(
+      (id, target) => MapEntry(id, _resolveCategoryId(target, remap)),
+    )..removeWhere((id, target) => id == target);
+  }
+
+  bool _hasCategoryNameConflict(
+    Iterable<Category> left,
+    Iterable<Category> right,
+  ) {
+    final idsByName = <String, Set<String>>{};
+    void collect(Iterable<Category> categories) {
+      for (final category in categories) {
+        final key = _categoryLabelKey(category.name);
+        if (key.isEmpty) continue;
+        idsByName.putIfAbsent(key, () => <String>{}).add(category.id);
+      }
+    }
+
+    collect(left);
+    collect(right);
+    return idsByName.values.any((ids) => ids.length > 1);
+  }
+
+  bool _remapCategoryIdsInSlots(
+    Map<String, List<TimeSlot>> dailySlots,
+    Map<String, String> remap,
+  ) {
+    var changed = false;
+    for (final daySlots in dailySlots.values) {
+      for (final slot in daySlots) {
+        final mapped = _remappedCategoryId(slot.categoryId, remap);
+        if (mapped != slot.categoryId) {
+          slot.categoryId = mapped;
+          changed = true;
+        }
+      }
+    }
+    return changed;
+  }
+
+  bool _remapCategoryIdsInTargets(
+    List<Target> targets,
+    Map<String, String> remap,
+  ) {
+    var changed = false;
+    for (var i = 0; i < targets.length; i++) {
+      final target = targets[i];
+      final mapped = _remappedCategoryId(target.categoryId, remap);
+      if (mapped != target.categoryId && mapped != null) {
+        targets[i] = target.copyWith(categoryId: mapped);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  bool _remapCategoryIdsInTemplates(
+    List<ScheduleTemplate> templates,
+    Map<String, String> remap,
+  ) {
+    var changed = false;
+    for (var i = 0; i < templates.length; i++) {
+      final template = templates[i];
+      var templateChanged = false;
+      final slots = template.slots.map((slot) {
+        final mapped = _remappedCategoryId(slot.categoryId, remap);
+        if (mapped == slot.categoryId) return slot;
+        templateChanged = true;
+        return TemplateSlot(
+          index: slot.index,
+          label: slot.label,
+          categoryId: mapped,
+          colorArgb: slot.colorArgb,
+        );
+      }).toList();
+      if (templateChanged) {
+        templates[i] = template.copyWith(slots: slots);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  bool _remapCategoryIdsInDeletedRelations(
+    List<DeletedEventRelation> relations,
+    Map<String, String> remap,
+  ) {
+    var changed = false;
+    for (var i = 0; i < relations.length; i++) {
+      final relation = relations[i];
+      final mapped = _remappedCategoryId(relation.categoryId, remap);
+      if (mapped != relation.categoryId && mapped != null) {
+        relations[i] = relation.copyWith(categoryId: mapped);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  bool _remapCategoryExpandStates(Map<String, String> remap) {
+    final next = Map<String, bool>.from(_categoryExpandStates);
+    var changed = false;
+    for (final entry in remap.entries) {
+      final value = _categoryExpandStates[entry.key];
+      if (value == null) continue;
+      if (!next.containsKey(entry.value)) next[entry.value] = value;
+      if (next.remove(entry.key) != null) changed = true;
+    }
+    if (changed) {
+      _categoryExpandStates = next;
+      _categoryExpandDirty = true;
+    }
+    return changed;
+  }
+
+  bool _remapCategoryReferences(
+    Map<String, String> remap, {
+    bool scheduleRemoteSync = true,
+  }) {
+    if (remap.isEmpty) return false;
+    final slotsChanged = _remapCategoryIdsInSlots(_dailySlots, remap);
+    final targetsChanged = _remapCategoryIdsInTargets(_targets, remap);
+    final templatesChanged = _remapCategoryIdsInTemplates(_templates, remap);
+    final relationsChanged =
+        _remapCategoryIdsInDeletedRelations(_deletedRelations, remap);
+    final expandStatesChanged = _remapCategoryExpandStates(remap);
+
+    if (slotsChanged) _markAllSlotsDirty();
+    if (targetsChanged) {
+      _targetsDocUpdatedAt = DateTime.now().millisecondsSinceEpoch;
+      _targetsDirty = true;
+      if (scheduleRemoteSync) _markTargetsGiteePending();
+    }
+    if (templatesChanged) _markTemplatesChanged();
+    if (relationsChanged) _categoriesDirty = true;
+    if (expandStatesChanged) _categoryExpandDirty = true;
+    if (slotsChanged ||
+        targetsChanged ||
+        templatesChanged ||
+        relationsChanged) {
+      _invalidateLabelCategoryIdCache();
+    }
+    return slotsChanged ||
+        targetsChanged ||
+        templatesChanged ||
+        relationsChanged ||
+        expandStatesChanged;
   }
 
   DeletedEventRelation? _findDeletedRelationForSlot(
@@ -6202,6 +6504,7 @@ class TimeProvider with ChangeNotifier {
                 'color': c.color.toARGB32(),
                 'subCategories': c.subCategories,
                 'hiddenSubCategories': c.hiddenSubCategories,
+                'updatedAt': c.updatedAt,
               })
           .toList(),
       'deletedRelations':
@@ -6254,6 +6557,7 @@ class TimeProvider with ChangeNotifier {
     _migrateToCategoryIds();
     // 导入是全量操作，设置所有脏标记
     _markCategoriesChanged();
+    _markCategoriesGiteePending();
     _targetsDirty = true;
     _markAllSlotsDirty();
     _markTemplatesChanged();
@@ -6292,13 +6596,26 @@ class TimeProvider with ChangeNotifier {
         _recordAppError('导入分类数据出错', err, stackTrace);
       }
     }
-    if (!parsedCategories.any((c) => c.name == temporaryCategoryName)) {
+    final rawParsedCategories = List<Category>.from(parsedCategories);
+    final normalizedCategories =
+        normalizeCategoriesForStorage(rawParsedCategories);
+    parsedCategories
+      ..clear()
+      ..addAll(normalizedCategories.categories);
+    if (!parsedCategories.any(
+      (c) =>
+          _categoryLabelKey(c.name) == _categoryLabelKey(temporaryCategoryName),
+    )) {
       parsedCategories.add(Category(
         name: temporaryCategoryName,
         color: AppSemanticColors.neutral,
         updatedAt: DateTime.now().millisecondsSinceEpoch,
       ));
     }
+    final categoryIdRemap = _categoryIdRemapForCanonicalCategories(
+      rawParsedCategories,
+      parsedCategories,
+    );
 
     final parsedDeletedRelations = <DeletedEventRelation>[];
     final rawDeletedRelations = data['deletedRelations'];
@@ -6391,6 +6708,14 @@ class TimeProvider with ChangeNotifier {
         googlePending.map((e) => _normalizeDateKey(e.toString())),
       );
     }
+
+    _remapCategoryIdsInSlots(parsedDailySlots, categoryIdRemap);
+    _remapCategoryIdsInTargets(parsedTargets, categoryIdRemap);
+    _remapCategoryIdsInTemplates(parsedTemplates, categoryIdRemap);
+    _remapCategoryIdsInDeletedRelations(
+      parsedDeletedRelations,
+      categoryIdRemap,
+    );
     final hasSplitPendingState = giteePending is List || googlePending is List;
     final legacyPendingState = PendingSyncState.fromLegacy(
       parsedPending,
@@ -6398,6 +6723,7 @@ class TimeProvider with ChangeNotifier {
     );
 
     _categories = parsedCategories;
+    _invalidateLabelCategoryIdCache();
     _deletedRelations
       ..clear()
       ..addAll(parsedDeletedRelations);
@@ -6423,14 +6749,19 @@ class TimeProvider with ChangeNotifier {
     );
   }
 
-  void _ensureTempCategory() {
-    if (!_categories.any((c) => c.name == temporaryCategoryName)) {
-      _categories.add(Category(
-        name: temporaryCategoryName,
-        color: AppSemanticColors.neutral,
-        updatedAt: DateTime.now().millisecondsSinceEpoch,
-      ));
+  bool _ensureTempCategory() {
+    if (_categories.any(
+      (c) =>
+          _categoryLabelKey(c.name) == _categoryLabelKey(temporaryCategoryName),
+    )) {
+      return false;
     }
+    _categories.add(Category(
+      name: temporaryCategoryName,
+      color: AppSemanticColors.neutral,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    ));
+    return true;
   }
 
   List<Category> _defaultCategories() {
@@ -6512,8 +6843,7 @@ class TimeProvider with ChangeNotifier {
           if (map['c'] != null) {
             final colorVal = _parseInt(map['c']);
             if (colorVal != null) {
-              daySlots[idx].color =
-                  AppSemanticColors.opaque(Color(colorVal));
+              daySlots[idx].color = AppSemanticColors.opaque(Color(colorVal));
             }
           }
           if (map['fc'] == true) {
@@ -6563,7 +6893,6 @@ class TimeProvider with ChangeNotifier {
         }
       }
       if (needMigration) _categoriesDirty = true;
-      _ensureTempCategory();
     } else {
       _categories = _defaultCategories();
     }
@@ -6763,6 +7092,27 @@ class TimeProvider with ChangeNotifier {
       }
     }
 
+    final previousCategories = List<Category>.from(_categories);
+    final normalizedCategories =
+        normalizeCategoriesForStorage(previousCategories);
+    _categories
+      ..clear()
+      ..addAll(normalizedCategories.categories);
+    final categoryIdRemap = _categoryIdRemapForCanonicalCategories(
+      previousCategories,
+      _categories,
+    );
+    final referencesChanged = _remapCategoryReferences(
+      categoryIdRemap,
+      scheduleRemoteSync: false,
+    );
+    if (normalizedCategories.changed || referencesChanged) {
+      _categoriesDirty = true;
+    }
+    if (_ensureTempCategory()) {
+      _categoriesDirty = true;
+    }
+    _invalidateLabelCategoryIdCache();
     _migrateToCategoryIds();
     if (_removeDeletedRelationsForLiveLabels()) {
       _categoriesDirty = true;

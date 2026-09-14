@@ -92,6 +92,14 @@ Future<TimeProvider> _createProvider({
   return provider;
 }
 
+Future<void> _waitUntil(bool Function() condition) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!condition() && DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+  expect(condition(), isTrue);
+}
+
 String _keyOf(DateTime date) {
   final y = date.year.toString().padLeft(4, '0');
   final m = date.month.toString().padLeft(2, '0');
@@ -122,8 +130,7 @@ void main() {
       expect(_slotsOf(provider, dateKey), isEmpty);
     });
 
-    test('本地旧 l:null 坏记录加载后迁移为墓碑（导出 del:true 而非 l:null）',
-        () async {
+    test('本地旧 l:null 坏记录加载后迁移为墓碑（导出 del:true 而非 l:null）', () async {
       final state = _RemoteState();
       final provider = await _createProvider(
         initialPreferences: {
@@ -164,8 +171,8 @@ void main() {
       await provider.syncScheduleToGitee(dateKey: '2026-09-06');
 
       expect(state.uploads, hasLength(1));
-      final uploaded = json.decode(state.uploads.single.content)
-          as Map<String, dynamic>;
+      final uploaded =
+          json.decode(state.uploads.single.content) as Map<String, dynamic>;
       final slots = (uploaded['slots'] as List).cast<Map<String, dynamic>>();
       final tomb = slots.singleWhere((e) => e['i'] == 98);
       expect(tomb['del'], true);
@@ -182,8 +189,7 @@ void main() {
       expect(localEntries.singleWhere((e) => e['i'] == 98)['del'], true);
     });
 
-    test('模拟 9/8 场景：删除 16:20-16:40(98/99) 再新增其它时段，墓碑不变空标签',
-        () async {
+    test('模拟 9/8 场景：删除 16:20-16:40(98/99) 再新增其它时段，墓碑不变空标签', () async {
       final state = _RemoteState();
       final provider = await _createProvider(
         initialPreferences: {
@@ -206,8 +212,8 @@ void main() {
       await provider.syncScheduleToGitee(dateKey: '2026-09-08');
 
       expect(state.uploads, hasLength(1));
-      final uploaded = json.decode(state.uploads.single.content)
-          as Map<String, dynamic>;
+      final uploaded =
+          json.decode(state.uploads.single.content) as Map<String, dynamic>;
       final slots = (uploaded['slots'] as List).cast<Map<String, dynamic>>();
       for (final idx in const [98, 99]) {
         final tomb = slots.singleWhere((e) => e['i'] == idx);
@@ -224,8 +230,7 @@ void main() {
       final state = _RemoteState();
       final provider = await _createProvider(
         initialPreferences: {
-          'daily_slots':
-              '{"2026-09-06":[{"i":98,"l":"八股","c":1,"ts":1000}]}',
+          'daily_slots': '{"2026-09-06":[{"i":98,"l":"八股","c":1,"ts":1000}]}',
         },
         state: state,
       );
@@ -248,8 +253,7 @@ void main() {
       final state = _RemoteState();
       final provider = await _createProvider(
         initialPreferences: {
-          'daily_slots':
-              '{"2026-09-06":[{"i":98,"l":"八股","c":1,"ts":1000}]}',
+          'daily_slots': '{"2026-09-06":[{"i":98,"l":"八股","c":1,"ts":1000}]}',
           'pending_gitee_sync_dates': <String>['2026-09-06'],
         },
         state: state,
@@ -298,8 +302,8 @@ void main() {
       addTearDown(provider.dispose);
 
       await provider.setScheduleUser(DiaryKind.j);
-      // 身份切换完成后仍会异步刷新身份范围数据，等待这次刷新释放同步锁。
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      // 身份切换完成后仍会异步刷新身份范围数据，等待这次刷新完成。
+      await _waitUntil(() => !provider.hasScheduleSyncInFlight);
       expect(provider.scheduleUser, DiaryKind.j);
 
       provider.assignCategoryToSlots(

@@ -31,6 +31,159 @@ class CategoryDocument {
   });
 }
 
+/// 分类写入前的规范化结果。
+///
+/// `idRemap` 用于把因同名合并而被丢弃的旧分类 ID 迁移到胜出的分类，
+/// 避免时间块、目标或模板留下悬空引用。
+class CategoryNormalizationResult {
+  final List<Category> categories;
+  final Map<String, String> idRemap;
+  final bool changed;
+
+  const CategoryNormalizationResult({
+    required this.categories,
+    required this.idRemap,
+    required this.changed,
+  });
+}
+
+/// 与 UI 校验保持一致的分类显示名称比较键。
+String categoryLabelKey(String value) => value.trim().toLowerCase();
+
+/// 只裁剪名称，不改变列表长度和顺序。
+Category trimCategoryForStorage(Category category) {
+  return category.copyWith(
+    name: category.name.trim(),
+    subCategories: category.subCategories.map((value) => value.trim()).toList(),
+    hiddenSubCategories:
+        category.hiddenSubCategories.map((value) => value.trim()).toList(),
+  );
+}
+
+List<String> _dedupeSubCategories(
+  List<String> values,
+  Set<String> seen,
+) {
+  final result = <String>[];
+  for (final value in values) {
+    final key = categoryLabelKey(value);
+    if (seen.add(key)) result.add(value);
+  }
+  return result;
+}
+
+Category _canonicalizeCategory(Category category) {
+  final normalized = trimCategoryForStorage(category);
+  final seen = <String>{};
+  final visible = _dedupeSubCategories(normalized.subCategories, seen);
+  final hidden = _dedupeSubCategories(normalized.hiddenSubCategories, seen);
+  return normalized.copyWith(
+    subCategories: visible,
+    hiddenSubCategories: hidden,
+  );
+}
+
+bool _categoryEquals(Category left, Category right) {
+  if (left.id != right.id ||
+      left.name != right.name ||
+      left.color != right.color ||
+      left.updatedAt != right.updatedAt ||
+      left.subCategories.length != right.subCategories.length ||
+      left.hiddenSubCategories.length != right.hiddenSubCategories.length) {
+    return false;
+  }
+  for (var i = 0; i < left.subCategories.length; i++) {
+    if (left.subCategories[i] != right.subCategories[i]) return false;
+  }
+  for (var i = 0; i < left.hiddenSubCategories.length; i++) {
+    if (left.hiddenSubCategories[i] != right.hiddenSubCategories[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// 规范化分类名称/子事件，并按 ID、再按父事件显示名称去重。
+///
+/// 同名分类保留 `updatedAt` 较新的版本；时间戳相同时保留先出现的版本，
+/// 保证结果稳定且保留原有列表顺序。可见子事件优先于隐藏子事件。
+CategoryNormalizationResult normalizeCategoriesForStorage(
+  Iterable<Category> source,
+) {
+  final original = source.toList(growable: false);
+  final normalized = original.map(_canonicalizeCategory).toList();
+
+  // 先处理同 ID 的重复项。空 ID 交给 TimeProvider 的 ID 迁移逻辑，不能
+  // 把所有空 ID 错误地视为同一个分类。
+  final byId = <String, int>{};
+  final byIdCategories = <Category>[];
+  for (final category in normalized) {
+    final existingIndex = category.id.isEmpty ? null : byId[category.id];
+    if (existingIndex == null) {
+      if (category.id.isNotEmpty) byId[category.id] = byIdCategories.length;
+      byIdCategories.add(category);
+      continue;
+    }
+    final existing = byIdCategories[existingIndex];
+    if (category.updatedAt > existing.updatedAt) {
+      byIdCategories[existingIndex] = category;
+    }
+  }
+
+  final byName = <String, int>{};
+  final categories = <Category>[];
+  final idRemap = <String, String>{};
+  for (final category in byIdCategories) {
+    final nameKey = categoryLabelKey(category.name);
+    final existingIndex = byName[nameKey];
+    if (existingIndex == null || nameKey.isEmpty) {
+      if (nameKey.isNotEmpty) byName[nameKey] = categories.length;
+      categories.add(category);
+      continue;
+    }
+
+    final existing = categories[existingIndex];
+    if (category.updatedAt > existing.updatedAt) {
+      if (existing.id.isNotEmpty && existing.id != category.id) {
+        idRemap[existing.id] = category.id;
+      }
+      categories[existingIndex] = category;
+    } else if (category.id.isNotEmpty && category.id != existing.id) {
+      idRemap[category.id] = existing.id;
+    }
+  }
+
+  // 解析可能形成 A→B、B→C 的链，统一压缩成直接映射。
+  final resolvedRemap = <String, String>{};
+  String resolve(String id) {
+    var current = id;
+    final visited = <String>{};
+    while (visited.add(current) && idRemap.containsKey(current)) {
+      current = idRemap[current]!;
+    }
+    return current;
+  }
+
+  for (final id in idRemap.keys) {
+    final target = resolve(id);
+    if (id != target) resolvedRemap[id] = target;
+  }
+
+  final changed = original.length != categories.length ||
+      original.length != byIdCategories.length ||
+      original.asMap().entries.any(
+            (entry) =>
+                entry.key >= categories.length ||
+                !_categoryEquals(entry.value, categories[entry.key]),
+          );
+
+  return CategoryNormalizationResult(
+    categories: List.unmodifiable(categories),
+    idRemap: Map.unmodifiable(resolvedRemap),
+    changed: changed || resolvedRemap.isNotEmpty,
+  );
+}
+
 /// 解析分类同步文档；失败或空返回空文档（updatedAt=0）。
 CategoryDocument parseCategoryDocument(String? content) {
   if (content == null || content.trim().isEmpty) {
@@ -45,8 +198,8 @@ CategoryDocument parseCategoryDocument(String? content) {
         if (item is Map<String, dynamic>) {
           categories.add(Category.fromJson(item));
         } else if (item is Map) {
-          categories.add(Category.fromJson(
-              item.map((k, v) => MapEntry(k.toString(), v))));
+          categories.add(
+              Category.fromJson(item.map((k, v) => MapEntry(k.toString(), v))));
         }
       }
     }
@@ -72,9 +225,10 @@ CategoryDocument parseCategoryDocument(String? content) {
 
 /// 序列化分类同步文档为 JSON 字符串。
 String encodeCategoryDocument(CategoryDocument doc, {required int nowMs}) {
+  final categories = normalizeCategoriesForStorage(doc.categories).categories;
   return json.encode({
     'updated_at': nowMs,
-    'categories': doc.categories.map((c) => c.toJson()).toList(),
+    'categories': categories.map((c) => c.toJson()).toList(),
     'deletedCategories': doc.deletedCategories,
   });
 }
@@ -91,6 +245,11 @@ CategoryDocument mergeCategoryDocuments({
   required CategoryDocument local,
   required CategoryDocument remote,
 }) {
+  final localCategories =
+      normalizeCategoriesForStorage(local.categories).categories;
+  final remoteCategories =
+      normalizeCategoriesForStorage(remote.categories).categories;
+
   final deleted = <String, int>{};
   deleted.addAll(local.deletedCategories);
   for (final entry in remote.deletedCategories.entries) {
@@ -101,10 +260,10 @@ CategoryDocument mergeCategoryDocuments({
   }
 
   final byId = <String, Category>{};
-  for (final c in local.categories) {
+  for (final c in localCategories) {
     byId[c.id] = c;
   }
-  for (final c in remote.categories) {
+  for (final c in remoteCategories) {
     final localCat = byId[c.id];
     if (localCat == null || (c.updatedAt > localCat.updatedAt)) {
       byId[c.id] = c;
@@ -122,25 +281,28 @@ CategoryDocument mergeCategoryDocuments({
   });
 
   // 顺序：文档 updatedAt 大者一侧为基准。
-  final baseOrder = local.updatedAt >= remote.updatedAt ? local : remote;
-  final otherOrder = baseOrder == local ? remote : local;
+  final baseOrder =
+      local.updatedAt >= remote.updatedAt ? localCategories : remoteCategories;
+  final otherOrder =
+      baseOrder == localCategories ? remoteCategories : localCategories;
 
   final merged = <Category>[];
   final seen = <String>{};
-  for (final c in baseOrder.categories) {
+  for (final c in baseOrder) {
     if (surviving.containsKey(c.id) && seen.add(c.id)) {
       merged.add(surviving[c.id]!);
     }
   }
-  for (final c in otherOrder.categories) {
+  for (final c in otherOrder) {
     if (surviving.containsKey(c.id) && seen.add(c.id)) {
       merged.add(surviving[c.id]!);
     }
   }
 
+  final normalizedMerged = normalizeCategoriesForStorage(merged);
   return CategoryDocument(
     updatedAt: DateTime.now().millisecondsSinceEpoch,
-    categories: merged,
+    categories: normalizedMerged.categories,
     deletedCategories: deleted,
   );
 }

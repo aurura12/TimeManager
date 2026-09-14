@@ -740,7 +740,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ElevatedButton(
               onPressed: () {
                 final name = nameController.text.trim();
-                if (name.isNotEmpty && name == TimeProvider.deletedCategoryName) {
+                if (name.isNotEmpty &&
+                    name == TimeProvider.deletedCategoryName) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('“已删除”为系统保留名称，不能作为临时事件名称'),
@@ -927,6 +928,31 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
+          void addSubCategory(String rawValue) {
+            final value = rawValue.trim();
+            if (value.isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('子事件名称不能为空')),
+              );
+              return;
+            }
+            final key = value.toLowerCase();
+            final duplicated = [
+              ...tempSubCategories,
+              ...tempHiddenSubCategories,
+            ].any((item) => item.trim().toLowerCase() == key);
+            if (duplicated) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('子事件“$value”重复，请保留一个')),
+              );
+              return;
+            }
+            setDialogState(() {
+              tempSubCategories.add(value);
+              subCatController.clear();
+            });
+          }
+
           return AlertDialog(
             title: Text(isEdit ? '编辑事件' : '添加事件',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -1115,27 +1141,14 @@ class _HomeScreenState extends State<HomeScreen> {
                             controller: subCatController,
                             decoration: const InputDecoration(
                                 hintText: '添加子事件', isDense: true),
-                            onSubmitted: (val) {
-                              if (val.isNotEmpty) {
-                                setDialogState(() {
-                                  tempSubCategories.add(val);
-                                  subCatController.clear();
-                                });
-                              }
-                            },
+                            onSubmitted: addSubCategory,
                           ),
                         ),
                         IconButton(
                           icon: Icon(Icons.add_circle,
                               color: Theme.of(context).colorScheme.primary),
-                          onPressed: () {
-                            if (subCatController.text.isNotEmpty) {
-                              setDialogState(() {
-                                tempSubCategories.add(subCatController.text);
-                                subCatController.clear();
-                              });
-                            }
-                          },
+                          onPressed: () =>
+                              addSubCategory(subCatController.text),
                         ),
                       ],
                     ),
@@ -1192,23 +1205,16 @@ class _HomeScreenState extends State<HomeScreen> {
                     subCategories: tempSubCategories,
                     hiddenSubCategories: tempHiddenSubCategories,
                   );
-                  final validationError = provider.categoryValidationError(
-                    newCat,
-                    editingIndex: isEdit ? index : null,
-                  );
-                  if (validationError != null) {
+                  final result = isEdit
+                      ? provider.updateCategoryWithResult(index, newCat)
+                      : provider.addCategoryWithResult(newCat);
+                  if (!result.isSuccess) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(validationError)),
-                    );
-                    return;
-                  }
-
-                  final saved = isEdit
-                      ? provider.updateCategory(index, newCat)
-                      : provider.addCategory(newCat);
-                  if (!saved) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('事件保存失败，请稍后重试')),
+                      SnackBar(
+                        content: Text(
+                          result.error ?? '事件保存失败，请稍后重试',
+                        ),
+                      ),
                     );
                     return;
                   }

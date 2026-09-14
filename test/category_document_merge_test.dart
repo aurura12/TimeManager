@@ -17,37 +17,95 @@ Category cat(String id, String name, int updatedAt,
 
 void main() {
   test('同 ID 分类取 updatedAt 大者', () {
-    final local = CategoryDocument(
-        updatedAt: 100, categories: [cat('a', '本地', 200)]);
-    final remote = CategoryDocument(
-        updatedAt: 200, categories: [cat('a', '远端', 300)]);
+    final local =
+        CategoryDocument(updatedAt: 100, categories: [cat('a', '本地', 200)]);
+    final remote =
+        CategoryDocument(updatedAt: 200, categories: [cat('a', '远端', 300)]);
     final merged = mergeCategoryDocuments(local: local, remote: remote);
     expect(merged.categories.length, 1);
     expect(merged.categories.first.name, '远端');
   });
 
-  test('删除时间新于分类更新时间 → 删除生效不复活', () {
+  test('同名分类按规范化名称去重并保留较新的版本', () {
     final local = CategoryDocument(
-        updatedAt: 100, categories: [cat('a', '本地', 200)]);
+      updatedAt: 100,
+      categories: [
+        cat('old', ' 工作 ', 200, subs: [' 会议 ', '会议'])
+      ],
+    );
     final remote = CategoryDocument(
-        updatedAt: 200, deletedCategories: {'a': 500});
+      updatedAt: 200,
+      categories: [
+        cat('new', '工作', 300, subs: ['文档'])
+      ],
+    );
+
+    final merged = mergeCategoryDocuments(local: local, remote: remote);
+
+    expect(merged.categories, hasLength(1));
+    expect(merged.categories.single.id, 'new');
+    expect(merged.categories.single.name, '工作');
+    expect(merged.categories.single.subCategories, ['文档']);
+  });
+
+  test('规范化会裁剪并去重可见/隐藏子事件，同时返回分类 ID 映射', () {
+    final childResult = normalizeCategoriesForStorage([
+      Category(
+        id: 'old',
+        name: ' 工作 ',
+        color: Colors.blue,
+        subCategories: [' 会议 ', '会议', '文档'],
+        hiddenSubCategories: [' 文档 ', '复盘'],
+        updatedAt: 100,
+      ),
+    ]);
+    expect(childResult.categories.single.name, '工作');
+    expect(childResult.categories.single.subCategories, ['会议', '文档']);
+    expect(childResult.categories.single.hiddenSubCategories, ['复盘']);
+
+    final result = normalizeCategoriesForStorage([
+      Category(
+        id: 'old',
+        name: ' 工作 ',
+        color: Colors.blue,
+        updatedAt: 100,
+      ),
+      Category(
+        id: 'new',
+        name: '工作',
+        color: Colors.red,
+        updatedAt: 200,
+      ),
+    ]);
+
+    expect(result.categories, hasLength(1));
+    expect(result.categories.single.id, 'new');
+    expect(result.idRemap, {'old': 'new'});
+  });
+
+  test('删除时间新于分类更新时间 → 删除生效不复活', () {
+    final local =
+        CategoryDocument(updatedAt: 100, categories: [cat('a', '本地', 200)]);
+    final remote =
+        CategoryDocument(updatedAt: 200, deletedCategories: {'a': 500});
     final merged = mergeCategoryDocuments(local: local, remote: remote);
     expect(merged.categories, isEmpty);
     expect(merged.deletedCategories['a'], 500);
   });
 
   test('分类更新时间新于删除时间 → 修改胜出（复活）', () {
-    final local = CategoryDocument(
-        updatedAt: 100, categories: [cat('a', '新改', 600)]);
-    final remote = CategoryDocument(
-        updatedAt: 200, deletedCategories: {'a': 500});
+    final local =
+        CategoryDocument(updatedAt: 100, categories: [cat('a', '新改', 600)]);
+    final remote =
+        CategoryDocument(updatedAt: 200, deletedCategories: {'a': 500});
     final merged = mergeCategoryDocuments(local: local, remote: remote);
     expect(merged.categories.length, 1);
     expect(merged.categories.first.name, '新改');
   });
 
   test('两侧墓碑并集取时间戳大者，删除后不复活', () {
-    final local = CategoryDocument(updatedAt: 100, deletedCategories: {'a': 500});
+    final local =
+        CategoryDocument(updatedAt: 100, deletedCategories: {'a': 500});
     final remote = CategoryDocument(
         updatedAt: 200,
         categories: [cat('a', '旧', 100)],
@@ -58,10 +116,10 @@ void main() {
   });
 
   test('首次同步基线：本地独有分类保留、远端独有分类也加入', () {
-    final local = CategoryDocument(
-        updatedAt: 0, categories: [cat('local', '本地', 100)]);
-    final remote = CategoryDocument(
-        updatedAt: 0, categories: [cat('remote', '远端', 100)]);
+    final local =
+        CategoryDocument(updatedAt: 0, categories: [cat('local', '本地', 100)]);
+    final remote =
+        CategoryDocument(updatedAt: 0, categories: [cat('remote', '远端', 100)]);
     final merged = mergeCategoryDocuments(local: local, remote: remote);
     final ids = merged.categories.map((c) => c.id).toSet();
     expect(ids, {'local', 'remote'});
@@ -71,19 +129,18 @@ void main() {
     final local = CategoryDocument(
         updatedAt: 300, categories: [cat('a', 'a', 1), cat('b', 'b', 1)]);
     final remote = CategoryDocument(
-        updatedAt: 100,
-        categories: [cat('c', 'c', 1), cat('a', 'a', 1)]);
+        updatedAt: 100, categories: [cat('c', 'c', 1), cat('a', 'a', 1)]);
     final merged = mergeCategoryDocuments(local: local, remote: remote);
     expect(merged.categories.map((c) => c.id).toList(), ['a', 'b', 'c']);
   });
 
   test('子事件随胜出分类整体替换', () {
-    final local = CategoryDocument(
-        updatedAt: 100,
-        categories: [cat('a', '工作', 200, subs: ['会议', '文档'])]);
-    final remote = CategoryDocument(
-        updatedAt: 200,
-        categories: [cat('a', '工作', 300, subs: ['会议', '出差'])]);
+    final local = CategoryDocument(updatedAt: 100, categories: [
+      cat('a', '工作', 200, subs: ['会议', '文档'])
+    ]);
+    final remote = CategoryDocument(updatedAt: 200, categories: [
+      cat('a', '工作', 300, subs: ['会议', '出差'])
+    ]);
     final merged = mergeCategoryDocuments(local: local, remote: remote);
     expect(merged.categories.single.subCategories, ['会议', '出差']);
   });
@@ -108,10 +165,10 @@ void main() {
   });
 
   test('两身份互不影响：本地文档输入不被修改', () {
-    final local = CategoryDocument(
-        updatedAt: 100, categories: [cat('a', '本地', 200)]);
-    final remote = CategoryDocument(
-        updatedAt: 200, categories: [cat('a', '远端', 300)]);
+    final local =
+        CategoryDocument(updatedAt: 100, categories: [cat('a', '本地', 200)]);
+    final remote =
+        CategoryDocument(updatedAt: 200, categories: [cat('a', '远端', 300)]);
     mergeCategoryDocuments(local: local, remote: remote);
     // 输入文档保持不变（merge 不修改入参）
     expect(local.categories.single.name, '本地');
