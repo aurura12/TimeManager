@@ -624,11 +624,15 @@ class HomeScreenState extends State<HomeScreen> {
       ),
     );
 
-    // 刷子模式开着时，返回键第一次只退出刷子模式，不会退出页面
+    // 返回键优先关闭临时浮层（日期选择 / 刷子模式），不直接退出页面
     return PopScope(
-      canPop: !_isBrushMode,
+      canPop: !_isBrushMode && !_isDatePickerVisible,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
+        if (_isDatePickerVisible) {
+          setState(() => _isDatePickerVisible = false);
+          return;
+        }
         _exitBrushMode();
       },
       child: page,
@@ -1895,8 +1899,11 @@ class HomeScreenState extends State<HomeScreen> {
                                             AppSemanticColors.danger,
                                             AppSurfaces.of(context).card)),
                                     onPressed: () {
-                                      provider.deleteTemplate(t.id);
-                                      setSheetState(() {});
+                                      _showDeleteTemplateConfirmDialog(
+                                        t,
+                                        provider,
+                                        onDeleted: () => setSheetState(() {}),
+                                      );
                                     },
                                   ),
                                 ],
@@ -2007,6 +2014,34 @@ class HomeScreenState extends State<HomeScreen> {
         ],
       ),
     ).whenComplete(() => nameController.dispose());
+  }
+
+  void _showDeleteTemplateConfirmDialog(
+    ScheduleTemplate template,
+    TimeProvider provider, {
+    VoidCallback? onDeleted,
+  }) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('确认删除'),
+        content: Text('确定要删除模板“${template.name}”吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              provider.deleteTemplate(template.id);
+              Navigator.pop(dialogContext);
+              onDeleted?.call();
+            },
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showDeleteConfirmDialog(

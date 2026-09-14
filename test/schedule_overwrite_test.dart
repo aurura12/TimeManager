@@ -2261,6 +2261,12 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
+    // 破坏性操作必须先二次确认，确认后才真正执行
+    expect(find.text('确认覆盖拉取'), findsOneWidget);
+    await tester.tap(find.text('覆盖拉取'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
     expect(find.textContaining('覆盖拉取未开始：'), findsOneWidget);
     expect(scaffoldKey.currentState!.isDrawerOpen, isFalse);
     await tester.pump(const Duration(seconds: 6));

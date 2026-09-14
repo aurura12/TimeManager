@@ -278,6 +278,27 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       subtitle: const Text('以远端补零路径为准，清空本地旧日程，不合并'),
       onTap: () async {
         final messenger = ScaffoldMessenger.of(context);
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('确认覆盖拉取'),
+            content: const Text(
+              '将以远端「补零路径」为准，清空并覆盖本地旧日程，不与本地合并。\n\n'
+              '此操作不可撤销。',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('覆盖拉取'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true || !context.mounted) return;
         Navigator.pop(context);
         final succeeded = await provider.overwriteAllSchedulesFromGitee();
         messenger.showSnackBar(

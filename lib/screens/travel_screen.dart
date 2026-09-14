@@ -209,6 +209,7 @@ class _TravelScreenState extends State<TravelScreen> {
     var tempDate = _normalizedDate(initialDate ?? DateTime.now());
     final locationController = TextEditingController();
     final eventController = TextEditingController();
+    String? locationError;
 
     final shouldSave = await showDialog<bool>(
       context: context,
@@ -234,10 +235,16 @@ class _TravelScreenState extends State<TravelScreen> {
                     const SizedBox(height: 8),
                     TextField(
                       controller: locationController,
-                      decoration: const InputDecoration(
+                      onChanged: (_) {
+                        if (locationError != null) {
+                          setDialogState(() => locationError = null);
+                        }
+                      },
+                      decoration: InputDecoration(
                         labelText: '地点',
-                        border: OutlineInputBorder(),
+                        border: const OutlineInputBorder(),
                         isDense: true,
+                        errorText: locationError,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -258,7 +265,15 @@ class _TravelScreenState extends State<TravelScreen> {
                   child: const Text('取消'),
                 ),
                 FilledButton(
-                  onPressed: () => Navigator.of(context).pop(true),
+                  onPressed: () {
+                    // 校验放在弹窗内：地点为空时保持弹窗打开并就地提示，
+                    // 避免弹窗关闭后输入内容全部丢失。
+                    if (locationController.text.trim().isEmpty) {
+                      setDialogState(() => locationError = '地点不能为空');
+                      return;
+                    }
+                    Navigator.of(context).pop(true);
+                  },
                   child: const Text('保存'),
                 ),
               ],
@@ -287,6 +302,7 @@ class _TravelScreenState extends State<TravelScreen> {
     final locationController =
         TextEditingController(text: existing?.location ?? '');
     final eventController = TextEditingController(text: existing?.event ?? '');
+    String? locationError;
 
     final shouldSave = await showDialog<bool>(
       context: context,
@@ -312,10 +328,16 @@ class _TravelScreenState extends State<TravelScreen> {
                     const SizedBox(height: 8),
                     TextField(
                       controller: locationController,
-                      decoration: const InputDecoration(
+                      onChanged: (_) {
+                        if (locationError != null) {
+                          setDialogState(() => locationError = null);
+                        }
+                      },
+                      decoration: InputDecoration(
                         labelText: '地点',
-                        border: OutlineInputBorder(),
+                        border: const OutlineInputBorder(),
                         isDense: true,
+                        errorText: locationError,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -336,7 +358,15 @@ class _TravelScreenState extends State<TravelScreen> {
                   child: const Text('取消'),
                 ),
                 FilledButton(
-                  onPressed: () => Navigator.of(context).pop(true),
+                  onPressed: () {
+                    // 校验放在弹窗内：地点为空时保持弹窗打开并就地提示，
+                    // 避免弹窗关闭后输入内容全部丢失。
+                    if (locationController.text.trim().isEmpty) {
+                      setDialogState(() => locationError = '地点不能为空');
+                      return;
+                    }
+                    Navigator.of(context).pop(true);
+                  },
                   child: const Text('保存'),
                 ),
               ],
