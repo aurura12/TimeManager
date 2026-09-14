@@ -55,9 +55,10 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
       } else if (t.type == TargetType.frequency) {
         _frequencyCount = t.frequencyCount.toString();
       } else if (t.type == TargetType.timePoint) {
-        _targetTime = t.targetTime;
-        _startTime = t.startTime;
-        _endTime = t.endTime;
+        // 旧数据可能缺字段（默认空串），保留表单默认值而不是显示空白
+        if (t.targetTime.isNotEmpty) _targetTime = t.targetTime;
+        if (t.startTime.isNotEmpty) _startTime = t.startTime;
+        if (t.endTime.isNotEmpty) _endTime = t.endTime;
       }
     }
   }
@@ -101,13 +102,25 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
     );
   }
 
+  /// 把 "HH:mm" 字符串安全地转成 TimeOfDay。
+  ///
+  /// - "24:00" 这类当天结束边界按 00:00 展示（TimeOfDay 不接受 hour=24）
+  /// - 空串、非法字符、越界数值一律回退到 [fallback]，不抛异常
+  TimeOfDay _parseTimeOfDay(String value, {TimeOfDay fallback = const TimeOfDay(hour: 0, minute: 0)}) {
+    final parts = value.split(':');
+    if (parts.length < 2) return fallback;
+    final hour = int.tryParse(parts[0].trim());
+    final minute = int.tryParse(parts[1].trim());
+    if (hour == null || minute == null) return fallback;
+    if (hour == 24 && minute == 0) return const TimeOfDay(hour: 0, minute: 0);
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return fallback;
+    return TimeOfDay(hour: hour, minute: minute);
+  }
+
   Future<void> _pickTime(String initialTime, Function(String) onSave) async {
-    final parts = initialTime.split(':');
     final TimeOfDay? picked = await showTimePicker(
       context: context,
-      initialTime: TimeOfDay(
-          hour: int.parse(parts[0]),
-          minute: int.parse(parts[1] == "24" ? "0" : parts[1])),
+      initialTime: _parseTimeOfDay(initialTime),
     );
     if (picked != null && mounted) {
       setState(() {
