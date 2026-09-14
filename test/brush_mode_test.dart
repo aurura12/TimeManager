@@ -222,6 +222,33 @@ Future<void> _selectCell(WidgetTester tester, Offset point) async {
 }
 
 void main() {
+  testWidgets('刷子卡片在窄侧栏中保持单行事件名和提示', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: SizedBox(
+            width: 100,
+            child: BrushModeCard(
+              label: '研究生 · 小论文',
+              onExit: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final label = tester.widget<Text>(find.text('研究生 · 小论文'));
+    final hint = tester.widget<Text>(find.text('点击/拖动记录'));
+    expect(label.maxLines, 1);
+    expect(label.softWrap, isFalse);
+    expect(label.overflow, TextOverflow.ellipsis);
+    expect(hint.maxLines, 1);
+    expect(hint.softWrap, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('没有选中时间时，点击一级事件只进入刷子模式', (tester) async {
     final provider = await _pumpHome(tester);
     final revision = provider.slotsRevision;

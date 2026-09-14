@@ -6,7 +6,7 @@ import '../theme/app_tokens.dart';
 
 /// 刷子模式的状态卡，替换 `TemplateBar` 原来的「模板 + 设置」标题行。
 ///
-/// 侧栏只有 100 宽，所以按列排布：标题行、当前刷子事件、操作提示、退出按钮。
+/// 侧栏只有 100 宽，所以按紧凑的窄栏布局排布内容。
 /// 卡片本身就是"刷子模式开着"的唯一指示，退出入口也放在这里。
 class BrushModeCard extends StatelessWidget {
   const BrushModeCard({
@@ -31,9 +31,9 @@ class BrushModeCard extends StatelessWidget {
       colorScheme.primary,
       background,
     );
-    final borderColor =
-        AppSemanticColors.readableOn(colorScheme.primary, background,
-            minRatio: 3.0);
+    final borderColor = AppSemanticColors.readableOn(
+        colorScheme.primary, background,
+        minRatio: 3.0);
     final hintColor = AppSemanticColors.onTint(
       colorScheme.primary,
       surfaces.subtle,
@@ -74,15 +74,20 @@ class BrushModeCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.xs),
             Text(
               label,
-              maxLines: 2,
+              // 事件名优先保持一行，窄栏放不下时只在末尾省略，避免卡片被撑高。
+              maxLines: 1,
+              softWrap: false,
               overflow: TextOverflow.ellipsis,
-              style: AppText.body.copyWith(
+              style: AppText.badge.copyWith(
                 color: onBackground,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w700,
               ),
             ),
             Text(
-              '点击或拖动网格记录',
+              '点击/拖动记录',
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.ellipsis,
               style: AppText.caption.copyWith(color: hintColor),
             ),
             const SizedBox(height: AppSpacing.xs),
