@@ -97,7 +97,9 @@ class CheckInSyncService {
       }
 
       final local = await CheckInLocalStore.loadDraft();
-      if (local != null) _document = local;
+      final migratedLocal =
+          local == null ? null : await _migrateLegacyGoalTimestamps(local);
+      if (migratedLocal != null) _document = migratedLocal;
 
       final token = await DiaryLocalStore.loadToken();
       if (token == null || token.isEmpty) {
@@ -112,8 +114,9 @@ class CheckInSyncService {
       if (pull.success && pull.content != null) {
         try {
           final remote = CheckInDocument.fromMarkdown(pull.content!);
-          _document =
-              local == null ? remote : CheckInDocument.merge(local, remote);
+          _document = migratedLocal == null
+              ? remote
+              : CheckInDocument.merge(migratedLocal, remote);
           await CheckInLocalStore.saveDraft(_document);
         } catch (e) {
           _lastError = '解析远端打卡数据失败: $e';
@@ -122,6 +125,20 @@ class CheckInSyncService {
     } finally {
       if (!silent) _loading = false;
     }
+  }
+
+  /// 给缺少 updatedAt 的旧目标补齐时间戳并落盘（保证跨重启稳定）。
+  ///
+  /// 目标在引入 updatedAt 之前完全没有时间信息，合并只能按"远端优先"处理，
+  /// 于是本地对已有目标的编辑会被远端旧值覆盖。补齐后本地编辑才能生效。
+  Future<CheckInDocument> _migrateLegacyGoalTimestamps(
+    CheckInDocument doc,
+  ) async {
+    final migrated =
+        doc.withLegacyGoalTimestamps(DateTime.now().millisecondsSinceEpoch);
+    if (identical(migrated, doc)) return doc;
+    await CheckInLocalStore.saveDraft(migrated);
+    return migrated;
   }
 
   Future<CheckInSyncResult> pullFromGitHub() async {
@@ -233,6 +250,8 @@ class CheckInSyncService {
       ownerEmail: goal.ownerEmail.isEmpty ? user.email : goal.ownerEmail,
       ownerDisplayName: goal.ownerDisplayName ?? user.displayName,
       records: const [],
+      // 打上修改时间，合并时才能胜出；否则会被远端旧元数据覆盖。
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
 
     _document = _document.upsertGoal(meta);

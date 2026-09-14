@@ -41,6 +41,22 @@ class CheckInDocument {
       ..sort((a, b) => a.name.compareTo(b.name));
   }
 
+  /// 给缺少 updatedAt 的目标补齐时间戳（纯函数，无副作用）。
+  ///
+  /// 无需补齐时原样返回同一实例，调用方可据此跳过落盘。
+  CheckInDocument withLegacyGoalTimestamps(int nowMs) {
+    if (goals.every((g) => g.updatedAt > 0)) return this;
+    return CheckInDocument(
+      goals: [
+        for (final g in goals)
+          g.updatedAt > 0 ? g : g.copyWith(updatedAt: nowMs),
+      ],
+      records: records,
+      deletedGoalIds: deletedGoalIds,
+      deletedRecordIds: deletedRecordIds,
+    );
+  }
+
   CheckInDocument upsertGoal(CheckInGoal goal) {
     final meta = goal.withoutRecords();
     final nextGoals = [...goals.where((g) => g.id != meta.id), meta];
@@ -129,7 +145,10 @@ class CheckInDocument {
       if (deletedGoals.contains(g.id)) continue; // 已删目标不复活
       final meta = g.withoutRecords();
       final existing = goalMap[meta.id];
-      if (existing == null) {
+      // 与记录一致：同 id 取 updatedAt 大者（严格大于才替换，平局保留先到的
+      // 远端）。目标旧数据 updatedAt 为 0，加载本地时会被补齐成当前时间，
+      // 因此本地的编辑不会继续被远端旧值覆盖。
+      if (existing == null || meta.updatedAt > existing.updatedAt) {
         goalMap[meta.id] = meta;
       }
     }

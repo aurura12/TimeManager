@@ -69,6 +69,7 @@ class CheckInGoal {
     this.endDate,
     this.isArchived = false,
     this.archivedAt,
+    this.updatedAt = 0,
   });
 
   final String id;
@@ -88,6 +89,13 @@ class CheckInGoal {
   final DateTime? endDate;
   final bool isArchived;
   final DateTime? archivedAt;
+
+  /// 目标元数据最后修改时间（毫秒时间戳），用于跨端合并判断谁更新。
+  ///
+  /// 记录（[CheckInRecord]）本来就有 timestamp 可比，但目标在此之前完全没有时间
+  /// 信息，导致合并只能"远端优先"，本地对已有目标的编辑（改名/描述/图标/周期/
+  /// 次数）必然被远端旧值覆盖。旧数据为 0，加载本地数据时补齐。
+  final int updatedAt;
 
   String get ownerLabel => KnownGoogleUsers.displayLabel(
         email: ownerEmail,
@@ -221,6 +229,7 @@ class CheckInGoal {
     DateTime? endDate,
     bool? isArchived,
     DateTime? archivedAt,
+    int? updatedAt,
   }) {
     return CheckInGoal(
       id: id ?? this.id,
@@ -240,6 +249,7 @@ class CheckInGoal {
       endDate: endDate ?? this.endDate,
       isArchived: isArchived ?? this.isArchived,
       archivedAt: archivedAt ?? this.archivedAt,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 
@@ -261,6 +271,7 @@ class CheckInGoal {
       if (endDate != null) 'end_date': endDate!.toIso8601String(),
       'is_archived': isArchived,
       if (archivedAt != null) 'archived_at': archivedAt!.toIso8601String(),
+      'updated_at': updatedAt,
     };
   }
 
@@ -290,6 +301,16 @@ class CheckInGoal {
       archivedAt: json['archived_at'] != null
           ? DateTime.tryParse(json['archived_at'].toString())
           : null,
+      updatedAt: _asInt(json['updated_at']),
     );
+  }
+
+  /// 时间戳字段宽松解析：旧数据缺失、或历史写入的是字符串/浮点，都不应让整条
+  /// 目标解析失败（否则整份远端数据都会被丢弃）。
+  static int _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return num.tryParse(value.trim())?.toInt() ?? 0;
+    return 0;
   }
 }
