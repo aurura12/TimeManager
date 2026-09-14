@@ -143,14 +143,28 @@ CategoryNormalizationResult normalizeCategoriesForStorage(
     }
 
     final existing = categories[existingIndex];
-    if (category.updatedAt > existing.updatedAt) {
-      if (existing.id.isNotEmpty && existing.id != category.id) {
-        idRemap[existing.id] = category.id;
+    final categoryWins = category.updatedAt > existing.updatedAt;
+    final winner = categoryWins ? category : existing;
+    final loser = categoryWins ? existing : category;
+    // Empty IDs are legacy data rather than stable identities. Keep the
+    // newer payload, but inherit the other side's non-empty ID so a remap
+    // can never turn an existing reference into an empty string.
+    final winnerId = winner.id.isNotEmpty
+        ? winner.id
+        : (loser.id.isNotEmpty ? loser.id : '');
+    final normalizedWinner =
+        winner.id == winnerId ? winner : winner.copyWith(id: winnerId);
+
+    if (categoryWins) {
+      if (existing.id.isNotEmpty && existing.id != normalizedWinner.id) {
+        idRemap[existing.id] = normalizedWinner.id;
       }
-      categories[existingIndex] = category;
-    } else if (category.id.isNotEmpty && category.id != existing.id) {
-      idRemap[category.id] = existing.id;
+    } else {
+      if (category.id.isNotEmpty && category.id != normalizedWinner.id) {
+        idRemap[category.id] = normalizedWinner.id;
+      }
     }
+    categories[existingIndex] = normalizedWinner;
   }
 
   // 解析可能形成 A→B、B→C 的链，统一压缩成直接映射。

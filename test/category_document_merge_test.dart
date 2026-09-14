@@ -83,6 +83,28 @@ void main() {
     expect(result.idRemap, {'old': 'new'});
   });
 
+  test('同名分类不会把有效 ID 映射为空字符串', () {
+    final result = normalizeCategoriesForStorage([
+      Category(
+        id: '',
+        name: '工作',
+        color: Colors.red,
+        updatedAt: 500,
+      ),
+      Category(
+        id: 'local1',
+        name: ' 工作 ',
+        color: Colors.blue,
+        updatedAt: 100,
+      ),
+    ]);
+
+    expect(result.categories, hasLength(1));
+    expect(result.categories.single.id, 'local1');
+    expect(result.categories.single.color, Colors.red);
+    expect(result.idRemap, isEmpty);
+  });
+
   test('删除时间新于分类更新时间 → 删除生效不复活', () {
     final local =
         CategoryDocument(updatedAt: 100, categories: [cat('a', '本地', 200)]);

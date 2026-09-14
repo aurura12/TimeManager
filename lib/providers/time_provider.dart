@@ -3247,7 +3247,14 @@ class TimeProvider with ChangeNotifier {
         return;
       }
 
-      _applyMergedCategories(merged, scheduleRemoteRepair: false);
+      final applied = _applyMergedCategories(
+        merged,
+        scheduleRemoteRepair: false,
+      );
+      if (!applied) {
+        _addScheduleSyncStatus('分类同步状态已变化，本地结果未应用');
+        return;
+      }
       _addScheduleSyncStatus('分类已同步');
       Future.delayed(const Duration(seconds: 3), () {
         _addScheduleSyncStatus('');
@@ -3341,13 +3348,20 @@ class TimeProvider with ChangeNotifier {
         localCategories,
         remoteCategoryNormalization.categories,
       );
-      _applyMergedCategories(
+      final applied = _applyMergedCategories(
         merged,
         scheduleRemoteRepair: localCategoryNormalization.changed ||
             remoteCategoryNormalization.changed ||
             localIdRemap.isNotEmpty ||
             crossDocumentNameConflict,
       );
+      if (!applied) {
+        _appLogService.warning(
+          '分类拉取结果未应用：$userCode（同步状态已变化）',
+          source: 'schedule_sync',
+        );
+        return false;
+      }
       _appLogService.info(
         '分类拉取成功：$userCode（远端 ${remoteDoc.categories.length} 个，合并后 ${merged.categories.length} 个）',
         source: 'schedule_sync',
@@ -3363,7 +3377,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   /// 将合并结果写回本地分类状态并持久化。
-  void _applyMergedCategories(
+  bool _applyMergedCategories(
     CategoryDocument merged, {
     bool scheduleRemoteRepair = false,
   }) {
@@ -3371,7 +3385,7 @@ class TimeProvider with ChangeNotifier {
         _scheduleOverwriteCleanupInProgress ||
         _remoteViewTransitionInProgress ||
         _remoteViewEnabled) {
-      return;
+      return false;
     }
     final previousCategories = List<Category>.from(_categories);
     final normalized = normalizeCategoriesForStorage(merged.categories);
@@ -3391,6 +3405,7 @@ class TimeProvider with ChangeNotifier {
     if (scheduleRemoteRepair) _markCategoriesGiteePending();
     _saveData();
     notifyListeners();
+    return true;
   }
 
   /// 从 Gitee 拉取指定用户日程并合并到指定日期。
@@ -5518,7 +5533,11 @@ class TimeProvider with ChangeNotifier {
     Map<String, String> remap,
   ) {
     if (categoryId == null || categoryId.isEmpty) return categoryId;
-    return _resolveCategoryId(categoryId, remap);
+    final resolved = _resolveCategoryId(categoryId, remap);
+    // Never erase a valid reference because malformed legacy data produced
+    // an empty remap target. The category normalizer also prevents this, but
+    // keeping the guard here protects every reference migration call site.
+    return resolved.isEmpty ? categoryId : resolved;
   }
 
   Map<String, String> _categoryIdRemapForCanonicalCategories(
@@ -5535,7 +5554,7 @@ class TimeProvider with ChangeNotifier {
     for (final category in previous) {
       if (category.id.isEmpty) continue;
       final winnerId = winnerByName[_categoryLabelKey(category.name)];
-      if (winnerId != null && winnerId != category.id) {
+      if (winnerId != null && winnerId.isNotEmpty && winnerId != category.id) {
         remap[category.id] = winnerId;
       }
     }
