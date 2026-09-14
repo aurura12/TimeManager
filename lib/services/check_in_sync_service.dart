@@ -139,8 +139,8 @@ class CheckInSyncService {
           path: CheckInDocument.filePath,
         );
         if (pull.notFound) {
-          _document = CheckInDocument.empty;
-          await CheckInLocalStore.saveDraft(_document);
+          // 远端尚无该文件（也可能是路径被解析成目录或缺权限被误判为 notFound）。
+          // 一律保留本地数据，绝不清空本地。
           return CheckInSyncResult.ok(_document);
         }
         if (!pull.success || pull.content == null) {
