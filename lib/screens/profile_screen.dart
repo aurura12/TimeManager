@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../widgets/profile_settings_drawer.dart';
@@ -8,7 +7,23 @@ import '../providers/time_provider.dart';
 import 'event_detail_screen.dart';
 
 import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+
+enum _DeletedEventDisplayMode { grouped, separate, hidden }
+
+class _DropdownOption<T> {
+  const _DropdownOption({
+    required this.value,
+    required this.label,
+    required this.description,
+  });
+
+  final T value;
+  final String label;
+  final String description;
+}
+
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
@@ -22,6 +37,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   int _groupValue = 0; // 0: 列表, 1: 饼图
   int _touchedIndex = -1;
   bool _showParentOnly = false; // false: 全部事件, true: 只显示父事件
+  bool _showDeletedEvents = true;
   bool _groupDeletedEvents = true; // 全部事件视图中是否合并已删除标签
 
   @override
@@ -66,95 +82,280 @@ class _ProfileScreenState extends State<ProfileScreen>
         children: [
           _buildTrendChart(provider),
           const SizedBox(height: 20),
-
           _buildCustomTabBar(),
           const SizedBox(height: 20),
-
           _buildSummaryCards(provider, _tabController.index),
           const SizedBox(height: 20),
-
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            runSpacing: AppSpacing.sm,
-            children: [
-              const Text("分类统计",
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-              Wrap(
-                spacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  if (!_showParentOnly)
-                    GestureDetector(
-                      onTap: () => setState(() =>
-                          _groupDeletedEvents = !_groupDeletedEvents),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: _groupDeletedEvents
-                              ? colorScheme.primary
-                              : colorScheme.surfaceContainerHighest,
-                          borderRadius: AppRadius.cardAll,
-                        ),
-                        child: Text(
-                          _groupDeletedEvents ? '合并已删除' : '已删除独立',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: _groupDeletedEvents
-                                ? colorScheme.onPrimary
-                                : colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ),
-                    ),
-                  GestureDetector(
-                    onTap: () => setState(() => _showParentOnly = !_showParentOnly),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: _showParentOnly
-                            ? colorScheme.primary
-                            : colorScheme.surfaceContainerHighest,
-                        borderRadius: AppRadius.cardAll,
-                      ),
-                      child: Text(
-                        _showParentOnly ? '父事件' : '全部',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: _showParentOnly
-                              ? colorScheme.onPrimary
-                              : colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ),
-                  CupertinoSegmentedControl<int>(
-                    groupValue: _groupValue,
-                    borderColor: colorScheme.primary,
-                    selectedColor: colorScheme.primary,
-                    pressedColor: colorScheme.primary.withValues(alpha: 0.2),
-                    children: const {
-                      0: Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                        child: Icon(Icons.table_chart_outlined, size: 20),
-                      ),
-                      1: Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                        child: Icon(Icons.pie_chart_outline, size: 20),
-                      ),
-                    },
-                    onValueChanged: (value) => setState(() => _groupValue = value),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
+          _buildStatisticsHeader(),
+          const SizedBox(height: AppSpacing.sm),
+          _buildStatisticsFilters(),
+          const SizedBox(height: AppSpacing.sm),
           _groupValue == 0
               ? _buildDetailList(provider, _tabController.index)
               : _buildPieChart(provider, _tabController.index),
           const SizedBox(height: 30),
         ],
+      ),
+    );
+  }
+
+  Widget _buildStatisticsHeader() {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            '分类统计',
+            style: AppText.sectionTitle.copyWith(
+              color: colorScheme.onSurface,
+            ),
+          ),
+        ),
+        Semantics(
+          label: '统计展示方式',
+          child: SegmentedButton<int>(
+            segments: const [
+              ButtonSegment<int>(
+                value: 0,
+                label: Text('列表'),
+                icon: Icon(Icons.table_chart_outlined),
+                tooltip: '列表视图',
+              ),
+              ButtonSegment<int>(
+                value: 1,
+                label: Text('饼图'),
+                icon: Icon(Icons.pie_chart_outline),
+                tooltip: '饼图视图',
+              ),
+            ],
+            selected: {_groupValue},
+            showSelectedIcon: false,
+            onSelectionChanged: (selection) {
+              if (selection.isEmpty) return;
+              setState(() {
+                _groupValue = selection.first;
+                _touchedIndex = -1;
+              });
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatisticsFilters() {
+    return Wrap(
+      spacing: AppSpacing.sm,
+      runSpacing: AppSpacing.sm,
+      children: [
+        _buildEventHierarchyControl(),
+        _buildDeletedEventControl(),
+      ],
+    );
+  }
+
+  _DeletedEventDisplayMode get _deletedEventDisplayMode {
+    if (!_showDeletedEvents) return _DeletedEventDisplayMode.hidden;
+    return _groupDeletedEvents
+        ? _DeletedEventDisplayMode.grouped
+        : _DeletedEventDisplayMode.separate;
+  }
+
+  Widget _buildEventHierarchyControl() {
+    return _buildDropdownControl<bool>(
+      label: '统计层级',
+      compactLabel: '层级',
+      icon: Icons.account_tree_outlined,
+      value: _showParentOnly,
+      options: const [
+        _DropdownOption<bool>(
+          value: false,
+          label: '全部事件',
+          description: '父事件和子事件分别显示',
+        ),
+        _DropdownOption<bool>(
+          value: true,
+          label: '父事件汇总',
+          description: '将子事件合并到所属父事件',
+        ),
+      ],
+      onChanged: (value) {
+        if (value == null) return;
+        setState(() => _showParentOnly = value);
+      },
+    );
+  }
+
+  Widget _buildDeletedEventControl() {
+    if (_showParentOnly) {
+      return _buildDropdownControl<bool>(
+        label: '已删除事件',
+        compactLabel: '删除',
+        icon: Icons.delete_outline,
+        value: _showDeletedEvents,
+        options: const [
+          _DropdownOption<bool>(
+            value: true,
+            label: '显示',
+            description: '计入“已删除”汇总',
+          ),
+          _DropdownOption<bool>(
+            value: false,
+            label: '不显示',
+            description: '从统计结果中排除',
+          ),
+        ],
+        onChanged: (value) {
+          if (value == null) return;
+          setState(() => _showDeletedEvents = value);
+        },
+      );
+    }
+
+    return _buildDropdownControl<_DeletedEventDisplayMode>(
+      label: '已删除事件',
+      compactLabel: '删除',
+      icon: Icons.delete_outline,
+      value: _deletedEventDisplayMode,
+      options: const [
+        _DropdownOption<_DeletedEventDisplayMode>(
+          value: _DeletedEventDisplayMode.grouped,
+          label: '合并显示',
+          description: '所有已删除事件合并为“已删除”',
+        ),
+        _DropdownOption<_DeletedEventDisplayMode>(
+          value: _DeletedEventDisplayMode.separate,
+          label: '独立显示',
+          description: '保留原事件名称，分别列出',
+        ),
+        _DropdownOption<_DeletedEventDisplayMode>(
+          value: _DeletedEventDisplayMode.hidden,
+          label: '不显示',
+          description: '从统计结果中排除',
+        ),
+      ],
+      onChanged: (mode) {
+        if (mode == null) return;
+        setState(() {
+          _showDeletedEvents = mode != _DeletedEventDisplayMode.hidden;
+          if (mode == _DeletedEventDisplayMode.grouped) {
+            _groupDeletedEvents = true;
+          } else if (mode == _DeletedEventDisplayMode.separate) {
+            _groupDeletedEvents = false;
+          }
+        });
+      },
+    );
+  }
+
+  Widget _buildDropdownControl<T>({
+    required String label,
+    required String compactLabel,
+    required IconData icon,
+    required T value,
+    required List<_DropdownOption<T>> options,
+    required ValueChanged<T?> onChanged,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final surfaces = AppSurfaces.of(context);
+    final selectedLabel =
+        options.firstWhere((option) => option.value == value).label;
+
+    return PopupMenuButton<T>(
+      initialValue: value,
+      tooltip: label,
+      padding: EdgeInsets.zero,
+      position: PopupMenuPosition.under,
+      offset: const Offset(0, AppSpacing.xs),
+      constraints: const BoxConstraints(
+        minWidth: 220,
+        maxWidth: 300,
+      ),
+      shape: const RoundedRectangleBorder(
+        borderRadius: AppRadius.cardAll,
+      ),
+      borderRadius: AppRadius.controlAll,
+      color: surfaces.card,
+      onSelected: onChanged,
+      itemBuilder: (context) => options
+          .map(
+            (option) => PopupMenuItem<T>(
+              value: option.value,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  vertical: AppSpacing.xs,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      option.label,
+                      style: AppText.body.copyWith(
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                    Text(
+                      option.description,
+                      style: AppText.caption.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          )
+          .toList(),
+      child: Container(
+        height: AppSizes.input,
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+        decoration: BoxDecoration(
+          color: surfaces.subtle,
+          borderRadius: AppRadius.controlAll,
+          border: Border.all(color: surfaces.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color: colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: AppSpacing.xs),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 180),
+              child: Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(
+                      text: '$compactLabel：',
+                      style: AppText.caption.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    TextSpan(
+                      text: selectedLabel,
+                      style: AppText.button.copyWith(
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                  ],
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.xs),
+            Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 18,
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -242,7 +443,8 @@ class _ProfileScreenState extends State<ProfileScreen>
                     dotData: const FlDotData(show: false),
                     belowBarData: BarAreaData(
                         show: true,
-                        color: AppSemanticColors.warning.withValues(alpha: 0.05)),
+                        color:
+                            AppSemanticColors.warning.withValues(alpha: 0.05)),
                   ),
                 ],
               ),
@@ -451,7 +653,8 @@ class _ProfileScreenState extends State<ProfileScreen>
               title: Text(key,
                   style: TextStyle(
                       color: colorScheme.onSurface,
-                      fontWeight: FontWeight.bold, fontSize: 15)),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15)),
               subtitle: Text("占比 ${percent.toStringAsFixed(1)}%",
                   style: TextStyle(
                     color: colorScheme.onSurfaceVariant,
@@ -498,8 +701,7 @@ class _ProfileScreenState extends State<ProfileScreen>
               PieChartData(
                 pieTouchData: PieTouchData(
                   touchCallback: (FlTouchEvent event, pieTouchResponse) {
-                    final touchedSection =
-                        pieTouchResponse?.touchedSection;
+                    final touchedSection = pieTouchResponse?.touchedSection;
                     setState(() {
                       if (!event.isInterestedForInteractions ||
                           touchedSection == null) {
@@ -609,14 +811,18 @@ class _ProfileScreenState extends State<ProfileScreen>
     } else {
       start = DateTime(2025);
     }
-    if (_showParentOnly) {
-      return provider.getParentStatistics(start, now);
-    }
-    return provider.getStatisticsWithTemporaryGrouped(
-      start,
-      now,
-      groupDeleted: _groupDeletedEvents,
-    );
+    return _showParentOnly
+        ? provider.getParentStatistics(
+            start,
+            now,
+            includeDeleted: _showDeletedEvents,
+          )
+        : provider.getStatisticsWithTemporaryGrouped(
+            start,
+            now,
+            groupDeleted: _groupDeletedEvents,
+            includeDeleted: _showDeletedEvents,
+          );
   }
 
   // 一次遍历最近 30 天，同时得到每日总时长与事件数，
