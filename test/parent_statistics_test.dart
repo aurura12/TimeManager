@@ -276,6 +276,56 @@ void main() {
     expect(ranges.single.isParentEvent, isFalse);
   });
 
+  test('统计可以完全隐藏已删除事件', () async {
+    final provider = await _createProvider();
+    provider.addCategory(Category(
+      name: '项目',
+      color: Colors.red,
+      updatedAt: 1,
+    ));
+    provider.addCategory(Category(
+      name: '工作',
+      color: Colors.blue,
+      updatedAt: 1,
+    ));
+
+    final project = provider.categories.firstWhere((cat) => cat.name == '项目');
+    final work = provider.categories.firstWhere((cat) => cat.name == '工作');
+    final yesterday = DateTime.now().subtract(const Duration(days: 1));
+    provider.assignCategoryToSlots({0}, project, date: yesterday);
+    provider.assignCategoryToSlots({1}, work, date: yesterday);
+    provider.deleteCategory(
+        provider.categories.indexWhere((cat) => cat.name == '项目'));
+
+    final grouped =
+        provider.getStatisticsWithTemporaryGrouped(yesterday, yesterday);
+    final separate = provider.getStatisticsWithTemporaryGrouped(
+      yesterday,
+      yesterday,
+      groupDeleted: false,
+    );
+    final hidden = provider.getStatisticsWithTemporaryGrouped(
+      yesterday,
+      yesterday,
+      includeDeleted: false,
+    );
+    final parentHidden = provider.getParentStatistics(
+      yesterday,
+      yesterday,
+      includeDeleted: false,
+    );
+
+    expect(grouped[TimeProvider.deletedCategoryName], closeTo(1 / 6, 1e-9));
+    expect(grouped['项目'], isNull);
+    expect(separate['项目'], closeTo(1 / 6, 1e-9));
+    expect(separate[TimeProvider.deletedCategoryName], isNull);
+    expect(hidden.containsKey(TimeProvider.deletedCategoryName), isFalse);
+    expect(hidden.containsKey('项目'), isFalse);
+    expect(hidden['工作'], closeTo(1 / 6, 1e-9));
+    expect(parentHidden.containsKey(TimeProvider.deletedCategoryName), isFalse);
+    expect(parentHidden['工作'], closeTo(1 / 6, 1e-9));
+  });
+
   test('全部事件统计只将无归属标签合并为临时', () async {
     final provider = await _createProvider();
     provider.addCategory(Category(

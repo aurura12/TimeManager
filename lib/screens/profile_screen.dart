@@ -12,16 +12,14 @@ import '../theme/app_tokens.dart';
 
 enum _DeletedEventDisplayMode { grouped, separate, hidden }
 
-class _DropdownOption<T> {
-  const _DropdownOption({
-    required this.value,
-    required this.label,
-    required this.description,
-  });
-
-  final T value;
-  final String label;
-  final String description;
+enum _StatisticsFilterAction {
+  allEvents,
+  parentSummary,
+  showDeletedInParent,
+  hideDeletedInParent,
+  groupDeleted,
+  separateDeleted,
+  hideDeletedInAll,
 }
 
 class ProfileScreen extends StatefulWidget {
@@ -145,13 +143,181 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   Widget _buildStatisticsFilters() {
-    return Wrap(
-      spacing: AppSpacing.sm,
-      runSpacing: AppSpacing.sm,
-      children: [
-        _buildEventHierarchyControl(),
-        _buildDeletedEventControl(),
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Wrap(
+        alignment: WrapAlignment.end,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: AppSpacing.sm,
+        runSpacing: AppSpacing.xs,
+        children: [
+          _buildEventHierarchyControl(),
+          _buildDeletedEventControl(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEventHierarchyControl() {
+    final surfaces = AppSurfaces.of(context);
+
+    return PopupMenuButton<_StatisticsFilterAction>(
+      tooltip: '统计层级',
+      padding: EdgeInsets.zero,
+      position: PopupMenuPosition.under,
+      offset: const Offset(0, AppSpacing.xs),
+      constraints: const BoxConstraints(
+        minWidth: 260,
+        maxWidth: 320,
+      ),
+      shape: const RoundedRectangleBorder(
+        borderRadius: AppRadius.cardAll,
+      ),
+      borderRadius: AppRadius.controlAll,
+      color: surfaces.card,
+      onSelected: _onStatisticsFilterActionSelected,
+      itemBuilder: (context) => [
+        _buildFilterMenuHeader('统计层级'),
+        _buildFilterMenuItem(
+          action: _StatisticsFilterAction.allEvents,
+          label: '全部事件',
+          description: '父事件和子事件分别显示',
+          selected: !_showParentOnly,
+        ),
+        _buildFilterMenuItem(
+          action: _StatisticsFilterAction.parentSummary,
+          label: '父事件汇总',
+          description: '将子事件合并到所属父事件',
+          selected: _showParentOnly,
+        ),
       ],
+      child: _buildStatisticsFilterControl(
+        prefix: '层级',
+        value: _showParentOnly ? '父事件汇总' : '全部事件',
+      ),
+    );
+  }
+
+  Widget _buildDeletedEventControl() {
+    final surfaces = AppSurfaces.of(context);
+    final menuItems = <PopupMenuEntry<_StatisticsFilterAction>>[
+      _buildFilterMenuHeader('已删除事件'),
+      if (_showParentOnly) ...[
+        _buildFilterMenuItem(
+          action: _StatisticsFilterAction.showDeletedInParent,
+          label: '显示',
+          description: '计入“已删除”汇总',
+          selected: _showDeletedEvents,
+        ),
+        _buildFilterMenuItem(
+          action: _StatisticsFilterAction.hideDeletedInParent,
+          label: '不显示',
+          description: '从统计结果中排除',
+          selected: !_showDeletedEvents,
+        ),
+      ] else ...[
+        _buildFilterMenuItem(
+          action: _StatisticsFilterAction.groupDeleted,
+          label: '合并显示',
+          description: '所有已删除事件合并为“已删除”',
+          selected:
+              _deletedEventDisplayMode == _DeletedEventDisplayMode.grouped,
+        ),
+        _buildFilterMenuItem(
+          action: _StatisticsFilterAction.separateDeleted,
+          label: '独立显示',
+          description: '保留原事件名称，分别列出',
+          selected:
+              _deletedEventDisplayMode == _DeletedEventDisplayMode.separate,
+        ),
+        _buildFilterMenuItem(
+          action: _StatisticsFilterAction.hideDeletedInAll,
+          label: '不显示',
+          description: '从统计结果中排除',
+          selected: _deletedEventDisplayMode == _DeletedEventDisplayMode.hidden,
+        ),
+      ],
+    ];
+
+    return PopupMenuButton<_StatisticsFilterAction>(
+      tooltip: '已删除事件',
+      padding: EdgeInsets.zero,
+      position: PopupMenuPosition.under,
+      offset: const Offset(0, AppSpacing.xs),
+      constraints: const BoxConstraints(
+        minWidth: 260,
+        maxWidth: 320,
+      ),
+      shape: const RoundedRectangleBorder(
+        borderRadius: AppRadius.cardAll,
+      ),
+      borderRadius: AppRadius.controlAll,
+      color: surfaces.card,
+      onSelected: _onStatisticsFilterActionSelected,
+      itemBuilder: (context) => menuItems,
+      child: _buildStatisticsFilterControl(
+        prefix: '删除',
+        value: _showParentOnly
+            ? (_showDeletedEvents ? '显示' : '不显示')
+            : switch (_deletedEventDisplayMode) {
+                _DeletedEventDisplayMode.grouped => '合并显示',
+                _DeletedEventDisplayMode.separate => '独立显示',
+                _DeletedEventDisplayMode.hidden => '不显示',
+              },
+        compact: true,
+      ),
+    );
+  }
+
+  Widget _buildStatisticsFilterControl({
+    required String prefix,
+    required String value,
+    bool compact = false,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final surfaces = AppSurfaces.of(context);
+
+    return Container(
+      height: AppSizes.button,
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? AppSpacing.xs : AppSpacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: surfaces.subtle,
+        borderRadius: AppRadius.controlAll,
+        border: Border.all(color: surfaces.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: '$prefix：',
+                  style: AppText.caption.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                TextSpan(
+                  text: value,
+                  style: AppText.button.copyWith(
+                    color: colorScheme.onSurface,
+                  ),
+                ),
+              ],
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          Icon(
+            Icons.keyboard_arrow_down_rounded,
+            size: 18,
+            color: colorScheme.onSurfaceVariant,
+          ),
+        ],
+      ),
     );
   }
 
@@ -162,202 +328,87 @@ class _ProfileScreenState extends State<ProfileScreen>
         : _DeletedEventDisplayMode.separate;
   }
 
-  Widget _buildEventHierarchyControl() {
-    return _buildDropdownControl<bool>(
-      label: '统计层级',
-      compactLabel: '层级',
-      icon: Icons.account_tree_outlined,
-      value: _showParentOnly,
-      options: const [
-        _DropdownOption<bool>(
-          value: false,
-          label: '全部事件',
-          description: '父事件和子事件分别显示',
+  PopupMenuItem<_StatisticsFilterAction> _buildFilterMenuHeader(String label) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return PopupMenuItem<_StatisticsFilterAction>(
+      enabled: false,
+      height: AppSizes.button,
+      child: Text(
+        label,
+        style: AppText.caption.copyWith(
+          color: colorScheme.primary,
+          fontWeight: FontWeight.w600,
         ),
-        _DropdownOption<bool>(
-          value: true,
-          label: '父事件汇总',
-          description: '将子事件合并到所属父事件',
-        ),
-      ],
-      onChanged: (value) {
-        if (value == null) return;
-        setState(() => _showParentOnly = value);
-      },
+      ),
     );
   }
 
-  Widget _buildDeletedEventControl() {
-    if (_showParentOnly) {
-      return _buildDropdownControl<bool>(
-        label: '已删除事件',
-        compactLabel: '删除',
-        icon: Icons.delete_outline,
-        value: _showDeletedEvents,
-        options: const [
-          _DropdownOption<bool>(
-            value: true,
-            label: '显示',
-            description: '计入“已删除”汇总',
-          ),
-          _DropdownOption<bool>(
-            value: false,
-            label: '不显示',
-            description: '从统计结果中排除',
-          ),
-        ],
-        onChanged: (value) {
-          if (value == null) return;
-          setState(() => _showDeletedEvents = value);
-        },
-      );
-    }
-
-    return _buildDropdownControl<_DeletedEventDisplayMode>(
-      label: '已删除事件',
-      compactLabel: '删除',
-      icon: Icons.delete_outline,
-      value: _deletedEventDisplayMode,
-      options: const [
-        _DropdownOption<_DeletedEventDisplayMode>(
-          value: _DeletedEventDisplayMode.grouped,
-          label: '合并显示',
-          description: '所有已删除事件合并为“已删除”',
-        ),
-        _DropdownOption<_DeletedEventDisplayMode>(
-          value: _DeletedEventDisplayMode.separate,
-          label: '独立显示',
-          description: '保留原事件名称，分别列出',
-        ),
-        _DropdownOption<_DeletedEventDisplayMode>(
-          value: _DeletedEventDisplayMode.hidden,
-          label: '不显示',
-          description: '从统计结果中排除',
-        ),
-      ],
-      onChanged: (mode) {
-        if (mode == null) return;
-        setState(() {
-          _showDeletedEvents = mode != _DeletedEventDisplayMode.hidden;
-          if (mode == _DeletedEventDisplayMode.grouped) {
-            _groupDeletedEvents = true;
-          } else if (mode == _DeletedEventDisplayMode.separate) {
-            _groupDeletedEvents = false;
-          }
-        });
-      },
-    );
-  }
-
-  Widget _buildDropdownControl<T>({
+  PopupMenuItem<_StatisticsFilterAction> _buildFilterMenuItem({
+    required _StatisticsFilterAction action,
     required String label,
-    required String compactLabel,
-    required IconData icon,
-    required T value,
-    required List<_DropdownOption<T>> options,
-    required ValueChanged<T?> onChanged,
+    required String description,
+    required bool selected,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
-    final surfaces = AppSurfaces.of(context);
-    final selectedLabel =
-        options.firstWhere((option) => option.value == value).label;
-
-    return PopupMenuButton<T>(
-      initialValue: value,
-      tooltip: label,
-      padding: EdgeInsets.zero,
-      position: PopupMenuPosition.under,
-      offset: const Offset(0, AppSpacing.xs),
-      constraints: const BoxConstraints(
-        minWidth: 220,
-        maxWidth: 300,
-      ),
-      shape: const RoundedRectangleBorder(
-        borderRadius: AppRadius.cardAll,
-      ),
-      borderRadius: AppRadius.controlAll,
-      color: surfaces.card,
-      onSelected: onChanged,
-      itemBuilder: (context) => options
-          .map(
-            (option) => PopupMenuItem<T>(
-              value: option.value,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  vertical: AppSpacing.xs,
+    return PopupMenuItem<_StatisticsFilterAction>(
+      value: action,
+      child: Row(
+        children: [
+          Icon(
+            selected
+                ? Icons.radio_button_checked
+                : Icons.radio_button_unchecked,
+            size: 20,
+            color:
+                selected ? colorScheme.primary : colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: AppText.body.copyWith(
+                    color: colorScheme.onSurface,
+                  ),
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      option.label,
-                      style: AppText.body.copyWith(
-                        color: colorScheme.onSurface,
-                      ),
-                    ),
-                    Text(
-                      option.description,
-                      style: AppText.caption.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
+                Text(
+                  description,
+                  style: AppText.caption.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
                 ),
-              ),
+              ],
             ),
-          )
-          .toList(),
-      child: Container(
-        height: AppSizes.input,
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-        decoration: BoxDecoration(
-          color: surfaces.subtle,
-          borderRadius: AppRadius.controlAll,
-          border: Border.all(color: surfaces.border),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 18,
-              color: colorScheme.onSurfaceVariant,
-            ),
-            const SizedBox(width: AppSpacing.xs),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 180),
-              child: Text.rich(
-                TextSpan(
-                  children: [
-                    TextSpan(
-                      text: '$compactLabel：',
-                      style: AppText.caption.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    TextSpan(
-                      text: selectedLabel,
-                      style: AppText.button.copyWith(
-                        color: colorScheme.onSurface,
-                      ),
-                    ),
-                  ],
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: AppSpacing.xs),
-            Icon(
-              Icons.keyboard_arrow_down_rounded,
-              size: 18,
-              color: colorScheme.onSurfaceVariant,
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
+  }
+
+  void _onStatisticsFilterActionSelected(_StatisticsFilterAction action) {
+    setState(() {
+      switch (action) {
+        case _StatisticsFilterAction.allEvents:
+          _showParentOnly = false;
+        case _StatisticsFilterAction.parentSummary:
+          _showParentOnly = true;
+        case _StatisticsFilterAction.showDeletedInParent:
+          _showDeletedEvents = true;
+        case _StatisticsFilterAction.hideDeletedInParent:
+          _showDeletedEvents = false;
+        case _StatisticsFilterAction.groupDeleted:
+          _showDeletedEvents = true;
+          _groupDeletedEvents = true;
+        case _StatisticsFilterAction.separateDeleted:
+          _showDeletedEvents = true;
+          _groupDeletedEvents = false;
+        case _StatisticsFilterAction.hideDeletedInAll:
+          _showDeletedEvents = false;
+      }
+    });
   }
 
   // 核心：双曲线折线图组件

@@ -7211,8 +7211,10 @@ class TimeProvider with ChangeNotifier {
     return Map.unmodifiable(stats);
   }
 
-  /// 获取按父事件汇总的统计（每个父事件包含自己的时间 + 所有子事件的时间）
-  Map<String, double> getParentStatistics(DateTime start, DateTime end) {
+  /// 获取按父事件汇总的统计（每个父事件包含自己的时间 + 所有子事件的时间）。
+  /// [includeDeleted] 为 false 时完全排除已删除事件。
+  Map<String, double> getParentStatistics(DateTime start, DateTime end,
+      {bool includeDeleted = true}) {
     // 先获取详细统计
     final detailStats = getStatistics(start, end);
     Map<String, double> parentStats = {};
@@ -7233,6 +7235,9 @@ class TimeProvider with ChangeNotifier {
 
     // 汇总统计
     detailStats.forEach((label, hours) {
+      if (!includeDeleted && deletedLabels.contains(label)) {
+        return;
+      }
       final parentName = childToParent[label];
       if (parentName != null) {
         // 子事件：累加到父事件
@@ -7298,12 +7303,17 @@ class TimeProvider with ChangeNotifier {
 
   /// 获取“全部事件”统计：当前有归属的事件保持独立，无归属历史标签合并为“临时”。
   /// [groupDeleted] 为 true 时将有效已删除事件合并为“已删除”。
+  /// [includeDeleted] 为 false 时完全排除已删除事件。
   Map<String, double> getStatisticsWithTemporaryGrouped(
       DateTime start, DateTime end,
-      {bool groupDeleted = true}) {
+      {bool groupDeleted = true, bool includeDeleted = true}) {
     final stats = Map<String, double>.from(getStatistics(start, end));
     final deletedLabels = _effectiveDeletedLabels();
-    if (groupDeleted) {
+    if (!includeDeleted) {
+      for (final label in deletedLabels) {
+        stats.remove(label);
+      }
+    } else if (groupDeleted) {
       var deletedHours = 0.0;
       for (final label in deletedLabels) {
         deletedHours += stats.remove(label) ?? 0;
