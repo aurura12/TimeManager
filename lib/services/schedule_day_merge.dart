@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-/// 日程单日文件的解析与合并（后写覆盖）。
+/// 日程单日文件的解析与合并。
 ///
 /// 新格式：`{ "updated_at": ms, "slots": [{ "i":0, "l":"...", "c":123, "ts": ms }] }`
 /// 旧格式：裸数组 `[{ "i":0, "l":"...", "c":123 }]`（视为 updated_at=0、槽位 ts=0）
@@ -128,9 +128,10 @@ ScheduleDayMergeResult parseScheduleContent(String? content) {
   return ScheduleDayMergeResult(slots: slots, updatedAt: updatedAt);
 }
 
-/// 合并本地与远端槽位（后写覆盖）。
+/// 合并本地与远端槽位。
 ///
-/// - 两侧都有同一槽位：`ts` 大者胜，平局取本地；
+/// - 两侧都有同一槽位：`ts` 大者胜；时间戳相等时墓碑优先，同类条目使用
+///   与参数顺序无关的稳定判据；
 /// - 仅一侧有：保留该侧（union）。tombstone（`del: true`）与 live entry
 ///   都携带 `ts`，通常与普通槽位一样参与"大者胜"比较；
 /// - Google 来源墓碑（`del: true, fc: true`）只能删除 Google live entry，
@@ -161,8 +162,25 @@ List<Map<String, dynamic>> mergeScheduleSlots({
       } else if (_isCalendarTombstone(remote) && _isPersonalLiveEntry(local)) {
         merged.add(local);
       } else {
-        // 其余冲突：后写者胜
-        merged.add(_tsOf(local) >= _tsOf(remote) ? local : remote);
+        final localTs = _tsOf(local);
+        final remoteTs = _tsOf(remote);
+        if (localTs != remoteTs) {
+          // 时间戳不等时保持原有的后写覆盖语义。
+          merged.add(localTs > remoteTs ? local : remote);
+        } else if (_isTombstone(local) != _isTombstone(remote)) {
+          // 时间戳缺失时两侧通常都是 0；删除优先可避免旧 live 条目
+          // 在平局中把已有删除撤销。
+          merged.add(_isTombstone(local) ? local : remote);
+        } else {
+          // 不能在平局时取 local：local/remote 只是调用方视角，交换参数后
+          // 会让两台设备各自坚持自己的版本。规范化后按稳定字符串比较，
+          // 确保同一对输入无论参数顺序如何都收敛到同一个条目。
+          merged.add(
+            _stableEntryKey(local).compareTo(_stableEntryKey(remote)) >= 0
+                ? local
+                : remote,
+          );
+        }
       }
     } else if (local != null) {
       merged.add(local);
@@ -192,6 +210,23 @@ List<Map<String, dynamic>> scheduleEntriesForPush({
 int _indexOf(Map<String, dynamic> e) => (e['i'] as num?)?.toInt() ?? -1;
 
 int _tsOf(Map<String, dynamic> e) => (e['ts'] as num?)?.toInt() ?? 0;
+
+bool _isTombstone(Map<String, dynamic> e) => e['del'] == true;
+
+/// 生成与 Map 插入顺序无关的条目键，用于同槽、同时间戳时的稳定决策。
+///
+/// 日程条目当前只有标量字段，但这里仍按 key 排序并统一 key 类型，避免
+/// JSON 字段写入顺序差异再次引入调用方相关的结果。
+String _stableEntryKey(Map<String, dynamic> entry) {
+  final normalizedEntries = entry.entries
+      .map((item) => MapEntry(item.key.toString(), item.value))
+      .toList()
+    ..sort((a, b) => a.key.compareTo(b.key));
+  final normalized = <String, dynamic>{
+    for (final item in normalizedEntries) item.key: item.value,
+  };
+  return json.encode(normalized);
+}
 
 bool _isCalendarTombstone(Map<String, dynamic> e) =>
     e['del'] == true && e['fc'] == true;

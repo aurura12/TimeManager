@@ -97,6 +97,8 @@ TargetDocument mergeTargetDocuments({
   }
   for (final target in remote.targets) {
     final localTarget = byId[target.id];
+    // 与日程槽位不同，目标编辑路径会写入 updatedAt；不要让缺失时间戳
+    // 逐渐进入这里，否则严格大于会使结果依赖 local/remote 参数顺序。
     if (localTarget == null || target.updatedAt > localTarget.updatedAt) {
       byId[target.id] = target;
     }
@@ -111,6 +113,8 @@ TargetDocument mergeTargetDocuments({
     surviving[id] = target;
   });
 
+  // 两端必须有可靠的文档时间戳；若允许缺失，>= 的平局选择也会依赖
+  // local/remote 参数顺序。
   final baseOrder = local.updatedAt >= remote.updatedAt ? local : remote;
   final otherOrder = identical(baseOrder, local) ? remote : local;
   final merged = <Target>[];

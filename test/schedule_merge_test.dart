@@ -58,8 +58,8 @@ void main() {
       expect(emptyLabel.isValid, isFalse);
 
       // 完全没有 l 键的 live 条目同样非法
-      final noLabel = parseScheduleContent(
-          '{"updated_at":1,"slots":[{"i":98,"ts":1000}]}');
+      final noLabel =
+          parseScheduleContent('{"updated_at":1,"slots":[{"i":98,"ts":1000}]}');
       expect(noLabel.isValid, isFalse);
 
       // 非法内容 slots 应为空且不抛异常（调用方靠 isValid 决定行为）
@@ -115,8 +115,7 @@ void main() {
       );
     });
 
-    test('字段类型校验：del/fc 必须 bool，cid/eid 必须 String，c/ts 必须 num',
-        () {
+    test('字段类型校验：del/fc 必须 bool，cid/eid 必须 String，c/ts 必须 num', () {
       final badDel = parseScheduleContent(
           '{"updated_at":1,"slots":[{"i":0,"del":"true","ts":1}]}');
       expect(badDel.isValid, isFalse);
@@ -145,11 +144,13 @@ void main() {
 
   group('scheduleDayEntriesError', () {
     test('合法列表返回 null', () {
-      expect(scheduleDayEntriesError(const [
-        {'i': 0, 'l': '跑步', 'c': 1, 'cid': 'c1', 'ts': 1000},
-        {'i': 98, 'del': true, 'ts': 2000},
-        {'i': 143, 'l': '睡觉', 'fc': true, 'eid': 'evt', 'ts': 3000},
-      ]), isNull);
+      expect(
+          scheduleDayEntriesError(const [
+            {'i': 0, 'l': '跑步', 'c': 1, 'cid': 'c1', 'ts': 1000},
+            {'i': 98, 'del': true, 'ts': 2000},
+            {'i': 143, 'l': '睡觉', 'fc': true, 'eid': 'evt', 'ts': 3000},
+          ]),
+          isNull);
     });
 
     test('空列表合法（空文件语义）', () {
@@ -157,24 +158,32 @@ void main() {
     });
 
     test('非法条目返回非 null 原因', () {
-      expect(scheduleDayEntriesError(const [
-        {'i': 98, 'l': null, 'ts': 1000},
-      ]), isNotNull);
+      expect(
+          scheduleDayEntriesError(const [
+            {'i': 98, 'l': null, 'ts': 1000},
+          ]),
+          isNotNull);
 
-      expect(scheduleDayEntriesError(const [
-        {'i': 98, 'l': '', 'ts': 1000},
-      ]), isNotNull);
+      expect(
+          scheduleDayEntriesError(const [
+            {'i': 98, 'l': '', 'ts': 1000},
+          ]),
+          isNotNull);
 
       expect(scheduleDayEntriesError(const ['not-a-map']), isNotNull);
 
-      expect(scheduleDayEntriesError(const [
-        {'i': 98, 'del': true, 'l': null, 'ts': 1000},
-      ]), isNotNull);
+      expect(
+          scheduleDayEntriesError(const [
+            {'i': 98, 'del': true, 'l': null, 'ts': 1000},
+          ]),
+          isNotNull);
 
       // 合法墓碑
-      expect(scheduleDayEntriesError(const [
-        {'i': 98, 'del': true, 'l': '', 'ts': 1000},
-      ]), isNull);
+      expect(
+          scheduleDayEntriesError(const [
+            {'i': 98, 'del': true, 'l': '', 'ts': 1000},
+          ]),
+          isNull);
     });
   });
 
@@ -194,18 +203,65 @@ void main() {
       expect(merged.first['l'], '远端');
     });
 
-    test('平局取本地', () {
+    test('同时间戳使用稳定判据，交换参数顺序结果一致', () {
       final local = [
-        {'i': 0, 'l': '本地', 'ts': 1000},
+        {'i': 0, 'l': 'A', 'ts': 1000},
       ];
       final remote = [
-        {'i': 0, 'l': '远端', 'ts': 1000},
+        {'i': 0, 'l': 'B', 'ts': 1000},
       ];
-      final merged = mergeScheduleSlots(
+      final localFirst = mergeScheduleSlots(
         localEntries: local,
         remoteEntries: remote,
       );
-      expect(merged.first['l'], '本地');
+      final remoteFirst = mergeScheduleSlots(
+        localEntries: remote,
+        remoteEntries: local,
+      );
+      expect(localFirst.first['l'], 'B');
+      expect(remoteFirst.first['l'], 'B');
+    });
+
+    test('两侧都没有 ts 时仍使用稳定判据', () {
+      final local = [
+        {'i': 0, 'l': '日历 A', 'fc': true},
+      ];
+      final remote = [
+        {'i': 0, 'l': '日历 B', 'fc': true},
+      ];
+
+      final localFirst = mergeScheduleSlots(
+        localEntries: local,
+        remoteEntries: remote,
+      );
+      final remoteFirst = mergeScheduleSlots(
+        localEntries: remote,
+        remoteEntries: local,
+      );
+
+      expect(localFirst.first['l'], '日历 B');
+      expect(remoteFirst.first['l'], '日历 B');
+    });
+
+    test('同时间戳时墓碑优先于 live 条目', () {
+      final tombstone = [
+        {'i': 0, 'del': true},
+      ];
+      final live = [
+        {'i': 0, 'l': '旧日程'},
+      ];
+
+      final tombstoneFirst = mergeScheduleSlots(
+        localEntries: tombstone,
+        remoteEntries: live,
+      );
+      final liveFirst = mergeScheduleSlots(
+        localEntries: live,
+        remoteEntries: tombstone,
+      );
+
+      expect(tombstoneFirst.single['del'], true);
+      expect(liveFirst.single['del'], true);
     });
 
     test('两侧不同的槽位都保留（不误删对方记录）', () {

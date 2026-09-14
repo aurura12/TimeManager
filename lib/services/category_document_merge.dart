@@ -266,7 +266,8 @@ String encodeCategoryDocument(CategoryDocument doc, {required int nowMs}) {
 /// 规则：
 /// - 删除墓碑取两侧并集，同 id 取时间戳大者；
 /// - 分类按 id union：仅一侧有的保留（除非墓碑时间更新则视为删除），
-///   两侧都有的取 updatedAt 大者（平局取本地）；
+///   两侧都有的取 updatedAt 大者（平局取本地）；updatedAt 必须始终存在，
+///   若未来允许缺失时间戳，平局规则需要改为与参数顺序无关的稳定判据；
 /// - 删除与更新冲突：分类 updatedAt 与墓碑时间谁大谁胜；
 /// - 顺序：以文档 updatedAt 大者一侧的顺序为基准，另一侧独有的分类按该侧相对顺序追加到尾部。
 CategoryDocument mergeCategoryDocuments({
@@ -294,6 +295,8 @@ CategoryDocument mergeCategoryDocuments({
   for (final c in remoteCategories) {
     if (c.id.isEmpty) continue;
     final localCat = byId[c.id];
+    // 与日程槽位不同，分类编辑路径会写入 updatedAt；不要让缺失时间戳
+    // 逐渐进入这里，否则严格大于会使结果依赖 local/remote 参数顺序。
     if (localCat == null || (c.updatedAt > localCat.updatedAt)) {
       byId[c.id] = c;
     }
@@ -309,7 +312,8 @@ CategoryDocument mergeCategoryDocuments({
     surviving[id] = cat;
   });
 
-  // 顺序：文档 updatedAt 大者一侧为基准。
+  // 顺序：文档 updatedAt 大者一侧为基准。两端必须有可靠的文档时间戳；
+  // 若允许缺失，>= 的平局选择也会依赖 local/remote 参数顺序。
   final baseOrder =
       local.updatedAt >= remote.updatedAt ? localCategories : remoteCategories;
   final otherOrder =
