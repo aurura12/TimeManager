@@ -8,10 +8,16 @@ class TravelGiteePullResult {
   final String? sha;
   final String? error;
 
-  const TravelGiteePullResult._({required this.success, required this.notFound, this.content, this.sha, this.error});
+  const TravelGiteePullResult._(
+      {required this.success,
+      required this.notFound,
+      this.content,
+      this.sha,
+      this.error});
 
   factory TravelGiteePullResult.success(String content, String sha) {
-    return TravelGiteePullResult._(success: true, notFound: false, content: content, sha: sha);
+    return TravelGiteePullResult._(
+        success: true, notFound: false, content: content, sha: sha);
   }
 
   factory TravelGiteePullResult.notFound() {
@@ -19,7 +25,8 @@ class TravelGiteePullResult {
   }
 
   factory TravelGiteePullResult.error(String message) {
-    return TravelGiteePullResult._(success: false, notFound: false, error: message);
+    return TravelGiteePullResult._(
+        success: false, notFound: false, error: message);
   }
 }
 
@@ -28,14 +35,16 @@ class TravelGiteePushResult {
   final bool created;
   final String? error;
 
-  const TravelGiteePushResult._({required this.success, required this.created, this.error});
+  const TravelGiteePushResult._(
+      {required this.success, required this.created, this.error});
 
   factory TravelGiteePushResult.success({required bool created}) {
     return TravelGiteePushResult._(success: true, created: created);
   }
 
   factory TravelGiteePushResult.error(String message) {
-    return TravelGiteePushResult._(success: false, created: false, error: message);
+    return TravelGiteePushResult._(
+        success: false, created: false, error: message);
   }
 }
 
@@ -63,12 +72,16 @@ class TravelGiteeService {
     required String path,
     required String content,
     required String commitMessage,
+    String? expectedSha,
+    bool expectNotFound = false,
   }) async {
     final result = await _api.pushText(
       token: token,
       path: path,
       content: content,
       commitMessage: commitMessage,
+      expectedSha: expectedSha,
+      expectNotFound: expectNotFound,
     );
     if (result.success) {
       return TravelGiteePushResult.success(created: result.created);

@@ -38,36 +38,80 @@ class GiteeContentsApi {
   }
 
   /// 拉取文件内容。
-  Future<({bool success, bool notFound, String? content, String? sha, String? error})> pullText({
+  Future<
+      ({
+        bool success,
+        bool notFound,
+        String? content,
+        String? sha,
+        String? error
+      })> pullText({
     required String token,
     required String path,
   }) async {
     try {
       final res = await requestWithRetry(
-        () => http.get(contentsUri(path, token: token), headers: headers(token)),
+        () =>
+            http.get(contentsUri(path, token: token), headers: headers(token)),
       );
       if (res.statusCode == 404) {
-        return (success: false, notFound: true, content: null, sha: null, error: null);
+        return (
+          success: false,
+          notFound: true,
+          content: null,
+          sha: null,
+          error: null
+        );
       }
       if (res.statusCode != 200) {
-        return (success: false, notFound: false, content: null, sha: null, error: extractErrorMessage(res));
+        return (
+          success: false,
+          notFound: false,
+          content: null,
+          sha: null,
+          error: extractErrorMessage(res)
+        );
       }
 
       final body = json.decode(res.body);
       // Gitee 对不存在的文件可能返回目录列表而非 404
       if (body is List) {
-        return (success: false, notFound: true, content: null, sha: null, error: null);
+        return (
+          success: false,
+          notFound: true,
+          content: null,
+          sha: null,
+          error: null
+        );
       }
       final map = body as Map<String, dynamic>;
       final rawContent = map['content']?.toString();
       final sha = map['sha']?.toString();
       if (rawContent == null || sha == null) {
-        return (success: false, notFound: false, content: null, sha: null, error: '远端文件内容无效');
+        return (
+          success: false,
+          notFound: false,
+          content: null,
+          sha: null,
+          error: '远端文件内容无效'
+        );
       }
       final decoded = utf8.decode(base64Decode(normalizeBase64(rawContent)));
-      return (success: true, notFound: false, content: decoded, sha: sha, error: null);
+      return (
+        success: true,
+        notFound: false,
+        content: decoded,
+        sha: sha,
+        error: null
+      );
     } catch (e) {
-      return (success: false, notFound: false, content: null, sha: null, error: '拉取失败: $e');
+      return (
+        success: false,
+        notFound: false,
+        content: null,
+        sha: null,
+        error: '拉取失败: $e'
+      );
     }
   }
 
@@ -77,14 +121,44 @@ class GiteeContentsApi {
     required String path,
     required String content,
     required String commitMessage,
+    String? expectedSha,
+    bool expectNotFound = false,
   }) async {
     try {
       String? sha;
-      final current = await pullText(token: token, path: path);
-      if (current.success) {
-        sha = current.sha;
-      } else if (!current.notFound) {
-        return (success: false, created: false, error: current.error ?? '读取远端文件失败');
+      if (expectedSha != null) {
+        // 调用方已经读取过该版本。把这个 sha 原样交给 PUT，让服务端在版本
+        // 变化时拒绝写入，避免“先读后写”期间覆盖并发更新。
+        sha = expectedSha;
+      } else if (expectNotFound) {
+        // 创建文件前再次确认远端仍不存在；若之后并发创建，POST 也会失败，
+        // 不会转成更新请求覆盖对方内容。
+        final current = await pullText(token: token, path: path);
+        if (current.success) {
+          return (
+            success: false,
+            created: false,
+            error: '远端文件已发生变化，请先重新拉取',
+          );
+        }
+        if (!current.notFound) {
+          return (
+            success: false,
+            created: false,
+            error: current.error ?? '读取远端文件失败',
+          );
+        }
+      } else {
+        final current = await pullText(token: token, path: path);
+        if (current.success) {
+          sha = current.sha;
+        } else if (!current.notFound) {
+          return (
+            success: false,
+            created: false,
+            error: current.error ?? '读取远端文件失败',
+          );
+        }
       }
 
       final payload = <String, dynamic>{

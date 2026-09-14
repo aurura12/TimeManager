@@ -94,7 +94,8 @@ class CheckInGoal {
   ///
   /// 记录（[CheckInRecord]）本来就有 timestamp 可比，但目标在此之前完全没有时间
   /// 信息，导致合并只能"远端优先"，本地对已有目标的编辑（改名/描述/图标/周期/
-  /// 次数）必然被远端旧值覆盖。旧数据为 0，加载本地数据时补齐。
+  /// 次数）必然被远端旧值覆盖。旧数据为 0，须在本地与远端合并后再补齐，不能在
+  /// 拉取远端前把旧本地数据伪装成最新修改。
   final int updatedAt;
 
   String get ownerLabel => KnownGoogleUsers.displayLabel(
@@ -128,7 +129,8 @@ class CheckInGoal {
     final now = DateTime.now();
     return records
         .where((r) =>
-            _matchesUser(r, userId, email) && _isInCurrentPeriod(r.timestamp, now))
+            _matchesUser(r, userId, email) &&
+            _isInCurrentPeriod(r.timestamp, now))
         .length;
   }
 
@@ -179,7 +181,8 @@ class CheckInGoal {
 
   // 兼容旧 UI 调用（默认统计全部用户的记录）
   int get currentPeriodCount => currentPeriodCountFor(null);
-  @Deprecated('Use isCompletedTodayBy(userId) instead. This getter checks all users.')
+  @Deprecated(
+      'Use isCompletedTodayBy(userId) instead. This getter checks all users.')
   bool get isCompletedToday =>
       records.any((r) => _isSameDay(r.timestamp, DateTime.now()));
   int get streakDays => streakDaysFor(ownerId);
@@ -293,8 +296,8 @@ class CheckInGoal {
       name: json['name']?.toString() ?? '',
       description: json['description']?.toString() ?? '',
       // 与 Category 同理：颜色只能是不透明实色
-      color: AppSemanticColors.opaque(Color(json['color'] as int? ??
-          AppSemanticColors.brandSurface.toARGB32())),
+      color: AppSemanticColors.opaque(Color(
+          json['color'] as int? ?? AppSemanticColors.brandSurface.toARGB32())),
       icon: CheckInGoalIcons.fromCodePoint(json['icon'] as int?),
       period: CheckInPeriod.fromKey(json['period']?.toString()),
       targetCount: json['target_count'] as int? ?? 1,

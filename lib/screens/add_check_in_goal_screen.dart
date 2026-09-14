@@ -6,6 +6,7 @@ import '../models/check_in_goal.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+
 class AddCheckInGoalScreen extends StatefulWidget {
   const AddCheckInGoalScreen({super.key, this.goal});
 
@@ -62,19 +63,20 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
       final start = _effectiveStartDate();
       // 把"今天"落成具体日期，保证开始/结束/时长三者一致
       _startDate = start;
-      _endDate = start.add(Duration(days: days));
+      // 开始日和结束日都算在时长内，所以 1 天的结束日就是开始日。
+      _endDate = start.add(Duration(days: days - 1));
     });
   }
 
   void _onStartDateChanged(DateTime? date) {
     setState(() {
-      _startDate = date == null
-          ? null
-          : DateTime(date.year, date.month, date.day);
+      _startDate =
+          date == null ? null : DateTime(date.year, date.month, date.day);
       if (_selectedDurationDays != null) {
         // 开始日期变化（或清空回"今天"）时按选定时长重算结束日期
-        _endDate =
-            _effectiveStartDate().add(Duration(days: _selectedDurationDays!));
+        _endDate = _effectiveStartDate().add(
+          Duration(days: _selectedDurationDays! - 1),
+        );
       }
     });
   }
@@ -93,9 +95,22 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
       _startDate = g.startDate;
       _endDate = g.endDate;
       if (_startDate != null && _endDate != null) {
-        _selectedDurationDays = _endDate!.difference(_startDate!).inDays;
+        // 使用 UTC 日期计算，避免夏令时导致本地 DateTime 的 inDays 少一天。
+        final start = DateTime.utc(
+          _startDate!.year,
+          _startDate!.month,
+          _startDate!.day,
+        );
+        final end = DateTime.utc(
+          _endDate!.year,
+          _endDate!.month,
+          _endDate!.day,
+        );
+        final durationDays = end.difference(start).inDays + 1;
+        _selectedDurationDays = durationDays > 0 ? durationDays : null;
       }
-      final ci = _themeColors.indexWhere((c) => c.toARGB32() == g.color.toARGB32());
+      final ci =
+          _themeColors.indexWhere((c) => c.toARGB32() == g.color.toARGB32());
       if (ci >= 0) _selectedColorIndex = ci;
       final ii = _icons.indexOf(g.icon);
       if (ii >= 0) _selectedIconIndex = ii;
@@ -118,7 +133,9 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
       );
       return;
     }
-    if (_startDate != null && _endDate != null && _endDate!.isBefore(_startDate!)) {
+    if (_startDate != null &&
+        _endDate != null &&
+        _endDate!.isBefore(_startDate!)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('结束日期不能早于开始日期')),
       );
@@ -126,8 +143,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
     }
     final count = int.tryParse(_countController.text) ?? 1;
     final goal = CheckInGoal(
-      id: widget.goal?.id ??
-          DateTime.now().millisecondsSinceEpoch.toString(),
+      id: widget.goal?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
       ownerId: widget.goal?.ownerId ?? '',
       ownerEmail: widget.goal?.ownerEmail ?? '',
       ownerDisplayName: widget.goal?.ownerDisplayName,
@@ -231,8 +247,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
                     borderRadius: AppRadius.controlAll,
                     border: selected
                         ? Border.all(
-                            color: AppSemanticColors.onTint(
-                                accent, pageSurface,
+                            color: AppSemanticColors.onTint(accent, pageSurface,
                                 alpha: 0.2),
                             width: 2)
                         : null,
@@ -314,7 +329,8 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
                     ? DateFormat('yyyy-MM-dd').format(_startDate!)
                     : '今天',
                 style: TextStyle(
-                  color: _startDate != null ? null : colorScheme.onSurfaceVariant,
+                  color:
+                      _startDate != null ? null : colorScheme.onSurfaceVariant,
                 ),
               ),
             ),
@@ -337,7 +353,8 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
               ChoiceChip(
                 label: const Text('自定义'),
                 selected: _selectedDurationDays != null &&
-                    !_durationOptions.any((o) => o.days == _selectedDurationDays),
+                    !_durationOptions
+                        .any((o) => o.days == _selectedDurationDays),
                 onSelected: (_) => _showCustomDurationDialog(),
               ),
             ],

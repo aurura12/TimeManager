@@ -32,9 +32,7 @@ class CheckInDocument {
   /// 将扁平记录挂到各目标上，供 UI 使用
   List<CheckInGoal> goalsWithRecords() {
     return goals.map((goal) {
-      final goalRecords = records
-          .where((r) => r.goalId == goal.id)
-          .toList()
+      final goalRecords = records.where((r) => r.goalId == goal.id).toList()
         ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
       return goal.copyWith(records: goalRecords);
     }).toList()
@@ -43,6 +41,7 @@ class CheckInDocument {
 
   /// 给缺少 updatedAt 的目标补齐时间戳（纯函数，无副作用）。
   ///
+  /// 调用方应在本地与远端完成合并后调用，避免把旧本地数据误判为最新修改。
   /// 无需补齐时原样返回同一实例，调用方可据此跳过落盘。
   CheckInDocument withLegacyGoalTimestamps(int nowMs) {
     if (goals.every((g) => g.updatedAt > 0)) return this;
@@ -146,8 +145,8 @@ class CheckInDocument {
       final meta = g.withoutRecords();
       final existing = goalMap[meta.id];
       // 与记录一致：同 id 取 updatedAt 大者（严格大于才替换，平局保留先到的
-      // 远端）。目标旧数据 updatedAt 为 0，加载本地时会被补齐成当前时间，
-      // 因此本地的编辑不会继续被远端旧值覆盖。
+      // 远端）。目标旧数据 updatedAt 为 0，需在合并完成后再补齐，不能让旧本地
+      // 数据在拉取远端前凭空获得一个比远端更新的时间戳。
       if (existing == null || meta.updatedAt > existing.updatedAt) {
         goalMap[meta.id] = meta;
       }

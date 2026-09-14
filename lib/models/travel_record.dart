@@ -60,6 +60,23 @@ class TravelRecordsDocument {
     return TravelRecordsDocument(records: next);
   }
 
+  /// 返回两端同一天但内容不同的记录日期。
+  ///
+  /// 出行记录没有逐条时间戳，同一天的不同地点/事件无法自动判断谁更新，
+  /// 因此同步写入前必须把这类日期视为冲突并中止覆盖。
+  Set<String> conflictingDateKeys(TravelRecordsDocument other) {
+    final conflicts = <String>{};
+    for (final local in records) {
+      final hasConflict = other.records.any(
+        (remote) =>
+            remote.dateKey == local.dateKey &&
+            (remote.location != local.location || remote.event != local.event),
+      );
+      if (hasConflict) conflicts.add(local.dateKey);
+    }
+    return conflicts;
+  }
+
   String toMarkdown() {
     final payload = records.map((e) => e.toJson()).toList();
     final body = const JsonEncoder.withIndent('  ').convert(payload);

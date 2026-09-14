@@ -4,7 +4,8 @@ import 'package:intl/intl.dart';
 import 'package:time_manager/models/check_in_goal.dart';
 import 'package:time_manager/screens/add_check_in_goal_screen.dart';
 
-CheckInGoal _goal({DateTime? startDate, DateTime? endDate, bool archived = false}) {
+CheckInGoal _goal(
+    {DateTime? startDate, DateTime? endDate, bool archived = false}) {
   return CheckInGoal(
     id: 'g1',
     ownerId: 'u1',
@@ -38,7 +39,8 @@ void main() {
 
     test('结束日期当天带具体时刻也仍有效', () {
       final today = _today();
-      final goal = _goal(endDate: DateTime(today.year, today.month, today.day, 9));
+      final goal =
+          _goal(endDate: DateTime(today.year, today.month, today.day, 9));
       expect(goal.isExpired, isFalse);
       expect(goal.isActive, isTrue);
     });
@@ -69,15 +71,15 @@ void main() {
       expect(future.isActive, isFalse);
       expect(future.isExpired, isFalse);
 
-      final past =
-          _goal(endDate: _today().subtract(const Duration(days: 1)), archived: true);
+      final past = _goal(
+          endDate: _today().subtract(const Duration(days: 1)), archived: true);
       expect(past.isActive, isFalse);
       expect(past.isExpired, isTrue);
     });
 
     test('选 7 天时长时，第 7 天仍可打卡、第 8 天过期', () {
       final start = _today();
-      final end = start.add(const Duration(days: 7));
+      final end = start.add(const Duration(days: 6));
 
       // 用固定"今天"无法模拟未来，这里直接验证边界日期语义：
       // 结束日 00:00 所在的那一天算有效，次日 00:00 起算过期
@@ -97,8 +99,7 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('新建目标时选「1周」会算出结束日期（回归：此前被静默丢弃）',
-        (tester) async {
+    testWidgets('新建目标时选「1周」会算出结束日期（回归：此前被静默丢弃）', (tester) async {
       await pumpScreen(tester);
 
       expect(find.text('今天'), findsOneWidget);
@@ -107,7 +108,7 @@ void main() {
       await tester.tap(find.text('1周'));
       await tester.pump();
 
-      final expected = _fmt(_today().add(const Duration(days: 7)));
+      final expected = _fmt(_today().add(const Duration(days: 6)));
       expect(find.text('结束日期：$expected'), findsOneWidget);
       // 开始日期落成具体日期，保证开始/结束/时长三者一致
       expect(find.text(_fmt(_today())), findsOneWidget);
@@ -123,7 +124,7 @@ void main() {
       await tester.tap(find.text('确定'));
       await tester.pumpAndSettle();
 
-      final expected = _fmt(_today().add(const Duration(days: 3)));
+      final expected = _fmt(_today().add(const Duration(days: 2)));
       expect(find.text('结束日期：$expected'), findsOneWidget);
     });
 
@@ -174,7 +175,7 @@ void main() {
 
       expect(saved, isNotNull);
       expect(saved!.startDate, _today());
-      expect(saved!.endDate, _today().add(const Duration(days: 7)));
+      expect(saved!.endDate, _today().add(const Duration(days: 6)));
     });
   });
 }

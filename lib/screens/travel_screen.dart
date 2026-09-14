@@ -12,6 +12,7 @@ import '../services/travel_local_store.dart';
 
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_tokens.dart';
+
 enum _TravelViewMode { table, calendar, stats }
 
 enum _TravelRecordAction { edit, delete }
@@ -78,25 +79,30 @@ class _TravelScreenState extends State<TravelScreen> {
       _recordDateKeys.difference(remote.records.map((e) => e.dateKey).toSet());
 
   /// 远端有、本地没有的日期。
-  Set<String> _remoteOnlyDateKeys(TravelRecordsDocument remote) => remote
-      .records
-      .map((e) => e.dateKey)
-      .toSet()
-      .difference(_recordDateKeys);
+  Set<String> _remoteOnlyDateKeys(TravelRecordsDocument remote) =>
+      remote.records.map((e) => e.dateKey).toSet().difference(_recordDateKeys);
 
-  Future<bool> _confirmOverwriteLocal(Set<String> localOnlyKeys) async {
+  Future<bool> _confirmOverwriteLocal({
+    required Set<String> localOnlyKeys,
+    required Set<String> conflictingKeys,
+  }) async {
     if (!mounted) return false;
-    final preview = localOnlyKeys.take(5).join('、');
-    final suffix = localOnlyKeys.length > 5 ? ' 等' : '';
+    final localPreview = localOnlyKeys.take(5).join('、');
+    final localSuffix = localOnlyKeys.length > 5 ? ' 等' : '';
+    final conflictPreview = conflictingKeys.take(5).join('、');
+    final conflictSuffix = conflictingKeys.length > 5 ? ' 等' : '';
+    final details = <String>[
+      if (localOnlyKeys.isNotEmpty)
+        '本地有 ${localOnlyKeys.length} 天记录不在远端（$localPreview$localSuffix）',
+      if (conflictingKeys.isNotEmpty)
+        '本地与远端有 ${conflictingKeys.length} 天内容不同（$conflictPreview$conflictSuffix）',
+    ].join('；');
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
           title: const Text('覆盖本地记录'),
-          content: Text(
-            '本地有 ${localOnlyKeys.length} 天记录不在远端（$preview$suffix），'
-            '继续拉取会丢失这些记录。确认覆盖吗？',
-          ),
+          content: Text('$details；继续拉取会覆盖本地内容。确认覆盖吗？'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -417,12 +423,16 @@ class _TravelScreenState extends State<TravelScreen> {
         // 远端缺了本地已有的日期时，覆盖会丢掉本地未同步的记录。
         // 静默拉取（进页面自动触发）一律保留本地；手动拉取需用户确认。
         final localOnly = _localOnlyDateKeys(doc);
-        if (localOnly.isNotEmpty) {
+        final conflicting = _document.conflictingDateKeys(doc);
+        if (localOnly.isNotEmpty || conflicting.isNotEmpty) {
           if (silent) {
             setState(() => _processing = false);
             return;
           }
-          final confirmed = await _confirmOverwriteLocal(localOnly);
+          final confirmed = await _confirmOverwriteLocal(
+            localOnlyKeys: localOnly,
+            conflictingKeys: conflicting,
+          );
           if (!confirmed || !mounted) {
             setState(() => _processing = false);
             _showMessage('已取消拉取，本地记录保持不变');
@@ -483,6 +493,16 @@ class _TravelScreenState extends State<TravelScreen> {
           );
           return;
         }
+        final conflicting = _document.conflictingDateKeys(remote);
+        if (conflicting.isNotEmpty) {
+          setState(() => _processing = false);
+          final preview = conflicting.take(5).join('、');
+          final suffix = conflicting.length > 5 ? ' 等' : '';
+          _showMessage(
+            '本地与远端同日记录内容不同（$preview$suffix），已中止同步，请先执行「拉取」并确认覆盖',
+          );
+          return;
+        }
       } catch (_) {
         setState(() => _processing = false);
         _showMessage('远端记录格式无法解析，已中止同步以保护远端数据');
@@ -490,6 +510,8 @@ class _TravelScreenState extends State<TravelScreen> {
       }
     }
 
+    final remoteSha = pull.success ? pull.sha : null;
+    final remoteWasNotFound = pull.notFound;
     final content = _document.toMarkdown();
     final latest = _document.records.isEmpty ? null : _document.records.first;
     final result = await TravelGiteeService.pushFile(
@@ -499,6 +521,8 @@ class _TravelScreenState extends State<TravelScreen> {
       commitMessage: latest == null
           ? 'travel: update'
           : 'travel: update ${latest.dateKey} ${latest.location}',
+      expectedSha: remoteSha,
+      expectNotFound: remoteWasNotFound,
     );
     if (!mounted) return;
     setState(() => _processing = false);
@@ -1230,8 +1254,7 @@ class _TravelScreenState extends State<TravelScreen> {
                       centerSpaceRadius: 36,
                       sections: List.generate(pieData.length, (i) {
                         final entry = pieData[i];
-                        final color =
-                            AppSemanticColors.chartAt(i);
+                        final color = AppSemanticColors.chartAt(i);
                         final percentage = entry.value / total * 100;
                         final isTouched = i == _touchedIndex;
                         return PieChartSectionData(

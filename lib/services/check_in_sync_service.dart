@@ -97,12 +97,12 @@ class CheckInSyncService {
       }
 
       final local = await CheckInLocalStore.loadDraft();
-      final migratedLocal =
-          local == null ? null : await _migrateLegacyGoalTimestamps(local);
-      if (migratedLocal != null) _document = migratedLocal;
+      if (local != null) _document = local;
 
       final token = await DiaryLocalStore.loadToken();
       if (token == null || token.isEmpty) {
+        // 没有远端可比较时不要补时间戳；之后用户配置 token 后，远端可能已有
+        // 比旧本地数据更新的目标，必须保留 updatedAt=0 让合并策略安全处理。
         return;
       }
 
@@ -114,23 +114,27 @@ class CheckInSyncService {
       if (pull.success && pull.content != null) {
         try {
           final remote = CheckInDocument.fromMarkdown(pull.content!);
-          _document = migratedLocal == null
-              ? remote
-              : CheckInDocument.merge(migratedLocal, remote);
+          final merged =
+              local == null ? remote : CheckInDocument.merge(local, remote);
+          // 先合并，再给最终选中的旧目标补时间戳，避免陈旧本地目标覆盖远端新版本。
+          _document = await _migrateLegacyGoalTimestamps(merged);
           await CheckInLocalStore.saveDraft(_document);
         } catch (e) {
           _lastError = '解析远端打卡数据失败: $e';
         }
+      } else if (pull.notFound && local != null) {
+        // 远端文件确认不存在时，本地目标没有远端新版本可冲突。
+        _document = await _migrateLegacyGoalTimestamps(local);
       }
     } finally {
       if (!silent) _loading = false;
     }
   }
 
-  /// 给缺少 updatedAt 的旧目标补齐时间戳并落盘（保证跨重启稳定）。
+  /// 给已经完成同步决策的旧目标补齐时间戳并落盘（保证跨重启稳定）。
   ///
-  /// 目标在引入 updatedAt 之前完全没有时间信息，合并只能按"远端优先"处理，
-  /// 于是本地对已有目标的编辑会被远端旧值覆盖。补齐后本地编辑才能生效。
+  /// 旧目标的时间戳未知，不能在拉取远端前把它当成最新修改；只有远端不存在，
+  /// 或本地/远端已完成合并后，才可以把最终选中的内容作为新的基线保存。
   Future<CheckInDocument> _migrateLegacyGoalTimestamps(
     CheckInDocument doc,
   ) async {

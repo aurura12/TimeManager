@@ -33,7 +33,8 @@ void main() {
   group('CheckInDocument tombstone', () {
     test('删除的目标在 merge 时不复活', () {
       final goal = _goal('g1');
-      final local = CheckInDocument(goals: [goal], records: []).tombstoneGoal('g1');
+      final local =
+          CheckInDocument(goals: [goal], records: []).tombstoneGoal('g1');
       final remote = CheckInDocument(goals: [goal], records: []);
 
       final merged = CheckInDocument.merge(local, remote);
@@ -75,8 +76,8 @@ void main() {
 
     test('序列化 round-trip 保留 tombstone', () {
       final goal = _goal('g1');
-      final doc = CheckInDocument(goals: [goal], records: [])
-          .tombstoneGoal('g1');
+      final doc =
+          CheckInDocument(goals: [goal], records: []).tombstoneGoal('g1');
       final parsed = CheckInDocument.fromMarkdown(doc.toMarkdown());
       expect(parsed.deletedGoalIds, contains('g1'));
       expect(parsed.goals, isEmpty);
@@ -182,6 +183,19 @@ void main() {
       expect(merged.goals.single.name, '远端名');
     });
 
+    test('旧本地目标不会因为迁移时间戳覆盖远端新版本', () {
+      final localLegacy = _goal('g1').copyWith(name: '本地旧名');
+      final remoteGoal = _goal('g1').copyWith(name: '远端新名', updatedAt: 5000);
+
+      final merged = CheckInDocument.merge(
+        CheckInDocument(goals: [localLegacy], records: []),
+        CheckInDocument(goals: [remoteGoal], records: []),
+      );
+
+      expect(merged.goals.single.name, '远端新名');
+      expect(merged.goals.single.updatedAt, 5000);
+    });
+
     test('合并保留记录、不因元数据时间戳影响记录合并', () {
       final remoteGoal = _goal('g1').copyWith(updatedAt: 1000);
       final localGoal = _goal('g1').copyWith(name: '晨跑', updatedAt: 2000);
@@ -243,7 +257,9 @@ void main() {
         records: [],
       ).withLegacyGoalTimestamps(nowMs);
       final edited = CheckInDocument(
-        goals: [migrated.goals.single.copyWith(name: '晨跑', updatedAt: nowMs + 1)],
+        goals: [
+          migrated.goals.single.copyWith(name: '晨跑', updatedAt: nowMs + 1)
+        ],
         records: [],
       );
       // 远端仍是旧的、且没有时间戳
