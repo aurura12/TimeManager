@@ -122,33 +122,35 @@ class CheckInGoal {
     );
   }
 
+  /// 连续打卡天数。
+  ///
+  /// 同一天多次打卡只算一天；今天尚未打卡时，允许从昨天开始计算（保持原语义）。
   int streakDaysFor(String userId, {String? email}) {
-    final userRecords = records
-        .where((r) => _matchesUser(r, userId, email))
-        .map((r) => r.timestamp)
-        .toList()
-      ..sort((a, b) => b.compareTo(a));
-    if (userRecords.isEmpty) return 0;
+    // 先按"天"去重：否则同一天的重复记录会让后续日期对不上而提前中断。
+    final days = <DateTime>{};
+    for (final r in records) {
+      if (!_matchesUser(r, userId, email)) continue;
+      days.add(DateTime(r.timestamp.year, r.timestamp.month, r.timestamp.day));
+    }
+    if (days.isEmpty) return 0;
 
-    int streak = 0;
-    var checkDate = DateTime.now();
-    // 仅在第一次迭代允许跳过"今天"（处理今天尚未打卡的情况）
-    bool firstDaySkipAllowed = true;
-    for (final ts in userRecords) {
-      if (_isSameDay(ts, checkDate)) {
-        streak++;
-        checkDate = checkDate.subtract(const Duration(days: 1));
-      } else if (firstDaySkipAllowed &&
-          _isSameDay(
-              ts, checkDate.subtract(const Duration(days: 1)))) {
-        // 允许从昨天开始计算 streak（今天可能还没打卡）
-        streak++;
-        checkDate = DateTime(ts.year, ts.month, ts.day);
-        checkDate = checkDate.subtract(const Duration(days: 1));
-        firstDaySkipAllowed = false;
-      } else {
-        break;
-      }
+    final sortedDays = days.toList()..sort((a, b) => b.compareTo(a));
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    var cursor = today;
+    if (sortedDays.first != today) {
+      // 今天还没打卡：只有当最近一次打卡是昨天时才继续算连续
+      final yesterday = DateTime(today.year, today.month, today.day - 1);
+      if (sortedDays.first != yesterday) return 0;
+      cursor = yesterday;
+    }
+
+    var streak = 0;
+    for (final day in sortedDays) {
+      if (day != cursor) break;
+      streak++;
+      cursor = DateTime(cursor.year, cursor.month, cursor.day - 1);
     }
     return streak;
   }
