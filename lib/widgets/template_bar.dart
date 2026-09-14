@@ -11,6 +11,10 @@ class TemplateBar extends StatelessWidget {
   final VoidCallback onCopyYesterdayTap;
   final VoidCallback? onVoiceTap;
 
+  /// 替换「模板 + 设置」这一行的内容（刷子模式用）。
+  /// 为 null 时保持原来的标题行；语音 / 昨天 / 模板 / 添加模板都不受影响。
+  final Widget? headerOverride;
+
   const TemplateBar({
     super.key,
     required this.provider,
@@ -18,6 +22,7 @@ class TemplateBar extends StatelessWidget {
     required this.onManageTap,
     required this.onCopyYesterdayTap,
     this.onVoiceTap,
+    this.headerOverride,
   });
 
   static const double _chipHeight = AppSizes.chip;
@@ -45,26 +50,7 @@ class TemplateBar extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Text(
-                '模板',
-                style: AppText.body.copyWith(
-                  color: colorScheme.onSurface,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const Spacer(),
-              IconButton(
-                onPressed: onManageTap,
-                icon: const Icon(Icons.settings, size: 22),
-                color: colorScheme.onSurfaceVariant,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                tooltip: '管理模板',
-              ),
-            ],
-          ),
+          headerOverride ?? _buildDefaultHeader(context),
           if (onVoiceTap != null) ...[
             const SizedBox(height: _chipGap),
             Semantics(
@@ -152,6 +138,30 @@ class TemplateBar extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildDefaultHeader(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        Text(
+          '模板',
+          style: AppText.body.copyWith(
+            color: colorScheme.onSurface,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const Spacer(),
+        IconButton(
+          onPressed: onManageTap,
+          icon: const Icon(Icons.settings, size: 22),
+          color: colorScheme.onSurfaceVariant,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+          tooltip: '管理模板',
+        ),
+      ],
     );
   }
 }

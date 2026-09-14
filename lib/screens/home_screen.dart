@@ -12,6 +12,7 @@ import '../providers/time_provider.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/brush_mode_card.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/template_bar.dart';
 import '../widgets/time_grid.dart';
@@ -27,10 +28,10 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class HomeScreenState extends State<HomeScreen> {
   final GlobalKey _gridKey = GlobalKey();
   // 左侧时间轴滚动；右侧网格跟随同步，自身不可滚动
   final ScrollController _scrollController = ScrollController();
@@ -43,7 +44,43 @@ class _HomeScreenState extends State<HomeScreen> {
   int? _selectionEnd;
   DateTime? _selectionDate;
 
+  // --- 刷子模式 ---
+  // 当前没有选中时间格时点事件进入刷子模式：之后点击/拖动网格直接写入该事件。
+  String? _brushCategoryId;
+  String? _brushSubLabel;
+  // 一次刷子手势的归属日期与覆盖槽位；手势期间只做预览，松手才落数据。
+  DateTime? _brushStrokeDate;
+  Set<int> _brushStrokeIndices = <int>{};
+  bool _isBrushPointerDown = false;
+
   bool _isDatePickerVisible = false;
+
+  bool get _isBrushMode => _brushCategoryId != null;
+
+  /// 按 id 找当前刷子事件；事件可能在刷子模式开着时被删掉，找不到就返回 null。
+  Category? _findBrushCategory(TimeProvider provider) {
+    for (final category in provider.categories) {
+      if (category.id == _brushCategoryId) return category;
+    }
+    return null;
+  }
+
+  /// 刷子卡片上显示的当前事件名
+  String _currentBrushLabel(TimeProvider provider) {
+    final name = _findBrushCategory(provider)?.name;
+    if (name == null) return '未知事件';
+    return _brushSubLabel == null ? name : '$name · $_brushSubLabel';
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  /// 只在刷子手势发生的那个日期上画预览，避免 Windows 三列串写/串画
+  Set<int> _brushPreviewFor(DateTime date) {
+    final strokeDate = _brushStrokeDate;
+    if (!_isBrushMode || strokeDate == null) return const <int>{};
+    return _isSameDay(strokeDate, date) ? _brushStrokeIndices : const <int>{};
+  }
 
   @override
   void initState() {
@@ -143,6 +180,133 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  // --- 刷子模式：进入 / 切换 / 退出与手势记录 ---
+
+  /// 进入刷子模式：清掉待分配的时间选择，之后点网格直接记录当前事件。
+  void _enterBrushMode(Category category, {String? subLabel}) {
+    setState(() {
+      _brushCategoryId = category.id;
+      _brushSubLabel = subLabel;
+      _selectionStart = null;
+      _selectionEnd = null;
+      _selectionDate = null;
+    });
+  }
+
+  void _switchBrushTarget(Category category, {String? subLabel}) {
+    setState(() {
+      _brushCategoryId = category.id;
+      _brushSubLabel = subLabel;
+      _endBrushStroke();
+    });
+  }
+
+  /// 退出刷子模式。公开给 MainScreen 在离开「记录」Tab 时调用。
+  void exitBrushMode() {
+    if (!_isBrushMode) return;
+    _exitBrushMode();
+  }
+
+  void _exitBrushMode() {
+    if (!mounted) return;
+    setState(() {
+      _brushCategoryId = null;
+      _brushSubLabel = null;
+      _endBrushStroke();
+    });
+  }
+
+  /// 清掉一次刷子手势的临时状态（不写数据）。必须在 setState 里调用。
+  void _endBrushStroke() {
+    _brushStrokeDate = null;
+    _brushStrokeIndices = <int>{};
+    _isBrushPointerDown = false;
+  }
+
+  /// 事件 / 子事件的统一点击入口。
+  ///
+  /// 有时间选择 → 保持原来的「先选时间，再选事件」；
+  /// 没有时间选择 → 进入刷子模式，不写任何时间数据。
+  void _handleCategoryTap(Category category, {String? subLabel}) {
+    if (_isBrushMode) {
+      final isCurrentTarget =
+          _brushCategoryId == category.id && _brushSubLabel == subLabel;
+      if (isCurrentTarget) {
+        _exitBrushMode();
+      } else {
+        _switchBrushTarget(category, subLabel: subLabel);
+      }
+      return;
+    }
+
+    if (_selectionStart != null && _selectionEnd != null) {
+      final provider = context.read<TimeProvider>();
+      if (subLabel == null) {
+        _assignCategory(category, provider);
+      } else {
+        _assignSubCategory(category, subLabel, provider);
+      }
+      return;
+    }
+
+    _enterBrushMode(category, subLabel: subLabel);
+  }
+
+  bool _isActiveBrushCategory(Category category) =>
+      _isBrushMode && _brushCategoryId == category.id && _brushSubLabel == null;
+
+  bool _isActiveBrushSubCategory(Category category, String subCategory) =>
+      _isBrushMode &&
+      _brushCategoryId == category.id &&
+      _brushSubLabel == subCategory;
+
+  void _brushStart(DateTime date, int index) {
+    if (!_isBrushMode) return;
+    setState(() {
+      _isBrushPointerDown = true;
+      _brushStrokeDate = date;
+      _brushStrokeIndices = <int>{index};
+    });
+  }
+
+  void _brushExtend(DateTime date, int index) {
+    if (!_isBrushPointerDown) return;
+    final strokeDate = _brushStrokeDate;
+    if (strokeDate == null || !_isSameDay(strokeDate, date)) return;
+    if (_brushStrokeIndices.contains(index)) return;
+    setState(() {
+      _brushStrokeIndices = <int>{..._brushStrokeIndices, index};
+    });
+  }
+
+  /// 松手一次性落数据：一次手势 = 一次 assignCategoryToSlots =
+  /// 一条撤销记录 = 一次落盘/同步，不会按格子各存一次。
+  void _finishBrushStroke() {
+    if (!_isBrushPointerDown) return;
+
+    final indices = Set<int>.from(_brushStrokeIndices);
+    final date = _brushStrokeDate;
+    final subLabel = _brushSubLabel;
+
+    setState(_endBrushStroke);
+
+    if (indices.isEmpty || date == null) return;
+    final provider = context.read<TimeProvider>();
+    final category = _findBrushCategory(provider);
+    if (category == null) return;
+    provider.assignCategoryToSlots(
+      indices,
+      category,
+      subLabel: subLabel,
+      date: date,
+    );
+  }
+
+  void _cancelBrushStroke() {
+    if (!_isBrushPointerDown) return;
+    setState(_endBrushStroke);
+  }
+
   @override
   Widget build(BuildContext context) {
     final timeProvider = context.read<TimeProvider>();
@@ -162,7 +326,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final colorScheme = Theme.of(context).colorScheme;
     final surfaces = AppSurfaces.of(context);
 
-    return Scaffold(
+    final page = Scaffold(
       appBar: AppBar(
         // 底色、图标色、底部弱边框统一由主题给定，不再使用大面积橄榄绿
         titleSpacing: AppSpacing.sm,
@@ -243,6 +407,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                         Expanded(
                                           child: _DayGrid(
                                             date: prevDate,
+                                            brushMode: _isBrushMode,
+                                            brushPreviewIndices:
+                                                _brushPreviewFor(prevDate),
+                                            onBrushIndexDown: _brushStart,
+                                            onBrushIndexMove: _brushExtend,
+                                            onBrushEnd: (_) =>
+                                                _finishBrushStroke(),
+                                            onBrushCancel: (_) =>
+                                                _cancelBrushStroke(),
                                             timeAxisController:
                                                 _scrollController,
                                             dragStartIndex: _selectionStart,
@@ -271,6 +444,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                         Expanded(
                                           child: _DayGrid(
                                             date: currentDate,
+                                            brushMode: _isBrushMode,
+                                            brushPreviewIndices:
+                                                _brushPreviewFor(currentDate),
+                                            onBrushIndexDown: _brushStart,
+                                            onBrushIndexMove: _brushExtend,
+                                            onBrushEnd: (_) =>
+                                                _finishBrushStroke(),
+                                            onBrushCancel: (_) =>
+                                                _cancelBrushStroke(),
                                             timeAxisController:
                                                 _scrollController,
                                             dragStartIndex: _selectionStart,
@@ -299,6 +481,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                         Expanded(
                                           child: _DayGrid(
                                             date: nextDate,
+                                            brushMode: _isBrushMode,
+                                            brushPreviewIndices:
+                                                _brushPreviewFor(nextDate),
+                                            onBrushIndexDown: _brushStart,
+                                            onBrushIndexMove: _brushExtend,
+                                            onBrushEnd: (_) =>
+                                                _finishBrushStroke(),
+                                            onBrushCancel: (_) =>
+                                                _cancelBrushStroke(),
                                             timeAxisController:
                                                 _scrollController,
                                             dragStartIndex: _selectionStart,
@@ -332,6 +523,20 @@ class _HomeScreenState extends State<HomeScreen> {
                                 controller: _gridScrollController,
                                 dragStartIndex: _selectionStart,
                                 dragEndIndex: _selectionEnd,
+                                brushMode: _isBrushMode,
+                                brushPreviewIndices: _brushStrokeIndices,
+                                onBrushPointerDown: _isBrushMode
+                                    ? (position) => _brushStart(
+                                        currentDate, _calculateIndex(position))
+                                    : null,
+                                onBrushPointerMove: _isBrushMode
+                                    ? (position) => _brushExtend(
+                                        currentDate, _calculateIndex(position))
+                                    : null,
+                                onBrushPointerUp:
+                                    _isBrushMode ? _finishBrushStroke : null,
+                                onBrushPointerCancel:
+                                    _isBrushMode ? _cancelBrushStroke : null,
                                 onTapDown: (position) => _handleSelect(
                                     position, currentDate,
                                     isClick: true),
@@ -403,12 +608,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: DatePickerPanel(
                     initialDate: currentDate,
                     onDateSelected: (selected) {
+                      _leaveBrushAndClearSelection();
                       timeProvider.goToDate(selected);
                       setState(() {
                         _isDatePickerVisible = false;
-                        _selectionStart = null;
-                        _selectionEnd = null;
-                        _selectionDate = null;
                       });
                     },
                     onClose: () => setState(() => _isDatePickerVisible = false),
@@ -419,6 +622,16 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ],
       ),
+    );
+
+    // 刷子模式开着时，返回键第一次只退出刷子模式，不会退出页面
+    return PopScope(
+      canPop: !_isBrushMode,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _exitBrushMode();
+      },
+      child: page,
     );
   }
 
@@ -446,6 +659,13 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           TemplateBar(
             provider: provider,
+            // 刷子模式替换掉「模板 + 设置」标题行，语音/昨天/模板都不受影响
+            headerOverride: _isBrushMode
+                ? BrushModeCard(
+                    label: _currentBrushLabel(provider),
+                    onExit: _exitBrushMode,
+                  )
+                : null,
             onTemplateTap: (template) => _onTemplateTap(template, provider),
             onManageTap: () => _showTemplateManageSheet(provider),
             onCopyYesterdayTap: () => _onCopyYesterday(provider),
@@ -532,6 +752,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final onSubBg = AppSemanticColors.onColor(subBg);
     final editBg = AppSemanticColors.tint(cat.color, sidebarSurface, 0.4);
     final onEditBg = AppSemanticColors.onColor(editBg);
+    // 刷子选中态：外框 + 勾选图标用 primary 压到当前底色上可读的版本
+    final brushActive = _isActiveBrushCategory(cat);
+    final brushOutline = AppSemanticColors.readableOn(
+        Theme.of(context).colorScheme.primary, cat.color);
+    final subBrushOutline = AppSemanticColors.readableOn(
+        Theme.of(context).colorScheme.primary, subBg);
 
     return Column(
       children: [
@@ -551,13 +777,13 @@ class _HomeScreenState extends State<HomeScreen> {
                     provider.setCategoryExpandState(cat.id, !currentExpanded);
                   },
                 ),
-              // 事件主体 - 可点击分配分类
+              // 事件主体 - 可点击分配分类（无时间选择时改为进入刷子模式）
               Expanded(
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: () => isTemporary
                       ? _showTemporaryEventDialog(provider)
-                      : _assignCategory(cat, provider),
+                      : _handleCategoryTap(cat),
                   onSecondaryTapDown: isDesktopPlatform
                       ? (details) => _showCategoryContextMenu(
                             details.globalPosition,
@@ -570,18 +796,34 @@ class _HomeScreenState extends State<HomeScreen> {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
                     decoration: BoxDecoration(
+                      // 分类色保持不变，激活只加外框和勾选图标
                       color: cat.color,
                       borderRadius: AppRadius.badgeAll,
+                      border: brushActive
+                          ? Border.all(color: brushOutline, width: 2)
+                          : null,
                     ),
-                    child: Text(
-                      cat.name,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: AppSemanticColors.onColor(cat.color),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      overflow: TextOverflow.ellipsis,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        if (brushActive) ...[
+                          Icon(Icons.check_circle,
+                              size: 14, color: brushOutline),
+                          const SizedBox(width: AppSpacing.xs),
+                        ],
+                        Flexible(
+                          child: Text(
+                            cat.name,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: AppSemanticColors.onColor(cat.color),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -597,8 +839,9 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 ...cat.subCategories.asMap().entries.map((entry) {
                   String subCat = entry.value;
+                  final subActive = _isActiveBrushSubCategory(cat, subCat);
                   return InkWell(
-                    onTap: () => _assignSubCategory(cat, subCat, provider),
+                    onTap: () => _handleCategoryTap(cat, subLabel: subCat),
                     child: Container(
                       margin: const EdgeInsets.symmetric(vertical: 2),
                       padding: const EdgeInsets.symmetric(
@@ -607,13 +850,20 @@ class _HomeScreenState extends State<HomeScreen> {
                         color: subBg,
                         borderRadius: AppRadius.gridAll,
                         border: Border.all(
-                          color: AppSemanticColors.onColorMuted(subBg),
-                          width: 1,
+                          color: subActive
+                              ? subBrushOutline
+                              : AppSemanticColors.onColorMuted(subBg),
+                          width: subActive ? 2 : 1,
                         ),
                       ),
                       child: Row(
                         children: [
-                          const SizedBox(width: 4),
+                          if (subActive) ...[
+                            Icon(Icons.check_circle,
+                                size: 12, color: subBrushOutline),
+                            const SizedBox(width: AppSpacing.xs),
+                          ] else
+                            const SizedBox(width: 4),
                           Expanded(
                             child: Text(
                               subCat,
@@ -1315,7 +1565,7 @@ class _HomeScreenState extends State<HomeScreen> {
           icon: Icons.arrow_back_ios,
           compact: true,
           onPressed: () {
-            _clearSelection();
+            _leaveBrushAndClearSelection();
             provider.previousDay();
           },
         ),
@@ -1337,7 +1587,7 @@ class _HomeScreenState extends State<HomeScreen> {
           icon: Icons.arrow_forward_ios,
           compact: true,
           onPressed: () {
-            _clearSelection();
+            _leaveBrushAndClearSelection();
             provider.nextDay();
           },
         ),
@@ -1415,7 +1665,8 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         ),
         onPressed: () {
-          _clearSelection();
+          // 对方日程是只读的，刷子留在上面只会变成"拖了没反应"
+          _leaveBrushAndClearSelection();
           provider.toggleRemoteScheduleView();
         },
       ),
@@ -1452,6 +1703,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _clearSelection() {
     setState(() {
+      _selectionStart = null;
+      _selectionEnd = null;
+      _selectionDate = null;
+    });
+  }
+
+  /// 切日期 / 选日期前的统一收尾：退出刷子模式并清掉待分配的时间选择。
+  void _leaveBrushAndClearSelection() {
+    if (!mounted) return;
+    setState(() {
+      _brushCategoryId = null;
+      _brushSubLabel = null;
+      _endBrushStroke();
       _selectionStart = null;
       _selectionEnd = null;
       _selectionDate = null;
@@ -1871,6 +2135,15 @@ class _DayGrid extends StatefulWidget {
   final VoidCallback onSelectionCleared;
   final void Function(DateTime date, int index) onRemoveSlot;
 
+  /// 刷子模式：本列自己把触摸位置换算成「日期 + 槽位索引」再上报，
+  /// 所以昨天/今天/明天不会串数据。
+  final bool brushMode;
+  final Set<int> brushPreviewIndices;
+  final void Function(DateTime date, int index) onBrushIndexDown;
+  final void Function(DateTime date, int index) onBrushIndexMove;
+  final void Function(DateTime date) onBrushEnd;
+  final void Function(DateTime date) onBrushCancel;
+
   const _DayGrid({
     required this.date,
     required this.timeAxisController,
@@ -1880,6 +2153,12 @@ class _DayGrid extends StatefulWidget {
     required this.onSelectionChanged,
     required this.onSelectionCleared,
     required this.onRemoveSlot,
+    this.brushMode = false,
+    this.brushPreviewIndices = const <int>{},
+    required this.onBrushIndexDown,
+    required this.onBrushIndexMove,
+    required this.onBrushEnd,
+    required this.onBrushCancel,
   });
 
   @override
@@ -2009,6 +2288,20 @@ class _DayGridState extends State<_DayGrid> {
                 ).appliesTo(widget.selectionDate!, widget.date)
             ? widget.dragEndIndex
             : null,
+        brushMode: widget.brushMode,
+        brushPreviewIndices: widget.brushPreviewIndices,
+        onBrushPointerDown: widget.brushMode
+            ? (position) =>
+                widget.onBrushIndexDown(widget.date, _calculateIndex(position))
+            : null,
+        onBrushPointerMove: widget.brushMode
+            ? (position) =>
+                widget.onBrushIndexMove(widget.date, _calculateIndex(position))
+            : null,
+        onBrushPointerUp:
+            widget.brushMode ? () => widget.onBrushEnd(widget.date) : null,
+        onBrushPointerCancel:
+            widget.brushMode ? () => widget.onBrushCancel(widget.date) : null,
         onTapDown: (position) => _handleSelect(position, isClick: true),
         onPanStart: (position) => _handleSelect(position, isStart: true),
         onPanUpdate: (position) => _handleSelect(position),

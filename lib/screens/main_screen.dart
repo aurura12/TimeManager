@@ -45,6 +45,10 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _selectedIndex = 0;
 
+  // 「记录」页用 IndexedStack 常驻，离开 Tab 不会 dispose，
+  // 所以刷子模式要靠这个 key 主动退出。
+  final GlobalKey<HomeScreenState> _homeKey = GlobalKey<HomeScreenState>();
+
   // 那年今日弹窗状态
   String? _onThisDayShownDateKey; // 本次会话已弹过的日期（跨午夜时重置）
   bool _onThisDayChecking = false; // 正在检查中（防并发重复触发）
@@ -163,8 +167,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
   }
 
-  static final List<Widget> _widgetOptions = <Widget>[
-    const HomeScreen(),
+  late final List<Widget> _widgetOptions = <Widget>[
+    HomeScreen(key: _homeKey),
     const DiaryScreen(),
     const TravelScreen(),
     const CheckInScreen(),
@@ -206,6 +210,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   ];
 
   void _onItemTapped(int index) {
+    // 离开「记录」页时退出刷子模式，避免回到该页还带着刷子
+    if (_selectedIndex == 0 && index != 0) {
+      _homeKey.currentState?.exitBrushMode();
+    }
     setState(() {
       _selectedIndex = index;
     });

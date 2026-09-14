@@ -12,6 +12,9 @@ import '../utils/time_slot_segment.dart';
 ///
 /// 网格只订阅当前日期和时间块版本；拖选状态仍由 HomeScreen 持有，
 /// 以便本阶段保持现有分类侧栏交互不变。
+///
+/// 刷子模式（[brushMode]）下网格改用外层 [Listener] 接管指针：行内原有的
+/// 点选 / 拖动选择 / 双击删除全部让位，避免与刷子手势抢同一个指针。
 class TimeGrid extends StatelessWidget {
   const TimeGrid({
     super.key,
@@ -24,6 +27,12 @@ class TimeGrid extends StatelessWidget {
     required this.onPanUpdate,
     required this.onRemoveSlot,
     this.date,
+    this.brushMode = false,
+    this.brushPreviewIndices = const <int>{},
+    this.onBrushPointerDown,
+    this.onBrushPointerMove,
+    this.onBrushPointerUp,
+    this.onBrushPointerCancel,
   });
 
   final GlobalKey gridKey;
@@ -38,6 +47,25 @@ class TimeGrid extends StatelessWidget {
   /// 要渲染的日期；为 null 时渲染当前日期（保持原有行为）
   final DateTime? date;
 
+  /// 刷子模式：行内手势全部关闭，只保留 [Listener] 上报的指针事件。
+  final bool brushMode;
+
+  /// 本次刷子手势将要写入的槽位，手势结束前只做预览、不落数据。
+  final Set<int> brushPreviewIndices;
+
+  /// 刷子手势回调。四者全为 null 时不安装外层 [Listener]，
+  /// 交给调用方自己处理（Windows 三列由 `_DayGrid` 上报日期 + 索引）。
+  final ValueChanged<Offset>? onBrushPointerDown;
+  final ValueChanged<Offset>? onBrushPointerMove;
+  final VoidCallback? onBrushPointerUp;
+  final VoidCallback? onBrushPointerCancel;
+
+  bool get _handlesBrushGestures =>
+      onBrushPointerDown != null ||
+      onBrushPointerMove != null ||
+      onBrushPointerUp != null ||
+      onBrushPointerCancel != null;
+
   bool _isHighlighted(int index) {
     if (dragStartIndex == null || dragEndIndex == null) return false;
     final start =
@@ -46,6 +74,8 @@ class TimeGrid extends StatelessWidget {
         dragStartIndex! < dragEndIndex! ? dragEndIndex! : dragStartIndex!;
     return index >= start && index <= end;
   }
+
+  bool _isBrushPreview(int index) => brushPreviewIndices.contains(index);
 
   @override
   Widget build(BuildContext context) {
@@ -56,7 +86,7 @@ class TimeGrid extends StatelessWidget {
       ),
       builder: (context, _, __) {
         final provider = context.read<TimeProvider>();
-        return ListView.builder(
+        final grid = ListView.builder(
           key: gridKey,
           controller: controller,
           physics: const NeverScrollableScrollPhysics(),
@@ -66,6 +96,17 @@ class TimeGrid extends StatelessWidget {
           itemBuilder: (context, hour) =>
               _buildGridRow(context, hour, provider),
         );
+        if (!_handlesBrushGestures) return grid;
+        // 整列装一个 Listener：拖动跨越不同小时行不会丢手势，
+        // 也不需要每经过一个格子就回调一次 Provider。
+        return Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerDown: (event) => onBrushPointerDown?.call(event.position),
+          onPointerMove: (event) => onBrushPointerMove?.call(event.position),
+          onPointerUp: (_) => onBrushPointerUp?.call(),
+          onPointerCancel: (_) => onBrushPointerCancel?.call(),
+          child: grid,
+        );
       },
     );
   }
@@ -73,6 +114,13 @@ class TimeGrid extends StatelessWidget {
   Widget _buildGridRow(BuildContext context, int hour, TimeProvider provider) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final content = RepaintBoundary(
+          child: _buildGridRowContent(context, hour, provider),
+        );
+        if (brushMode) {
+          // 刷子手势由外层 Listener 独占，行内不再参与手势竞技场
+          return content;
+        }
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapDown: (details) => onTapDown(details.globalPosition),
@@ -85,9 +133,7 @@ class TimeGrid extends StatelessWidget {
           onDoubleTap: () {},
           onPanStart: (details) => onPanStart(details.globalPosition),
           onPanUpdate: (details) => onPanUpdate(details.globalPosition),
-          child: RepaintBoundary(
-            child: _buildGridRowContent(context, hour, provider),
-          ),
+          child: content,
         );
       },
     );
@@ -100,6 +146,10 @@ class TimeGrid extends StatelessWidget {
     final highlightColor = colorScheme.primary.withValues(alpha: 0.28);
     // 空白格用主题的次级表面色，浅色下比原灰色更浅，深色下不刺眼
     final emptyCellColor = surfaces.gridEmpty;
+    // 刷子预览：品牌绿（primary）的淡填充 + 实色描边，表示"松手后会写入这里"
+    final brushPreviewFill =
+        AppSemanticColors.tint(colorScheme.primary, emptyCellColor, 0.35);
+    final brushPreviewBorder = colorScheme.primary;
     final daySlots =
         date == null ? provider.slots : provider.slotsForDate(date!);
 
@@ -125,11 +175,10 @@ class TimeGrid extends StatelessWidget {
                 span++;
               }
               var highlighted = false;
+              var preview = false;
               for (var k = 0; k < span; k++) {
-                if (_isHighlighted(hour * 6 + minute + k)) {
-                  highlighted = true;
-                  break;
-                }
+                if (_isHighlighted(hour * 6 + minute + k)) highlighted = true;
+                if (_isBrushPreview(hour * 6 + minute + k)) preview = true;
               }
 
               segments.add(Expanded(
@@ -143,7 +192,11 @@ class TimeGrid extends StatelessWidget {
                         _shouldBridgeRight(daySlots, index + span - 1) ? 0 : 1,
                   ),
                   decoration: BoxDecoration(
+                    // 刷子预览不改已有事件的颜色，只在外圈加一道主色描边
                     color: highlighted ? highlightColor : slot.color!,
+                    border: preview
+                        ? Border.all(color: brushPreviewBorder, width: 2)
+                        : null,
                     borderRadius: _computeSegmentBorderRadius(
                         daySlots, hour, minute, span, highlighted),
                   ),
@@ -167,11 +220,17 @@ class TimeGrid extends StatelessWidget {
               minute += span;
             } else {
               final highlighted = _isHighlighted(index);
+              final preview = _isBrushPreview(index);
               segments.add(Expanded(
                 child: Container(
                   margin: const EdgeInsets.all(1),
                   decoration: BoxDecoration(
-                    color: highlighted ? highlightColor : emptyCellColor,
+                    color: preview
+                        ? brushPreviewFill
+                        : (highlighted ? highlightColor : emptyCellColor),
+                    border: preview
+                        ? Border.all(color: brushPreviewBorder, width: 2)
+                        : null,
                     borderRadius: AppRadius.gridAll,
                   ),
                   child: const SizedBox.expand(),
