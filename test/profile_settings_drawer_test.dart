@@ -38,6 +38,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('覆盖拉取日程'), findsNothing);
+    expect(find.text('同步中心'), findsOneWidget);
   });
 
   testWidgets(

@@ -11,6 +11,7 @@ import '../providers/time_provider.dart';
 import '../services/data_backup_service.dart';
 import '../services/update_service.dart';
 import '../screens/app_log_screen.dart';
+import '../screens/sync_center_screen.dart';
 import '../screens/word_cloud_screen.dart';
 import '../screens/on_this_day_screen.dart';
 import '../services/google_calendar_service.dart';
@@ -121,6 +122,25 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                     if (!isAndroid)
                       _buildOverwriteScheduleTile(context, provider),
                   ],
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.sync_rounded),
+                    title: const Text('同步中心'),
+                    subtitle: Text(
+                      provider.hasPendingSync
+                          ? '有 ${provider.pendingSyncDates.length} 天待同步，查看全部状态'
+                          : '查看各模块同步状态并重试',
+                    ),
+                    onTap: () {
+                      final navigator = Navigator.of(context);
+                      navigator.pop();
+                      navigator.push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const SyncCenterScreen(),
+                        ),
+                      );
+                    },
+                  ),
                   const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.palette_outlined),

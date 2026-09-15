@@ -13,6 +13,7 @@ import '../models/search_result.dart';
 import '../models/voice_schedule_draft.dart';
 import '../models/pending_sync_state.dart';
 import '../models/schedule_sync_progress.dart';
+import '../models/sync_center_state.dart';
 import '../models/deleted_event_relation.dart';
 import '../services/home_widget_service.dart';
 import '../utils/platform_features.dart';
@@ -657,7 +658,8 @@ class TimeProvider with ChangeNotifier {
       _isSyncing ||
       _scheduleMergePullsInProgress > 0 ||
       _googleCalendarPullsInProgress > 0 ||
-      _categoriesGiteeSyncing;
+      _categoriesGiteeSyncing ||
+      _targetsGiteeSyncing;
 
   /// 当前是否仍有日程/分类同步任务在执行。
   bool get hasScheduleSyncInFlight => _hasScheduleSyncInFlight;
@@ -2170,7 +2172,8 @@ class TimeProvider with ChangeNotifier {
       _remoteViewEnabled ||
       _scheduleMergePullsInProgress > 0 ||
       _googleCalendarPullsInProgress > 0 ||
-      _categoriesGiteeSyncing;
+      _categoriesGiteeSyncing ||
+      _targetsGiteeSyncing;
 
   /// 标记当前日期需要同步到 Gitee（带 3 秒防抖）。
   /// [dateKey] 捕获目标日期，避免防抖期间切换日期推错日期。
@@ -4262,6 +4265,91 @@ class TimeProvider with ChangeNotifier {
   }
 
   /// 统一同步：始终同步到 Gitee，若开启 Google 日历同步则同时同步 Google。
+  ///
+  /// 同步中心使用这个按模块的包装入口。底层同步实现仍由本 Provider
+  /// 持有，因而能复用已有锁、pending 日期和远端合并逻辑。
+  Future<SyncOperationResult> syncModuleForCenter(SyncModule module) async {
+    if (!_isInitialLoadFinished || !_scheduleUserLoadFinished) {
+      return const SyncOperationResult.offline('本地同步状态仍在准备，请稍后重试');
+    }
+    if (_initializationFailed) {
+      return SyncOperationResult.offline(
+        _initializationFailureMessage ?? '本地数据未准备好，暂时无法同步',
+      );
+    }
+    if (_isDisposed) {
+      return const SyncOperationResult.failed('同步服务已结束，请重新打开应用');
+    }
+    if (module == SyncModule.googleCalendar && !googleCalendarSyncEnabled) {
+      return const SyncOperationResult.disabled('Google 日历同步已关闭');
+    }
+    if (module == SyncModule.googleCalendar && !_isGoogleCalendarSignedIn) {
+      return const SyncOperationResult.offline('Google 日历尚未连接，联网并重新连接后再试');
+    }
+    if (!_hasSelectedScheduleUser) {
+      return const SyncOperationResult.offline('请先在“我的”中选择身份后再同步');
+    }
+    if (_hasScheduleSyncInFlight) {
+      return const SyncOperationResult.busy('已有同步任务正在进行，请稍后再试');
+    }
+
+    try {
+      switch (module) {
+        case SyncModule.schedule:
+          _scheduleGiteeTimer?.cancel();
+          _scheduleGiteeTimer = null;
+          await syncAllSchedulesToGitee();
+          final scheduleProgress = _scheduleSyncProgress;
+          if (scheduleProgress?.isError == true) {
+            return SyncOperationResult.failed(
+              scheduleProgress!.message,
+              pendingUploadCount: pendingGiteeSyncDates.length,
+            );
+          }
+          return SyncOperationResult.success(
+            message: '日程同步完成',
+            pendingUploadCount: pendingGiteeSyncDates.length,
+          );
+        case SyncModule.categories:
+          final ok = await pullCategoriesFromGitee(force: true);
+          return ok
+              ? const SyncOperationResult.success(message: '分类同步完成')
+              : const SyncOperationResult.failed('分类同步未完成，请稍后重试');
+        case SyncModule.targets:
+          final hadPending =
+              _targetsGiteePending || (_targetsGiteeTimer?.isActive ?? false);
+          _targetsGiteeTimer?.cancel();
+          _targetsGiteeTimer = null;
+          if (hadPending) {
+            await _syncTargetsToGitee();
+            return _targetsGiteePending
+                ? const SyncOperationResult.failed('目标同步未完成，请稍后重试',
+                    pendingUploadCount: 1)
+                : const SyncOperationResult.success(message: '目标同步完成');
+          }
+          await _pullTargetsFromGitee();
+          return const SyncOperationResult.success(message: '目标同步完成');
+        case SyncModule.diary:
+        case SyncModule.travel:
+        case SyncModule.checkIn:
+          return const SyncOperationResult.failed('该模块由同步中心服务处理');
+        case SyncModule.googleCalendar:
+          if (pendingGoogleSyncDates.isNotEmpty) {
+            await synchronizeAllPendingCalendars();
+          } else {
+            await synchronizeCalendar();
+          }
+          return SyncOperationResult.success(
+            message: 'Google 日历同步完成',
+            pendingUploadCount: pendingGoogleSyncDates.length,
+          );
+      }
+    } catch (e, stackTrace) {
+      _recordAppError('同步中心${module.label}同步失败', e, stackTrace);
+      return SyncOperationResult.failed('同步失败：$e');
+    }
+  }
+
   Future<void> syncAll() async {
     if (!_isInitialLoadFinished ||
         !_scheduleUserLoadFinished ||
