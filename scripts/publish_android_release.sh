@@ -228,9 +228,9 @@ create_release_or_get_id() {
       RELEASE_ID="$release_id"
       return
     fi
-    log "Release 列表中没有 $RELEASE_TAG，准备创建"
+    log "Release 列表中没有 ${RELEASE_TAG}，准备创建"
   elif [[ "$API_STATUS" == "404" ]]; then
-    log "未找到 $RELEASE_TAG，准备创建"
+    log "未找到 ${RELEASE_TAG}，准备创建"
   else
     echo "读取 Gitee Release 失败（HTTP ${API_STATUS}）" >&2
     print_api_error
