@@ -4,7 +4,47 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'app_identity_service.dart';
 import '../config/siliconflow_config.dart';
+
+class AiPrivacySettings {
+  static const _enabledKey = 'daily_review_ai_enabled';
+  static const _consentKey = 'daily_review_ai_consent';
+
+  static Future<bool> isEnabled() async {
+    final prefs = await _prefs();
+    return prefs.getBool(_key(_enabledKey)) ?? true;
+  }
+
+  static Future<bool> hasConsent() async {
+    final prefs = await _prefs();
+    return prefs.getBool(_key(_consentKey)) ?? false;
+  }
+
+  static Future<bool> canSendRequests() async {
+    return await isEnabled() && await hasConsent();
+  }
+
+  static Future<bool> setEnabled(bool enabled) async {
+    final prefs = await _prefs();
+    return prefs.setBool(_key(_enabledKey), enabled);
+  }
+
+  static Future<bool> recordConsent() async {
+    final prefs = await _prefs();
+    return prefs.setBool(_key(_consentKey), true);
+  }
+
+  static Future<SharedPreferences> _prefs() async {
+    await AppIdentityService.load();
+    return SharedPreferences.getInstance();
+  }
+
+  static String _key(String baseKey) {
+    return AppIdentityService.dataKeyForCurrentIdentity(baseKey);
+  }
+}
 
 class SiliconFlowAiService {
   static const _maxAttempts = 2;
@@ -49,6 +89,10 @@ class SiliconFlowAiService {
     required int maxTokens,
     required String logTag,
   }) async {
+    if (!await AiPrivacySettings.canSendRequests()) {
+      return (content: null, timedOut: false);
+    }
+
     final apiKey = _apiKey;
     if (apiKey == null) return (content: null, timedOut: false);
 
@@ -76,9 +120,7 @@ class SiliconFlowAiService {
             .timeout(_requestTimeout);
 
         if (response.statusCode != 200) {
-          debugPrint(
-            '$logTag 错误(第$attempt次): ${response.statusCode} ${response.body}',
-          );
+          debugPrint('$logTag 错误(第$attempt次): ${response.statusCode}');
           lastError = 'http_${response.statusCode}';
           continue;
         }
@@ -93,9 +135,7 @@ class SiliconFlowAiService {
         final message = choices.first['message'] as Map<String, dynamic>?;
         final content = _extractFinalAnswer(message);
         if (content == null) {
-          debugPrint(
-            '$logTag 无有效正文(第$attempt次): ${response.body.substring(0, response.body.length.clamp(0, 500))}',
-          );
+          debugPrint('$logTag 无有效正文(第$attempt次)');
           lastError = 'empty_content';
           continue;
         }

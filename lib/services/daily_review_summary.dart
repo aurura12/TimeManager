@@ -6,6 +6,8 @@ import 'siliconflow_ai_service.dart';
 
 enum DailyReviewAiError {
   noApiKey,
+  aiDisabled,
+  consentRequired,
   networkFailed,
   timeout,
 }
@@ -31,6 +33,10 @@ class DailyReviewAiResult {
     switch (error) {
       case DailyReviewAiError.noApiKey:
         return '未配置 AI API Key，请在 lib/config/siliconflow_config.dart 中填写。';
+      case DailyReviewAiError.aiDisabled:
+        return 'AI 复盘已关闭，请在右上角 AI 设置中开启。';
+      case DailyReviewAiError.consentRequired:
+        return '首次使用 AI 前需要先阅读并同意数据使用说明。';
       case DailyReviewAiError.networkFailed:
         return 'AI 生成失败，请检查网络后重试。';
       case DailyReviewAiError.timeout:
@@ -43,7 +49,20 @@ class DailyReviewAiResult {
 
 class DailyReviewSummaryBuilder {
   static const _cachePrefix = 'daily_review_ai_cache_';
+  static const cacheRetention = Duration(days: 30);
   static const payloadPrefix = 'daily_review:';
+
+  static Future<bool> isAiEnabled() => AiPrivacySettings.isEnabled();
+
+  static Future<bool> hasAiConsent() => AiPrivacySettings.hasConsent();
+
+  static Future<bool> setAiEnabled(bool enabled) {
+    return AiPrivacySettings.setEnabled(enabled);
+  }
+
+  static Future<bool> recordAiConsent() {
+    return AiPrivacySettings.recordConsent();
+  }
 
   static String payloadForDate(DateTime date) =>
       '$payloadPrefix${dateKey(date)}';
@@ -88,6 +107,7 @@ class DailyReviewSummaryBuilder {
       cacheKey: AppIdentityService.dataKeyForCurrentIdentity(
         '$_cachePrefix${dateKey(date)}',
       ),
+      cacheDate: date,
     );
     if (body == null) return null;
     return DailyReviewAiResult(
@@ -109,12 +129,28 @@ class DailyReviewSummaryBuilder {
     final cacheKey = AppIdentityService.dataKeyForCurrentIdentity(
       '$_cachePrefix${dateKey(date)}',
     );
+    final title = _titleForDate(date);
+
+    if (!await AiPrivacySettings.isEnabled()) {
+      return DailyReviewAiResult(
+        date: date,
+        title: title,
+        error: DailyReviewAiError.aiDisabled,
+      );
+    }
+    if (!await AiPrivacySettings.hasConsent()) {
+      return DailyReviewAiResult(
+        date: date,
+        title: title,
+        error: DailyReviewAiError.consentRequired,
+      );
+    }
+
     final todayStats = await _loadDayStats(prefs, date, slotsKey: slotsKey);
     final yesterday = date.subtract(const Duration(days: 1));
     final yesterdayStats =
         await _loadDayStats(prefs, yesterday, slotsKey: slotsKey);
     final dataHash = _hashDayData(prefs, date, slotsKey: slotsKey);
-    final title = _titleForDate(date);
 
     if (!SiliconFlowAiService.hasApiKeyConfigured) {
       return DailyReviewAiResult(
@@ -128,6 +164,7 @@ class DailyReviewSummaryBuilder {
       prefs: prefs,
       dataHash: dataHash,
       cacheKey: cacheKey,
+      cacheDate: date,
     );
     if (cached != null) {
       return DailyReviewAiResult(
@@ -170,7 +207,11 @@ class DailyReviewSummaryBuilder {
 
     await prefs.setString(
       cacheKey,
-      json.encode({'hash': dataHash, 'body': result.content}),
+      json.encode({
+        'hash': dataHash,
+        'body': result.content,
+        'createdAt': DateTime.now().toUtc().toIso8601String(),
+      }),
     );
 
     return DailyReviewAiResult(
@@ -328,11 +369,20 @@ class DailyReviewSummaryBuilder {
     required SharedPreferences prefs,
     required String dataHash,
     required String cacheKey,
+    required DateTime cacheDate,
   }) async {
     final cachedRaw = prefs.getString(cacheKey);
     if (cachedRaw == null) return null;
     try {
       final cached = json.decode(cachedRaw) as Map<String, dynamic>;
+      final createdAt =
+          DateTime.tryParse(cached['createdAt']?.toString() ?? '');
+      final cacheTimestamp = createdAt ?? cacheDate;
+      final cutoff = DateTime.now().toUtc().subtract(cacheRetention);
+      if (cacheTimestamp.toUtc().isBefore(cutoff)) {
+        await prefs.remove(cacheKey);
+        return null;
+      }
       if (cached['hash'] == dataHash) {
         final body = cached['body'] as String?;
         if (body != null &&

@@ -3,6 +3,7 @@ import '../services/daily_review_summary.dart';
 import '../widgets/daily_review_chat_sheet.dart';
 
 import '../theme/app_tokens.dart';
+
 class DailyReviewScreen extends StatefulWidget {
   final DateTime date;
 
@@ -42,6 +43,10 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
 
   late DateTime _selectedDate;
   bool _loadingMore = false;
+  bool _aiEnabled = true;
+  bool _aiConsent = false;
+  bool _aiSettingsReady = false;
+  bool _aiConsentDialogShowing = false;
 
   @override
   void initState() {
@@ -53,8 +58,8 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollLeftToSelected(jump: true);
       _jumpRightToDate(_selectedDate, jump: true);
+      _initializeAi();
     });
-    _preloadInitialCards();
   }
 
   @override
@@ -172,7 +177,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
   Future<void> _preloadInitialCards() async {
     final selectedIndex = _indexOfDate(_selectedDate);
     if (selectedIndex >= 0) {
-      await _loadEntry(selectedIndex);
+      await _loadEntry(selectedIndex, skipAccessCheck: true);
     }
     for (var i = 0; i < _entries.length && i < 3; i++) {
       if (i != selectedIndex) {
@@ -181,14 +186,134 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
     }
   }
 
+  Future<void> _initializeAi() async {
+    try {
+      final enabled = await DailyReviewSummaryBuilder.isAiEnabled();
+      final consent = await DailyReviewSummaryBuilder.hasAiConsent();
+      if (!mounted) return;
+      setState(() {
+        _aiEnabled = enabled;
+        _aiConsent = consent;
+        _aiSettingsReady = true;
+      });
+
+      if (_aiEnabled && !_aiConsent) {
+        await _requestAiConsent();
+      }
+      if (!mounted) return;
+      await _preloadInitialCards();
+    } catch (_) {
+      // Privacy settings fail closed: no automatic AI request is attempted.
+      if (!mounted) return;
+      setState(() {
+        _aiEnabled = false;
+        _aiConsent = false;
+        _aiSettingsReady = true;
+      });
+    }
+  }
+
+  Future<bool> _ensureAiAccess() async {
+    if (!_aiSettingsReady) {
+      try {
+        final enabled = await DailyReviewSummaryBuilder.isAiEnabled();
+        final consent = await DailyReviewSummaryBuilder.hasAiConsent();
+        if (!mounted) return false;
+        setState(() {
+          _aiEnabled = enabled;
+          _aiConsent = consent;
+          _aiSettingsReady = true;
+        });
+      } catch (_) {
+        return false;
+      }
+    }
+
+    if (!_aiEnabled) return false;
+    if (_aiConsent) return true;
+    return _requestAiConsent();
+  }
+
+  Future<bool> _requestAiConsent() async {
+    if (!mounted) return false;
+    if (_aiConsentDialogShowing) return false;
+    _aiConsentDialogShowing = true;
+    try {
+      final accepted = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('使用 AI 复盘前请确认'),
+          content: const Text(
+            '复盘会将当天及前一天的时间记录（事项名称、时长和时间段）发送给 AI 服务，用于生成复盘文字。\n\n'
+            '不会发送 API 密钥、照片或精确定位。你可以随时在右上角 AI 设置中关闭功能或清理本地缓存。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('暂不使用'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('同意并开启'),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted) return false;
+      if (accepted == true) {
+        final consentSaved = await DailyReviewSummaryBuilder.recordAiConsent();
+        final enabledSaved = await DailyReviewSummaryBuilder.setAiEnabled(true);
+        if (!mounted) return false;
+        setState(() {
+          _aiConsent = consentSaved;
+          _aiEnabled = enabledSaved;
+          _aiSettingsReady = true;
+        });
+        return consentSaved && enabledSaved;
+      }
+
+      await DailyReviewSummaryBuilder.setAiEnabled(false);
+      if (!mounted) return false;
+      setState(() {
+        _aiEnabled = false;
+        _aiSettingsReady = true;
+      });
+      return false;
+    } finally {
+      _aiConsentDialogShowing = false;
+    }
+  }
+
   Future<void> _loadEntry(
     int index, {
     bool cachedOnly = false,
+    bool skipAccessCheck = false,
   }) async {
     if (index < 0 || index >= _entries.length) return;
     final entry = _entries[index];
     if (entry.loading) return;
     if (entry.result != null && entry.result!.isSuccess) return;
+
+    if (!cachedOnly) {
+      final allowed =
+          skipAccessCheck ? _aiEnabled && _aiConsent : await _ensureAiAccess();
+      if (!allowed) {
+        if (!mounted) return;
+        setState(() {
+          entry.result = DailyReviewAiResult(
+            date: entry.date,
+            title: '${entry.date.month}月${entry.date.day}日 · 今日复盘',
+            error: _aiEnabled
+                ? DailyReviewAiError.consentRequired
+                : DailyReviewAiError.aiDisabled,
+          );
+          entry.loading = false;
+        });
+        return;
+      }
+    }
 
     setState(() {
       entry.loading = true;
@@ -294,9 +419,8 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
           return Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             child: Material(
-              color: selected
-                  ? colorScheme.primaryContainer
-                  : Colors.transparent,
+              color:
+                  selected ? colorScheme.primaryContainer : Colors.transparent,
               borderRadius: AppRadius.controlAll,
               child: InkWell(
                 borderRadius: AppRadius.controlAll,
@@ -352,6 +476,11 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
         elevation: 0,
         iconTheme: IconThemeData(color: colorScheme.onSurface),
         actions: [
+          IconButton(
+            tooltip: 'AI 设置',
+            onPressed: _showAiSettings,
+            icon: const Icon(Icons.auto_awesome_outlined),
+          ),
           IconButton(
             tooltip: '选择日期',
             onPressed: _pickDate,
@@ -463,8 +592,12 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                 ),
                 const SizedBox(height: 10),
                 _buildCardAction(
-                  label: '重试',
-                  onTap: () => _loadEntry(index),
+                  label: result.error == DailyReviewAiError.aiDisabled
+                      ? '打开 AI 设置'
+                      : '重试',
+                  onTap: result.error == DailyReviewAiError.aiDisabled
+                      ? _showAiSettings
+                      : () => _loadEntry(index),
                 ),
               ],
             )
@@ -580,6 +713,85 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _showAiSettings() async {
+    if (!_aiSettingsReady) await _ensureAiAccess();
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, updateSheet) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SwitchListTile(
+                      title: const Text('启用 AI 复盘'),
+                      subtitle: Text(
+                        _aiConsent ? '已同意数据使用说明' : '首次使用前需要确认数据用途',
+                      ),
+                      value: _aiEnabled,
+                      onChanged: (value) async {
+                        if (!value) {
+                          await DailyReviewSummaryBuilder.setAiEnabled(false);
+                          if (!mounted) return;
+                          setState(() {
+                            _aiEnabled = false;
+                            for (final entry in _entries) {
+                              entry.result = null;
+                            }
+                          });
+                        } else {
+                          await _requestAiConsentIfNeeded();
+                        }
+                        if (sheetContext.mounted) updateSheet(() {});
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.delete_sweep_outlined),
+                      title: const Text('清理 AI 缓存'),
+                      subtitle: const Text('删除当前身份保存的复盘结果缓存'),
+                      onTap: () async {
+                        await DailyReviewSummaryBuilder.clearAiCache();
+                        if (!mounted) return;
+                        setState(() {
+                          for (final entry in _entries) {
+                            entry.result = null;
+                          }
+                        });
+                        if (sheetContext.mounted) {
+                          Navigator.of(sheetContext).pop();
+                        }
+                        messenger.showSnackBar(
+                          const SnackBar(content: Text('AI 缓存已清理')),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _requestAiConsentIfNeeded() async {
+    if (_aiConsent) {
+      await DailyReviewSummaryBuilder.setAiEnabled(true);
+      if (!mounted) return;
+      setState(() => _aiEnabled = true);
+      return;
+    }
+    await _requestAiConsent();
   }
 }
 
