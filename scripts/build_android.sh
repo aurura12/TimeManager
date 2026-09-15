@@ -30,7 +30,7 @@ usage() {
 
 默认行为：
   1. 获取依赖、运行分析和测试；
-  2. 自动把 pubspec.yaml 的版本号 +1（patch 和构建号都加，如 1.93.0+1 → 1.93.1+2）；
+  2. 自动把 pubspec.yaml 的次版本号 +1、patch 归零、构建号 +1（如 1.95.3+13 → 1.96.0+14）；
   3. 构建 Android arm64-v8a release APK；
   4. 把 APK 和同名 .sha256 摘要复制到 dist/ 目录（文件名带版本号）；
   5. 提交 pubspec.yaml 版本号变更并 push，让每次构建后工作区干净。
@@ -156,8 +156,7 @@ compute_next_version() {
   local major="${VERSION_NAME%%.*}"
   local rest="${VERSION_NAME#*.}" # minor.patch
   local minor="${rest%%.*}"
-  local patch="${rest#*.}"
-  NEW_VERSION_NAME="$major.$minor.$((patch + 1))"
+  NEW_VERSION_NAME="$major.$((minor + 1)).0"
   NEW_VERSION_STR="$NEW_VERSION_NAME+$((BUILD_NUMBER + 1))"
 }
 
