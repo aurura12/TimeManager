@@ -16,8 +16,8 @@ bool _isRetryableError(Object e) {
       e is TlsException;
 }
 
-Future<http.Response> requestWithRetry(
-  Future<http.Response> Function() request, {
+Future<T> requestWithRetry<T>(
+  Future<T> Function() request, {
   int maxRetries = _maxRetries,
   Duration timeout = _defaultTimeout,
 }) async {

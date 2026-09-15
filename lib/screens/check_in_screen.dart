@@ -11,6 +11,7 @@ import '../services/check_in_sync_service.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/platform_features.dart';
 import '../widgets/check_in_map_preview.dart';
 import '../widgets/check_in_photo_sheet.dart';
 import 'add_check_in_goal_screen.dart';
@@ -62,16 +63,16 @@ class _CheckInScreenState extends State<CheckInScreen> {
         return activeGoals;
       case CheckInViewFilter.guaiGuai:
         return activeGoals
-            .where((g) => KnownGoogleUsers.matchesFilter(
-                  email: g.ownerEmail,
-                  filter: CheckInViewFilter.guaiGuai,
+            .where((g) => g.isOwnedBy(
+                  '',
+                  email: KnownGoogleUsers.guaiGuaiEmail,
                 ))
             .toList();
       case CheckInViewFilter.jingJing:
         return activeGoals
-            .where((g) => KnownGoogleUsers.matchesFilter(
-                  email: g.ownerEmail,
-                  filter: CheckInViewFilter.jingJing,
+            .where((g) => g.isOwnedBy(
+                  '',
+                  email: KnownGoogleUsers.jingJingEmail,
                 ))
             .toList();
     }
@@ -90,28 +91,23 @@ class _CheckInScreenState extends State<CheckInScreen> {
       case CheckInViewFilter.guaiGuai:
       case CheckInViewFilter.jingJing:
         return records
-            .where((r) => KnownGoogleUsers.matchesFilter(
-                  email: r.userEmail,
-                  filter: _filter,
+            .where((r) => r.belongsTo(
+                  '',
+                  _filter == CheckInViewFilter.guaiGuai
+                      ? KnownGoogleUsers.guaiGuaiEmail
+                      : KnownGoogleUsers.jingJingEmail,
                 ))
             .toList();
     }
   }
 
-  int get _todayMyCheckedCount {
-    final userId = _currentUserId;
-    if (userId == null) return 0;
-    return _allGoals
-        .where((g) =>
-            g.isOwnedBy(userId, email: _sync.currentUser?.email) &&
-            g.isCompletedTodayBy(userId, email: _sync.currentUser?.email))
+  int get _todaySelectedCheckedCount {
+    return _filteredGoals
+        .where((g) => g.isCompletedTodayBy(g.ownerId, email: g.ownerEmail))
         .length;
   }
 
-  int get _myGoalCount => _allGoals
-      .where((g) =>
-          g.isOwnedBy(_currentUserId ?? '', email: _sync.currentUser?.email))
-      .length;
+  int get _selectedGoalCount => _filteredGoals.length;
 
   void _showMessage(String msg) {
     if (!mounted) return;
@@ -344,9 +340,9 @@ class _CheckInScreenState extends State<CheckInScreen> {
                 color: colorScheme.onSurface,
               ),
             ),
-            if (_filter != CheckInViewFilter.all && userId != null)
+            if (_filter != CheckInViewFilter.all)
               Text(
-                '今日 $_todayMyCheckedCount/$_myGoalCount',
+                '今日 $_todaySelectedCheckedCount/$_selectedGoalCount',
                 style: TextStyle(
                   fontSize: 13,
                   color: colorScheme.onSurfaceVariant,
@@ -435,8 +431,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
                 ),
               ),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
                   // 计数 chip 的底是 onSurfaceVariant 淡涂 10%，
                   // 文字色按涂后的底重算（同色淡底规则）。
@@ -463,17 +458,14 @@ class _CheckInScreenState extends State<CheckInScreen> {
     );
   }
 
-  Widget _buildSummaryCard(
-      ColorScheme colorScheme, int recordCount) {
-    final userId = _currentUserId ?? '';
-    final maxStreak = _allGoals.isEmpty
+  Widget _buildSummaryCard(ColorScheme colorScheme, int recordCount) {
+    final selectedGoals = _filteredGoals;
+    final maxStreak = selectedGoals.isEmpty
         ? 0
-        : _allGoals
-            .where((g) =>
-                userId.isEmpty ||
-                g.isOwnedBy(userId, email: _sync.currentUser?.email))
+        : selectedGoals
             .map(
-                (g) => g.streakDaysFor(userId, email: _sync.currentUser?.email))
+              (g) => g.streakDaysFor(g.ownerId, email: g.ownerEmail),
+            )
             .fold(0, (a, b) => a > b ? a : b);
 
     return Container(
@@ -598,27 +590,23 @@ class _CheckInScreenState extends State<CheckInScreen> {
   ) {
     // 深色下的压暗规则收敛在 AppSemanticColorAdaptation 里
     final cardColor = context.adaptSemanticColor(goal.color);
-    final onCardColor =
-        AppSemanticColors.onColor(cardColor);
+    final onCardColor = AppSemanticColors.onColor(cardColor);
     final mutedColor = onCardColor.withValues(alpha: 0.75);
     // 「打卡」按钮与「已打卡」徽标都是"把前景色淡涂一层当底"的做法。
     // 底被淡涂之后，对比度就不再等于 onCardColor vs cardColor ——
     // 在 onColor 的黑白切换点附近，淡涂白色会把底提亮到白字只剩 3.6:1。
     // 所以文字色一律按**涂后的那个底**重算。
-    final quickActionBg =
-        AppSemanticColors.tint(onCardColor, cardColor, 0.15);
+    final quickActionBg = AppSemanticColors.tint(onCardColor, cardColor, 0.15);
     // 图标块的底同样是 onCardColor 淡涂，图标色要按涂后的底重算
-    final iconChipBg =
-        AppSemanticColors.tint(onCardColor, cardColor, 0.15);
+    final iconChipBg = AppSemanticColors.tint(onCardColor, cardColor, 0.15);
     final isMine = userId != null &&
         goal.isOwnedBy(userId, email: _sync.currentUser?.email);
     final checked = userId != null &&
         goal.isCompletedTodayBy(userId, email: _sync.currentUser?.email);
-    final progressUserId = _filter == CheckInViewFilter.all
-        ? null
-        : _filter == CheckInViewFilter.guaiGuai
-            ? _userIdForFilter(CheckInViewFilter.guaiGuai)
-            : _userIdForFilter(CheckInViewFilter.jingJing);
+    // “全部”只改变目标列表，不应把每个目标的进度改成全用户聚合。
+    // 目标卡始终按目标所有者统计，并同时传入 email 兼容手动/Google 两种 id。
+    final progressUserId = goal.ownerId;
+    final progressUserEmail = goal.ownerEmail;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -677,7 +665,10 @@ class _CheckInScreenState extends State<CheckInScreen> {
                       child: ClipRRect(
                         borderRadius: AppRadius.gridAll,
                         child: LinearProgressIndicator(
-                          value: goal.progressFor(progressUserId),
+                          value: goal.progressFor(
+                            progressUserId,
+                            email: progressUserEmail,
+                          ),
                           minHeight: 6,
                           backgroundColor: onCardColor.withValues(alpha: 0.2),
                           valueColor:
@@ -687,7 +678,10 @@ class _CheckInScreenState extends State<CheckInScreen> {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      '${goal.currentPeriodCountFor(progressUserId)}/${goal.targetCount}',
+                      '${goal.currentPeriodCountFor(
+                        progressUserId,
+                        email: progressUserEmail,
+                      )}/${goal.targetCount}',
                       style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
@@ -702,7 +696,10 @@ class _CheckInScreenState extends State<CheckInScreen> {
                         size: 14, color: mutedColor),
                     const SizedBox(width: 4),
                     Text(
-                      '连续 ${goal.streakDaysFor(progressUserId ?? goal.ownerId)} 天',
+                      '连续 ${goal.streakDaysFor(
+                        progressUserId,
+                        email: progressUserEmail,
+                      )} 天',
                       style: TextStyle(fontSize: 12, color: mutedColor),
                     ),
                     const Spacer(),
@@ -732,7 +729,12 @@ class _CheckInScreenState extends State<CheckInScreen> {
                           shape: RoundedRectangleBorder(
                               borderRadius: AppRadius.sheetAll),
                         ),
-                        icon: const Icon(Icons.camera_alt, size: 16),
+                        icon: Icon(
+                          supportsCameraCapture
+                              ? Icons.camera_alt
+                              : Icons.photo_library_outlined,
+                          size: 16,
+                        ),
                         label: const Text('打卡', style: TextStyle(fontSize: 13)),
                       ),
                     ],
@@ -744,25 +746,6 @@ class _CheckInScreenState extends State<CheckInScreen> {
         ),
       ),
     );
-  }
-
-  String? _userIdForFilter(CheckInViewFilter filter) {
-    final email = filter == CheckInViewFilter.guaiGuai
-        ? KnownGoogleUsers.guaiGuaiEmail
-        : KnownGoogleUsers.jingJingEmail;
-    for (final g in _allGoals) {
-      if (KnownGoogleUsers.normalizeEmail(g.ownerEmail) ==
-          KnownGoogleUsers.normalizeEmail(email)) {
-        return g.ownerId;
-      }
-    }
-    for (final r in _allGoals.expand((g) => g.records)) {
-      if (KnownGoogleUsers.normalizeEmail(r.userEmail) ==
-          KnownGoogleUsers.normalizeEmail(email)) {
-        return r.userId;
-      }
-    }
-    return null;
   }
 
   /// 目标卡上的「已打卡」徽标。

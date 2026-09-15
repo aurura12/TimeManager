@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/check_in_document.dart';
 import '../models/check_in_goal.dart';
@@ -13,6 +16,7 @@ import 'check_in_image_service.dart';
 import 'check_in_local_store.dart';
 import 'check_in_location_service.dart';
 import 'check_in_photo_cache.dart';
+import 'check_in_photo_resource.dart';
 import 'diary_local_store.dart';
 import 'google_calendar_service.dart';
 import 'app_identity_service.dart';
@@ -21,16 +25,25 @@ import '../utils/platform_features.dart';
 class CheckInSyncResult {
   final bool success;
   final String? error;
+  final String? warning;
   final CheckInDocument? document;
 
   const CheckInSyncResult._({
     required this.success,
     this.error,
+    this.warning,
     this.document,
   });
 
-  factory CheckInSyncResult.ok(CheckInDocument document) {
-    return CheckInSyncResult._(success: true, document: document);
+  factory CheckInSyncResult.ok(
+    CheckInDocument document, {
+    String? warning,
+  }) {
+    return CheckInSyncResult._(
+      success: true,
+      document: document,
+      warning: warning,
+    );
   }
 
   factory CheckInSyncResult.fail(String error) {
@@ -40,6 +53,8 @@ class CheckInSyncResult {
 
 /// 打卡数据同步编排
 class CheckInSyncService {
+  static const _pendingPhotoCleanupKey = 'check_in_pending_photo_cleanup_v1';
+
   CheckInDocument _document = CheckInDocument.empty;
   bool _loading = false;
   bool _syncing = false;
@@ -66,6 +81,86 @@ class CheckInSyncService {
   String? get lastError => _lastError;
 
   List<CheckInGoal> get goalsWithRecords => _document.goalsWithRecords();
+
+  /// 保存/编辑目标前的业务校验。必须在服务层执行，不能只依赖页面上的按钮状态。
+  static String? validateGoalMutation({
+    required CheckInGoal goal,
+    required CheckInDocument document,
+    required String userId,
+    required String userEmail,
+  }) {
+    final start = goal.startDate;
+    final end = goal.endDate;
+    if (start != null &&
+        end != null &&
+        DateTime(end.year, end.month, end.day)
+            .isBefore(DateTime(start.year, start.month, start.day))) {
+      return '结束日期不能早于开始日期';
+    }
+
+    final existing = document.goals.where((g) => g.id == goal.id).firstOrNull;
+    if (existing != null && !existing.isOwnedBy(userId, email: userEmail)) {
+      return '只能修改自己创建的目标';
+    }
+
+    // 新建目标通常没有 owner 字段；若调用方显式携带了归属，则也必须属于当前
+    // 逻辑身份，避免通过服务层直接伪造他人的目标。
+    final hasOwner =
+        goal.ownerId.trim().isNotEmpty || goal.ownerEmail.trim().isNotEmpty;
+    if (existing == null &&
+        hasOwner &&
+        !goal.isOwnedBy(userId, email: userEmail)) {
+      return '目标归属与当前身份不一致';
+    }
+    return null;
+  }
+
+  /// 提交打卡前的统一规则校验。
+  ///
+  /// [existingRecords] 应来自服务当前文档，而不是仅来自页面传入的旧快照，
+  /// 这样同一账号在另一台设备上刚打过卡时也不会被本地页面绕过。
+  static String? validateCheckInRequest({
+    required CheckInGoal goal,
+    required Iterable<CheckInRecord> existingRecords,
+    required String userId,
+    required String userEmail,
+    required DateTime now,
+    DateTime? backfillDate,
+    bool hasPhoto = true,
+    bool hasLocation = true,
+  }) {
+    if (!goal.isOwnedBy(userId, email: userEmail)) {
+      return '只能在自己的目标下打卡';
+    }
+    if (goal.isArchived) return '已归档的目标不能打卡';
+
+    final effectiveDate = backfillDate ?? now;
+    if (effectiveDate.isAfter(now)) return '不能补打未来日期';
+    if (!goal.allowsCheckInAt(effectiveDate)) {
+      final start = goal.startDate;
+      if (start != null &&
+          DateTime(effectiveDate.year, effectiveDate.month, effectiveDate.day)
+              .isBefore(DateTime(start.year, start.month, start.day))) {
+        return '目标尚未开始，不能打卡';
+      }
+      return '已超过目标结束日期，不能打卡';
+    }
+
+    if (goal.requirePhoto && !hasPhoto) return '请先添加打卡照片';
+    if (goal.requireLocation && !hasLocation) return '请先获取打卡位置';
+
+    final duplicate = existingRecords.any(
+      (record) =>
+          record.goalId == goal.id &&
+          record.belongsTo(userId, userEmail) &&
+          _isSameLocalDay(record.timestamp, effectiveDate),
+    );
+    if (duplicate) return '这一天已经打卡，不能重复补打卡';
+    return null;
+  }
+
+  static bool _isSameLocalDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
 
   /// Windows 手动身份派生的打卡用户（仅 Windows 使用）
   GoogleCalendarUser? _manualUser;
@@ -126,6 +221,9 @@ class CheckInSyncService {
         // 远端文件确认不存在时，本地目标没有远端新版本可冲突。
         _document = await _migrateLegacyGoalTimestamps(local);
       }
+
+      // 目标删除成功但照片清理失败时，保留的路径会在后续启动自动重试。
+      unawaited(retryPendingPhotoCleanup());
     } finally {
       if (!silent) _loading = false;
     }
@@ -259,38 +357,61 @@ class CheckInSyncService {
   }
 
   Future<CheckInSyncResult> saveGoal(CheckInGoal goal) async {
-    final user = await _requireUser();
-    if (!hasIdentity || user == null) {
-      return CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
-    }
-
-    final meta = goal.copyWith(
-      ownerId: goal.ownerId.isEmpty ? user.id : goal.ownerId,
-      ownerEmail: goal.ownerEmail.isEmpty ? user.email : goal.ownerEmail,
-      ownerDisplayName: goal.ownerDisplayName ?? user.displayName,
-      records: const [],
-      // 打上修改时间，合并时才能胜出；否则会被远端旧元数据覆盖。
-      updatedAt: DateTime.now().millisecondsSinceEpoch,
-    );
-
-    _document = _document.upsertGoal(meta);
-    await CheckInLocalStore.saveDraft(_document);
-    return pushToGitHub();
-  }
-
-  Future<CheckInSyncResult> deleteGoal(CheckInGoal goal) async {
-    final user = await _requireUser();
-    if (!hasIdentity || user == null) {
-      return CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
-    }
-    if (!goal.isOwnedBy(user.id, email: user.email)) {
-      return CheckInSyncResult.fail('只能删除自己创建的目标');
-    }
-
     return _synchronized(() async {
       _syncing = true;
       _lastError = null;
       try {
+        final user = await _requireUser();
+        if (!hasIdentity || user == null) {
+          return CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
+        }
+
+        // 先合并远端，再做归属校验，避免旧页面快照覆盖远端的他人目标。
+        final token = await _requireToken();
+        if (token != null) {
+          final pull = await _pullAndMergeForWrite(token);
+          if (pull.error != null) return CheckInSyncResult.fail(pull.error!);
+        }
+
+        final validation = validateGoalMutation(
+          goal: goal,
+          document: _document,
+          userId: user.id,
+          userEmail: user.email,
+        );
+        if (validation != null) return CheckInSyncResult.fail(validation);
+
+        final meta = goal.copyWith(
+          // 统一保存为当前身份的 id + email；查询端仍会通过 email 兼容另一种
+          // 身份模式下已经存在的历史记录。
+          ownerId: user.id,
+          ownerEmail: user.email,
+          ownerDisplayName: goal.ownerDisplayName ?? user.displayName,
+          records: const [],
+          // 打上修改时间，合并时才能胜出；否则会被远端旧元数据覆盖。
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
+        );
+
+        _document = _document.upsertGoal(meta);
+        await CheckInLocalStore.saveDraft(_document);
+        return await _pushToGitHubInternal();
+      } catch (e) {
+        return CheckInSyncResult.fail('保存失败: $e');
+      } finally {
+        _syncing = false;
+      }
+    });
+  }
+
+  Future<CheckInSyncResult> deleteGoal(CheckInGoal goal) async {
+    return _synchronized(() async {
+      _syncing = true;
+      _lastError = null;
+      try {
+        final user = await _requireUser();
+        if (!hasIdentity || user == null) {
+          return CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
+        }
         final token = await _requireToken();
         if (token == null) {
           return CheckInSyncResult.fail('未配置当前平台同步 Token');
@@ -300,6 +421,19 @@ class CheckInSyncService {
         if (pull.error != null) {
           return CheckInSyncResult.fail(pull.error!);
         }
+
+        final liveGoal =
+            _document.goals.where((g) => g.id == goal.id).firstOrNull;
+        if (liveGoal == null) return CheckInSyncResult.fail('目标不存在或已被删除');
+        if (!liveGoal.isOwnedBy(user.id, email: user.email)) {
+          return CheckInSyncResult.fail('只能删除自己创建的目标');
+        }
+        final photoPaths = _document.records
+            .where((record) => record.goalId == goal.id)
+            .map((record) => record.photoPath)
+            .whereType<String>()
+            .where((path) => path.isNotEmpty)
+            .toSet();
 
         _document = _document.tombstoneGoal(goal.id);
         await CheckInLocalStore.saveDraft(_document);
@@ -316,7 +450,15 @@ class CheckInSyncService {
           return CheckInSyncResult.fail(push.error ?? '删除同步失败');
         }
 
-        return CheckInSyncResult.ok(_document);
+        final failedPhotos = await _attemptPhotoCleanup(
+          token: token,
+          paths: photoPaths,
+          commitPrefix: 'check-in(${user.label}): delete goal ${goal.name}',
+        );
+        final warning = failedPhotos.isEmpty
+            ? null
+            : '目标已删除，但 ${failedPhotos.length} 张关联照片清理失败，后续同步会自动重试';
+        return CheckInSyncResult.ok(_document, warning: warning);
       } catch (e) {
         return CheckInSyncResult.fail('删除失败: $e');
       } finally {
@@ -333,10 +475,6 @@ class CheckInSyncService {
     if (!hasIdentity || user == null) {
       return CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
     }
-    if (!record.belongsTo(user.id, user.email)) {
-      return CheckInSyncResult.fail('只能删除自己的打卡记录');
-    }
-
     return _synchronized(() async {
       _syncing = true;
       _lastError = null;
@@ -350,6 +488,13 @@ class CheckInSyncService {
         final pull = await _pullAndMergeForWrite(token);
         if (pull.error != null) {
           return CheckInSyncResult.fail(pull.error!);
+        }
+
+        final liveRecord =
+            _document.records.where((item) => item.id == record.id).firstOrNull;
+        if (liveRecord == null) return CheckInSyncResult.fail('打卡记录不存在或已被删除');
+        if (!liveRecord.belongsTo(user.id, user.email)) {
+          return CheckInSyncResult.fail('只能删除自己的打卡记录');
         }
 
         // Step 2: Remove record from document
@@ -375,24 +520,18 @@ class CheckInSyncService {
 
         // Step 5: Delete the now-unreferenced photo from Gitee. Failure here is
         // best-effort: an orphaned photo is safer than a broken remote record.
-        if (record.photoPath != null && record.photoPath!.isNotEmpty) {
-          await CheckInGiteeService.deleteFile(
-            token: token,
-            path: record.photoPath!,
-            commitMessage:
-                'check-in(${user.label}): delete photo ${record.photoPath}',
-          );
-          // Also remove local cache (best-effort, ignore errors)
-          try {
-            final cached =
-                await CheckInPhotoCache.getCachedFile(record.photoPath!);
-            if (cached != null && await cached.exists()) {
-              await cached.delete();
-            }
-          } catch (_) {}
-        }
-
-        return CheckInSyncResult.ok(_document);
+        final photoPath = liveRecord.photoPath;
+        final failedPhotos = photoPath == null || photoPath.isEmpty
+            ? <String>{}
+            : await _attemptPhotoCleanup(
+                token: token,
+                paths: [photoPath],
+                commitPrefix:
+                    'check-in(${user.label}): delete photo $photoPath',
+              );
+        final warning =
+            failedPhotos.isEmpty ? null : '打卡记录已删除，但照片清理失败，后续同步会自动重试';
+        return CheckInSyncResult.ok(_document, warning: warning);
       } catch (e) {
         return CheckInSyncResult.fail('删除失败: $e');
       } finally {
@@ -413,22 +552,42 @@ class CheckInSyncService {
       return CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
     }
 
-    final now = DateTime.now();
-    final effectiveDate = backfillDate ?? now;
-    // 不能补打未来日期
-    if (effectiveDate.isAfter(now)) {
-      return CheckInSyncResult.fail('不能补打未来日期');
-    }
-
     return _synchronized(() async {
       _syncing = true;
       try {
+        final now = DateTime.now();
+        final token = await _requireToken();
+
+        // 有远端文档时先合并，校验必须基于最新记录；没有 Token 时保留原有
+        // 离线草稿行为，最终推送阶段会返回同步失败而不丢失本地记录。
+        if (token != null) {
+          final pull = await _pullAndMergeForWrite(token);
+          if (pull.error != null) return CheckInSyncResult.fail(pull.error!);
+        }
+
+        final liveGoal = _document
+            .goalsWithRecords()
+            .where((g) => g.id == goal.id)
+            .firstOrNull;
+        if (liveGoal == null) return CheckInSyncResult.fail('目标不存在或已被删除');
+        final validation = validateCheckInRequest(
+          goal: liveGoal,
+          existingRecords: _document.records,
+          userId: user.id,
+          userEmail: user.email,
+          now: now,
+          backfillDate: backfillDate,
+          hasPhoto: photoFile != null,
+          hasLocation: location != null,
+        );
+        if (validation != null) return CheckInSyncResult.fail(validation);
+
+        final effectiveDate = backfillDate ?? now;
         final recordId = now.millisecondsSinceEpoch.toString();
         String? photoPath;
 
         // 有照片时：压缩并上传
         if (photoFile != null) {
-          final token = await _requireToken();
           if (token == null) {
             return CheckInSyncResult.fail('未配置当前平台同步 Token，无法上传照片');
           }
@@ -491,10 +650,99 @@ class CheckInSyncService {
     return CheckInPhotoCache.loadOrFetch(token: token, photoPath: photoPath);
   }
 
+  /// 重试此前已完成目标删除、但照片文件清理失败的任务。
+  Future<CheckInSyncResult> retryPendingPhotoCleanup() async {
+    return _synchronized(() async {
+      _syncing = true;
+      try {
+        final token = await _requireToken();
+        if (token == null) {
+          return CheckInSyncResult.fail('未配置当前平台同步 Token');
+        }
+        final pending = await _loadPendingPhotoCleanup();
+        if (pending.isEmpty) return CheckInSyncResult.ok(_document);
+        final failed = await _attemptPhotoCleanup(
+          token: token,
+          paths: pending,
+          commitPrefix: 'check-in: retry photo cleanup',
+        );
+        final warning =
+            failed.isEmpty ? null : '仍有 ${failed.length} 张照片清理失败，后续同步会继续重试';
+        return CheckInSyncResult.ok(_document, warning: warning);
+      } finally {
+        _syncing = false;
+      }
+    });
+  }
+
   Future<String?> _requireToken() async {
     final token = await DiaryLocalStore.loadToken();
     if (token == null || token.isEmpty) return null;
     return token;
+  }
+
+  Future<Set<String>> _loadPendingPhotoCleanup() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_pendingPhotoCleanupKey);
+      if (raw == null || raw.trim().isEmpty) return <String>{};
+      final decoded = json.decode(raw);
+      if (decoded is! List) return <String>{};
+      return decoded.whereType<String>().where(_isManagedPhotoPath).toSet();
+    } catch (_) {
+      return <String>{};
+    }
+  }
+
+  Future<void> _savePendingPhotoCleanup(Set<String> paths) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (paths.isEmpty) {
+        await prefs.remove(_pendingPhotoCleanupKey);
+      } else {
+        await prefs.setString(
+            _pendingPhotoCleanupKey, json.encode(paths.toList()));
+      }
+    } catch (_) {
+      // 清理状态本身不能让已经成功的目标/记录删除变成失败。
+    }
+  }
+
+  Future<Set<String>> _attemptPhotoCleanup({
+    required String token,
+    required Iterable<String> paths,
+    required String commitPrefix,
+  }) async {
+    final allPaths = {
+      ...await _loadPendingPhotoCleanup(),
+      ...paths.where(_isManagedPhotoPath),
+    };
+    final failed = <String>{};
+    for (final path in allPaths) {
+      try {
+        final result = await CheckInGiteeService.deleteFile(
+          token: token,
+          path: path,
+          commitMessage: '$commitPrefix: $path',
+        );
+        if (!result.success) {
+          failed.add(path);
+          continue;
+        }
+        try {
+          final cached = await CheckInPhotoCache.getCachedFile(path);
+          if (cached != null && await cached.exists()) await cached.delete();
+        } catch (_) {}
+      } catch (_) {
+        failed.add(path);
+      }
+    }
+    await _savePendingPhotoCleanup(failed);
+    return failed;
+  }
+
+  static bool _isManagedPhotoPath(String path) {
+    return CheckInPhotoResource.normalizePath(path) != null;
   }
 
   Future<GoogleCalendarUser?> _requireUser() async {

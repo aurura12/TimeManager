@@ -80,7 +80,9 @@ class _TravelScreenState extends State<TravelScreen> {
 
   /// 远端有、本地没有的日期。
   Set<String> _remoteOnlyDateKeys(TravelRecordsDocument remote) =>
-      remote.records.map((e) => e.dateKey).toSet().difference(_recordDateKeys);
+      remote.recordDateKeys
+          .difference(_recordDateKeys)
+          .difference(_document.deletedDateKeys);
 
   Future<bool> _confirmOverwriteLocal({
     required Set<String> localOnlyKeys,
@@ -119,6 +121,36 @@ class _TravelScreenState extends State<TravelScreen> {
     return confirmed == true;
   }
 
+  Future<bool> _confirmReplaceExistingRecord({
+    required TravelRecord existing,
+    required TravelRecord replacement,
+  }) async {
+    if (!mounted) return false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('目标日期已有记录'),
+          content: Text(
+            '${replacement.dateKey} 已有「${existing.location}」的出行记录，'
+            '继续保存会覆盖原记录，是否继续？',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('覆盖并保存'),
+            ),
+          ],
+        );
+      },
+    );
+    return confirmed == true;
+  }
+
   Future<void> _saveDraft() async {
     await TravelLocalStore.saveDraft(_document.toMarkdown());
   }
@@ -138,14 +170,15 @@ class _TravelScreenState extends State<TravelScreen> {
     return _normalizedDate(picked);
   }
 
-  Future<void> _saveRecord({
+  Future<bool> _saveRecord({
     required DateTime date,
     required String location,
     required String event,
+    DateTime? previousDate,
   }) async {
     if (location.trim().isEmpty) {
       _showMessage('地点不能为空');
-      return;
+      return false;
     }
     final normalizedDate = _normalizedDate(date);
     final record = TravelRecord(
@@ -153,12 +186,32 @@ class _TravelScreenState extends State<TravelScreen> {
       location: location.trim(),
       event: event.trim(),
     );
+
+    final previousDateKey = previousDate == null
+        ? null
+        : DateFormat('yyyy-MM-dd').format(_normalizedDate(previousDate));
+    final existingTarget = _recordForDate(normalizedDate);
+    if (existingTarget != null && existingTarget.dateKey != previousDateKey) {
+      final confirmed = await _confirmReplaceExistingRecord(
+        existing: existingTarget,
+        replacement: record,
+      );
+      if (!confirmed) return false;
+    }
+    if (!mounted) return false;
+
     setState(() {
-      _document = _document.upsert(record);
+      _document = previousDateKey == null
+          ? _document.upsert(record)
+          : _document.replaceDate(
+              previousDateKey: previousDateKey,
+              record: record,
+            );
       _selectedDate = normalizedDate;
       _calendarMonth = DateTime(normalizedDate.year, normalizedDate.month);
     });
     await _saveDraft();
+    return true;
   }
 
   Future<void> _confirmDeleteRecord(DateTime date) async {
@@ -192,11 +245,7 @@ class _TravelScreenState extends State<TravelScreen> {
     if (confirmed != true) return;
 
     setState(() {
-      _document = TravelRecordsDocument(
-        records: _document.records
-            .where((e) => e.dateKey != record.dateKey)
-            .toList(),
-      );
+      _document = _document.deleteByDate(record.date);
       if (_selectedDateText() == record.dateKey) {
         if (_document.records.isNotEmpty) {
           _selectedDate = _document.records.first.date;
@@ -290,12 +339,12 @@ class _TravelScreenState extends State<TravelScreen> {
     );
 
     if (shouldSave == true) {
-      await _saveRecord(
+      final saved = await _saveRecord(
         date: tempDate,
         location: locationController.text,
         event: eventController.text,
       );
-      await _pushToGitHub();
+      if (saved) await _pushToGitHub();
     }
     locationController.dispose();
     eventController.dispose();
@@ -383,12 +432,13 @@ class _TravelScreenState extends State<TravelScreen> {
     );
 
     if (shouldSave == true) {
-      await _saveRecord(
+      final saved = await _saveRecord(
         date: tempDate,
         location: locationController.text,
         event: eventController.text,
+        previousDate: normalizedDate,
       );
-      await _pushToGitHub();
+      if (saved) await _pushToGitHub();
     }
     locationController.dispose();
     eventController.dispose();
@@ -420,6 +470,8 @@ class _TravelScreenState extends State<TravelScreen> {
     if (result.success) {
       try {
         final doc = TravelRecordsDocument.fromMarkdown(result.content!);
+        final locallyDeletedRemoteLive =
+            _document.deletedDateKeys.intersection(doc.recordDateKeys);
         // 远端缺了本地已有的日期时，覆盖会丢掉本地未同步的记录。
         // 静默拉取（进页面自动触发）一律保留本地；手动拉取需用户确认。
         final localOnly = _localOnlyDateKeys(doc);
@@ -439,10 +491,14 @@ class _TravelScreenState extends State<TravelScreen> {
             return;
           }
         }
-        _document = doc;
+        _document = _document.mergeRemotePreservingLocalDeletions(doc);
         await _saveDraft();
         if (!silent) {
-          _showMessage('拉取成功（已覆盖本地）');
+          _showMessage(
+            locallyDeletedRemoteLive.isEmpty
+                ? '拉取成功（已覆盖本地）'
+                : '拉取成功（保留本地待同步删除）',
+          );
         }
       } catch (e) {
         if (!silent) {
@@ -476,6 +532,7 @@ class _TravelScreenState extends State<TravelScreen> {
       path: TravelRecordsDocument.filePath,
     );
     if (!mounted) return;
+    TravelRecordsDocument? remoteDocument;
     if (!pull.success && !pull.notFound) {
       setState(() => _processing = false);
       _showMessage('远端读取失败，已中止同步：${pull.error ?? '未知错误'}');
@@ -484,6 +541,7 @@ class _TravelScreenState extends State<TravelScreen> {
     if (pull.success && pull.content != null) {
       try {
         final remote = TravelRecordsDocument.fromMarkdown(pull.content!);
+        remoteDocument = remote;
         final remoteOnly = _remoteOnlyDateKeys(remote);
         if (remoteOnly.isNotEmpty) {
           setState(() => _processing = false);
@@ -512,8 +570,11 @@ class _TravelScreenState extends State<TravelScreen> {
 
     final remoteSha = pull.success ? pull.sha : null;
     final remoteWasNotFound = pull.notFound;
-    final content = _document.toMarkdown();
-    final latest = _document.records.isEmpty ? null : _document.records.first;
+    final outgoing = remoteDocument == null
+        ? _document
+        : _document.preparePush(remoteDocument);
+    final content = outgoing.toMarkdown();
+    final latest = outgoing.records.isEmpty ? null : outgoing.records.first;
     final result = await TravelGiteeService.pushFile(
       token: _token!,
       path: TravelRecordsDocument.filePath,
@@ -527,6 +588,9 @@ class _TravelScreenState extends State<TravelScreen> {
     if (!mounted) return;
     setState(() => _processing = false);
     if (result.success) {
+      if (mounted) {
+        setState(() => _document = outgoing);
+      }
       await _saveDraft();
       _showMessage(result.created ? '同步成功（已新建远端文件）' : '同步成功');
       return;

@@ -56,6 +56,279 @@ class BackupPreview {
   });
 }
 
+class _ParsedBackup {
+  const _ParsedBackup({
+    required this.exportedAt,
+    required this.rawCategoryCount,
+    required this.categories,
+    required this.deletedRelations,
+    required this.targets,
+    required this.dailySlots,
+    required this.templates,
+    required this.ignoredCalendarImports,
+    required this.pendingGiteeDates,
+    required this.pendingGoogleDates,
+  });
+
+  final String? exportedAt;
+  final int rawCategoryCount;
+  final List<Category> categories;
+  final List<DeletedEventRelation> deletedRelations;
+  final List<Target> targets;
+  final Map<String, List<TimeSlot>> dailySlots;
+  final List<ScheduleTemplate> templates;
+  final Map<String, Set<String>> ignoredCalendarImports;
+  final Set<String> pendingGiteeDates;
+  final Set<String> pendingGoogleDates;
+}
+
+/// Import is a full replacement, so keep enough state to restore both memory
+/// and the identity-scoped preferences if the final persistence step fails.
+class _BackupImportSnapshot {
+  _BackupImportSnapshot({
+    required this.categories,
+    required this.deletedRelations,
+    required this.targets,
+    required this.dailySlots,
+    required this.templates,
+    required this.ignoredCalendarImports,
+    required this.pendingGiteeDates,
+    required this.pendingGoogleDates,
+    required this.categoriesDirty,
+    required this.categoriesRevision,
+    required this.targetsDirty,
+    required this.targetsDocUpdatedAt,
+    required this.targetsGiteePending,
+    required this.templatesRevision,
+    required this.slotsRevision,
+    required this.slotsDirty,
+    required this.allSlotsDirty,
+    required this.templatesDirty,
+    required this.calendarDirty,
+    required this.syncDirty,
+    required this.categoryExpandDirty,
+    required this.statsCache,
+    required this.statsCacheKey,
+    required this.occurrenceCache,
+    required this.occurrenceCacheKey,
+    required this.categoriesUserCode,
+    required this.targetsUserCode,
+    required this.hadCategoriesGiteeTimer,
+    required this.hadTargetsGiteeTimer,
+    required this.persistedPreferences,
+  });
+
+  final List<Category> categories;
+  final List<DeletedEventRelation> deletedRelations;
+  final List<Target> targets;
+  final Map<String, List<TimeSlot>> dailySlots;
+  final List<ScheduleTemplate> templates;
+  final Map<String, Set<String>> ignoredCalendarImports;
+  final Set<String> pendingGiteeDates;
+  final Set<String> pendingGoogleDates;
+  final bool categoriesDirty;
+  final int categoriesRevision;
+  final bool targetsDirty;
+  final int targetsDocUpdatedAt;
+  final bool targetsGiteePending;
+  final int templatesRevision;
+  final int slotsRevision;
+  final Set<String> slotsDirty;
+  final bool allSlotsDirty;
+  final bool templatesDirty;
+  final bool calendarDirty;
+  final bool syncDirty;
+  final bool categoryExpandDirty;
+  final Map<String, double>? statsCache;
+  final String? statsCacheKey;
+  final Map<String, int>? occurrenceCache;
+  final String? occurrenceCacheKey;
+  final String categoriesUserCode;
+  final String targetsUserCode;
+  final bool hadCategoriesGiteeTimer;
+  final bool hadTargetsGiteeTimer;
+  final Map<String, Object?> persistedPreferences;
+
+  static Future<_BackupImportSnapshot> capture(TimeProvider provider) async {
+    final prefs = await SharedPreferences.getInstance();
+    final preferenceKeys = TimeProvider._identityScopedPreferenceBases
+        .map(provider._identityDataKey)
+        .toSet();
+    final persistedPreferences = <String, Object?>{
+      for (final key in preferenceKeys) key: prefs.get(key),
+    };
+
+    TimeSlot cloneSlot(TimeSlot slot) => TimeSlot(
+          hour: slot.hour,
+          minute10: slot.minute10,
+          recorded: slot.recorded,
+          label: slot.label,
+          categoryId: slot.categoryId,
+          color: slot.color,
+          isFromCalendar: slot.isFromCalendar,
+          calendarEventId: slot.calendarEventId,
+          modifiedAt: slot.modifiedAt,
+          deletedAt: slot.deletedAt,
+        );
+
+    final categories = provider._categories
+        .map(
+          (category) => category.copyWith(
+            subCategories: List<String>.from(category.subCategories),
+            hiddenSubCategories:
+                List<String>.from(category.hiddenSubCategories),
+          ),
+        )
+        .toList();
+    final dailySlots = <String, List<TimeSlot>>{
+      for (final entry in provider._dailySlots.entries)
+        entry.key: entry.value.map(cloneSlot).toList(),
+    };
+    final templates = provider._templates
+        .map(
+          (template) => template.copyWith(
+            slots: template.slots
+                .map(
+                  (slot) => TemplateSlot(
+                    index: slot.index,
+                    label: slot.label,
+                    categoryId: slot.categoryId,
+                    colorArgb: slot.colorArgb,
+                  ),
+                )
+                .toList(),
+          ),
+        )
+        .toList();
+
+    return _BackupImportSnapshot(
+      categories: categories,
+      deletedRelations: List<DeletedEventRelation>.from(
+        provider._deletedRelations,
+      ),
+      targets: List<Target>.from(provider._targets),
+      dailySlots: dailySlots,
+      templates: templates,
+      ignoredCalendarImports: {
+        for (final entry in provider._ignoredCalendarImports.entries)
+          entry.key: Set<String>.from(entry.value),
+      },
+      pendingGiteeDates: Set<String>.from(provider.pendingGiteeSyncDates),
+      pendingGoogleDates: Set<String>.from(provider.pendingGoogleSyncDates),
+      categoriesDirty: provider._categoriesDirty,
+      categoriesRevision: provider._categoriesRevision,
+      targetsDirty: provider._targetsDirty,
+      targetsDocUpdatedAt: provider._targetsDocUpdatedAt,
+      targetsGiteePending: provider._targetsGiteePending,
+      templatesRevision: provider._templatesRevision,
+      slotsRevision: provider._slotsRevision,
+      slotsDirty: Set<String>.from(provider._slotsDirty),
+      allSlotsDirty: provider._allSlotsDirty,
+      templatesDirty: provider._templatesDirty,
+      calendarDirty: provider._calendarDirty,
+      syncDirty: provider._syncDirty,
+      categoryExpandDirty: provider._categoryExpandDirty,
+      statsCache: provider._statsCache == null
+          ? null
+          : Map<String, double>.from(provider._statsCache!),
+      statsCacheKey: provider._statsCacheKey,
+      occurrenceCache: provider._occurrenceCache == null
+          ? null
+          : Map<String, int>.from(provider._occurrenceCache!),
+      occurrenceCacheKey: provider._occurrenceCacheKey,
+      categoriesUserCode: provider._categoriesUserCode,
+      targetsUserCode: provider._targetsUserCode,
+      hadCategoriesGiteeTimer: provider._categoriesGiteeTimer != null,
+      hadTargetsGiteeTimer: provider._targetsGiteeTimer != null,
+      persistedPreferences: persistedPreferences,
+    );
+  }
+
+  Future<void> restore(TimeProvider provider) async {
+    provider._categoriesGiteeTimer?.cancel();
+    provider._categoriesGiteeTimer = null;
+    provider._targetsGiteeTimer?.cancel();
+    provider._targetsGiteeTimer = null;
+
+    provider._categories = List<Category>.from(categories);
+    provider._deletedRelations
+      ..clear()
+      ..addAll(deletedRelations);
+    provider._targets
+      ..clear()
+      ..addAll(targets);
+    provider._dailySlots
+      ..clear()
+      ..addAll(dailySlots);
+    provider._templates
+      ..clear()
+      ..addAll(templates);
+    provider._ignoredCalendarImports
+      ..clear()
+      ..addAll(ignoredCalendarImports);
+    provider._pendingSyncState.replace(
+      giteeDates: pendingGiteeDates,
+      googleDates: pendingGoogleDates,
+    );
+    provider._categoriesDirty = categoriesDirty;
+    provider._categoriesRevision = categoriesRevision;
+    provider._targetsDirty = targetsDirty;
+    provider._targetsDocUpdatedAt = targetsDocUpdatedAt;
+    provider._targetsGiteePending = targetsGiteePending;
+    provider._templatesRevision = templatesRevision;
+    provider._slotsRevision = slotsRevision;
+    provider._slotsDirty
+      ..clear()
+      ..addAll(slotsDirty);
+    provider._allSlotsDirty = allSlotsDirty;
+    provider._templatesDirty = templatesDirty;
+    provider._calendarDirty = calendarDirty;
+    provider._syncDirty = syncDirty;
+    provider._categoryExpandDirty = categoryExpandDirty;
+    provider._statsCache =
+        statsCache == null ? null : Map<String, double>.from(statsCache!);
+    provider._statsCacheKey = statsCacheKey;
+    provider._occurrenceCache = occurrenceCache == null
+        ? null
+        : Map<String, int>.from(occurrenceCache!);
+    provider._occurrenceCacheKey = occurrenceCacheKey;
+    provider._categoriesUserCode = categoriesUserCode;
+    provider._targetsUserCode = targetsUserCode;
+    provider._invalidateLabelCategoryIdCache();
+
+    if (hadCategoriesGiteeTimer) provider._markCategoriesGiteePending();
+    if (hadTargetsGiteeTimer) provider._markTargetsGiteePending();
+
+    final prefs = await SharedPreferences.getInstance();
+    for (final entry in persistedPreferences.entries) {
+      final value = entry.value;
+      bool restored;
+      if (value == null) {
+        restored = await prefs.remove(entry.key);
+      } else if (value is String) {
+        restored = await prefs.setString(entry.key, value);
+      } else if (value is bool) {
+        restored = await prefs.setBool(entry.key, value);
+      } else if (value is int) {
+        restored = await prefs.setInt(entry.key, value);
+      } else if (value is double) {
+        restored = await prefs.setDouble(entry.key, value);
+      } else if (value is List<String>) {
+        restored = await prefs.setStringList(entry.key, value);
+      } else {
+        restored = false;
+      }
+      if (!restored) {
+        provider._recordAppError(
+          '备份导入回滚偏好设置失败（${entry.key}）',
+          StateError('SharedPreferences rollback failed'),
+          StackTrace.current,
+        );
+      }
+    }
+  }
+}
+
 enum CategoryMutationStatus { success, validationError, blocked, invalidIndex }
 
 /// 分类新增/编辑的明确结果。
@@ -217,6 +490,18 @@ class _ScheduleOverwriteJournal {
 
 class TimeProvider with ChangeNotifier {
   static const int backupVersion = 2;
+
+  /// Upper bounds for user-selected backup files and decoded collections.
+  /// They are deliberately generous compared with normal exports while
+  /// preventing malformed input from consuming unbounded memory/CPU.
+  static const int maxBackupFileBytes = 16 * 1024 * 1024;
+  static const int maxBackupStringLength = 4096;
+  static const int maxBackupNestingDepth = 12;
+  static const int maxBackupCollectionEntries = 100000;
+  static const int maxBackupEntityCount = 10000;
+  static const int maxBackupDays = 100000;
+  static const int maxBackupSlotsPerDay = 144;
+  static const int maxBackupTotalSlotEntries = 500000;
   static const Color calendarImportColor = AppSemanticColors.calendarImport;
   static const String _scheduleOverwriteJournalKey =
       'schedule_overwrite_transaction_journal';
@@ -5384,7 +5669,7 @@ class TimeProvider with ChangeNotifier {
     _invalidateLabelCategoryIdCache();
   }
 
-  void _migrateToCategoryIds() {
+  void _migrateToCategoryIds({bool persist = true}) {
     var categoriesChanged = false;
     _categories = _categories.map((cat) {
       if (cat.id.isEmpty) {
@@ -5438,7 +5723,7 @@ class TimeProvider with ChangeNotifier {
         _targetsDirty = true;
         _markTargetsGiteePending();
       }
-      _saveData();
+      if (persist) _saveData();
     }
   }
 
@@ -6596,22 +6881,13 @@ class TimeProvider with ChangeNotifier {
 
   BackupPreview? previewBackupJson(String jsonStr) {
     try {
-      final data = _parseBackupRoot(jsonStr);
-      final categories = data['categories'];
-      final targets = data['targets'];
-      final dailySlots = data['dailySlots'];
-      final templates = data['scheduleTemplates'];
-
-      if (categories is! List || dailySlots is! Map) {
-        return null;
-      }
-
+      final backup = _parseBackupRoot(jsonStr);
       return BackupPreview(
-        exportedAt: data['exportedAt'] as String?,
-        dayCount: dailySlots.length,
-        targetCount: targets is List ? targets.length : 0,
-        categoryCount: categories.length,
-        templateCount: templates is List ? templates.length : 0,
+        exportedAt: backup.exportedAt,
+        dayCount: backup.dailySlots.length,
+        targetCount: backup.targets.length,
+        categoryCount: backup.rawCategoryCount,
+        templateCount: backup.templates.length,
       );
     } catch (_) {
       return null;
@@ -6622,62 +6898,107 @@ class TimeProvider with ChangeNotifier {
     if (!_initialLoadCompleter.isCompleted) {
       await _initialLoadCompleter.future;
     }
-    if (!_allowScheduleMutation()) return;
-    final data = _parseBackupRoot(jsonStr);
-    _applyBackupMap(data);
-    _migrateToCategoryIds();
-    // 导入是全量操作，设置所有脏标记
-    _markCategoriesChanged();
-    _markCategoriesGiteePending();
-    _targetsDirty = true;
-    _markAllSlotsDirty();
-    _markTemplatesChanged();
-    _calendarDirty = true;
-    _syncDirty = true;
-    final saved = await _saveData();
-    if (!_isDisposed && saved) notifyListeners();
+    final parsed = _parseBackupRoot(jsonStr);
+    if (!_allowScheduleMutation()) {
+      // 初始化失败或 provider 已销毁时，保持其它公开编辑 API 的 no-op 语义；
+      // 初始化错误已经通过全局错误状态暴露，不能再让后台调用抛出未处理异常。
+      if (_initializationFailed || _isDisposed) return;
+      throw StateError(
+        _scheduleMutationBlockedMessage() ?? '当前状态不允许导入备份',
+      );
+    }
+    final snapshot = await _BackupImportSnapshot.capture(this);
+    try {
+      _applyParsedBackup(parsed);
+      // Legacy backups can contain empty category IDs.  Run the existing
+      // migration against the temporary replacement without starting a second
+      // asynchronous save; the import save below is the single commit point.
+      _migrateToCategoryIds(persist: false);
+
+      // 导入是全量操作，设置所有脏标记
+      _markCategoriesChanged();
+      _markCategoriesGiteePending();
+      _targetsDirty = true;
+      _markAllSlotsDirty();
+      _markTemplatesChanged();
+      _calendarDirty = true;
+      _syncDirty = true;
+      _targetStatsCache.invalidate();
+      final saved = await _saveData();
+      if (!saved) {
+        throw StateError('备份导入保存失败，已保留原有数据');
+      }
+      if (!_isDisposed) notifyListeners();
+    } catch (_) {
+      await snapshot.restore(this);
+      if (!_isDisposed) notifyListeners();
+      rethrow;
+    }
   }
 
-  Map<String, dynamic> _parseBackupRoot(String jsonStr) {
-    final decoded = json.decode(jsonStr);
-    if (decoded is! Map) {
-      throw const FormatException('备份文件格式无效');
+  _ParsedBackup _parseBackupRoot(String jsonStr) {
+    final byteLength = utf8.encode(jsonStr).length;
+    if (byteLength > maxBackupFileBytes) {
+      throw FormatException(
+        '备份文件过大（${(byteLength / (1024 * 1024)).toStringAsFixed(1)} MB），'
+        '上限为 ${maxBackupFileBytes ~/ (1024 * 1024)} MB',
+      );
     }
-    final data = Map<String, dynamic>.from(decoded);
+
+    dynamic decoded;
+    try {
+      decoded = json.decode(jsonStr);
+    } on FormatException {
+      throw const FormatException('备份文件不是有效的 JSON');
+    }
+    _validateBackupTree(decoded, '根节点', 0);
+    final data = _backupMap(decoded, '根节点');
 
     final version = data['version'];
-    if (version is num && version > backupVersion) {
-      throw FormatException('备份版本过新（v$version），请先升级 App');
+    if (version != null) {
+      if (!_isBackupWholeNumber(version)) {
+        _invalidBackup('.version', '必须是整数');
+      }
+      final versionNumber = _backupInt(version);
+      if (versionNumber == null) _invalidBackup('.version', '格式无效');
+      if (versionNumber > backupVersion) {
+        throw FormatException('备份版本过新（v$versionNumber），请先升级 App');
+      }
     }
-    if (data['categories'] is! List || data['dailySlots'] is! Map) {
-      throw const FormatException('备份文件缺少必要数据');
+    final exportedAt = data['exportedAt'];
+    if (exportedAt != null && exportedAt is! String) {
+      _invalidBackup('.exportedAt', '必须是字符串');
     }
-    return data;
-  }
 
-  void _applyBackupMap(Map<String, dynamic> data) {
-    // 先解析到临时容器，全部完成后再替换真实状态，避免畸形备份造成半导入。
+    final rawCategories = _backupList(data, 'categories', '.categories');
+    final rawDailySlots = _backupMap(data['dailySlots'], '.dailySlots');
+    _checkBackupCount(
+        rawCategories.length, maxBackupEntityCount, '.categories');
+    _checkBackupCount(rawDailySlots.length, maxBackupDays, '.dailySlots');
+
     final parsedCategories = <Category>[];
-    for (final e in data['categories'] as List) {
+    for (var i = 0; i < rawCategories.length; i++) {
+      final path = '.categories[$i]';
+      final map = _backupMap(rawCategories[i], path);
+      _validateCategoryMap(map, path);
       try {
-        final map = Map<String, dynamic>.from(e as Map);
         parsedCategories.add(Category.fromJson(map));
-      } catch (err, stackTrace) {
-        debugPrint("导入分类数据出错: $err");
-        _recordAppError('导入分类数据出错', err, stackTrace);
+      } catch (_) {
+        _invalidBackup(path, '内容无效');
       }
     }
     final rawParsedCategories = List<Category>.from(parsedCategories);
     final normalizedCategories =
         normalizeCategoriesForStorage(rawParsedCategories);
-    parsedCategories
-      ..clear()
-      ..addAll(normalizedCategories.categories);
-    if (!parsedCategories.any(
-      (c) =>
-          _categoryLabelKey(c.name) == _categoryLabelKey(temporaryCategoryName),
+    final canonicalCategories = List<Category>.from(
+      normalizedCategories.categories,
+    );
+    if (!canonicalCategories.any(
+      (category) =>
+          _categoryLabelKey(category.name) ==
+          _categoryLabelKey(temporaryCategoryName),
     )) {
-      parsedCategories.add(Category(
+      canonicalCategories.add(Category(
         name: temporaryCategoryName,
         color: AppSemanticColors.neutral,
         updatedAt: DateTime.now().millisecondsSinceEpoch,
@@ -6685,100 +7006,110 @@ class TimeProvider with ChangeNotifier {
     }
     final categoryIdRemap = _categoryIdRemapForCanonicalCategories(
       rawParsedCategories,
-      parsedCategories,
+      canonicalCategories,
     );
 
+    final rawDeletedRelations =
+        _backupList(data, 'deletedRelations', '.deletedRelations');
+    _checkBackupCount(
+      rawDeletedRelations.length,
+      maxBackupEntityCount,
+      '.deletedRelations',
+    );
     final parsedDeletedRelations = <DeletedEventRelation>[];
-    final rawDeletedRelations = data['deletedRelations'];
-    if (rawDeletedRelations is List) {
-      for (final raw in rawDeletedRelations) {
-        try {
-          if (raw is! Map) continue;
-          parsedDeletedRelations.add(
-            DeletedEventRelation.fromJson(
-              Map<String, dynamic>.from(raw),
-            ),
-          );
-        } catch (err, stackTrace) {
-          debugPrint('导入已删除事件关系出错: $err');
-          _recordAppError('导入已删除事件关系出错', err, stackTrace);
-        }
+    for (var i = 0; i < rawDeletedRelations.length; i++) {
+      final path = '.deletedRelations[$i]';
+      final map = _backupMap(rawDeletedRelations[i], path);
+      _validateDeletedRelationMap(map, path);
+      try {
+        parsedDeletedRelations.add(DeletedEventRelation.fromJson(map));
+      } catch (_) {
+        _invalidBackup(path, '内容无效');
       }
     }
 
+    final rawTargets = _backupList(data, 'targets', '.targets');
+    _checkBackupCount(rawTargets.length, maxBackupEntityCount, '.targets');
     final parsedTargets = <Target>[];
-    final targets = data['targets'];
-    if (targets is List) {
-      for (final e in targets) {
-        try {
-          parsedTargets
-              .add(Target.fromJson(Map<String, dynamic>.from(e as Map)));
-        } catch (err, stackTrace) {
-          debugPrint("导入目标数据出错: $err");
-          _recordAppError('导入目标数据出错', err, stackTrace);
-        }
+    for (var i = 0; i < rawTargets.length; i++) {
+      final path = '.targets[$i]';
+      final map = _backupMap(rawTargets[i], path);
+      _validateTargetMap(map, path);
+      try {
+        parsedTargets.add(Target.fromJson(map));
+      } catch (_) {
+        _invalidBackup(path, '内容无效');
       }
     }
 
+    _validateDailySlots(rawDailySlots, '.dailySlots');
     final parsedDailySlots = <String, List<TimeSlot>>{};
-    try {
-      _loadDailySlotsFromJson(
-        Map<String, dynamic>.from(data['dailySlots'] as Map),
-        destination: parsedDailySlots,
-      );
-    } catch (err, stackTrace) {
-      debugPrint("导入时间块数据出错: $err");
-      _recordAppError('导入时间块数据出错', err, stackTrace);
-    }
+    _loadDailySlotsFromJson(
+      rawDailySlots,
+      destination: parsedDailySlots,
+      strict: true,
+    );
 
+    final rawTemplates =
+        _backupList(data, 'scheduleTemplates', '.scheduleTemplates');
+    _checkBackupCount(
+      rawTemplates.length,
+      maxBackupEntityCount,
+      '.scheduleTemplates',
+    );
     final parsedTemplates = <ScheduleTemplate>[];
-    final templates = data['scheduleTemplates'];
-    if (templates is List) {
-      for (final e in templates) {
-        try {
-          parsedTemplates.add(
-              ScheduleTemplate.fromJson(Map<String, dynamic>.from(e as Map)));
-        } catch (err, stackTrace) {
-          debugPrint("导入模板数据出错: $err");
-          _recordAppError('导入模板数据出错', err, stackTrace);
-        }
+    for (var i = 0; i < rawTemplates.length; i++) {
+      final path = '.scheduleTemplates[$i]';
+      final map = _backupMap(rawTemplates[i], path);
+      _validateTemplateMap(map, path);
+      try {
+        parsedTemplates.add(ScheduleTemplate.fromJson(map));
+      } catch (_) {
+        _invalidBackup(path, '内容无效');
       }
     }
 
     final parsedIgnored = <String, Set<String>>{};
-    final ignored = data['ignoredCalendarImports'];
-    if (ignored is Map) {
-      ignored.forEach((dateKey, value) {
-        if (value is List) {
-          final normalizedKey = _normalizeDateKey(dateKey.toString());
-          parsedIgnored[normalizedKey] = value.whereType<String>().toSet();
+    final rawIgnored = data['ignoredCalendarImports'];
+    if (rawIgnored != null) {
+      final ignored = _backupMap(rawIgnored, '.ignoredCalendarImports');
+      _checkBackupCount(
+        ignored.length,
+        maxBackupDays,
+        '.ignoredCalendarImports',
+      );
+      for (final entry in ignored.entries) {
+        final path = '.ignoredCalendarImports.${entry.key}';
+        final dateKey = _validateBackupDateKey(entry.key, path);
+        if (entry.value is! List) _invalidBackup(path, '必须是字符串数组');
+        final ids = entry.value as List;
+        _checkBackupCount(ids.length, maxBackupCollectionEntries, path);
+        final parsedIds = <String>{};
+        for (var i = 0; i < ids.length; i++) {
+          if (ids[i] is! String) {
+            _invalidBackup('$path[$i]', '必须是字符串');
+          }
+          parsedIds.add(ids[i] as String);
         }
-      });
+        parsedIgnored.putIfAbsent(dateKey, () => <String>{}).addAll(parsedIds);
+      }
     }
 
-    final parsedPending = <String>{};
-    final pending = data['pendingSyncDates'];
-    if (pending is List) {
-      parsedPending.addAll(
-        pending.map((e) => _normalizeDateKey(e.toString())),
-      );
-    }
-
-    final parsedGiteePending = <String>{};
-    final giteePending = data['pendingGiteeSyncDates'];
-    if (giteePending is List) {
-      parsedGiteePending.addAll(
-        giteePending.map((e) => _normalizeDateKey(e.toString())),
-      );
-    }
-
-    final parsedGooglePending = <String>{};
-    final googlePending = data['pendingGoogleSyncDates'];
-    if (googlePending is List) {
-      parsedGooglePending.addAll(
-        googlePending.map((e) => _normalizeDateKey(e.toString())),
-      );
-    }
+    final parsedPending = _parseBackupDateList(
+      data,
+      'pendingSyncDates',
+      '.pendingSyncDates',
+    );
+    final parsedGiteePending = _parseBackupDateList(
+      data,
+      'pendingGiteeSyncDates',
+      '.pendingGiteeSyncDates',
+    );
+    final parsedGooglePending = _parseBackupDateList(
+      data,
+      'pendingGoogleSyncDates',
+      '.pendingGoogleSyncDates',
+    );
 
     _remapCategoryIdsInSlots(parsedDailySlots, categoryIdRemap);
     _remapCategoryIdsInTargets(parsedTargets, categoryIdRemap);
@@ -6787,37 +7118,315 @@ class TimeProvider with ChangeNotifier {
       parsedDeletedRelations,
       categoryIdRemap,
     );
-    final hasSplitPendingState = giteePending is List || googlePending is List;
+    final hasSplitPendingState = data['pendingGiteeSyncDates'] is List ||
+        data['pendingGoogleSyncDates'] is List;
     final legacyPendingState = PendingSyncState.fromLegacy(
       parsedPending,
       desktop: isDesktopPlatform,
     );
 
-    _categories = parsedCategories;
-    _invalidateLabelCategoryIdCache();
-    _deletedRelations
-      ..clear()
-      ..addAll(parsedDeletedRelations);
-    _targets
-      ..clear()
-      ..addAll(parsedTargets);
-    _dailySlots
-      ..clear()
-      ..addAll(parsedDailySlots);
-    _templates
-      ..clear()
-      ..addAll(parsedTemplates);
-    _ignoredCalendarImports
-      ..clear()
-      ..addAll(parsedIgnored);
-    _pendingSyncState.replace(
-      giteeDates: hasSplitPendingState
+    return _ParsedBackup(
+      exportedAt: exportedAt as String?,
+      rawCategoryCount: rawCategories.length,
+      categories: canonicalCategories,
+      deletedRelations: parsedDeletedRelations,
+      targets: parsedTargets,
+      dailySlots: parsedDailySlots,
+      templates: parsedTemplates,
+      ignoredCalendarImports: parsedIgnored,
+      pendingGiteeDates: hasSplitPendingState
           ? parsedGiteePending
           : legacyPendingState.giteeDates,
-      googleDates: hasSplitPendingState
+      pendingGoogleDates: hasSplitPendingState
           ? parsedGooglePending
           : legacyPendingState.googleDates,
     );
+  }
+
+  void _applyParsedBackup(_ParsedBackup backup) {
+    _categories = List<Category>.from(backup.categories);
+    _invalidateLabelCategoryIdCache();
+    _deletedRelations
+      ..clear()
+      ..addAll(backup.deletedRelations);
+    _targets
+      ..clear()
+      ..addAll(backup.targets);
+    _dailySlots
+      ..clear()
+      ..addAll(backup.dailySlots);
+    _templates
+      ..clear()
+      ..addAll(backup.templates);
+    _ignoredCalendarImports
+      ..clear()
+      ..addAll(backup.ignoredCalendarImports);
+    _pendingSyncState.replace(
+      giteeDates: backup.pendingGiteeDates,
+      googleDates: backup.pendingGoogleDates,
+    );
+  }
+
+  List<dynamic> _backupList(
+    Map<String, dynamic> data,
+    String key,
+    String path,
+  ) {
+    final value = data[key];
+    if (value == null) return const <dynamic>[];
+    if (value is! List) _invalidBackup(path, '必须是数组');
+    return value;
+  }
+
+  Map<String, dynamic> _backupMap(dynamic value, String path) {
+    if (value is! Map) _invalidBackup(path, '必须是对象');
+    return Map<String, dynamic>.from(value);
+  }
+
+  Never _invalidBackup(String path, String message) {
+    throw FormatException('备份文件$path$message');
+  }
+
+  void _checkBackupCount(int count, int max, String path) {
+    if (count > max) _invalidBackup(path, '数量超过限制（最多 $max 项）');
+  }
+
+  void _validateBackupTree(dynamic value, String path, int depth) {
+    if (depth > maxBackupNestingDepth) {
+      _invalidBackup(path, '嵌套层级超过限制');
+    }
+    if (value is String) {
+      if (value.length > maxBackupStringLength) {
+        _invalidBackup(path, '字符串长度超过限制');
+      }
+      return;
+    }
+    if (value is List) {
+      _checkBackupCount(value.length, maxBackupCollectionEntries, path);
+      for (var i = 0; i < value.length; i++) {
+        _validateBackupTree(value[i], '$path[$i]', depth + 1);
+      }
+      return;
+    }
+    if (value is Map) {
+      _checkBackupCount(value.length, maxBackupCollectionEntries, path);
+      for (final entry in value.entries) {
+        if (entry.key is! String) _invalidBackup(path, '对象键必须是字符串');
+        _validateBackupTree(
+          entry.value,
+          '$path.${entry.key}',
+          depth + 1,
+        );
+      }
+    }
+  }
+
+  bool _isBackupNumber(dynamic value) {
+    if (value is num) return value.toDouble().isFinite;
+    if (value is String) {
+      final parsed = num.tryParse(value.trim());
+      return parsed != null && parsed.toDouble().isFinite;
+    }
+    return false;
+  }
+
+  bool _isBackupWholeNumber(dynamic value) {
+    if (value is int) return true;
+    if (value is num) {
+      return value.toDouble().isFinite && value == value.toInt();
+    }
+    if (value is String) return int.tryParse(value.trim()) != null;
+    return false;
+  }
+
+  int? _backupInt(dynamic value) {
+    if (!_isBackupNumber(value)) return null;
+    if (value is num) return value.toInt();
+    return num.tryParse((value as String).trim())?.toInt();
+  }
+
+  void _validateOptionalString(
+    Map<String, dynamic> map,
+    String key,
+    String path,
+  ) {
+    if (!map.containsKey(key) || map[key] == null) return;
+    if (map[key] is! String) _invalidBackup('$path.$key', '必须是字符串');
+  }
+
+  void _validateOptionalNumber(
+    Map<String, dynamic> map,
+    String key,
+    String path,
+  ) {
+    if (!map.containsKey(key) || map[key] == null) return;
+    if (!_isBackupNumber(map[key])) _invalidBackup('$path.$key', '必须是数字');
+  }
+
+  void _validateOptionalBool(
+    Map<String, dynamic> map,
+    String key,
+    String path,
+  ) {
+    if (!map.containsKey(key) || map[key] == null) return;
+    if (map[key] is! bool) _invalidBackup('$path.$key', '必须是布尔值');
+  }
+
+  void _validateOptionalStringList(
+    Map<String, dynamic> map,
+    String key,
+    String path,
+  ) {
+    if (!map.containsKey(key) || map[key] == null) return;
+    final value = map[key];
+    if (value is! List) _invalidBackup('$path.$key', '必须是字符串数组');
+    _checkBackupCount(value.length, maxBackupCollectionEntries, '$path.$key');
+    for (var i = 0; i < value.length; i++) {
+      if (value[i] is! String) {
+        _invalidBackup('$path.$key[$i]', '必须是字符串');
+      }
+    }
+  }
+
+  void _validateCategoryMap(Map<String, dynamic> map, String path) {
+    _validateOptionalString(map, 'id', path);
+    _validateOptionalString(map, 'name', path);
+    _validateOptionalNumber(map, 'color', path);
+    _validateOptionalStringList(map, 'subCategories', path);
+    _validateOptionalStringList(map, 'hiddenSubCategories', path);
+    _validateOptionalNumber(map, 'updatedAt', path);
+  }
+
+  void _validateDeletedRelationMap(Map<String, dynamic> map, String path) {
+    for (final key in ['categoryId', 'parentName', 'eventName']) {
+      if (map[key] is! String) _invalidBackup('$path.$key', '必须是字符串');
+    }
+    if (map['isParentEvent'] is! bool) {
+      _invalidBackup('$path.isParentEvent', '必须是布尔值');
+    }
+    if (!_isBackupNumber(map['deletedAt'])) {
+      _invalidBackup('$path.deletedAt', '必须是数字');
+    }
+  }
+
+  void _validateTargetMap(Map<String, dynamic> map, String path) {
+    for (final key in [
+      'id',
+      'name',
+      'categoryId',
+      'period',
+      'compareType',
+      'targetTime',
+      'startTime',
+      'endTime',
+    ]) {
+      _validateOptionalString(map, key, path);
+    }
+    for (final key in [
+      'type',
+      'color',
+      'durationHours',
+      'frequencyCount',
+      'updatedAt',
+    ]) {
+      _validateOptionalNumber(map, key, path);
+    }
+  }
+
+  void _validateTemplateMap(Map<String, dynamic> map, String path) {
+    _validateOptionalString(map, 'id', path);
+    _validateOptionalString(map, 'name', path);
+    _validateOptionalNumber(map, 'createdAt', path);
+    if (!map.containsKey('slots') || map['slots'] == null) return;
+    final rawSlots = map['slots'];
+    if (rawSlots is! List) _invalidBackup('$path.slots', '必须是数组');
+    _checkBackupCount(rawSlots.length, maxBackupSlotsPerDay, '$path.slots');
+    for (var i = 0; i < rawSlots.length; i++) {
+      final slotPath = '$path.slots[$i]';
+      final slot = _backupMap(rawSlots[i], slotPath);
+      _validateOptionalNumber(slot, 'i', slotPath);
+      _validateOptionalString(slot, 'l', slotPath);
+      _validateOptionalString(slot, 'cid', slotPath);
+      _validateOptionalNumber(slot, 'c', slotPath);
+    }
+  }
+
+  void _validateDailySlots(
+    Map<String, dynamic> slotsJson,
+    String path,
+  ) {
+    var totalEntries = 0;
+    for (final entry in slotsJson.entries) {
+      final dayPath = '$path.${entry.key}';
+      _validateBackupDateKey(entry.key, dayPath);
+      final rawSlots = entry.value;
+      if (rawSlots is! List) _invalidBackup(dayPath, '必须是数组，不能按空数组导入');
+      _checkBackupCount(
+        rawSlots.length,
+        maxBackupSlotsPerDay,
+        dayPath,
+      );
+      totalEntries += rawSlots.length;
+      if (totalEntries > maxBackupTotalSlotEntries) {
+        _invalidBackup(path, '时间块总数量超过限制');
+      }
+      final indexes = <int>{};
+      for (var i = 0; i < rawSlots.length; i++) {
+        final slotPath = '$dayPath[$i]';
+        final slot = _backupMap(rawSlots[i], slotPath);
+        if (!slot.containsKey('i') || !_isBackupWholeNumber(slot['i'])) {
+          _invalidBackup('$slotPath.i', '必须是整数');
+        }
+        final index = _backupInt(slot['i']);
+        if (index == null || index < 0 || index >= 144) {
+          _invalidBackup('$slotPath.i', '必须在 0 到 143 之间');
+        }
+        if (!indexes.add(index)) {
+          _invalidBackup('$slotPath.i', '同一天内不能重复');
+        }
+        _validateOptionalString(slot, 'l', slotPath);
+        _validateOptionalString(slot, 'cid', slotPath);
+        _validateOptionalString(slot, 'eid', slotPath);
+        _validateOptionalNumber(slot, 'c', slotPath);
+        _validateOptionalNumber(slot, 'ts', slotPath);
+        _validateOptionalBool(slot, 'fc', slotPath);
+        _validateOptionalBool(slot, 'del', slotPath);
+      }
+    }
+  }
+
+  String _validateBackupDateKey(dynamic value, String path) {
+    if (value is! String) _invalidBackup(path, '日期键必须是字符串');
+    final parts = value.split('-');
+    if (parts.length != 3) _invalidBackup(path, '日期格式无效');
+    final year = int.tryParse(parts[0]);
+    final month = int.tryParse(parts[1]);
+    final day = int.tryParse(parts[2]);
+    if (year == null || month == null || day == null) {
+      _invalidBackup(path, '日期格式无效');
+    }
+    if (year < 1 || year > 9999 || month < 1 || month > 12) {
+      _invalidBackup(path, '日期范围无效');
+    }
+    final date = DateTime(year, month, day);
+    if (date.year != year || date.month != month || date.day != day) {
+      _invalidBackup(path, '日期范围无效');
+    }
+    return _normalizeDateKey(value);
+  }
+
+  Set<String> _parseBackupDateList(
+    Map<String, dynamic> data,
+    String key,
+    String path,
+  ) {
+    final raw = _backupList(data, key, path);
+    _checkBackupCount(raw.length, maxBackupCollectionEntries, path);
+    final result = <String>{};
+    for (var i = 0; i < raw.length; i++) {
+      result.add(_validateBackupDateKey(raw[i], '$path[$i]'));
+    }
+    return result;
   }
 
   bool _ensureTempCategory() {
@@ -6864,6 +7473,7 @@ class TimeProvider with ChangeNotifier {
   Set<String> _loadDailySlotsFromJson(
     Map<String, dynamic> slotsJson, {
     Map<String, List<TimeSlot>>? destination,
+    bool strict = false,
   }) {
     final migratedDates = <String>{};
     final target = destination ?? _dailySlots;
@@ -6919,8 +7529,7 @@ class TimeProvider with ChangeNotifier {
             if (map['c'] != null) {
               final colorVal = _parseInt(map['c']);
               if (colorVal != null) {
-                daySlots[idx].color =
-                    AppSemanticColors.opaque(Color(colorVal));
+                daySlots[idx].color = AppSemanticColors.opaque(Color(colorVal));
               }
             }
             if (map['fc'] == true) {
@@ -6938,6 +7547,10 @@ class TimeProvider with ChangeNotifier {
         }
         target[dateKey] = daySlots;
       } catch (e, stackTrace) {
+        if (strict) {
+          if (e is FormatException) rethrow;
+          throw FormatException('备份文件$rawKey时间块内容无效');
+        }
         _recordAppError('加载时间块数据出错（$rawKey）', e, stackTrace);
       }
     }

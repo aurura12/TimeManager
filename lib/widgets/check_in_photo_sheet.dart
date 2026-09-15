@@ -6,10 +6,12 @@ import 'package:image_picker/image_picker.dart';
 import '../models/check_in_goal.dart';
 import '../services/check_in_location_service.dart';
 import '../services/check_in_sync_service.dart';
+import '../utils/platform_features.dart';
 
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+
 /// 拍照 / 相册打卡底部弹窗
 class CheckInPhotoSheet extends StatefulWidget {
   const CheckInPhotoSheet({
@@ -21,6 +23,7 @@ class CheckInPhotoSheet extends StatefulWidget {
 
   final CheckInGoal goal;
   final CheckInSyncService syncService;
+
   /// 初始打卡日期，为 null 时默认今天；非 null 时作为补打卡的初始日期
   final DateTime? initialDate;
 
@@ -57,9 +60,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
     if (widget.initialDate != null) return true;
     final now = DateTime.now();
     final sel = _selectedDate;
-    return sel.year != now.year ||
-        sel.month != now.month ||
-        sel.day != now.day;
+    return sel.year != now.year || sel.month != now.month || sel.day != now.day;
   }
 
   String get _dateLabel {
@@ -101,6 +102,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
 
   Future<void> _pickImage(ImageSource source) async {
     if (_uploading) return;
+    if (source == ImageSource.camera && !supportsCameraCapture) return;
     setState(() => _error = null);
     try {
       final picked = await _picker.pickImage(
@@ -116,7 +118,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
     }
   }
 
-    Future<void> _submit() async {
+  Future<void> _submit() async {
     if (widget.goal.requirePhoto && _photoFile == null) return;
     if (widget.goal.requireLocation && _location == null) {
       setState(() => _error = '需要位置信息才能打卡');
@@ -200,13 +202,13 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                     width: 36,
                     height: 36,
                     decoration: BoxDecoration(
-                      color: AppSemanticColors.tint(widget.goal.color,
-                          AppSurfaces.of(context).card, 0.2),
+                      color: AppSemanticColors.tint(
+                          widget.goal.color, AppSurfaces.of(context).card, 0.2),
                       borderRadius: AppRadius.controlAll,
                     ),
                     child: Icon(widget.goal.icon,
-                        color: AppSemanticColors.onTint(widget.goal.color,
-                            AppSurfaces.of(context).card,
+                        color: AppSemanticColors.onTint(
+                            widget.goal.color, AppSurfaces.of(context).card,
                             alpha: 0.2),
                         size: 20),
                   ),
@@ -224,7 +226,9 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                         ),
                         Text(
                           widget.goal.requirePhoto
-                              ? '拍照或从相册选择，压缩后上传'
+                              ? supportsCameraCapture
+                                  ? '拍照或从相册选择，压缩后上传'
+                                  : '从相册选择，压缩后上传'
                               : '照片可选，也可直接打卡',
                           style: TextStyle(
                             fontSize: 12,
@@ -256,14 +260,17 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                         );
                         if (picked != null && mounted) {
                           setState(() => _selectedDate = DateTime(
-                            picked.year, picked.month, picked.day,
-                            _selectedDate.hour, _selectedDate.minute,
-                          ));
+                                picked.year,
+                                picked.month,
+                                picked.day,
+                                _selectedDate.hour,
+                                _selectedDate.minute,
+                              ));
                         }
                       },
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: colorScheme.surfaceContainerHighest
                         .withValues(alpha: 0.5),
@@ -344,7 +351,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                                   color: Colors.white.withValues(alpha: 0.5)),
                               const SizedBox(height: 8),
                               Text(
-                                '拍照或从相册选择',
+                                supportsCameraCapture ? '拍照或从相册选择' : '从相册选择',
                                 style: TextStyle(
                                   color: Colors.white.withValues(alpha: 0.6),
                                   fontSize: 13,
@@ -404,7 +411,8 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                              if (_locationFailed && widget.goal.requireLocation)
+                              if (_locationFailed &&
+                                  widget.goal.requireLocation)
                                 TextButton(
                                   onPressed: _loadLocation,
                                   child: const Text('重试',
@@ -426,29 +434,41 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
               if (_photoFile == null)
                 Column(
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: _uploading
-                                ? null
-                                : () => _pickImage(ImageSource.gallery),
-                            icon: const Icon(Icons.photo_library_outlined),
-                            label: const Text('相册'),
+                    if (supportsCameraCapture)
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _uploading
+                                  ? null
+                                  : () => _pickImage(ImageSource.gallery),
+                              icon: const Icon(Icons.photo_library_outlined),
+                              label: const Text('相册'),
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: FilledButton.icon(
-                            onPressed: _uploading
-                                ? null
-                                : () => _pickImage(ImageSource.camera),
-                            icon: const Icon(Icons.camera_alt),
-                            label: const Text('拍照'),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: _uploading
+                                  ? null
+                                  : () => _pickImage(ImageSource.camera),
+                              icon: const Icon(Icons.camera_alt),
+                              label: const Text('拍照'),
+                            ),
                           ),
+                        ],
+                      )
+                    else
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _uploading
+                              ? null
+                              : () => _pickImage(ImageSource.gallery),
+                          icon: const Icon(Icons.photo_library_outlined),
+                          label: const Text('相册'),
                         ),
-                      ],
-                    ),
+                      ),
                     if (!widget.goal.requirePhoto) ...[
                       const SizedBox(height: 12),
                       SizedBox(
@@ -456,8 +476,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                         child: OutlinedButton.icon(
                           onPressed: _canSubmit ? _submit : null,
                           icon: const Icon(Icons.skip_next),
-                          label: Text(
-                              _uploading ? '打卡中...' : '不拍照，直接打卡'),
+                          label: Text(_uploading ? '打卡中...' : '不拍照，直接打卡'),
                         ),
                       ),
                     ],
@@ -466,13 +485,14 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
               else
                 Row(
                   children: [
-                    TextButton.icon(
-                      onPressed: _uploading
-                          ? null
-                          : () => _pickImage(ImageSource.camera),
-                      icon: const Icon(Icons.camera_alt, size: 18),
-                      label: const Text('重拍'),
-                    ),
+                    if (supportsCameraCapture)
+                      TextButton.icon(
+                        onPressed: _uploading
+                            ? null
+                            : () => _pickImage(ImageSource.camera),
+                        icon: const Icon(Icons.camera_alt, size: 18),
+                        label: const Text('重拍'),
+                      ),
                     TextButton.icon(
                       onPressed: _uploading
                           ? null

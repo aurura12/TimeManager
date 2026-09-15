@@ -672,6 +672,15 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     }
   }
 
+  String _backupExportedAtLabel(String? exportedAt) {
+    if (exportedAt == null || exportedAt.trim().isEmpty) {
+      return '未知导出时间';
+    }
+    final display =
+        exportedAt.length > 16 ? exportedAt.substring(0, 16) : exportedAt;
+    return '导出时间：${display.replaceFirst('T', ' ')}';
+  }
+
   Future<void> _handleExport(
       BuildContext context, TimeProvider provider) async {
     final result = await DataBackupService.exportToFile(provider);
@@ -702,16 +711,16 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     }
 
     final preview = picked.preview!;
-    final exportedLabel = preview.exportedAt != null
-        ? '导出时间：${preview.exportedAt!.substring(0, 16).replaceFirst('T', ' ')}'
-        : '未知导出时间';
+    final exportedLabel = _backupExportedAtLabel(preview.exportedAt);
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('确认导入'),
         content: Text(
-          '导入将覆盖当前所有本地数据，此操作不可撤销。\n\n'
+          '导入将覆盖当前日程数据，此操作不可撤销。\n'
+          '备份包含时间块、分类、目标、日程模板及相关同步状态；'
+          '不会覆盖日记、出行、打卡、照片、AI 复盘、日志或应用设置。\n\n'
           '$exportedLabel\n'
           '${preview.dayCount} 天记录 · '
           '${preview.targetCount} 个目标 · '

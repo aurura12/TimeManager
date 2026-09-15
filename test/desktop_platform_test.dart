@@ -10,6 +10,21 @@ void main() {
     expect(isDesktopPlatformFor(windows: false, macos: false), isFalse);
   });
 
+  test('camera capture is disabled on desktop platforms', () {
+    expect(
+      supportsCameraCaptureFor(windows: true, macos: false),
+      isFalse,
+    );
+    expect(
+      supportsCameraCaptureFor(windows: false, macos: true),
+      isFalse,
+    );
+    expect(
+      supportsCameraCaptureFor(windows: false, macos: false),
+      isTrue,
+    );
+  });
+
   test('desktop update assets use platform installers', () {
     expect(updateAssetSuffixFor(windows: true, macos: false), '.exe');
     expect(updateAssetSuffixFor(windows: false, macos: true), '.dmg');

@@ -8,6 +8,7 @@ import 'check_in_detail_screen.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+
 class CheckInArchiveScreen extends StatefulWidget {
   const CheckInArchiveScreen({super.key, required this.syncService});
 
@@ -47,7 +48,11 @@ class _CheckInArchiveScreenState extends State<CheckInArchiveScreen> {
     setState(() {});
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(result.success ? '已恢复「${goal.name}」' : (result.error ?? '恢复失败')),
+        content: Text(
+          result.success
+              ? (result.warning ?? '已恢复「${goal.name}」')
+              : (result.error ?? '恢复失败'),
+        ),
       ),
     );
   }
@@ -68,7 +73,8 @@ class _CheckInArchiveScreenState extends State<CheckInArchiveScreen> {
                 children: [
                   Icon(Icons.archive,
                       size: 48,
-                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.45)),
+                      color:
+                          colorScheme.onSurfaceVariant.withValues(alpha: 0.45)),
                   const SizedBox(height: 12),
                   Text(
                     '暂无归档目标',
@@ -124,8 +130,7 @@ class _CheckInArchiveScreenState extends State<CheckInArchiveScreen> {
                       goal.color, AppSurfaces.of(context).page, 0.2),
                   borderRadius: AppRadius.controlAll,
                 ),
-                child: Icon(
-                    goal.icon,
+                child: Icon(goal.icon,
                     color: AppSemanticColors.onTint(
                         goal.color, AppSurfaces.of(context).page,
                         alpha: 0.2),

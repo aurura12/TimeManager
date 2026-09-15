@@ -6,6 +6,9 @@ import 'package:http/http.dart' as http;
 import '../config/remote_repo_config.dart';
 import 'contents_api_common.dart';
 import 'gitee_contents_api.dart';
+import 'check_in_photo_resource.dart';
+
+class _PhotoResponseTooLarge implements Exception {}
 
 class CheckInGiteePullResult {
   final bool success;
@@ -14,10 +17,16 @@ class CheckInGiteePullResult {
   final String? sha;
   final String? error;
 
-  const CheckInGiteePullResult._({required this.success, required this.notFound, this.content, this.sha, this.error});
+  const CheckInGiteePullResult._(
+      {required this.success,
+      required this.notFound,
+      this.content,
+      this.sha,
+      this.error});
 
   factory CheckInGiteePullResult.success(String content, String sha) {
-    return CheckInGiteePullResult._(success: true, notFound: false, content: content, sha: sha);
+    return CheckInGiteePullResult._(
+        success: true, notFound: false, content: content, sha: sha);
   }
 
   factory CheckInGiteePullResult.notFound() {
@@ -25,7 +34,8 @@ class CheckInGiteePullResult {
   }
 
   factory CheckInGiteePullResult.error(String message) {
-    return CheckInGiteePullResult._(success: false, notFound: false, error: message);
+    return CheckInGiteePullResult._(
+        success: false, notFound: false, error: message);
   }
 }
 
@@ -34,14 +44,16 @@ class CheckInGiteePushResult {
   final bool created;
   final String? error;
 
-  const CheckInGiteePushResult._({required this.success, required this.created, this.error});
+  const CheckInGiteePushResult._(
+      {required this.success, required this.created, this.error});
 
   factory CheckInGiteePushResult.success({required bool created}) {
     return CheckInGiteePushResult._(success: true, created: created);
   }
 
   factory CheckInGiteePushResult.error(String message) {
-    return CheckInGiteePushResult._(success: false, created: false, error: message);
+    return CheckInGiteePushResult._(
+        success: false, created: false, error: message);
   }
 }
 
@@ -51,10 +63,12 @@ class CheckInGiteeBinaryPullResult {
   final Uint8List? bytes;
   final String? error;
 
-  const CheckInGiteeBinaryPullResult._({required this.success, required this.notFound, this.bytes, this.error});
+  const CheckInGiteeBinaryPullResult._(
+      {required this.success, required this.notFound, this.bytes, this.error});
 
   factory CheckInGiteeBinaryPullResult.success(Uint8List bytes) {
-    return CheckInGiteeBinaryPullResult._(success: true, notFound: false, bytes: bytes);
+    return CheckInGiteeBinaryPullResult._(
+        success: true, notFound: false, bytes: bytes);
   }
 
   factory CheckInGiteeBinaryPullResult.notFound() {
@@ -62,7 +76,8 @@ class CheckInGiteeBinaryPullResult {
   }
 
   factory CheckInGiteeBinaryPullResult.error(String message) {
-    return CheckInGiteeBinaryPullResult._(success: false, notFound: false, error: message);
+    return CheckInGiteeBinaryPullResult._(
+        success: false, notFound: false, error: message);
   }
 }
 
@@ -103,10 +118,43 @@ class CheckInGiteeService {
   static Future<CheckInGiteeBinaryPullResult> pullBinary({
     required String token,
     required String path,
+    http.Client? client,
   }) async {
+    final normalizedPath = CheckInPhotoResource.normalizePath(path);
+    if (normalizedPath == null) {
+      return CheckInGiteeBinaryPullResult.error('照片路径无效');
+    }
+
+    final requestClient = client ?? http.Client();
     try {
-      final res = await requestWithRetry(
-        () => http.get(_api.contentsUri(path, token: token), headers: _api.headers(token)),
+      final streamed = await requestWithRetry(
+        () => requestClient.send(
+          http.Request(
+            'GET',
+            _api.contentsUri(normalizedPath, token: token),
+          )..headers.addAll(_api.headers(token)),
+        ),
+      );
+
+      if (streamed.contentLength != null &&
+          streamed.contentLength! >
+              CheckInPhotoResource.maxRemoteResponseBytes) {
+        await streamed.stream.listen((_) {}).cancel();
+        return CheckInGiteeBinaryPullResult.error('远端图片响应过大');
+      }
+
+      final bodyBytes = await _readLimitedResponse(
+        streamed,
+        maxBytes: CheckInPhotoResource.maxRemoteResponseBytes,
+      );
+      final res = http.Response.bytes(
+        bodyBytes,
+        streamed.statusCode,
+        headers: streamed.headers,
+        request: streamed.request,
+        isRedirect: streamed.isRedirect,
+        persistentConnection: streamed.persistentConnection,
+        reasonPhrase: streamed.reasonPhrase,
       );
       if (res.statusCode == 404) return CheckInGiteeBinaryPullResult.notFound();
       if (res.statusCode != 200) {
@@ -121,12 +169,33 @@ class CheckInGiteeService {
       if (rawContent == null) {
         return CheckInGiteeBinaryPullResult.error('远端图片内容无效');
       }
-      return CheckInGiteeBinaryPullResult.success(
-        base64Decode(normalizeBase64(rawContent)),
-      );
+      final bytes = base64Decode(normalizeBase64(rawContent));
+      final validationError = await CheckInPhotoResource.validateBytes(bytes);
+      if (validationError != null) {
+        return CheckInGiteeBinaryPullResult.error(validationError);
+      }
+      return CheckInGiteeBinaryPullResult.success(bytes);
+    } on _PhotoResponseTooLarge {
+      return CheckInGiteeBinaryPullResult.error('远端图片响应过大');
     } catch (e) {
-      return CheckInGiteeBinaryPullResult.error('拉取图片失败: $e');
+      return CheckInGiteeBinaryPullResult.error('拉取图片失败');
+    } finally {
+      if (client == null) requestClient.close();
     }
+  }
+
+  static Future<Uint8List> _readLimitedResponse(
+    http.StreamedResponse response, {
+    required int maxBytes,
+  }) async {
+    final builder = BytesBuilder(copy: false);
+    var total = 0;
+    await for (final chunk in response.stream) {
+      total += chunk.length;
+      if (total > maxBytes) throw _PhotoResponseTooLarge();
+      builder.add(chunk);
+    }
+    return builder.takeBytes();
   }
 
   /// 推送打卡文档（文本）。
@@ -162,13 +231,24 @@ class CheckInGiteeService {
     required Uint8List bytes,
     required String commitMessage,
     bool skipGetSha = false,
+    http.Client? client,
   }) async {
+    final normalizedPath = CheckInPhotoResource.normalizePath(path);
+    if (normalizedPath == null) {
+      return CheckInGiteePushResult.error('照片路径无效');
+    }
+    final validationError = await CheckInPhotoResource.validateBytes(bytes);
+    if (validationError != null) {
+      return CheckInGiteePushResult.error(validationError);
+    }
+
     return _pushBytes(
       token: token,
-      path: path,
+      path: normalizedPath,
       bytes: bytes,
       commitMessage: commitMessage,
       skipGetSha: skipGetSha,
+      client: client,
     );
   }
 
@@ -178,12 +258,21 @@ class CheckInGiteeService {
     required List<int> bytes,
     required String commitMessage,
     bool skipGetSha = false,
+    http.Client? client,
   }) async {
     try {
       String? sha;
       if (!skipGetSha) {
         final head = await requestWithRetry(
-          () => http.get(_api.contentsUri(path, token: token), headers: _api.headers(token)),
+          () =>
+              client?.get(
+                _api.contentsUri(path, token: token),
+                headers: _api.headers(token),
+              ) ??
+              http.get(
+                _api.contentsUri(path, token: token),
+                headers: _api.headers(token),
+              ),
         );
         if (head.statusCode == 200) {
           final body = json.decode(head.body);
@@ -204,16 +293,26 @@ class CheckInGiteeService {
       // Gitee: 新文件用 POST，更新用 PUT
       final res = await requestWithRetry(
         () => sha == null
-            ? http.post(
-                _api.contentsUri(path, token: token),
-                headers: _api.headers(token),
-                body: json.encode(payload),
-              )
-            : http.put(
-                _api.contentsUri(path, token: token),
-                headers: _api.headers(token),
-                body: json.encode(payload),
-              ),
+            ? client?.post(
+                  _api.contentsUri(path, token: token),
+                  headers: _api.headers(token),
+                  body: json.encode(payload),
+                ) ??
+                http.post(
+                  _api.contentsUri(path, token: token),
+                  headers: _api.headers(token),
+                  body: json.encode(payload),
+                )
+            : client?.put(
+                  _api.contentsUri(path, token: token),
+                  headers: _api.headers(token),
+                  body: json.encode(payload),
+                ) ??
+                http.put(
+                  _api.contentsUri(path, token: token),
+                  headers: _api.headers(token),
+                  body: json.encode(payload),
+                ),
       );
       if (res.statusCode == 200 || res.statusCode == 201) {
         return CheckInGiteePushResult.success(created: res.statusCode == 201);
@@ -228,10 +327,24 @@ class CheckInGiteeService {
     required String token,
     required String path,
     required String commitMessage,
+    http.Client? client,
   }) async {
+    final normalizedPath = CheckInPhotoResource.normalizePath(path);
+    if (normalizedPath == null) {
+      return CheckInGiteeDeleteResult.error('照片路径无效');
+    }
+
     try {
       final head = await requestWithRetry(
-        () => http.get(_api.contentsUri(path, token: token), headers: _api.headers(token)),
+        () =>
+            client?.get(
+              _api.contentsUri(normalizedPath, token: token),
+              headers: _api.headers(token),
+            ) ??
+            http.get(
+              _api.contentsUri(normalizedPath, token: token),
+              headers: _api.headers(token),
+            ),
       );
       if (head.statusCode == 404) {
         return CheckInGiteeDeleteResult.success();
@@ -253,11 +366,17 @@ class CheckInGiteeService {
         'sha': sha,
       });
       final res = await requestWithRetry(
-        () => http.delete(
-          _api.contentsUri(path, token: token),
-          headers: _api.headers(token),
-          body: payload,
-        ),
+        () =>
+            client?.delete(
+              _api.contentsUri(normalizedPath, token: token),
+              headers: _api.headers(token),
+              body: payload,
+            ) ??
+            http.delete(
+              _api.contentsUri(normalizedPath, token: token),
+              headers: _api.headers(token),
+              body: payload,
+            ),
       );
       if (res.statusCode == 200 || res.statusCode == 204) {
         return CheckInGiteeDeleteResult.success();

@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -18,11 +20,13 @@ class UpdateInfo {
   final String version;
   final String downloadUrl;
   final String releaseNotes;
+  final String? sha256;
 
   const UpdateInfo({
     required this.version,
     required this.downloadUrl,
     required this.releaseNotes,
+    this.sha256,
   });
 }
 
@@ -43,7 +47,21 @@ class UpdateService {
 
   static const Duration _checkTimeout = Duration(seconds: 10);
   static const Duration _downloadConnectTimeout = Duration(seconds: 20);
+  static const int _maxDownloadBytes = 512 * 1024 * 1024;
+  static const int _maxDiscardBytes = 64 * 1024;
+  static const int _maxRedirects = 5;
   static const int _maxRetries = 1;
+
+  static final RegExp _safeVersionPattern = RegExp(
+    r'^v?\d+(?:\.\d+){1,3}(?:-[0-9A-Za-z](?:[0-9A-Za-z.-]*[0-9A-Za-z])?)?(?:\+[0-9A-Za-z](?:[0-9A-Za-z.-]*[0-9A-Za-z])?)?$',
+  );
+  static final RegExp _safeAssetNamePattern = RegExp(r'^[A-Za-z0-9._-]+$');
+  static final RegExp _sha256Pattern = RegExp(r'^[a-f0-9]{64}$');
+
+  // The existing UI passes only URL and version to downloadAndInstall. Keep
+  // the digest from the most recent check so that API compatibility is not
+  // broken while refusing downloads that were not checked first.
+  static UpdateInfo? _lastCheckedUpdate;
 
   static Map<String, String> get _headers => {
         'Accept': 'application/json',
@@ -69,14 +87,140 @@ class UpdateService {
     return baseUri.resolveUri(redirectUri);
   }
 
+  static bool _isSafeVersion(String version) =>
+      _safeVersionPattern.hasMatch(version);
+
+  static bool _isSafeAssetName(String name, String expectedSuffix) {
+    return name.isNotEmpty &&
+        name.endsWith(expectedSuffix) &&
+        !name.contains('/') &&
+        !name.contains('\\') &&
+        !name.contains('\u0000') &&
+        _safeAssetNamePattern.hasMatch(name);
+  }
+
+  static bool _isAllowedDownloadUri(Uri uri) {
+    if (uri.scheme.toLowerCase() != 'https' ||
+        uri.host.toLowerCase() != 'gitee.com' ||
+        uri.userInfo.isNotEmpty ||
+        (uri.port != 0 && uri.port != 443) ||
+        uri.fragment.isNotEmpty) {
+      return false;
+    }
+
+    final rawPath = uri.toString().split('?').first.split('#').first;
+    final lowerRawPath = rawPath.toLowerCase();
+    if (rawPath.contains('\\') ||
+        lowerRawPath.contains('%2e') ||
+        lowerRawPath.contains('%2f') ||
+        lowerRawPath.contains('%5c')) {
+      return false;
+    }
+
+    final segments = uri.pathSegments;
+    if (segments.any((segment) => segment == '.' || segment == '..')) {
+      return false;
+    }
+
+    final isApiAsset = segments.length >= 8 &&
+        segments[0] == 'api' &&
+        segments[1] == 'v5' &&
+        segments[2] == 'repos' &&
+        segments[3] == _owner &&
+        segments[4] == _repo &&
+        segments[5] == 'releases' &&
+        segments[6] == 'assets' &&
+        segments[7].isNotEmpty;
+    if (isApiAsset) return true;
+
+    final isAttachFile = segments.length >= 4 &&
+        segments[0] == _owner &&
+        segments[1] == _repo &&
+        segments[2] == 'attach_files' &&
+        segments[3].isNotEmpty;
+    if (isAttachFile) return true;
+
+    // Keep compatibility with release-download style URLs while requiring
+    // the exact configured owner and repository.
+    return segments.length >= 5 &&
+        segments[0] == _owner &&
+        segments[1] == _repo &&
+        segments[2] == 'releases' &&
+        segments[3] == 'download' &&
+        segments[4].isNotEmpty;
+  }
+
+  static Uri? _parseAllowedDownloadUri(String rawUrl) {
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null || !_isAllowedDownloadUri(uri)) return null;
+    return uri;
+  }
+
+  static String? _readString(Object? value) => value is String ? value : null;
+
+  static String? _normalizeSha256Value(Object? value) {
+    if (value is! String) return null;
+    var normalized = value.trim().toLowerCase();
+    if (normalized.startsWith('sha256:')) {
+      normalized = normalized.substring('sha256:'.length).trim();
+    } else if (normalized.startsWith('sha256=')) {
+      normalized = normalized.substring('sha256='.length).trim();
+    }
+    return _sha256Pattern.hasMatch(normalized) ? normalized : null;
+  }
+
+  static String? _extractSha256(Map<String, dynamic> asset) {
+    for (final key in const ['sha256', 'sha256sum', 'checksum', 'digest']) {
+      final digest = _normalizeSha256Value(asset[key]);
+      if (digest != null) return digest;
+    }
+    return null;
+  }
+
+  static bool _isValidSha256(String? value) =>
+      value != null && _sha256Pattern.hasMatch(value.trim().toLowerCase());
+
+  static bool _isPathInside(Directory root, File candidate) {
+    final normalizedRoot = p.normalize(p.absolute(root.path));
+    final normalizedCandidate = p.normalize(p.absolute(candidate.path));
+    if (normalizedRoot == normalizedCandidate) return false;
+    final relative = p.relative(normalizedCandidate, from: normalizedRoot);
+    return relative != '..' &&
+        !relative.startsWith('..${p.separator}') &&
+        !p.isAbsolute(relative);
+  }
+
+  static File _buildInstallerFile(Directory tempDir, String version) {
+    if (!_isSafeVersion(version)) {
+      throw const _UpdateFailure('版本信息无效，已停止自动安装');
+    }
+
+    final fileName = 'time_manager_v$version$updateAssetSuffix';
+    final installerFile = File(p.join(tempDir.path, fileName));
+    if (!_isPathInside(tempDir, installerFile)) {
+      throw const _UpdateFailure('更新文件路径无效，已停止自动安装');
+    }
+    return installerFile;
+  }
+
+  static Future<void> _discardResponseBody(
+    http.StreamedResponse response,
+  ) async {
+    await response.stream.take(_maxDiscardBytes).drain<void>();
+  }
+
   static Future<http.StreamedResponse> _sendGetFollowingRedirects(
     http.Client client,
     Uri uri, {
     required Map<String, String> headers,
-    int maxRedirects = 5,
+    int maxRedirects = _maxRedirects,
   }) async {
+    if (!_isAllowedDownloadUri(uri)) {
+      throw const _UpdateFailure('更新下载地址不受信任，已停止自动安装');
+    }
+
     var currentUri = uri;
-    var currentHeaders = headers;
+    var currentHeaders = Map<String, String>.from(headers);
 
     for (var redirectCount = 0;
         redirectCount <= maxRedirects;
@@ -92,12 +236,15 @@ class UpdateService {
 
       final location = response.headers['location'];
       // 消费响应体再继续，避免 HTTP 连接复用导致请求污染
-      await response.stream.drain<void>();
+      await _discardResponseBody(response);
       if (location == null || location.isEmpty) {
         return response;
       }
 
       final nextUri = _resolveRedirectUri(currentUri, location);
+      if (!_isAllowedDownloadUri(nextUri)) {
+        throw const _UpdateFailure('更新重定向地址不受信任，已停止自动安装');
+      }
       // 跨主机重定向：移除 Authorization，防止 token 泄露给第三方
       if (nextUri.host != currentUri.host &&
           currentHeaders.containsKey('Authorization')) {
@@ -107,11 +254,12 @@ class UpdateService {
       currentUri = nextUri;
     }
 
-    throw StateError('重定向次数过多');
+    throw const _UpdateFailure('更新重定向次数过多，已停止自动安装');
   }
 
   /// Check whether Gitee has published a newer release.
   static Future<UpdateCheckResult> checkForUpdate() async {
+    _lastCheckedUpdate = null;
     for (int i = 0; i <= _maxRetries; i++) {
       try {
         debugPrint('检查更新: 请求 Gitee API... (尝试 ${i + 1})');
@@ -156,33 +304,64 @@ class UpdateService {
         final body = data['body'] as String? ?? '';
         debugPrint('检查更新: 最新版本 tag=$tagName');
 
+        if (!_isSafeVersion(tagName)) {
+          AppLogService.instance.error(
+            '发布版本号格式不受支持，已停止自动更新',
+            source: 'update',
+          );
+          return const UpdateCheckResult(error: '版本信息无效，无法自动更新');
+        }
+
         final String assetSuffix = updateAssetSuffix;
         String? installUrl;
-        final assets = data['assets'] as List<dynamic>? ?? [];
+        String? assetSha256;
+        final assets = data['assets'] is List<dynamic>
+            ? data['assets'] as List<dynamic>
+            : const <dynamic>[];
         debugPrint('检查更新: assets 数量=${assets.length}');
-        for (final asset in assets) {
-          final name = asset['name'] as String? ?? '';
+        for (final rawAsset in assets) {
+          if (rawAsset is! Map) continue;
+          final asset = Map<String, dynamic>.from(rawAsset);
+          final name = _readString(asset['name']) ?? '';
           debugPrint('检查更新: asset=$name');
-          if (name.endsWith(assetSuffix)) {
-            installUrl = (asset['url'] as String?)?.trim();
-            installUrl ??= (asset['browser_download_url'] as String?)?.trim();
+          if (_isSafeAssetName(name, assetSuffix)) {
+            final candidateUrls = [
+              _readString(asset['url']),
+              _readString(asset['browser_download_url']),
+            ];
+            for (final candidate in candidateUrls) {
+              if (candidate == null) continue;
+              final allowedUri = _parseAllowedDownloadUri(candidate.trim());
+              if (allowedUri != null) {
+                installUrl = allowedUri.toString();
+                break;
+              }
+            }
+            assetSha256 = _extractSha256(asset);
+            if (installUrl == null) {
+              AppLogService.instance.warning(
+                '发布资产下载地址不受信任，已跳过：$name',
+                source: 'update',
+              );
+              continue;
+            }
             break;
           }
         }
 
         if (installUrl == null || installUrl.isEmpty) {
           AppLogService.instance.warning(
-            '发布版本未找到可下载的安装包',
+            '发布版本未找到可信的可下载安装包',
             source: 'update',
           );
-          return const UpdateCheckResult(error: '未找到可下载的安装包');
+          return const UpdateCheckResult(error: '未找到可信的可下载安装包');
         }
-        if (tagName.isEmpty) {
-          AppLogService.instance.error(
-            '发布版本缺少版本信息',
+
+        if (assetSha256 == null) {
+          AppLogService.instance.warning(
+            '发布资产未提供可信 SHA-256 摘要，自动安装将安全失败；请配置发布元数据摘要',
             source: 'update',
           );
-          return const UpdateCheckResult(error: '版本信息无效');
         }
 
         final currentVersion = await _getCurrentVersion();
@@ -190,13 +369,14 @@ class UpdateService {
         final isNewer = _isNewerVersion(tagName, currentVersion);
 
         if (isNewer) {
-          return UpdateCheckResult(
-            info: UpdateInfo(
-              version: tagName,
-              downloadUrl: installUrl,
-              releaseNotes: body,
-            ),
+          final updateInfo = UpdateInfo(
+            version: tagName,
+            downloadUrl: installUrl,
+            releaseNotes: body,
+            sha256: assetSha256,
           );
+          _lastCheckedUpdate = updateInfo;
+          return UpdateCheckResult(info: updateInfo);
         }
 
         return const UpdateCheckResult();
@@ -269,17 +449,172 @@ class UpdateService {
     }
   }
 
-  /// Download the APK and install it.
+  static String? _expectedSha256For(String downloadUrl, String version) {
+    final update = _lastCheckedUpdate;
+    if (update == null ||
+        update.version != version ||
+        update.downloadUrl != downloadUrl) {
+      return null;
+    }
+    return update.sha256;
+  }
+
+  static Future<void> _deleteFileIfExists(File file) async {
+    try {
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (e, st) {
+      AppLogService.instance.warning(
+        '清理更新临时文件失败',
+        source: 'update',
+        error: e,
+        stackTrace: st,
+      );
+    }
+  }
+
+  static Future<void> _downloadToFile(
+    http.Client client,
+    Uri uri,
+    File destination, {
+    required String? expectedSha256,
+    required int maxBytes,
+    void Function(int receivedBytes, int? contentLength)? onProgress,
+  }) async {
+    if (!_isAllowedDownloadUri(uri)) {
+      throw const _UpdateFailure('更新下载地址不受信任，已停止自动安装');
+    }
+    if (!_isValidSha256(expectedSha256)) {
+      throw const _UpdateFailure(
+        '发布包未提供可信的 SHA-256 校验信息，无法自动安装',
+      );
+    }
+    if (maxBytes <= 0) {
+      throw const _UpdateFailure('更新包大小限制无效');
+    }
+    final expectedDigest = expectedSha256!.trim().toLowerCase();
+
+    IOSink? sink;
+    try {
+      final response = await _sendGetFollowingRedirects(
+        client,
+        uri,
+        headers: _downloadHeaders,
+      ).timeout(_downloadConnectTimeout);
+
+      if (response.statusCode != HttpStatus.ok) {
+        final statusCode = response.statusCode;
+        await _discardResponseBody(response);
+        throw _UpdateFailure(
+          '下载失败（HTTP $statusCode）',
+          statusCode: statusCode,
+        );
+      }
+
+      final contentLength = response.contentLength;
+      if (contentLength != null && contentLength > maxBytes) {
+        throw const _UpdateFailure('更新包超过允许的大小限制，已停止下载');
+      }
+
+      final digestOutput = _DigestSink();
+      final digestInput = sha256.startChunkedConversion(digestOutput);
+      var received = 0;
+      sink = destination.openWrite();
+
+      await for (final chunk
+          in response.stream.timeout(_downloadConnectTimeout)) {
+        if (chunk.isEmpty) continue;
+        if (chunk.length > maxBytes - received) {
+          throw const _UpdateFailure('更新包超过允许的大小限制，已停止下载');
+        }
+
+        sink.add(chunk);
+        digestInput.add(chunk);
+        received += chunk.length;
+        onProgress?.call(received, contentLength);
+      }
+
+      digestInput.close();
+      await sink.close();
+      sink = null;
+
+      final actualSha256 = digestOutput.digest?.toString();
+      if (actualSha256 == null) {
+        throw const _UpdateFailure('更新包完整性校验失败，已停止安装');
+      }
+      if (actualSha256 != expectedDigest) {
+        throw const _UpdateFailure('更新包完整性校验失败，已停止安装');
+      }
+    } catch (_) {
+      try {
+        await sink?.close();
+      } catch (_) {
+        // 清理时保留原始下载/校验错误。
+      }
+      await _deleteFileIfExists(destination);
+      rethrow;
+    }
+  }
+
+  @visibleForTesting
+  static bool isSafeVersionForTesting(String version) =>
+      _isSafeVersion(version);
+
+  @visibleForTesting
+  static bool isAllowedDownloadUrlForTesting(String rawUrl) =>
+      _parseAllowedDownloadUri(rawUrl) != null;
+
+  @visibleForTesting
+  static String? extractSha256ForTesting(Map<String, dynamic> asset) =>
+      _extractSha256(asset);
+
+  @visibleForTesting
+  static Future<void> downloadVerifiedFileForTesting({
+    required http.Client client,
+    required Uri uri,
+    required File destination,
+    required String? expectedSha256,
+    int maxBytes = _maxDownloadBytes,
+  }) {
+    return _downloadToFile(
+      client,
+      uri,
+      destination,
+      expectedSha256: expectedSha256,
+      maxBytes: maxBytes,
+    );
+  }
+
+  /// Download the installer and start the platform-specific installer.
   static Future<void> downloadAndInstall(
     String downloadUrl,
     String version,
-    BuildContext context,
-  ) async {
+    BuildContext context, {
+    String? expectedSha256,
+  }) async {
     final progressNotifier = ValueNotifier<double>(0);
     final statusNotifier = ValueNotifier<String>('准备下载...');
-    IOSink? sink;
+    File? installerFile;
+    var keepInstallerFile = false;
+    var downloadingDialogShown = false;
 
     try {
+      final downloadUri = _parseAllowedDownloadUri(downloadUrl);
+      if (downloadUri == null) {
+        throw const _UpdateFailure('更新下载地址不受信任，已停止自动安装');
+      }
+
+      final digest =
+          (expectedSha256 ?? _expectedSha256For(downloadUrl, version))
+              ?.trim()
+              .toLowerCase();
+      if (!_isValidSha256(digest)) {
+        throw const _UpdateFailure(
+          '发布包未提供可信的 SHA-256 校验信息，无法自动安装',
+        );
+      }
+
       if (context.mounted) {
         showDialog(
           context: context,
@@ -289,106 +624,82 @@ class UpdateService {
             statusNotifier: statusNotifier,
           ),
         );
+        downloadingDialogShown = true;
       }
 
       final tempDir = await getTemporaryDirectory();
-      final fileExt = updateAssetSuffix.substring(1);
-      final installerFile =
-          File('${tempDir.path}/time_manager_v$version.$fileExt');
-      sink = installerFile.openWrite();
+      installerFile = _buildInstallerFile(tempDir, version);
+      final existingType = await FileSystemEntity.type(
+        installerFile.path,
+        followLinks: false,
+      );
+      if (existingType == FileSystemEntityType.link) {
+        throw const _UpdateFailure('更新临时文件路径无效，已停止自动安装');
+      }
 
       final client = http.Client();
       try {
-        final response = await _sendGetFollowingRedirects(
-          client,
-          Uri.parse(downloadUrl),
-          headers: _downloadHeaders,
-        ).timeout(
-          _downloadConnectTimeout,
-          onTimeout: () {
-            client.close();
-            throw TimeoutException('连接超时');
-          },
-        );
-
-        if (response.statusCode != 200) {
-          await response.stream.drain<void>();
-          client.close();
-          debugPrint('下载失败: HTTP ${response.statusCode}');
-          AppLogService.instance.warning(
-            '下载更新失败（HTTP ${response.statusCode}）',
-            source: 'update',
-          );
-          if (context.mounted) {
-            Navigator.pop(context);
-            _showDownloadFailedDialog(context, version, response.statusCode);
-          }
-          return;
-        }
-
-        final contentLength = response.contentLength ?? 0;
-        debugPrint('下载: 文件大小=${contentLength ~/ 1024}KB');
-
-        int received = 0;
         final startTime = DateTime.now();
-        int lastReceived = 0;
-        DateTime lastTime = startTime;
+        var lastReceived = 0;
+        var lastTime = startTime;
+        await _downloadToFile(
+          client,
+          downloadUri,
+          installerFile,
+          expectedSha256: digest!,
+          maxBytes: _maxDownloadBytes,
+          onProgress: (received, contentLength) {
+            final now = DateTime.now();
+            final elapsed = now.difference(lastTime).inMilliseconds;
+            if (elapsed < 500) return;
 
-        await for (final chunk in response.stream) {
-          sink.add(chunk);
-          received += chunk.length;
-
-          final now = DateTime.now();
-          final elapsed = now.difference(lastTime).inMilliseconds;
-          if (elapsed >= 500) {
             final speed = (received - lastReceived) * 1000 ~/ elapsed;
             final speedStr = _formatSpeed(speed);
-
-            if (contentLength > 0) {
-              final progress = received / contentLength;
-              progressNotifier.value = progress;
+            if (contentLength != null && contentLength > 0) {
+              progressNotifier.value = received / contentLength;
               statusNotifier.value = '下载中 $speedStr';
             } else {
               statusNotifier.value = '下载中 ${received ~/ 1024}KB  $speedStr';
             }
-
             lastReceived = received;
             lastTime = now;
-          }
-        }
+          },
+        );
 
-        await sink.close();
-        sink = null;
-
-        debugPrint('下载完成: ${installerFile.path}');
+        debugPrint('下载并校验完成: ${installerFile.path}');
 
         statusNotifier.value = '正在启动安装...';
         progressNotifier.value = 1.0;
 
         await Future.delayed(const Duration(milliseconds: 500));
 
-        if (context.mounted) Navigator.pop(context);
+        if (downloadingDialogShown && context.mounted) {
+          Navigator.pop(context);
+          downloadingDialogShown = false;
+        }
 
         if (Platform.isWindows) {
-          if (context.mounted) {
-            await _launchWindowsInstaller(installerFile.path, context);
+          final launched = await _launchWindowsInstaller(installerFile.path);
+          if (!launched) {
+            throw const _UpdateFailure('无法启动 Windows 安装程序');
           }
+          keepInstallerFile = true;
         } else if (Platform.isMacOS) {
           final uri = Uri.file(installerFile.path);
-          if (await canLaunchUrl(uri)) {
-            await launchUrl(uri, mode: LaunchMode.externalApplication);
-          } else if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('无法打开 macOS 安装包')),
-            );
+          if (!await canLaunchUrl(uri) ||
+              !await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+            throw const _UpdateFailure('无法打开 macOS 安装包');
           }
+          keepInstallerFile = true;
         } else {
           final channel = MethodChannel('com.example.time_manager/install_apk');
+          var launched = false;
           try {
             debugPrint('尝试通过 MethodChannel 安装 APK...');
             await channel
                 .invokeMethod('installApk', {'path': installerFile.path});
             debugPrint('MethodChannel 安装成功');
+            launched = true;
           } catch (e, stackTrace) {
             debugPrint('MethodChannel 失败: $e，降级到 url_launcher');
             AppLogService.instance.warning(
@@ -398,17 +709,17 @@ class UpdateService {
               stackTrace: stackTrace,
             );
             final uri = Uri.file(installerFile.path);
-            if (await canLaunchUrl(uri)) {
-              await launchUrl(uri, mode: LaunchMode.externalApplication);
-            } else if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('无法打开安装程序')),
-              );
+            if (await canLaunchUrl(uri) &&
+                await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+              launched = true;
             }
           }
+          if (!launched) {
+            throw const _UpdateFailure('无法打开安装程序');
+          }
+          keepInstallerFile = true;
         }
       } finally {
-        await sink?.close();
         client.close();
       }
     } on TimeoutException catch (e) {
@@ -419,7 +730,7 @@ class UpdateService {
         error: e,
       );
       if (context.mounted) {
-        Navigator.pop(context);
+        if (downloadingDialogShown) Navigator.pop(context);
         _showDownloadFailedDialog(context, version, null);
       }
     } catch (e, stackTrace) {
@@ -431,27 +742,35 @@ class UpdateService {
         stackTrace: stackTrace,
       );
       if (context.mounted) {
-        Navigator.pop(context);
-        _showDownloadFailedDialog(context, version, null);
+        if (downloadingDialogShown) Navigator.pop(context);
+        final failure = e is _UpdateFailure ? e : null;
+        _showDownloadFailedDialog(
+          context,
+          version,
+          failure?.statusCode,
+          message: failure?.message,
+        );
       }
     } finally {
+      if (!keepInstallerFile && installerFile != null) {
+        await _deleteFileIfExists(installerFile);
+      }
       progressNotifier.dispose();
       statusNotifier.dispose();
     }
   }
 
-  /// Windows：非阻塞启动安装向导。
-  /// 用 `cmd /c start` 而非直接 Process.start(exe)：
-  /// 前者走 ShellExecuteEx，可自动触发 UAC 提权确认；后者 CreateProcess 对
-  /// 需要提权的安装器会直接失败（ERROR_ELEVATION_REQUIRED 740）。
-  static Future<void> _launchWindowsInstaller(
-    String installerPath,
-    BuildContext context,
-  ) async {
+  /// Windows：通过 Explorer 的参数列表启动安装器，避免拼接 shell 命令。
+  static Future<bool> _launchWindowsInstaller(String installerPath) async {
     try {
       debugPrint('启动 Windows 安装程序: $installerPath');
-      await Process.run('cmd', ['/c', 'start', '', installerPath]);
+      await Process.start(
+        'explorer.exe',
+        [installerPath],
+        mode: ProcessStartMode.detached,
+      );
       debugPrint('Windows 安装程序已启动');
+      return true;
     } catch (e, st) {
       debugPrint('启动安装程序失败: $e');
       debugPrint('堆栈: $st');
@@ -461,33 +780,32 @@ class UpdateService {
         error: e,
         stackTrace: st,
       );
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('无法启动安装程序，请打开发布页手动下载安装包')),
-        );
-      }
+      return false;
     }
   }
 
   static void _showDownloadFailedDialog(
     BuildContext context,
     String version,
-    int? statusCode,
-  ) {
+    int? statusCode, {
+    String? message,
+  }) {
+    final safeTag = _isSafeVersion(version) ? version : 'latest';
     final releasePageUrl = Uri.https(
       'gitee.com',
-      '/$_owner/$_repo/releases/tag/$version',
+      '/$_owner/$_repo/releases/tag/$safeTag',
     ).toString();
 
-    final message = statusCode == 401 || statusCode == 403
-        ? '下载被拒绝，通常是私有仓库权限不足，或者 release 资产需要登录后访问。'
-        : '下载失败，你可以先打开发布页手动下载，或稍后重试。';
+    final displayMessage = message ??
+        (statusCode == 401 || statusCode == 403
+            ? '下载被拒绝，通常是私有仓库权限不足，或者 release 资产需要登录后访问。'
+            : '下载失败，你可以先打开发布页手动下载，或稍后重试。');
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('下载失败'),
-        content: Text(message),
+        content: Text(displayMessage),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -561,4 +879,26 @@ class _DownloadingDialog extends StatelessWidget {
       ),
     );
   }
+}
+
+class _UpdateFailure implements Exception {
+  final String message;
+  final int? statusCode;
+
+  const _UpdateFailure(this.message, {this.statusCode});
+
+  @override
+  String toString() => message;
+}
+
+class _DigestSink implements Sink<Digest> {
+  Digest? digest;
+
+  @override
+  void add(Digest value) {
+    digest = value;
+  }
+
+  @override
+  void close() {}
 }

@@ -14,6 +14,7 @@ import 'add_check_in_goal_screen.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+
 class CheckInDetailScreen extends StatefulWidget {
   const CheckInDetailScreen({
     super.key,
@@ -123,7 +124,8 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     setState(() {});
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(saveResult.success ? '已保存' : (saveResult.error ?? '保存失败')),
+        content:
+            Text(saveResult.success ? '已保存' : (saveResult.error ?? '保存失败')),
       ),
     );
   }
@@ -165,7 +167,11 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     if (result.success) {
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已删除「${_goal.name}」')),
+        SnackBar(
+          content: Text(
+            result.warning ?? '已删除「${_goal.name}」',
+          ),
+        ),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -214,7 +220,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
       _refreshGoalFromSync();
       setState(() {});
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已删除打卡记录')),
+        SnackBar(content: Text(result.warning ?? '已删除打卡记录')),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -267,11 +273,12 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final onColor =
-        AppSemanticColors.onColor(_goal.color);
+    final onColor = AppSemanticColors.onColor(_goal.color);
     final sortedRecords = [..._goal.records]
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     final statsUserId = _isMine ? _userId : _goal.ownerId;
+    final statsUserEmail =
+        _isMine ? widget.syncService.currentUser?.email : _goal.ownerEmail;
 
     return Scaffold(
       body: CustomScrollView(
@@ -338,8 +345,10 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                         child: _StatCard(
                           icon: Icons.check_circle_outline,
                           label: '本周期',
-                          value:
-                              '${_goal.currentPeriodCountFor(statsUserId)}/${_goal.targetCount}',
+                          value: '${_goal.currentPeriodCountFor(
+                            statsUserId,
+                            email: statsUserEmail,
+                          )}/${_goal.targetCount}',
                           color: _goal.color,
                         ),
                       ),
@@ -348,7 +357,10 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                         child: _StatCard(
                           icon: Icons.local_fire_department,
                           label: '连续天数',
-                          value: '${_goal.streakDaysFor(statsUserId ?? _goal.ownerId)}',
+                          value: '${_goal.streakDaysFor(
+                            statsUserId,
+                            email: statsUserEmail,
+                          )}',
                           color: AppSemanticColors.warning,
                         ),
                       ),
@@ -418,12 +430,16 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                     heroTag: 'backfill',
                     onPressed: _backfillCheckIn,
                     backgroundColor: AppSemanticColors.warning,
-                    foregroundColor: AppSemanticColors.onColor(
-                        AppSemanticColors.warning),
+                    foregroundColor:
+                        AppSemanticColors.onColor(AppSemanticColors.warning),
                     child: const Icon(Icons.history),
                   ),
                   // 打卡 — 仅当天未打卡时显示
-                  if (_userId != null && !_goal.isCompletedTodayBy(_userId!)) ...[
+                  if (_userId != null &&
+                      !_goal.isCompletedTodayBy(
+                        _userId!,
+                        email: widget.syncService.currentUser?.email,
+                      )) ...[
                     const SizedBox(height: 8),
                     FloatingActionButton.extended(
                       heroTag: 'checkin',
@@ -614,8 +630,7 @@ class _StatCard extends StatelessWidget {
           Text(value,
               style: TextStyle(
                   fontSize: 18, fontWeight: FontWeight.bold, color: onTinted)),
-          Text(label,
-              style: TextStyle(fontSize: 11, color: onTinted)),
+          Text(label, style: TextStyle(fontSize: 11, color: onTinted)),
         ],
       ),
     );

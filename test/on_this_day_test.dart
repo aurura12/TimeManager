@@ -17,11 +17,15 @@ Map<String, dynamic> _slot(int index, String label) => {
     };
 
 /// 构造 TimeProvider（注入 dailySlots）
-Future<TimeProvider> _makeProvider(Map<String, dynamic> slots) async {
+Future<TimeProvider> _makeProvider(
+  Map<String, dynamic> slots, {
+  Future<bool> Function()? saveDataOverride,
+}) async {
   SharedPreferences.setMockInitialValues({});
 
   // mock 插件方法通道，避免 TimeProvider._init() 触发原生调用失败
-  final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   messenger.setMockMethodCallHandler(
     const MethodChannel('home_widget'),
     (call) async => null,
@@ -31,7 +35,7 @@ Future<TimeProvider> _makeProvider(Map<String, dynamic> slots) async {
     (call) async => null,
   );
 
-  final provider = TimeProvider();
+  final provider = TimeProvider(saveDataOverride: saveDataOverride);
   await provider.importBackupJson(jsonEncode({
     'categories': [
       {
@@ -107,7 +111,8 @@ class _FakeGoogleSignInPlatform extends GoogleSignInPlatform {
   }
 
   @override
-  Future<void> clearAuthorizationToken(ClearAuthorizationTokenParams params) async {}
+  Future<void> clearAuthorizationToken(
+      ClearAuthorizationTokenParams params) async {}
 
   @override
   Future<void> signOut(SignOutParams params) async {}
@@ -335,17 +340,19 @@ void main() {
       provider.addCategory(Category(name: '新分类', color: Colors.blue));
 
       expect(provider.slotsRevision, greaterThan(initialSlotsRevision));
-      expect(provider.categoriesRevision, greaterThan(initialCategoriesRevision));
+      expect(
+          provider.categoriesRevision, greaterThan(initialCategoriesRevision));
     });
   });
 
   group('TimeProvider.importBackupJson robustness', () {
-    test('optional sections with invalid types do not abort the import', () async {
-      final now = DateTime.now();
-      final dateKey = OnThisDayService.dateKeyOf(now);
+    test('legacy backup with omitted optional sections remains compatible',
+        () async {
+      const dateKey = '2099-01-01';
       final provider = await _makeProvider({
         dateKey: [_slot(0, '旧记录')],
       });
+      addTearDown(provider.dispose);
 
       await provider.importBackupJson(jsonEncode({
         'categories': [
@@ -357,16 +364,168 @@ void main() {
             'hiddenSubCategories': <String>[],
           },
         ],
-        'targets': '损坏的目标列表',
         'dailySlots': {
           dateKey: [_slot(0, '新记录')],
         },
-        'scheduleTemplates': <String, dynamic>{'invalid': true},
-        'pendingSyncDates': 123,
       }));
 
       expect(provider.categories.any((c) => c.name == '新分类'), isTrue);
-      expect(provider.slots[0].label, '新记录');
+      expect(provider.getSlotsForDate(dateKey)![0].label, '新记录');
+    });
+
+    test('malformed JSON preserves the current schedule', () async {
+      const dateKey = '2099-01-01';
+      final provider = await _makeProvider({
+        dateKey: [_slot(0, '必须保留')],
+      });
+      addTearDown(provider.dispose);
+
+      await expectLater(
+        provider.importBackupJson('{"categories":'),
+        throwsA(isA<FormatException>()),
+      );
+
+      expect(provider.getSlotsForDate(dateKey)![0].label, '必须保留');
+    });
+
+    test('dailySlots non-list value is rejected without clearing the day',
+        () async {
+      const dateKey = '2099-01-01';
+      final provider = await _makeProvider({
+        dateKey: [_slot(0, '必须保留')],
+      });
+      addTearDown(provider.dispose);
+
+      await expectLater(
+        provider.importBackupJson(jsonEncode({
+          'categories': <dynamic>[],
+          'dailySlots': <String, dynamic>{
+            dateKey: {'not': 'a list'}
+          },
+        })),
+        throwsA(isA<FormatException>()),
+      );
+
+      expect(provider.getSlotsForDate(dateKey)![0].label, '必须保留');
+    });
+
+    test('invalid optional field type rejects the whole import', () async {
+      const dateKey = '2099-01-01';
+      final provider = await _makeProvider({
+        dateKey: [_slot(0, '必须保留')],
+      });
+      addTearDown(provider.dispose);
+
+      await expectLater(
+        provider.importBackupJson(jsonEncode({
+          'categories': <dynamic>[],
+          'targets': '损坏的目标列表',
+          'dailySlots': <String, dynamic>{
+            dateKey: [_slot(0, '不应导入')],
+          },
+        })),
+        throwsA(isA<FormatException>()),
+      );
+
+      expect(provider.getSlotsForDate(dateKey)![0].label, '必须保留');
+    });
+
+    test('invalid slot fields reject the whole import', () async {
+      const dateKey = '2099-01-01';
+      final provider = await _makeProvider({
+        dateKey: [_slot(0, '必须保留')],
+      });
+      addTearDown(provider.dispose);
+
+      await expectLater(
+        provider.importBackupJson(jsonEncode({
+          'categories': <dynamic>[],
+          'dailySlots': <String, dynamic>{
+            dateKey: [
+              {'i': 0, 'l': 12345},
+            ],
+          },
+        })),
+        throwsA(isA<FormatException>()),
+      );
+
+      expect(provider.getSlotsForDate(dateKey)![0].label, '必须保留');
+    });
+
+    test('oversized strings, nesting and files are rejected', () async {
+      const dateKey = '2099-01-01';
+      final provider = await _makeProvider({
+        dateKey: [_slot(0, '必须保留')],
+      });
+      addTearDown(provider.dispose);
+
+      final longLabel = 'x' * (TimeProvider.maxBackupStringLength + 1);
+      await expectLater(
+        provider.importBackupJson(jsonEncode({
+          'categories': <dynamic>[],
+          'dailySlots': <String, dynamic>{
+            dateKey: [
+              {'i': 0, 'l': longLabel},
+            ],
+          },
+        })),
+        throwsA(isA<FormatException>()),
+      );
+
+      dynamic nested = 'x';
+      for (var i = 0; i <= TimeProvider.maxBackupNestingDepth; i++) {
+        nested = {'next': nested};
+      }
+      await expectLater(
+        provider.importBackupJson(jsonEncode({
+          'metadata': nested,
+          'categories': <dynamic>[],
+          'dailySlots': <String, dynamic>{},
+        })),
+        throwsA(isA<FormatException>()),
+      );
+
+      final oversized = ' ' * (TimeProvider.maxBackupFileBytes + 1);
+      await expectLater(
+        provider.importBackupJson(oversized),
+        throwsA(isA<FormatException>()),
+      );
+
+      expect(provider.getSlotsForDate(dateKey)![0].label, '必须保留');
+    });
+
+    test('failed persistence rolls back memory and preferences', () async {
+      var allowSave = true;
+      const dateKey = '2099-01-01';
+      final provider = await _makeProvider(
+        {
+          dateKey: [_slot(0, '必须保留')],
+        },
+        saveDataOverride: () async => allowSave,
+      );
+      addTearDown(provider.dispose);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'daily_slots',
+        jsonEncode(<String, dynamic>{
+          dateKey: [_slot(0, '必须保留')]
+        }),
+      );
+      allowSave = false;
+
+      await expectLater(
+        provider.importBackupJson(jsonEncode({
+          'categories': <dynamic>[],
+          'dailySlots': <String, dynamic>{
+            dateKey: [_slot(0, '不应提交')],
+          },
+        })),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(provider.getSlotsForDate(dateKey)![0].label, '必须保留');
+      final persisted = jsonDecode(prefs.getString('daily_slots')!);
+      expect(persisted[dateKey][0]['l'], '必须保留');
     });
   });
 }

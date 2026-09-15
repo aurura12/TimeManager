@@ -78,7 +78,18 @@ class DataBackupService {
         );
       }
 
-      final bytes = picked.files.first.bytes;
+      final file = picked.files.first;
+      if (file.size > TimeProvider.maxBackupFileBytes) {
+        return (
+          result: BackupFileResult.error(
+            '备份文件过大（上限 ${TimeProvider.maxBackupFileBytes ~/ (1024 * 1024)} MB）',
+          ),
+          preview: null,
+          json: null,
+        );
+      }
+
+      final bytes = file.bytes;
       if (bytes == null || bytes.isEmpty) {
         AppLogService.instance.warning(
           '备份文件内容为空或无法读取',
@@ -86,6 +97,15 @@ class DataBackupService {
         );
         return (
           result: BackupFileResult.error('无法读取文件内容'),
+          preview: null,
+          json: null,
+        );
+      }
+      if (bytes.length > TimeProvider.maxBackupFileBytes) {
+        return (
+          result: BackupFileResult.error(
+            '备份文件过大（上限 ${TimeProvider.maxBackupFileBytes ~/ (1024 * 1024)} MB）',
+          ),
           preview: null,
           json: null,
         );

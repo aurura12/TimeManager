@@ -295,8 +295,8 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
           _sectionTitle('打卡要求'),
           const SizedBox(height: 4),
           SwitchListTile(
-            title: const Text('需要拍照'),
-            subtitle: const Text('打卡时必须拍摄照片'),
+            title: const Text('需要照片'),
+            subtitle: const Text('打卡时必须添加照片（可拍摄或从相册选择）'),
             value: _requirePhoto,
             onChanged: (v) => setState(() => _requirePhoto = v),
             contentPadding: EdgeInsets.zero,

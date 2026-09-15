@@ -51,6 +51,8 @@ class CheckInGoalIcons {
 
 /// 打卡目标
 class CheckInGoal {
+  static const Object _unset = Object();
+
   const CheckInGoal({
     required this.id,
     required this.ownerId,
@@ -103,11 +105,23 @@ class CheckInGoal {
         googleDisplayName: ownerDisplayName,
       );
 
-  bool isOwnedBy(String userId, {String? email}) =>
-      ownerId == userId ||
-      (email != null &&
-          KnownGoogleUsers.normalizeEmail(ownerEmail) ==
-              KnownGoogleUsers.normalizeEmail(email));
+  bool isOwnedBy(String userId, {String? email}) => CheckInIdentity.matches(
+        candidateId: ownerId,
+        candidateEmail: ownerEmail,
+        userId: userId,
+        email: email,
+      );
+
+  /// 是否尚未到开始日期。开始日期按本地日历日处理，开始日当天可打卡。
+  bool get isNotStarted => isNotStartedAt(DateTime.now());
+
+  bool isNotStartedAt(DateTime now) {
+    final start = startDate;
+    if (start == null) return false;
+    final today = DateTime(now.year, now.month, now.day);
+    final startDay = DateTime(start.year, start.month, start.day);
+    return today.isBefore(startDay);
+  }
 
   /// 是否已过期。
   ///
@@ -115,13 +129,32 @@ class CheckInGoal {
   /// 只有过了结束日 24:00 才算过期。此前直接用 `endDate.isBefore(now)` 比较时刻，
   /// 而 endDate 存的是结束日 00:00，导致结束日当天目标就被判过期、从活动列表消失。
   bool get isExpired {
+    return isExpiredAt(DateTime.now());
+  }
+
+  bool isExpiredAt(DateTime now) {
     final end = endDate;
     if (end == null) return false;
     final endOfDayExclusive = DateTime(end.year, end.month, end.day + 1);
-    return !DateTime.now().isBefore(endOfDayExclusive);
+    return !now.isBefore(endOfDayExclusive);
   }
 
-  bool get isActive => !isArchived && !isExpired;
+  bool get isActive => !isArchived && !isNotStarted && !isExpired;
+
+  /// 判断某个本地日期是否落在目标的含首尾日期范围内。
+  bool allowsCheckInAt(DateTime date) {
+    final day = DateTime(date.year, date.month, date.day);
+    final start = startDate;
+    if (start != null &&
+        day.isBefore(DateTime(start.year, start.month, start.day))) {
+      return false;
+    }
+    final end = endDate;
+    if (end != null && day.isAfter(DateTime(end.year, end.month, end.day))) {
+      return false;
+    }
+    return true;
+  }
 
   int get totalCheckIns => records.length;
 
@@ -144,7 +177,7 @@ class CheckInGoal {
   /// 连续打卡天数。
   ///
   /// 同一天多次打卡只算一天；今天尚未打卡时，允许从昨天开始计算（保持原语义）。
-  int streakDaysFor(String userId, {String? email}) {
+  int streakDaysFor(String? userId, {String? email}) {
     // 先按"天"去重：否则同一天的重复记录会让后续日期对不上而提前中断。
     final days = <DateTime>{};
     for (final r in records) {
@@ -174,8 +207,8 @@ class CheckInGoal {
     return streak;
   }
 
-  double progressFor(String? userId) {
-    final count = currentPeriodCountFor(userId);
+  double progressFor(String? userId, {String? email}) {
+    final count = currentPeriodCountFor(userId, email: email);
     return targetCount > 0 ? (count / targetCount).clamp(0.0, 1.0) : 0;
   }
 
@@ -185,19 +218,18 @@ class CheckInGoal {
       'Use isCompletedTodayBy(userId) instead. This getter checks all users.')
   bool get isCompletedToday =>
       records.any((r) => _isSameDay(r.timestamp, DateTime.now()));
-  int get streakDays => streakDaysFor(ownerId);
+  int get streakDays => streakDaysFor(ownerId, email: ownerEmail);
   double get progress => progressFor(null);
 
   bool _matchesUser(CheckInRecord r, String? userId, String? email) {
-    // userId 与 email 均为空表示统计所有用户
+    // userId 与 email 均为空表示统计所有用户；否则统一走逻辑身份匹配。
     if (userId == null && email == null) return true;
-    if (userId != null && r.userId == userId) return true;
-    if (email != null &&
-        KnownGoogleUsers.normalizeEmail(r.userEmail) ==
-            KnownGoogleUsers.normalizeEmail(email)) {
-      return true;
-    }
-    return false;
+    return CheckInIdentity.matches(
+      candidateId: r.userId,
+      candidateEmail: r.userEmail,
+      userId: userId,
+      email: email,
+    );
   }
 
   bool _isSameDay(DateTime a, DateTime b) =>
@@ -227,7 +259,7 @@ class CheckInGoal {
     String? id,
     String? ownerId,
     String? ownerEmail,
-    String? ownerDisplayName,
+    Object? ownerDisplayName = _unset,
     String? name,
     String? description,
     Color? color,
@@ -237,17 +269,19 @@ class CheckInGoal {
     List<CheckInRecord>? records,
     bool? requireLocation,
     bool? requirePhoto,
-    DateTime? startDate,
-    DateTime? endDate,
+    Object? startDate = _unset,
+    Object? endDate = _unset,
     bool? isArchived,
-    DateTime? archivedAt,
+    Object? archivedAt = _unset,
     int? updatedAt,
   }) {
     return CheckInGoal(
       id: id ?? this.id,
       ownerId: ownerId ?? this.ownerId,
       ownerEmail: ownerEmail ?? this.ownerEmail,
-      ownerDisplayName: ownerDisplayName ?? this.ownerDisplayName,
+      ownerDisplayName: identical(ownerDisplayName, _unset)
+          ? this.ownerDisplayName
+          : ownerDisplayName as String?,
       name: name ?? this.name,
       description: description ?? this.description,
       color: color ?? this.color,
@@ -257,10 +291,14 @@ class CheckInGoal {
       records: records ?? this.records,
       requireLocation: requireLocation ?? this.requireLocation,
       requirePhoto: requirePhoto ?? this.requirePhoto,
-      startDate: startDate ?? this.startDate,
-      endDate: endDate ?? this.endDate,
+      startDate: identical(startDate, _unset)
+          ? this.startDate
+          : startDate as DateTime?,
+      endDate: identical(endDate, _unset) ? this.endDate : endDate as DateTime?,
       isArchived: isArchived ?? this.isArchived,
-      archivedAt: archivedAt ?? this.archivedAt,
+      archivedAt: identical(archivedAt, _unset)
+          ? this.archivedAt
+          : archivedAt as DateTime?,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }

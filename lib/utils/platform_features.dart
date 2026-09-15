@@ -7,6 +7,16 @@ bool get isDesktopPlatform =>
 bool isDesktopPlatformFor({required bool windows, required bool macos}) =>
     windows || macos;
 
+/// 仅移动端支持直接拍照。桌面端保留相册选择和已有照片流程，
+/// 不暴露 ImageSource.camera 入口。
+bool supportsCameraCaptureFor({required bool windows, required bool macos}) =>
+    !isDesktopPlatformFor(windows: windows, macos: macos);
+
+bool get supportsCameraCapture => supportsCameraCaptureFor(
+      windows: Platform.isWindows,
+      macos: Platform.isMacOS,
+    );
+
 bool useImmediateDragFor({required bool windows, required bool macos}) =>
     isDesktopPlatformFor(windows: windows, macos: macos);
 
