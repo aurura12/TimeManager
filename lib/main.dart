@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
 
@@ -20,6 +21,226 @@ import 'widgets/desktop_shortcut_host.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
+enum SafeErrorPageKind {
+  render,
+  startup,
+}
+
+/// Controls a safe interface-only recovery.
+///
+/// The controller deliberately lives below the providers in [main]. Bumping
+/// the generation recreates the current interface subtree while retaining the
+/// existing provider instances, so recovery cannot initialize a second set of
+/// providers or rerun application bootstrap.
+class AppRecoveryController extends ValueNotifier<int> {
+  AppRecoveryController() : super(0);
+
+  void reloadCurrentInterface() {
+    value++;
+  }
+}
+
+class AppRecoveryBoundary extends StatelessWidget {
+  const AppRecoveryBoundary({
+    required this.controller,
+    required this.child,
+    super.key,
+  });
+
+  final AppRecoveryController controller;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: controller,
+      child: child,
+      builder: (context, generation, child) {
+        return KeyedSubtree(
+          key: ValueKey<int>(generation),
+          child: child!,
+        );
+      },
+    );
+  }
+}
+
+String safeErrorTitle(SafeErrorPageKind kind) {
+  switch (kind) {
+    case SafeErrorPageKind.render:
+      return '页面暂时无法显示';
+    case SafeErrorPageKind.startup:
+      return '应用暂时无法启动';
+  }
+}
+
+String safeErrorDescription(SafeErrorPageKind kind) {
+  switch (kind) {
+    case SafeErrorPageKind.render:
+      return '问题详情已记录。你可以返回上一页，或重新加载当前界面。';
+    case SafeErrorPageKind.startup:
+      return '问题详情已记录。重新加载只会恢复当前安全界面，不会重复初始化应用。';
+  }
+}
+
+String _normalizedErrorScope(String scope) {
+  final normalized = scope.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+  if (normalized.isEmpty) return 'ERR';
+  return normalized.length > 8 ? normalized.substring(0, 8) : normalized;
+}
+
+int _errorFingerprint(String value) {
+  var hash = 0x811C9DC5;
+  for (final byte in utf8.encode(value)) {
+    hash ^= byte;
+    hash = (hash * 0x01000193) & 4294967295;
+  }
+  return hash;
+}
+
+/// Returns a short, non-sensitive identifier that can be searched in app logs.
+///
+/// The exception and stack trace are used only to derive the fingerprint. They
+/// are never returned to the UI by this function.
+String buildErrorReferenceCode({
+  required String scope,
+  required Object error,
+  StackTrace? stackTrace,
+}) {
+  String errorText;
+  try {
+    errorText = error.toString();
+  } catch (_) {
+    errorText = error.runtimeType.toString();
+  }
+  final fingerprint = _errorFingerprint(
+    '${_normalizedErrorScope(scope)}|$errorText|${stackTrace ?? ''}',
+  ).toRadixString(16).toUpperCase().padLeft(8, '0');
+  return '${_normalizedErrorScope(scope)}-$fingerprint';
+}
+
+String normalizeErrorReferenceCode(String value) {
+  final normalized = value.trim().toUpperCase();
+  final match = RegExp(r'^[A-Z][A-Z0-9]{0,7}-[0-9A-F]{8}$').firstMatch(
+    normalized,
+  );
+  return match?.group(0) ?? 'ERR-00000000';
+}
+
+class SafeErrorPage extends StatelessWidget {
+  const SafeErrorPage({
+    required this.kind,
+    required this.errorCode,
+    required this.onReload,
+    super.key,
+  });
+
+  final SafeErrorPageKind kind;
+  final String errorCode;
+  final VoidCallback onReload;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final navigator = Navigator.maybeOf(context, rootNavigator: true);
+    final canReturn = navigator?.canPop() ?? false;
+
+    return Theme(
+      data: theme,
+      child: Directionality(
+        textDirection: TextDirection.ltr,
+        child: Scaffold(
+          body: SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 480),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.error_outline,
+                        size: 48,
+                        color: AppSemanticColors.dangerDeep,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        safeErrorTitle(kind),
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        safeErrorDescription(kind),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 12),
+                      SelectableText(
+                        '错误编号：${normalizeErrorReferenceCode(errorCode)}',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 20),
+                      if (canReturn) ...[
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            final currentNavigator = Navigator.maybeOf(
+                              context,
+                              rootNavigator: true,
+                            );
+                            if (currentNavigator != null) {
+                              unawaited(currentNavigator.maybePop());
+                            }
+                          },
+                          icon: const Icon(Icons.arrow_back),
+                          label: const Text('返回上一页'),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      ElevatedButton.icon(
+                        onPressed: onReload,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('重新加载当前界面'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+void installSafeErrorWidgetBuilder({
+  required AppLogService service,
+  required AppRecoveryController recoveryController,
+}) {
+  ErrorWidget.builder = (details) {
+    final code = buildErrorReferenceCode(
+      scope: 'UI',
+      error: details.exception,
+      stackTrace: details.stack,
+    );
+    service.error(
+      '界面渲染失败 [$code]',
+      source: 'flutter_ui',
+      error: details.exception,
+      stackTrace: details.stack,
+    );
+    return SafeErrorPage(
+      kind: SafeErrorPageKind.render,
+      errorCode: code,
+      onReload: recoveryController.reloadCurrentInterface,
+    );
+  };
+}
+
 /// 自定义 HttpOverrides，解决部分 Android 设备（特别是 MIUI）上
 /// HttpClient 的 SSL 握手不稳定问题。
 class _StableHttpOverrides extends HttpOverrides {
@@ -36,17 +257,26 @@ class _StableHttpOverrides extends HttpOverrides {
 
 void installGlobalLogErrorHandlers(AppLogService service) {
   FlutterError.onError = (details) {
-    FlutterError.presentError(details);
+    final code = buildErrorReferenceCode(
+      scope: 'UI',
+      error: details.exception,
+      stackTrace: details.stack,
+    );
     service.error(
-      'Flutter 未捕获异常',
+      'Flutter 未捕获异常 [$code]',
       source: 'flutter',
       error: details.exception,
       stackTrace: details.stack,
     );
   };
   PlatformDispatcher.instance.onError = (error, stackTrace) {
+    final code = buildErrorReferenceCode(
+      scope: 'DART',
+      error: error,
+      stackTrace: stackTrace,
+    );
     service.error(
-      'Dart 未捕获异步异常',
+      'Dart 未捕获异步异常 [$code]',
       source: 'dart',
       error: error,
       stackTrace: stackTrace,
@@ -55,91 +285,103 @@ void installGlobalLogErrorHandlers(AppLogService service) {
   };
 }
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  final migrationResult = await WindowsLegacyPreferencesMigration().migrate();
-  if (migrationResult.didMigrate) {
-    debugPrint(
-      'Windows legacy preferences migrated: '
-      '${migrationResult.migratedKeyCount} keys',
-    );
-  } else if (migrationResult.status == WindowsLegacyMigrationStatus.failed) {
-    debugPrint(
-      'Windows legacy preferences migration failed: '
-      '${migrationResult.error}',
-    );
-  }
-  final appLogService = AppLogService.instance;
-  installGlobalLogErrorHandlers(appLogService);
-  try {
-    await appLogService.initialize();
-  } catch (error, stackTrace) {
-    debugPrint('应用日志初始化失败: $error\n$stackTrace');
-    appLogService.error(
-      '应用日志初始化失败',
-      source: 'startup',
-      error: error,
-      stackTrace: stackTrace,
-    );
-  }
-  HttpOverrides.global = _StableHttpOverrides();
-
-  ErrorWidget.builder = (details) {
-    return MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.error_outline,
-                    size: 48, color: AppSemanticColors.dangerDeep),
-                const SizedBox(height: 16),
-                const Text('应用遇到了问题',
-                    style:
-                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Text(details.exceptionAsString(), textAlign: TextAlign.center),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () => main(),
-                  child: const Text('重启应用'),
-                ),
-              ],
-            ),
-          ),
+void _runStartupFailurePage({
+  required AppLogService service,
+  required AppRecoveryController recoveryController,
+  required Object error,
+  required StackTrace stackTrace,
+}) {
+  final code = buildErrorReferenceCode(
+    scope: 'STARTUP',
+    error: error,
+    stackTrace: stackTrace,
+  );
+  service.error(
+    '应用启动失败 [$code]',
+    source: 'startup',
+    error: error,
+    stackTrace: stackTrace,
+  );
+  runApp(
+    MaterialApp(
+      theme: AppTheme.light(),
+      home: AppRecoveryBoundary(
+        controller: recoveryController,
+        child: SafeErrorPage(
+          kind: SafeErrorPageKind.startup,
+          errorCode: code,
+          onReload: recoveryController.reloadCurrentInterface,
         ),
       ),
-    );
-  };
+    ),
+  );
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final appLogService = AppLogService.instance;
+  final recoveryController = AppRecoveryController();
+  installGlobalLogErrorHandlers(appLogService);
+  installSafeErrorWidgetBuilder(
+    service: appLogService,
+    recoveryController: recoveryController,
+  );
 
   try {
+    final migrationResult = await WindowsLegacyPreferencesMigration().migrate();
+    if (migrationResult.didMigrate) {
+      debugPrint(
+        'Windows legacy preferences migrated: '
+        '${migrationResult.migratedKeyCount} keys',
+      );
+    } else if (migrationResult.status == WindowsLegacyMigrationStatus.failed) {
+      final code = buildErrorReferenceCode(
+        scope: 'MIGRATE',
+        error: migrationResult.error ?? StateError('migration failed'),
+      );
+      appLogService.error(
+        'Windows legacy preferences migration failed [$code]',
+        source: 'startup',
+        error: migrationResult.error,
+      );
+    }
+
+    try {
+      await appLogService.initialize();
+    } catch (error, stackTrace) {
+      final code = buildErrorReferenceCode(
+        scope: 'LOG',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      appLogService.error(
+        '应用日志初始化失败 [$code]',
+        source: 'startup',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+    HttpOverrides.global = _StableHttpOverrides();
+
     runApp(
       MultiProvider(
         providers: [
           ChangeNotifierProvider(create: (context) => TimeProvider()),
           ChangeNotifierProvider(create: (context) => ThemeModeProvider()),
         ],
-        child: const TimeManagerApp(),
-      ),
-    );
-  } catch (e, stackTrace) {
-    debugPrint('应用启动失败: $e');
-    appLogService.error(
-      '应用启动失败',
-      source: 'startup',
-      error: e,
-      stackTrace: stackTrace,
-    );
-    runApp(MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: Text('启动失败: $e',
-              style: const TextStyle(color: AppSemanticColors.dangerDeep)),
+        child: AppRecoveryBoundary(
+          controller: recoveryController,
+          child: const TimeManagerApp(),
         ),
       ),
-    ));
+    );
+  } catch (error, stackTrace) {
+    _runStartupFailurePage(
+      service: appLogService,
+      recoveryController: recoveryController,
+      error: error,
+      stackTrace: stackTrace,
+    );
   }
 }
 
