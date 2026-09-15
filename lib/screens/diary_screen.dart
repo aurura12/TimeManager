@@ -10,6 +10,7 @@ import '../services/diary_gitee_service.dart';
 import '../services/diary_local_store.dart';
 import '../services/diary_search_service.dart';
 import '../services/app_identity_service.dart';
+import '../utils/diary_remote_path_utils.dart';
 import 'diary_search_screen.dart';
 
 import '../theme/app_semantic_colors.dart';
@@ -470,14 +471,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   DateTime? _parseDateFromPath(String path) {
-    final fileName = _fileNameFromPath(path);
-    final match = RegExp(r'(\d{4})年(\d{1,2})月(\d{1,2})日').firstMatch(fileName);
-    if (match == null) return null;
-    final year = int.tryParse(match.group(1) ?? '');
-    final month = int.tryParse(match.group(2) ?? '');
-    final day = int.tryParse(match.group(3) ?? '');
-    if (year == null || month == null || day == null) return null;
-    return DateTime(year, month, day);
+    return parseDiaryDateFromRemotePath(path);
   }
 
   Future<void> _loadRemoteFileToEditor(String path) async {
@@ -627,6 +621,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   int _sortRemoteNodes(_RemoteFileNode a, _RemoteFileNode b) {
     if (a.isFile == b.isFile) {
+      if (a.isFile) {
+        return compareDiaryRemoteFilePaths(a.path, b.path);
+      }
       return a.name.compareTo(b.name);
     }
     return a.isFile ? 1 : -1;
@@ -638,7 +635,6 @@ class _DiaryScreenState extends State<DiaryScreen> {
         dense: true,
         leading: const Icon(Icons.description_outlined, size: 18),
         title: Text(node.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(node.path, maxLines: 1, overflow: TextOverflow.ellipsis),
         onTap: () => _openPathFromTree(node.path),
       );
     }
