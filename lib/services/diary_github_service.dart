@@ -1,9 +1,4 @@
-import 'dart:convert';
-
-import 'package:http/http.dart' as http;
-
 import '../config/remote_repo_config.dart';
-import 'contents_api_common.dart';
 import 'github_contents_api.dart';
 
 class DiaryPullResult {
@@ -70,42 +65,63 @@ class DiaryPushResult {
 class DiaryListResult {
   final bool success;
   final List<String> paths;
+  final bool truncated;
   final String? error;
 
   const DiaryListResult._({
     required this.success,
     required this.paths,
+    required this.truncated,
     this.error,
   });
 
   factory DiaryListResult.success(List<String> paths) {
-    return DiaryListResult._(success: true, paths: paths);
+    return DiaryListResult._(
+      success: true,
+      paths: paths,
+      truncated: false,
+    );
   }
 
-  factory DiaryListResult.error(String message) {
-    return DiaryListResult._(success: false, paths: const [], error: message);
+  factory DiaryListResult.error(String message, {bool truncated = false}) {
+    return DiaryListResult._(
+      success: false,
+      paths: const [],
+      truncated: truncated,
+      error: message,
+    );
   }
 }
 
 class DiaryListWithShaResult {
   final bool success;
   final Map<String, String> pathShaMap;
+  final bool truncated;
   final String? error;
 
   const DiaryListWithShaResult._({
     required this.success,
     required this.pathShaMap,
+    required this.truncated,
     this.error,
   });
 
   factory DiaryListWithShaResult.success(Map<String, String> pathShaMap) {
-    return DiaryListWithShaResult._(success: true, pathShaMap: pathShaMap);
+    return DiaryListWithShaResult._(
+      success: true,
+      pathShaMap: pathShaMap,
+      truncated: false,
+    );
   }
 
-  factory DiaryListWithShaResult.error(String message) {
+  factory DiaryListWithShaResult.error(
+    String message, {
+    bool truncated = false,
+  }) {
     return DiaryListWithShaResult._(
       success: false,
       pathShaMap: const {},
+      truncated: truncated,
       error: message,
     );
   }
@@ -128,8 +144,9 @@ class DiaryGitHubService {
   static Future<DiaryPullResult> pullDiary({
     required String token,
     required String path,
+    GitHubContentsApi? api,
   }) async {
-    final result = await _api.pullText(token: token, path: path);
+    final result = await (api ?? _api).pullText(token: token, path: path);
     if (result.success) {
       return DiaryPullResult.success(result.content!, result.sha!);
     }
@@ -142,8 +159,9 @@ class DiaryGitHubService {
     required String path,
     required String content,
     required String commitMessage,
+    GitHubContentsApi? api,
   }) async {
-    final result = await _api.pushText(
+    final result = await (api ?? _api).pushText(
       token: token,
       path: path,
       content: content,
@@ -157,10 +175,14 @@ class DiaryGitHubService {
 
   static Future<DiaryListResult> listDiaryPaths({
     required String token,
+    GitHubContentsApi? api,
   }) async {
-    final result = await listDiaryPathsWithSha(token: token);
+    final result = await listDiaryPathsWithSha(token: token, api: api);
     if (!result.success) {
-      return DiaryListResult.error(result.error ?? '读取远端日记列表失败');
+      return DiaryListResult.error(
+        result.error ?? '读取远端日记列表失败',
+        truncated: result.truncated,
+      );
     }
     final paths = result.pathShaMap.keys.toList();
     paths.sort((a, b) => b.compareTo(a));
@@ -169,36 +191,25 @@ class DiaryGitHubService {
 
   static Future<DiaryListWithShaResult> listDiaryPathsWithSha({
     required String token,
+    GitHubContentsApi? api,
   }) async {
-    try {
-      final res = await requestWithRetry(
-        () => http.get(_api.treeUri('HEAD'), headers: _api.headers(token)),
+    final treeResult = await (api ?? _api).listTree(
+      token: token,
+      ref: 'HEAD',
+    );
+    if (!treeResult.success) {
+      return DiaryListWithShaResult.error(
+        treeResult.error ?? '读取远端日记列表失败',
+        truncated: treeResult.truncated,
       );
-      if (res.statusCode != 200) {
-        return DiaryListWithShaResult.error(extractErrorMessage(res));
-      }
-      final map = json.decode(res.body) as Map<String, dynamic>;
-      final tree = map['tree'];
-      if (tree is! List) {
-        return DiaryListWithShaResult.error('远端目录结构无效');
-      }
-      final pathShaMap = <String, String>{};
-      for (final item in tree) {
-        if (item is! Map) continue;
-        final type = item['type']?.toString();
-        final path = item['path']?.toString();
-        final sha = item['sha']?.toString();
-        if (type == 'blob' &&
-            path != null &&
-            path.isNotEmpty &&
-            sha != null &&
-            _looksLikeDiaryMd(path)) {
-          pathShaMap[path] = sha;
-        }
-      }
-      return DiaryListWithShaResult.success(pathShaMap);
-    } catch (e) {
-      return DiaryListWithShaResult.error('读取远端日记列表失败: $e');
     }
+
+    final pathShaMap = <String, String>{};
+    for (final entry in treeResult.entries) {
+      if (entry.type == 'blob' && _looksLikeDiaryMd(entry.path)) {
+        pathShaMap[entry.path] = entry.sha;
+      }
+    }
+    return DiaryListWithShaResult.success(pathShaMap);
   }
 }
