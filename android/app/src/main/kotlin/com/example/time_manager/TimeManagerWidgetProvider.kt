@@ -64,6 +64,8 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
                 actionStatusAge in 0..ACTION_STATUS_TTL_MS
 
         appWidgetIds.forEach { widgetId ->
+            val widgetOptions = appWidgetManager.getAppWidgetOptions(widgetId)
+            val compact = isCompactWidget(widgetOptions)
             val (bitmapWidth, bitmapHeight) =
                 resolveTimelineBitmapSize(context, appWidgetManager, widgetId)
 
@@ -87,6 +89,25 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
                     setTextViewText(R.id.widget_next, next)
                     setImageViewBitmap(R.id.widget_timeline, timelineBitmap)
 
+                    // 2 行左右的小尺寸只保留日期、时间轴和快捷入口，避免
+                    // 统计/辅助文案把三个可点击入口挤出可视区域。
+                    setViewVisibility(
+                        R.id.widget_stats,
+                        if (compact) View.GONE else View.VISIBLE,
+                    )
+                    setViewVisibility(
+                        R.id.widget_timeline_labels,
+                        if (compact) View.GONE else View.VISIBLE,
+                    )
+                    setViewVisibility(
+                        R.id.widget_current_next,
+                        if (compact) View.GONE else View.VISIBLE,
+                    )
+                    setViewVisibility(
+                        R.id.widget_top_categories,
+                        if (compact) View.GONE else View.VISIBLE,
+                    )
+
                     setViewVisibility(
                         R.id.widget_pending_sync,
                         if (pendingSync) View.VISIBLE else View.GONE,
@@ -99,7 +120,7 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
                     )
                     setViewVisibility(
                         R.id.widget_action_status,
-                        if (showActionStatus) View.VISIBLE else View.GONE,
+                        if (showActionStatus && !compact) View.VISIBLE else View.GONE,
                     )
 
                     // 原有整块点击也明确进入“今日记录”，不再无参数地落到首页。
@@ -110,6 +131,14 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
                     setOnClickPendingIntent(
                         R.id.widget_action_today,
                         actionPendingIntent(context, ACTION_TODAY_RECORDS),
+                    )
+                    setOnClickPendingIntent(
+                        R.id.widget_action_search,
+                        actionPendingIntent(context, ACTION_SEARCH),
+                    )
+                    setOnClickPendingIntent(
+                        R.id.widget_action_sync,
+                        actionPendingIntent(context, ACTION_SYNC_CENTER),
                     )
                 }
             appWidgetManager.updateAppWidget(widgetId, views)
@@ -127,6 +156,9 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
         private const val ACTION_URI_SCHEME = "time-manager"
         private const val ACTION_URI_HOST = "widget"
         private const val ACTION_TODAY_RECORDS = "today_records"
+        private const val ACTION_SEARCH = "search"
+        private const val ACTION_SYNC_CENTER = "sync_center"
+        private const val COMPACT_HEIGHT_THRESHOLD_DP = 180
         private const val ACTION_STATUS_TTL_MS = 10 * 60 * 1000L
         private const val STATUS_SUCCESS_COLOR = 0xFF558B2F.toInt()
         private const val STATUS_ERROR_COLOR = 0xFFC62828.toInt()
@@ -147,6 +179,14 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
                 .appendQueryParameter("action", action)
                 .build(),
         )
+
+        private fun isCompactWidget(options: Bundle): Boolean {
+            val heightDp = options.getInt(
+                AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT,
+                options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 110),
+            )
+            return heightDp < COMPACT_HEIGHT_THRESHOLD_DP
+        }
 
         /** 按小组件实际宽度与 dimen 高度生成位图，避免 ImageView 拉伸导致文字变形 */
         fun resolveTimelineBitmapSize(

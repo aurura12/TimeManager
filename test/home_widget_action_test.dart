@@ -7,6 +7,8 @@ void main() {
     test('生成的动作 URI 都能严格往返解析', () {
       for (final action in [
         HomeWidgetAction.todayRecords,
+        HomeWidgetAction.search,
+        HomeWidgetAction.syncCenter,
       ]) {
         final uri = HomeWidgetService.actionUri(action);
         final request = HomeWidgetService.parseActionUri(uri);
@@ -15,6 +17,30 @@ void main() {
         expect(request!.action, action);
         expect(request.routeName, startsWith('/widget/'));
       }
+    });
+
+    test('快捷入口分别映射到明确的页面路由', () {
+      expect(
+        HomeWidgetService.parseActionUri(
+          HomeWidgetService.actionUri(HomeWidgetAction.todayRecords),
+        )!
+            .routeName,
+        '/widget/today-records',
+      );
+      expect(
+        HomeWidgetService.parseActionUri(
+          HomeWidgetService.actionUri(HomeWidgetAction.search),
+        )!
+            .routeName,
+        '/widget/search',
+      );
+      expect(
+        HomeWidgetService.parseActionUri(
+          HomeWidgetService.actionUri(HomeWidgetAction.syncCenter),
+        )!
+            .routeName,
+        '/widget/sync-center',
+      );
     });
 
     test('null 表示普通启动，恶意或未知参数会被标记为无效', () {

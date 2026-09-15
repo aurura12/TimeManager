@@ -3,4 +3,6 @@
     <string name="widget_timeline_desc">今日时间轴</string>
     <string name="widget_description">时间块今日概览</string>
     <string name="widget_action_today_desc">打开今日记录</string>
+    <string name="widget_action_search_desc">打开搜索</string>
+    <string name="widget_action_sync_desc">打开同步中心</string>
 </resources>

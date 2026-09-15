@@ -35,6 +35,8 @@ class HomeWidgetService {
 
     final action = switch (actionValues!.single) {
       'today_records' => HomeWidgetAction.todayRecords,
+      'search' => HomeWidgetAction.search,
+      'sync_center' => HomeWidgetAction.syncCenter,
       _ => HomeWidgetAction.invalid,
     };
     return HomeWidgetActionRequest(uri: uri, action: action);
@@ -44,6 +46,8 @@ class HomeWidgetService {
   static Uri actionUri(HomeWidgetAction action) {
     final value = switch (action) {
       HomeWidgetAction.todayRecords => 'today_records',
+      HomeWidgetAction.search => 'search',
+      HomeWidgetAction.syncCenter => 'sync_center',
       HomeWidgetAction.invalid => throw ArgumentError('invalid widget action'),
     };
     return Uri(
@@ -301,6 +305,8 @@ class HomeWidgetService {
 
 enum HomeWidgetAction {
   todayRecords,
+  search,
+  syncCenter,
   invalid,
 }
 
@@ -312,6 +318,8 @@ class HomeWidgetActionRequest {
 
   String get routeName => switch (action) {
         HomeWidgetAction.todayRecords => '/widget/today-records',
+        HomeWidgetAction.search => '/widget/search',
+        HomeWidgetAction.syncCenter => '/widget/sync-center',
         HomeWidgetAction.invalid => '/widget/invalid-action',
       };
 }

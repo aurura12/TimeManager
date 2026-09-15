@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 
 import '../providers/time_provider.dart';
 import '../screens/home_screen.dart';
+import '../screens/global_search_screen.dart';
+import '../screens/sync_center_screen.dart';
 import '../theme/app_tokens.dart';
 import 'home_widget_service.dart';
 
@@ -30,6 +32,22 @@ class HomeWidgetActionRouter {
           MaterialPageRoute<void>(
             settings: RouteSettings(name: request.routeName),
             builder: (_) => const HomeScreen(),
+          ),
+        );
+      case HomeWidgetAction.search:
+        _report('已打开搜索');
+        return navigator.push<void>(
+          MaterialPageRoute<void>(
+            settings: RouteSettings(name: request.routeName),
+            builder: (_) => const GlobalSearchScreen(),
+          ),
+        );
+      case HomeWidgetAction.syncCenter:
+        _report('已打开同步中心');
+        return navigator.push<void>(
+          MaterialPageRoute<void>(
+            settings: RouteSettings(name: request.routeName),
+            builder: (_) => const SyncCenterScreen(),
           ),
         );
       case HomeWidgetAction.invalid:
