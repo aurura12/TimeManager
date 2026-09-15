@@ -17,8 +17,99 @@ import 'google_calendar_event_parser.dart';
 import 'app_log_service.dart';
 import '../utils/local_day_range.dart';
 
+typedef GoogleCalendarEventsPageLoader = Future<calendar.Events> Function({
+  String? pageToken,
+  required int maxResults,
+});
+
+enum GoogleCalendarPaginationTruncationReason {
+  maxPages,
+  maxEvents,
+  repeatedPageToken,
+}
+
+class GoogleCalendarPaginationResult {
+  const GoogleCalendarPaginationResult({
+    required this.events,
+    this.truncationReason,
+  });
+
+  final List<calendar.Event> events;
+  final GoogleCalendarPaginationTruncationReason? truncationReason;
+
+  bool get isTruncated => truncationReason != null;
+}
+
+/// Reads all pages returned by Google Calendar while keeping the response
+/// bounded and detecting a broken/repeated page token.
+Future<GoogleCalendarPaginationResult> paginateGoogleCalendarEvents({
+  required GoogleCalendarEventsPageLoader fetchPage,
+  int pageSize = 250,
+  int maxPages = 20,
+  int maxEvents = 5000,
+}) async {
+  final events = <calendar.Event>[];
+  final seenPageTokens = <String>{};
+  String? pageToken;
+
+  for (var pageIndex = 0; pageIndex < maxPages; pageIndex++) {
+    if (pageToken != null && !seenPageTokens.add(pageToken)) {
+      return GoogleCalendarPaginationResult(
+        events: events,
+        truncationReason:
+            GoogleCalendarPaginationTruncationReason.repeatedPageToken,
+      );
+    }
+
+    final response = await fetchPage(
+      pageToken: pageToken,
+      maxResults: pageSize,
+    );
+    final pageEvents = response.items ?? const <calendar.Event>[];
+    final remainingEvents = maxEvents - events.length;
+    if (pageEvents.length > remainingEvents) {
+      if (remainingEvents > 0) {
+        events.addAll(pageEvents.take(remainingEvents));
+      }
+      return GoogleCalendarPaginationResult(
+        events: events,
+        truncationReason: GoogleCalendarPaginationTruncationReason.maxEvents,
+      );
+    }
+    events.addAll(pageEvents);
+
+    final nextPageToken = response.nextPageToken?.trim();
+    if (nextPageToken == null || nextPageToken.isEmpty) {
+      return GoogleCalendarPaginationResult(events: events);
+    }
+    if (seenPageTokens.contains(nextPageToken)) {
+      return GoogleCalendarPaginationResult(
+        events: events,
+        truncationReason:
+            GoogleCalendarPaginationTruncationReason.repeatedPageToken,
+      );
+    }
+    if (events.length >= maxEvents) {
+      return GoogleCalendarPaginationResult(
+        events: events,
+        truncationReason: GoogleCalendarPaginationTruncationReason.maxEvents,
+      );
+    }
+
+    pageToken = nextPageToken;
+  }
+
+  return GoogleCalendarPaginationResult(
+    events: events,
+    truncationReason: GoogleCalendarPaginationTruncationReason.maxPages,
+  );
+}
+
 class GoogleCalendarService {
   static const String _appSignature = "乖乖🥰晶晶";
+  static const int _calendarPageSize = 250;
+  static const int _calendarMaxPages = 20;
+  static const int _calendarMaxEvents = 5000;
   static final _logger = Logger();
   static const List<String> _scopes = [
     calendar.CalendarApi.calendarEventsScope
@@ -429,14 +520,28 @@ class GoogleCalendarService {
     try {
       final dayRange = localDayRange(date);
 
-      final response = await api.events.list(
-        'primary',
-        timeMin: dayRange.start.toUtc(),
-        timeMax: dayRange.end.toUtc(),
-        singleEvents: true,
+      final result = await paginateGoogleCalendarEvents(
+        pageSize: _calendarPageSize,
+        maxPages: _calendarMaxPages,
+        maxEvents: _calendarMaxEvents,
+        fetchPage: ({pageToken, required maxResults}) => api.events.list(
+          'primary',
+          timeMin: dayRange.start.toUtc(),
+          timeMax: dayRange.end.toUtc(),
+          singleEvents: true,
+          maxResults: maxResults,
+          pageToken: pageToken,
+        ),
       );
+      if (result.isTruncated) {
+        _logWarning(
+          '从 Google Calendar 拉取结果被截断，停止合并（原因: '
+          '${result.truncationReason}，已读取 ${result.events.length} 条）',
+        );
+        return null;
+      }
 
-      final items = response.items ?? [];
+      final items = result.events;
       final blocks = <CalendarBlock>[];
 
       for (final event in items) {
@@ -483,16 +588,29 @@ class GoogleCalendarService {
       final startOfDay = DateTime(date.year, date.month, date.day);
       final endOfDay = startOfDay.add(const Duration(days: 1));
 
-      var existingEventsResponse = await api.events.list(
-        'primary',
-        timeMin: startOfDay.toUtc(),
-        timeMax: endOfDay.toUtc(),
-        singleEvents: true,
+      final result = await paginateGoogleCalendarEvents(
+        pageSize: _calendarPageSize,
+        maxPages: _calendarMaxPages,
+        maxEvents: _calendarMaxEvents,
+        fetchPage: ({pageToken, required maxResults}) => api.events.list(
+          'primary',
+          timeMin: startOfDay.toUtc(),
+          timeMax: endOfDay.toUtc(),
+          singleEvents: true,
+          maxResults: maxResults,
+          pageToken: pageToken,
+        ),
       );
-      List<calendar.Event> remoteEvents = existingEventsResponse.items
-              ?.where((e) => e.description == _appSignature)
-              .toList() ??
-          [];
+      if (result.isTruncated) {
+        _logWarning(
+          '同步到 Google Calendar 前读取结果被截断，跳过本次写入（原因: '
+          '${result.truncationReason}，已读取 ${result.events.length} 条）',
+        );
+        return false;
+      }
+
+      List<calendar.Event> remoteEvents =
+          result.events.where((e) => e.description == _appSignature).toList();
       List<calendar.Event> localEvents = _convertToMergedEvents(slots, date);
 
       for (var re in remoteEvents) {
