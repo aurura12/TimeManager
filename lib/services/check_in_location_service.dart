@@ -15,34 +15,99 @@ class CheckInLocationResult {
   });
 }
 
-class CheckInLocationService {
-  static Future<bool> ensurePermission() async {
-    if (!await Geolocator.isLocationServiceEnabled()) return false;
+enum CheckInLocationPermissionStatus {
+  granted,
+  serviceDisabled,
+  denied,
+  deniedForever,
+  unavailable,
+}
 
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
+class CheckInLocationAccessResult {
+  final CheckInLocationPermissionStatus permissionStatus;
+  final CheckInLocationResult? location;
+
+  const CheckInLocationAccessResult({
+    required this.permissionStatus,
+    this.location,
+  });
+
+  bool get isGranted =>
+      permissionStatus == CheckInLocationPermissionStatus.granted &&
+      location != null;
+
+  bool get isPermanentlyDenied =>
+      permissionStatus == CheckInLocationPermissionStatus.deniedForever;
+}
+
+typedef CheckInLocationSettingsLauncher = Future<bool> Function();
+typedef CheckInLocationLoader = Future<CheckInLocationAccessResult> Function();
+
+class CheckInLocationService {
+  /// 可由逻辑测试注入，避免测试真正打开系统设置或调用定位插件。
+  static CheckInLocationSettingsLauncher? settingsLauncherForTesting;
+  static CheckInLocationLoader? locationLoaderForTesting;
+
+  static Future<CheckInLocationPermissionStatus>
+      requestPermissionStatus() async {
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        return CheckInLocationPermissionStatus.serviceDisabled;
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      switch (permission) {
+        case LocationPermission.always:
+        case LocationPermission.whileInUse:
+          return CheckInLocationPermissionStatus.granted;
+        case LocationPermission.deniedForever:
+          return CheckInLocationPermissionStatus.deniedForever;
+        case LocationPermission.denied:
+          return CheckInLocationPermissionStatus.denied;
+        case LocationPermission.unableToDetermine:
+          return CheckInLocationPermissionStatus.unavailable;
+      }
+    } catch (_) {
+      return CheckInLocationPermissionStatus.unavailable;
     }
-    return permission == LocationPermission.always ||
-        permission == LocationPermission.whileInUse;
   }
 
-  static Future<CheckInLocationResult?> getCurrentLocation() async {
-    final ok = await ensurePermission();
-    if (!ok) return null;
+  static Future<bool> ensurePermission() async {
+    return await requestPermissionStatus() ==
+        CheckInLocationPermissionStatus.granted;
+  }
+
+  static Future<CheckInLocationAccessResult>
+      getCurrentLocationWithStatus() async {
+    final injectedLoader = locationLoaderForTesting;
+    if (injectedLoader != null) {
+      try {
+        return await injectedLoader();
+      } catch (_) {
+        return const CheckInLocationAccessResult(
+          permissionStatus: CheckInLocationPermissionStatus.unavailable,
+        );
+      }
+    }
+
+    final permissionStatus = await requestPermissionStatus();
+    if (permissionStatus != CheckInLocationPermissionStatus.granted) {
+      return CheckInLocationAccessResult(permissionStatus: permissionStatus);
+    }
 
     // 优先用缓存位置（毫秒级），避免每次都等 GPS 冷启动
     Position? position;
     try {
-      position = await Geolocator.getLastKnownPosition().timeout(
-          const Duration(seconds: 3));
+      position = await Geolocator.getLastKnownPosition()
+          .timeout(const Duration(seconds: 3));
     } catch (_) {}
 
     if (position == null ||
-        DateTime.now()
-                .difference(position.timestamp)
-                .inSeconds >
-            30) {
+        DateTime.now().difference(position.timestamp).inSeconds > 30) {
       // 缓存过期或不可用，重新获取
       try {
         position = await Geolocator.getCurrentPosition(
@@ -52,7 +117,9 @@ class CheckInLocationService {
           ),
         );
       } catch (_) {
-        return null;
+        return const CheckInLocationAccessResult(
+          permissionStatus: CheckInLocationPermissionStatus.unavailable,
+        );
       }
     }
 
@@ -76,11 +143,28 @@ class CheckInLocationService {
     locationName ??=
         '${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}';
 
-    return CheckInLocationResult(
-      latitude: position.latitude,
-      longitude: position.longitude,
-      locationName: locationName,
+    return CheckInLocationAccessResult(
+      permissionStatus: CheckInLocationPermissionStatus.granted,
+      location: CheckInLocationResult(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        locationName: locationName,
+      ),
     );
+  }
+
+  static Future<CheckInLocationResult?> getCurrentLocation() async {
+    final access = await getCurrentLocationWithStatus();
+    return access.location;
+  }
+
+  static Future<bool> openAppSettings() async {
+    final launcher = settingsLauncherForTesting ?? Geolocator.openAppSettings;
+    try {
+      return await launcher();
+    } catch (_) {
+      return false;
+    }
   }
 }
 

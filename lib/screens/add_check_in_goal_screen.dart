@@ -32,7 +32,30 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
 
   static const _themeColors = AppSemanticColors.palette;
 
+  static const _colorLabels = [
+    '粉红色',
+    '橙色',
+    '黄色',
+    '绿色',
+    '蓝色',
+    '紫色',
+    '玫红色',
+  ];
+
   static const _icons = CheckInGoalIcons.options;
+
+  static const _iconLabels = [
+    '跑步',
+    '健身',
+    '阅读',
+    '冥想',
+    '游泳',
+    '骑行',
+    '睡眠',
+    '饮食',
+    '工作',
+    '宠物',
+  ];
 
   static const _durationOptions = [
     _DurationOption(label: '1周', days: 7),
@@ -190,6 +213,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
           const SizedBox(height: 8),
           TextField(
             controller: _nameController,
+            onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(
               labelText: '目标名称',
               hintText: '例如：晨跑、健身、阅读',
@@ -199,6 +223,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _descController,
+            onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(
               labelText: '描述（可选）',
               hintText: '简单描述打卡要求',
@@ -219,6 +244,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _countController,
+            onChanged: (_) => setState(() {}),
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
               labelText: '${_period.label}目标次数',
@@ -235,29 +261,36 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
             runSpacing: 8,
             children: List.generate(_icons.length, (i) {
               final selected = i == _selectedIconIndex;
-              return GestureDetector(
-                onTap: () => setState(() => _selectedIconIndex = i),
-                child: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? AppSemanticColors.tint(accent, pageSurface, 0.2)
-                        : colorScheme.surfaceContainerHighest,
-                    borderRadius: AppRadius.controlAll,
-                    border: selected
-                        ? Border.all(
-                            color: AppSemanticColors.onTint(accent, pageSurface,
-                                alpha: 0.2),
-                            width: 2)
-                        : null,
-                  ),
-                  child: Icon(
-                    _icons[i],
-                    color: selected
-                        ? AppSemanticColors.onTint(accent, pageSurface,
-                            alpha: 0.2)
-                        : colorScheme.onSurfaceVariant,
+              return Semantics(
+                button: true,
+                selected: selected,
+                label: '图标：${_iconLabels[i]}',
+                hint: '双击选择',
+                child: GestureDetector(
+                  onTap: () => setState(() => _selectedIconIndex = i),
+                  child: Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? AppSemanticColors.tint(accent, pageSurface, 0.2)
+                          : colorScheme.surfaceContainerHighest,
+                      borderRadius: AppRadius.controlAll,
+                      border: selected
+                          ? Border.all(
+                              color: AppSemanticColors.onTint(
+                                  accent, pageSurface,
+                                  alpha: 0.2),
+                              width: 2)
+                          : null,
+                    ),
+                    child: Icon(
+                      _icons[i],
+                      color: selected
+                          ? AppSemanticColors.onTint(accent, pageSurface,
+                              alpha: 0.2)
+                          : colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               );
@@ -270,23 +303,40 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
             spacing: 10,
             children: List.generate(_themeColors.length, (i) {
               final selected = i == _selectedColorIndex;
-              return GestureDetector(
-                onTap: () => setState(() => _selectedColorIndex = i),
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: _themeColors[i],
-                    shape: BoxShape.circle,
-                    border: selected
-                        ? Border.all(color: colorScheme.onSurface, width: 2)
-                        : null,
+              return Semantics(
+                button: true,
+                selected: selected,
+                label: '主题色：${_colorLabels[i]}',
+                hint: '双击选择',
+                child: GestureDetector(
+                  onTap: () => setState(() => _selectedColorIndex = i),
+                  child: SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: Center(
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: _themeColors[i],
+                          shape: BoxShape.circle,
+                          border: selected
+                              ? Border.all(
+                                  color: colorScheme.onSurface, width: 2)
+                              : null,
+                        ),
+                        child: selected
+                            ? Icon(
+                                Icons.check,
+                                color: AppSemanticColors.onColor(
+                                  _themeColors[i],
+                                ),
+                                size: 18,
+                              )
+                            : null,
+                      ),
+                    ),
                   ),
-                  child: selected
-                      ? Icon(Icons.check,
-                          color: AppSemanticColors.onColor(_themeColors[i]),
-                          size: 18)
-                      : null,
                 ),
               );
             }),
@@ -385,7 +435,10 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
   Widget _buildPreview(ColorScheme colorScheme) {
     final color = _themeColors[_selectedColorIndex];
     final icon = _icons[_selectedIconIndex];
-    final name = _nameController.text.isEmpty ? '打卡目标' : _nameController.text;
+    final name =
+        _nameController.text.trim().isEmpty ? '打卡目标' : _nameController.text;
+    final description = _descController.text.trim();
+    final count = _countController.text.isEmpty ? '1' : _countController.text;
 
     final onColor = AppSemanticColors.onColor(color);
     // 图标块的底是 onColor 淡涂 20%，所以图标色要按涂后的底重算 ——
@@ -424,17 +477,65 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${_period.label} ${_countController.text.isEmpty ? "1" : _countController.text} 次',
+                  '${_period.label} $count 次',
                   style: TextStyle(
                     fontSize: 13,
                     color: onColor.withValues(alpha: 0.85),
                   ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  description.isEmpty ? '暂无描述' : description,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: onColor.withValues(alpha: 0.85),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    _previewTag(
+                      color: onColor,
+                      icon: Icons.photo_camera_outlined,
+                      label: _requirePhoto ? '需要照片' : '照片可选',
+                    ),
+                    _previewTag(
+                      color: onColor,
+                      icon: Icons.location_on_outlined,
+                      label: _requireLocation ? '记录位置' : '不记录位置',
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _previewTag({
+    required Color color,
+    required IconData icon,
+    required String label,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 15, color: color.withValues(alpha: 0.9)),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: color.withValues(alpha: 0.9),
+          ),
+        ),
+      ],
     );
   }
 
@@ -501,7 +602,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
         ],
       ),
     );
-    if (result != null) {
+    if (result != null && mounted) {
       _onDurationSelected(result);
     }
   }
