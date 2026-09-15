@@ -9,6 +9,7 @@ PUBSPEC="$REPO_ROOT/pubspec.yaml"
 # 与 lib/services/update_service.dart 保持一致。
 GITEE_OWNER="${GITEE_OWNER:-zhou-jiaqi10}"
 GITEE_REPO="${GITEE_REPO:-time_manager_releases}"
+GITEE_TARGET_COMMITISH="${GITEE_TARGET_COMMITISH:-master}"
 GITEE_API_BASE="https://gitee.com/api/v5/repos/$GITEE_OWNER/$GITEE_REPO"
 
 TARGET_PLATFORM="android-arm64"
@@ -61,6 +62,7 @@ usage() {
                           未设置时自动读取 lib/config/diary_gitee_config.dart
   GITEE_OWNER              默认 zhou-jiaqi10
   GITEE_REPO               默认 time_manager_releases
+  GITEE_TARGET_COMMITISH   创建 Release 时的目标分支，默认 master
 
 示例：
   GITEE_TOKEN='...' scripts/publish_android_release.sh
@@ -247,6 +249,7 @@ create_release_or_get_id() {
   log "创建 Gitee Release：$RELEASE_TAG"
   api_call POST "$GITEE_API_BASE/releases" \
     --data-urlencode "tag_name=$RELEASE_TAG" \
+    --data-urlencode "target_commitish=$GITEE_TARGET_COMMITISH" \
     --data-urlencode "name=$release_name" \
     --data-urlencode "body=$release_body" \
     --data-urlencode "prerelease=false"
