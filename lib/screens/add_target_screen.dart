@@ -20,6 +20,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
   TargetType _selectedType = TargetType.duration;
   Color _selectedColor = AppSemanticColors.palette.first;
   String _selectedPeriod = "每周";
+  bool _isSaving = false;
 
   // --- 可编辑的表单数据 ---
   String _eventName = "运动";
@@ -106,7 +107,8 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
   ///
   /// - "24:00" 这类当天结束边界按 00:00 展示（TimeOfDay 不接受 hour=24）
   /// - 空串、非法字符、越界数值一律回退到 [fallback]，不抛异常
-  TimeOfDay _parseTimeOfDay(String value, {TimeOfDay fallback = const TimeOfDay(hour: 0, minute: 0)}) {
+  TimeOfDay _parseTimeOfDay(String value,
+      {TimeOfDay fallback = const TimeOfDay(hour: 0, minute: 0)}) {
     final parts = value.split(':');
     if (parts.length < 2) return fallback;
     final hour = int.tryParse(parts[0].trim());
@@ -215,6 +217,47 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
     );
   }
 
+  Future<void> _saveTarget() async {
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
+
+    final provider = Provider.of<TimeProvider>(context, listen: false);
+    final categoryId = _categoryId.isNotEmpty
+        ? _categoryId
+        : (provider.resolveCategoryIdForLabel(_eventName) ?? '');
+    final newTarget = Target(
+      id: widget.target?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      name: _eventName,
+      categoryId: categoryId,
+      type: _selectedType,
+      color: _selectedColor,
+      period: _selectedPeriod,
+      compareType: _compareType,
+      durationHours: double.tryParse(_durationValue) ?? 0,
+      frequencyCount: int.tryParse(_frequencyCount) ?? 0,
+      targetTime: _targetTime,
+      startTime: _startTime,
+      endTime: _endTime,
+    );
+
+    if (widget.target != null) {
+      final saved = await provider.updateTarget(newTarget);
+      if (!mounted) return;
+      if (!saved) {
+        setState(() => _isSaving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('保存失败，请稍后重试')),
+        );
+        return;
+      }
+    } else {
+      provider.addTarget(newTarget);
+    }
+
+    if (!mounted) return;
+    Navigator.pop(context, newTarget);
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -224,33 +267,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
       appBar: AppBar(
         leadingWidth: 80,
         leading: TextButton(
-          onPressed: () {
-            final provider = Provider.of<TimeProvider>(context, listen: false);
-            final categoryId = _categoryId.isNotEmpty
-                ? _categoryId
-                : (provider.resolveCategoryIdForLabel(_eventName) ?? '');
-            final newTarget = Target(
-              id: widget.target?.id ??
-                  DateTime.now().millisecondsSinceEpoch.toString(),
-              name: _eventName,
-              categoryId: categoryId,
-              type: _selectedType,
-              color: activeColor,
-              period: _selectedPeriod,
-              compareType: _compareType,
-              durationHours: double.tryParse(_durationValue) ?? 0,
-              frequencyCount: int.tryParse(_frequencyCount) ?? 0,
-              targetTime: _targetTime,
-              startTime: _startTime,
-              endTime: _endTime,
-            );
-            if (widget.target != null) {
-              provider.updateTarget(newTarget);
-            } else {
-              provider.addTarget(newTarget);
-            }
-            Navigator.pop(context);
-          },
+          onPressed: _isSaving ? null : _saveTarget,
           style: TextButton.styleFrom(
             foregroundColor: colorScheme.onSurface,
           ),

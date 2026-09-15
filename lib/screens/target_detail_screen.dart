@@ -8,10 +8,11 @@ import '../widgets/target_stats_section.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
-class TargetDetailScreen extends StatefulWidget {
-  final Target target;
 
-  const TargetDetailScreen({super.key, required this.target});
+class TargetDetailScreen extends StatefulWidget {
+  final String targetId;
+
+  const TargetDetailScreen({super.key, required this.targetId});
 
   @override
   State<TargetDetailScreen> createState() => _TargetDetailScreenState();
@@ -19,70 +20,76 @@ class TargetDetailScreen extends StatefulWidget {
 
 class _TargetDetailScreenState extends State<TargetDetailScreen> {
   bool _historyExpanded = false;
+  bool _deletionNoticeScheduled = false;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final target = widget.target;
+    return Consumer<TimeProvider>(
+      builder: (context, timeProvider, child) {
+        final target = timeProvider.targetById(widget.targetId);
+        if (target == null) {
+          _scheduleDeletedTargetReturn();
+          return _buildDeletedTargetScaffold();
+        }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(target.name),
-        centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.chevron_left, size: 30),
-          onPressed: () => Navigator.pop(context),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.edit),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => AddTargetScreen(target: target),
-                ),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            onPressed: () {
-              showDialog(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text("确认删除"),
-                  content: Text('确定要删除目标"${target.name}"吗？'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text("取消"),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        Provider.of<TimeProvider>(context, listen: false)
-                            .deleteTarget(target);
-                        Navigator.pop(context);
-                        Navigator.pop(context);
-                      },
-                      style: TextButton.styleFrom(
-                          foregroundColor: AppSemanticColors.readableOn(
-                              AppSemanticColors.danger,
-                              AppSurfaces.of(context).card)),
-                      child: const Text("删除"),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-      body: Consumer<TimeProvider>(
-        builder: (context, timeProvider, child) {
-          final history = timeProvider.getTargetHistory(target);
+        final colorScheme = Theme.of(context).colorScheme;
+        final history = timeProvider.getTargetHistory(target);
 
-          return SingleChildScrollView(
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(target.name),
+            centerTitle: true,
+            leading: IconButton(
+              icon: const Icon(Icons.chevron_left, size: 30),
+              onPressed: () => Navigator.pop(context),
+            ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.edit),
+                onPressed: () async {
+                  await Navigator.push<Target>(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => AddTargetScreen(target: target),
+                    ),
+                  );
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete_outline),
+                onPressed: () {
+                  showDialog<void>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                      title: const Text("确认删除"),
+                      content: Text('确定要删除目标"${target.name}"吗？'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext),
+                          child: const Text("取消"),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            timeProvider.deleteTarget(target);
+                            Navigator.pop(dialogContext);
+                            if (mounted && Navigator.of(context).canPop()) {
+                              Navigator.pop(context);
+                            }
+                          },
+                          style: TextButton.styleFrom(
+                              foregroundColor: AppSemanticColors.readableOn(
+                                  AppSemanticColors.danger,
+                                  AppSurfaces.of(context).card)),
+                          child: const Text("删除"),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+          body: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -95,14 +102,36 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                 ),
                 if (history.isNotEmpty) ...[
                   const SizedBox(height: 16),
-                  _buildHistorySection(history, colorScheme),
+                  _buildHistorySection(history, target, colorScheme),
                 ],
               ],
             ),
-          );
-        },
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDeletedTargetScaffold() {
+    return Scaffold(
+      appBar: AppBar(title: const Text('目标已删除')),
+      body: const Center(
+        child: Text('该目标已被删除，正在返回上一页'),
       ),
     );
+  }
+
+  void _scheduleDeletedTargetReturn() {
+    if (_deletionNoticeScheduled) return;
+    _deletionNoticeScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('目标已被删除')),
+      );
+      final navigator = Navigator.of(context);
+      if (navigator.canPop()) navigator.pop();
+    });
   }
 
   Widget _buildTargetInfoCard(Target target, ColorScheme colorScheme) {
@@ -174,7 +203,11 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
     );
   }
 
-  Widget _buildHistorySection(Map<String, List<String>> history, ColorScheme colorScheme) {
+  Widget _buildHistorySection(
+    Map<String, List<String>> history,
+    Target target,
+    ColorScheme colorScheme,
+  ) {
     return Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -210,7 +243,9 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                       ),
                       const SizedBox(width: 4),
                       Icon(
-                        _historyExpanded ? Icons.expand_less : Icons.expand_more,
+                        _historyExpanded
+                            ? Icons.expand_less
+                            : Icons.expand_more,
                         color: colorScheme.onSurfaceVariant,
                       ),
                     ],
@@ -223,7 +258,8 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
             const Divider(height: 1),
             ...history.entries.take(30).map((entry) {
               return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -237,15 +273,15 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                     ),
                     const SizedBox(height: 4),
                     ...entry.value.map((range) => Padding(
-                      padding: const EdgeInsets.only(left: 8),
-                      child: Text(
-                        '$range ${widget.target.name}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    )),
+                          padding: const EdgeInsets.only(left: 8),
+                          child: Text(
+                            '$range ${target.name}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        )),
                   ],
                 ),
               );

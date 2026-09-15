@@ -1336,6 +1336,14 @@ class TimeProvider with ChangeNotifier {
   final List<Target> _targets = [];
   List<Target> get targets => List.unmodifiable(_targets);
 
+  /// 按稳定 ID 获取当前目标，供详情页等长生命周期页面实时解析。
+  Target? targetById(String id) {
+    for (final target in _targets) {
+      if (target.id == id) return target;
+    }
+    return null;
+  }
+
   // 分类列表移至 Provider 管理
   List<Category> _categories = [];
   List<Category> get categories => List.unmodifiable(_categories);
@@ -8009,20 +8017,49 @@ class TimeProvider with ChangeNotifier {
     _invalidateTargetStats(); // 目标统计缓存整体失效
   }
 
-  void updateTarget(Target newTarget) {
-    if (!_allowScheduleMutation()) return;
-    int index = _targets.indexWhere((t) => t.id == newTarget.id);
-    if (index != -1) {
-      final nowMs = DateTime.now().millisecondsSinceEpoch;
-      _targets[index] = newTarget.copyWith(updatedAt: nowMs);
-      _deletedTargets.remove(newTarget.id);
-      _targetsDocUpdatedAt = nowMs;
-      _targetsDirty = true;
-      _markTargetsGiteePending();
-      _saveData();
-      notifyListeners();
-      _invalidateTargetStats(); // 目标统计缓存整体失效
+  /// 更新目标并等待本地保存完成。
+  ///
+  /// 保存失败时回滚内存中的目标，调用方可以据此决定是否关闭编辑页。
+  Future<bool> updateTarget(Target newTarget) async {
+    if (!_allowScheduleMutation()) return false;
+    final index = _targets.indexWhere((t) => t.id == newTarget.id);
+    if (index == -1) return false;
+
+    final previousTarget = _targets[index];
+    final hadDeletedTombstone = _deletedTargets.containsKey(newTarget.id);
+    final previousDeletedAt = _deletedTargets[newTarget.id];
+    final previousDocumentUpdatedAt = _targetsDocUpdatedAt;
+    final previousTargetsDirty = _targetsDirty;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+
+    _targets[index] = newTarget.copyWith(updatedAt: nowMs);
+    _deletedTargets.remove(newTarget.id);
+    _targetsDocUpdatedAt = nowMs;
+    _targetsDirty = true;
+
+    bool saved;
+    try {
+      saved = await _saveData();
+    } catch (e, stackTrace) {
+      _recordAppError('目标更新保存失败', e, stackTrace);
+      saved = false;
     }
+    if (!saved) {
+      _targets[index] = previousTarget;
+      if (hadDeletedTombstone) {
+        _deletedTargets[newTarget.id] = previousDeletedAt!;
+      } else {
+        _deletedTargets.remove(newTarget.id);
+      }
+      _targetsDocUpdatedAt = previousDocumentUpdatedAt;
+      _targetsDirty = previousTargetsDirty;
+      return false;
+    }
+
+    _markTargetsGiteePending();
+    notifyListeners();
+    _invalidateTargetStats(); // 目标统计缓存整体失效
+    return true;
   }
 
   void deleteTarget(Target target) {

@@ -10,6 +10,7 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+
 class TargetScreen extends StatelessWidget {
   const TargetScreen({super.key});
   @override
@@ -55,8 +56,7 @@ class TargetScreen extends StatelessWidget {
               String progressText = "";
               String title = "";
               final cardColor = context.adaptSemanticColor(target.color);
-              final onCardColor =
-                  AppSemanticColors.onColor(cardColor);
+              final onCardColor = AppSemanticColors.onColor(cardColor);
 
               // 使用 Provider 计算当前周期的进度
               double currentValue =
@@ -195,7 +195,7 @@ class TargetScreen extends StatelessWidget {
                       context,
                       MaterialPageRoute(
                         builder: (context) =>
-                            TargetDetailScreen(target: target),
+                            TargetDetailScreen(targetId: target.id),
                       ),
                     );
                   },
@@ -221,8 +221,7 @@ class TargetScreen extends StatelessWidget {
   }) {
     final colorScheme = Theme.of(context).colorScheme;
     final cardColor = context.adaptSemanticColor(color);
-    final onCardColor =
-        AppSemanticColors.onColor(cardColor);
+    final onCardColor = AppSemanticColors.onColor(cardColor);
 
     return GestureDetector(
       key: key,
@@ -299,7 +298,8 @@ class TargetScreen extends StatelessWidget {
             },
             child: Text('确认',
                 style: TextStyle(
-                    color: AppSemanticColors.readableOn(AppSemanticColors.danger,
+                    color: AppSemanticColors.readableOn(
+                        AppSemanticColors.danger,
                         AppSurfaces.of(context).card))),
           ),
         ],
