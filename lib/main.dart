@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
 
+import 'package:home_widget/home_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
@@ -9,8 +11,12 @@ import 'package:time_manager/theme/app_semantic_colors.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'providers/time_provider.dart';
 import 'package:time_manager/screens/main_screen.dart';
+import 'screens/global_search_screen.dart';
 import 'services/app_log_service.dart';
+import 'services/home_widget_action_router.dart';
+import 'services/home_widget_service.dart';
 import 'services/windows_legacy_preferences_migration.dart';
+import 'widgets/desktop_shortcut_host.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -88,7 +94,7 @@ void main() async {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Icon(Icons.error_outline,
-            size: 48, color: AppSemanticColors.dangerDeep),
+                    size: 48, color: AppSemanticColors.dangerDeep),
                 const SizedBox(height: 16),
                 const Text('应用遇到了问题',
                     style:
@@ -145,9 +151,76 @@ class TimeManagerApp extends StatefulWidget {
 }
 
 class _TimeManagerAppState extends State<TimeManagerApp> {
+  StreamSubscription<Uri?>? _homeWidgetClicks;
+  HomeWidgetActionRequest? _pendingHomeWidgetAction;
+
+  @override
+  void initState() {
+    super.initState();
+    // home_widget 只在 Android 注册小组件点击通道；其他平台不触碰该
+    // platform channel，避免启动时出现 MissingPluginException。
+    if (Platform.isAndroid) {
+      _homeWidgetClicks = HomeWidget.widgetClicked.listen(
+        _handleHomeWidgetUri,
+        onError: (Object error, StackTrace stackTrace) {
+          debugPrint('监听小组件动作失败: $error');
+        },
+      );
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_readInitialHomeWidgetUri());
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _homeWidgetClicks?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _readInitialHomeWidgetUri() async {
+    try {
+      final uri = await HomeWidget.initiallyLaunchedFromHomeWidget();
+      if (mounted) _handleHomeWidgetUri(uri);
+    } catch (error) {
+      debugPrint('读取小组件启动动作失败: $error');
+    }
+  }
+
+  void _handleHomeWidgetUri(Uri? uri) {
+    final request = HomeWidgetService.parseActionUri(uri);
+    if (request == null) return;
+
+    _pendingHomeWidgetAction = request;
+    _dispatchPendingHomeWidgetAction();
+  }
+
+  void _dispatchPendingHomeWidgetAction() {
+    final request = _pendingHomeWidgetAction;
+    if (request == null || !mounted) return;
+
+    final navigator = rootNavigatorKey.currentState;
+    if (navigator == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _dispatchPendingHomeWidgetAction();
+      });
+      return;
+    }
+
+    _pendingHomeWidgetAction = null;
+    unawaited(
+      HomeWidgetActionRouter.dispatch(
+        context: context,
+        navigator: navigator,
+        request: request,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final themeMode = context.watch<ThemeModeProvider>().themeMode;
+    final timeProvider = context.read<TimeProvider>();
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
       theme: AppTheme.light(),
@@ -162,6 +235,30 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
         Locale('zh', 'CN'),
         Locale('en', 'US'),
       ],
+      // 放在 Navigator 外层，保证 Dialog/BottomSheet 等临时路由也能用
+      // Esc 关闭；HomeScreen 内层还会处理日期面板、刷子和时间选择。
+      builder: (context, child) => DesktopShortcutHost(
+        onUndo: timeProvider.undo,
+        onPreviousDay: timeProvider.previousDay,
+        onNextDay: timeProvider.nextDay,
+        onToday: () => timeProvider.goToDate(DateTime.now()),
+        onOpenSearch: () {
+          final navigator = rootNavigatorKey.currentState;
+          if (navigator == null) return;
+          navigator.push(
+            MaterialPageRoute(
+              builder: (_) => const GlobalSearchScreen(),
+            ),
+          );
+        },
+        onEscape: () {
+          final navigator = rootNavigatorKey.currentState;
+          if (navigator == null || !navigator.canPop()) return false;
+          navigator.pop();
+          return true;
+        },
+        child: child ?? const SizedBox.shrink(),
+      ),
       home: const MainScreen(),
     );
   }

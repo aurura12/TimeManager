@@ -8,6 +8,73 @@ class HomeWidgetService {
   static const String androidProvider =
       'com.example.time_manager.TimeManagerWidgetProvider';
 
+  /// 小组件启动 URI 的固定协议。URI 只在 Android 原生小组件内部生成，
+  /// Dart 侧仍会再次严格校验，避免把任意外部 Intent 当成应用动作。
+  static const String actionUriScheme = 'time-manager';
+  static const String actionUriHost = 'widget';
+
+  /// 小组件启动请求。null 表示本次不是从小组件启动；非 null 一定是
+  /// 已收到过 URI（包括校验失败的 URI），这样坏参数不会静默跳首页。
+  static HomeWidgetActionRequest? parseActionUri(Uri? uri) {
+    if (uri == null) return null;
+
+    final actionValues = uri.queryParametersAll['action'];
+    final validShape = uri.toString().length <= 256 &&
+        uri.scheme == actionUriScheme &&
+        uri.host == actionUriHost &&
+        uri.path.isEmpty &&
+        uri.fragment.isEmpty &&
+        uri.userInfo.isEmpty &&
+        uri.port == 0 &&
+        uri.queryParametersAll.length == 1 &&
+        actionValues?.length == 1;
+    if (!validShape) {
+      return HomeWidgetActionRequest(
+          uri: uri, action: HomeWidgetAction.invalid);
+    }
+
+    final action = switch (actionValues!.single) {
+      'today_records' => HomeWidgetAction.todayRecords,
+      _ => HomeWidgetAction.invalid,
+    };
+    return HomeWidgetActionRequest(uri: uri, action: action);
+  }
+
+  /// 为原生小组件生成固定格式的 URI，避免在多个入口各自拼接参数。
+  static Uri actionUri(HomeWidgetAction action) {
+    final value = switch (action) {
+      HomeWidgetAction.todayRecords => 'today_records',
+      HomeWidgetAction.invalid => throw ArgumentError('invalid widget action'),
+    };
+    return Uri(
+      scheme: actionUriScheme,
+      host: actionUriHost,
+      queryParameters: {'action': value},
+    );
+  }
+
+  /// 将动作反馈写回小组件，原生端只显示短时间，避免过期状态长期误导用户。
+  static Future<void> reportActionStatus(
+    String message, {
+    bool isError = false,
+  }) async {
+    final normalized = message.trim();
+    if (normalized.isEmpty) return;
+    final safeMessage =
+        normalized.length <= 80 ? normalized : normalized.substring(0, 80);
+    await HomeWidget.saveWidgetData<String>(
+      'widget_action_status',
+      safeMessage,
+    );
+    await HomeWidget.saveWidgetData<bool>(
+        'widget_action_status_error', isError);
+    await HomeWidget.saveWidgetData<int>(
+      'widget_action_status_at',
+      DateTime.now().millisecondsSinceEpoch,
+    );
+    await HomeWidget.updateWidget(qualifiedAndroidName: androidProvider);
+  }
+
   /// 与 App 首页一致，时间轴从 7:00 开始展示
   static const int dayStartHour = 7;
   static const int dayEndHour = 24;
@@ -57,10 +124,12 @@ class HomeWidgetService {
 
     await HomeWidget.saveWidgetData<String>('widget_date', dateLabel);
     await HomeWidget.saveWidgetData<String>('widget_stats', statsText);
-    await HomeWidget.saveWidgetData<String>('widget_top_categories', topCategories);
+    await HomeWidget.saveWidgetData<String>(
+        'widget_top_categories', topCategories);
     await HomeWidget.saveWidgetData<String>('widget_current', currentText);
     await HomeWidget.saveWidgetData<String>('widget_next', nextText);
-    await HomeWidget.saveWidgetData<String>('widget_timeline_blocks', timelineBlocks);
+    await HomeWidget.saveWidgetData<String>(
+        'widget_timeline_blocks', timelineBlocks);
     await HomeWidget.saveWidgetData<bool>('widget_pending_sync', pendingSync);
     await HomeWidget.saveWidgetData<bool>('widget_is_today', isToday);
     await HomeWidget.saveWidgetData<int>(
@@ -116,7 +185,8 @@ class HomeWidgetService {
 
     return sorted
         .take(maxItems)
-        .map((e) => '${e.key} ${_formatDurationMinutes(e.value, compact: true)}')
+        .map(
+            (e) => '${e.key} ${_formatDurationMinutes(e.value, compact: true)}')
         .join(' · ');
   }
 
@@ -155,7 +225,8 @@ class HomeWidgetService {
       if (slots[i].recorded && (slots[i].label?.isNotEmpty ?? false)) {
         final label = slots[i].label!;
         final start = i;
-        while (i < slots.length && slots[i].recorded && slots[i].label == label) {
+        while (
+            i < slots.length && slots[i].recorded && slots[i].label == label) {
           i++;
         }
         final time =
@@ -200,9 +271,8 @@ class HomeWidgetService {
       if (slots[i].recorded && (slots[i].label?.isNotEmpty ?? false)) {
         final label = slots[i].label;
         final start = i;
-        while (i < slots.length &&
-            slots[i].recorded &&
-            slots[i].label == label) {
+        while (
+            i < slots.length && slots[i].recorded && slots[i].label == label) {
           i++;
         }
         blocks.add(_TimelineBlock(
@@ -227,6 +297,23 @@ class HomeWidgetService {
     final w = weekdays[date.weekday - 1];
     return '${date.month}月${date.day}日 $w';
   }
+}
+
+enum HomeWidgetAction {
+  todayRecords,
+  invalid,
+}
+
+class HomeWidgetActionRequest {
+  const HomeWidgetActionRequest({required this.uri, required this.action});
+
+  final Uri uri;
+  final HomeWidgetAction action;
+
+  String get routeName => switch (action) {
+        HomeWidgetAction.todayRecords => '/widget/today-records',
+        HomeWidgetAction.invalid => '/widget/invalid-action',
+      };
 }
 
 class _TimelineBlock {

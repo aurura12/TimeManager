@@ -14,6 +14,7 @@ import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/brush_mode_card.dart';
 import '../widgets/date_picker_panel.dart';
+import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/template_bar.dart';
 import '../widgets/time_grid.dart';
 import '../widgets/voice_schedule_sheet.dart';
@@ -625,7 +626,7 @@ class HomeScreenState extends State<HomeScreen> {
     );
 
     // 返回键优先关闭临时浮层（日期选择 / 刷子模式），不直接退出页面
-    return PopScope(
+    final pageWithPopScope = PopScope(
       canPop: !_isBrushMode && !_isDatePickerVisible,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
@@ -636,6 +637,16 @@ class HomeScreenState extends State<HomeScreen> {
         _exitBrushMode();
       },
       child: page,
+    );
+
+    return DesktopShortcutHost(
+      onUndo: timeProvider.undo,
+      onPreviousDay: _goToPreviousDay,
+      onNextDay: _goToNextDay,
+      onToday: _goToToday,
+      onOpenSearch: _openGlobalSearch,
+      onEscape: handleDesktopEscape,
+      child: pageWithPopScope,
     );
   }
 
@@ -1612,17 +1623,16 @@ class HomeScreenState extends State<HomeScreen> {
       minRatio: 3.0,
     );
     return [
+      if (isDesktopPlatform)
+        _appBarIconButton(
+          icon: Icons.keyboard_outlined,
+          tooltip: '键盘快捷键',
+          onPressed: _showKeyboardShortcutHelp,
+        ),
       _appBarIconButton(
         icon: Icons.search,
         tooltip: '搜索记录',
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const GlobalSearchScreen(),
-            ),
-          );
-        },
+        onPressed: _openGlobalSearch,
       ),
       _appBarIconButton(
         icon: Icons.undo,
@@ -1703,6 +1713,97 @@ class HomeScreenState extends State<HomeScreen> {
         ),
       ),
     ];
+  }
+
+  void _goToPreviousDay() {
+    if (!mounted) return;
+    _leaveBrushAndClearSelection();
+    context.read<TimeProvider>().previousDay();
+  }
+
+  void _goToNextDay() {
+    if (!mounted) return;
+    _leaveBrushAndClearSelection();
+    context.read<TimeProvider>().nextDay();
+  }
+
+  void _goToToday() {
+    if (!mounted) return;
+    _leaveBrushAndClearSelection();
+    final now = DateTime.now();
+    context
+        .read<TimeProvider>()
+        .goToDate(DateTime(now.year, now.month, now.day));
+  }
+
+  void _openGlobalSearch() {
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const GlobalSearchScreen(),
+      ),
+    );
+  }
+
+  /// 桌面端 Esc 的处理顺序：先关页面内浮层，再退出刷子，最后清除选择。
+  /// 返回 false 时交给根层处理 Dialog/BottomSheet 等临时路由。
+  bool handleDesktopEscape() {
+    if (!mounted) return false;
+    if (_isDatePickerVisible) {
+      setState(() => _isDatePickerVisible = false);
+      return true;
+    }
+    if (_isBrushMode ||
+        _selectionStart != null ||
+        _selectionEnd != null ||
+        _isBrushPointerDown) {
+      _leaveBrushAndClearSelection();
+      return true;
+    }
+    return false;
+  }
+
+  void _showKeyboardShortcutHelp() {
+    if (!mounted) return;
+    final hints = desktopShortcutHints(macOS: Platform.isMacOS);
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('键盘快捷键'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: AppSizes.dialogMaxWidth),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final hint in hints)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                  child: Row(
+                    children: [
+                      Expanded(child: Text(hint.action, style: AppText.body)),
+                      Text(hint.keys, style: AppText.body),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                '输入框获得焦点时不会接管文字编辑快捷键。',
+                style: AppText.caption.copyWith(
+                  color: Theme.of(dialogContext).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _clearSelection() {

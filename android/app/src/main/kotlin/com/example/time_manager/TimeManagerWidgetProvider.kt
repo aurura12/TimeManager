@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.widget.RemoteViews
@@ -53,6 +54,14 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
         val dayStartMinutes = widgetData.getInt("widget_day_start_minutes", 7 * 60)
         val daySpanMinutes = widgetData.getInt("widget_day_span_minutes", 17 * 60)
         val pendingSync = widgetData.getBoolean("widget_pending_sync", false)
+        val actionStatus = widgetData.getString("widget_action_status", "")?.trim().orEmpty()
+        val actionStatusAt = widgetData.getLong("widget_action_status_at", 0L)
+        val actionStatusError = widgetData.getBoolean("widget_action_status_error", false)
+        val actionStatusAge = System.currentTimeMillis() - actionStatusAt
+        val showActionStatus =
+            actionStatus.isNotEmpty() &&
+                actionStatusAt > 0L &&
+                actionStatusAge in 0..ACTION_STATUS_TTL_MS
 
         appWidgetIds.forEach { widgetId ->
             val (bitmapWidth, bitmapHeight) =
@@ -83,9 +92,25 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
                         if (pendingSync) View.VISIBLE else View.GONE,
                     )
 
-                    val pendingIntent =
-                        HomeWidgetLaunchIntent.getActivity(context, MainActivity::class.java)
-                    setOnClickPendingIntent(R.id.widget_container, pendingIntent)
+                    setTextViewText(R.id.widget_action_status, actionStatus)
+                    setTextColor(
+                        R.id.widget_action_status,
+                        if (actionStatusError) STATUS_ERROR_COLOR else STATUS_SUCCESS_COLOR,
+                    )
+                    setViewVisibility(
+                        R.id.widget_action_status,
+                        if (showActionStatus) View.VISIBLE else View.GONE,
+                    )
+
+                    // 原有整块点击也明确进入“今日记录”，不再无参数地落到首页。
+                    setOnClickPendingIntent(
+                        R.id.widget_container,
+                        actionPendingIntent(context, ACTION_TODAY_RECORDS),
+                    )
+                    setOnClickPendingIntent(
+                        R.id.widget_action_today,
+                        actionPendingIntent(context, ACTION_TODAY_RECORDS),
+                    )
                 }
             appWidgetManager.updateAppWidget(widgetId, views)
         }
@@ -99,10 +124,29 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
     )
 
     companion object {
+        private const val ACTION_URI_SCHEME = "time-manager"
+        private const val ACTION_URI_HOST = "widget"
+        private const val ACTION_TODAY_RECORDS = "today_records"
+        private const val ACTION_STATUS_TTL_MS = 10 * 60 * 1000L
+        private const val STATUS_SUCCESS_COLOR = 0xFF558B2F.toInt()
+        private const val STATUS_ERROR_COLOR = 0xFFC62828.toInt()
         private const val EMPTY_COLOR = 0xFFBDBDBD.toInt()
         private const val NOW_LINE_COLOR = 0xFFFFFFFF.toInt()
         private const val TEXT_MIN_PADDING_PX = 10f
         private const val WIDGET_HORIZONTAL_PADDING_DP = 20f
+
+        private fun actionPendingIntent(
+            context: Context,
+            action: String,
+        ) = HomeWidgetLaunchIntent.getActivity(
+            context,
+            MainActivity::class.java,
+            Uri.Builder()
+                .scheme(ACTION_URI_SCHEME)
+                .authority(ACTION_URI_HOST)
+                .appendQueryParameter("action", action)
+                .build(),
+        )
 
         /** 按小组件实际宽度与 dimen 高度生成位图，避免 ImageView 拉伸导致文字变形 */
         fun resolveTimelineBitmapSize(
