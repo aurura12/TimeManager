@@ -11,6 +11,8 @@ import '../models/known_google_users.dart';
 
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_tokens.dart';
+import '../utils/map_tile_config.dart';
+
 /// 打卡地图（高德瓦片 + 标记点，WGS-84 → GCJ-02 坐标转换）
 class CheckInMapPreview extends StatelessWidget {
   const CheckInMapPreview({
@@ -58,10 +60,9 @@ class CheckInMapPreview extends StatelessWidget {
                 ),
                 children: [
                   TileLayer(
-                    urlTemplate:
-                        'https://webrd{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
-                    subdomains: const ['01', '02', '03', '04'],
-                    userAgentPackageName: 'com.example.time_manager',
+                    urlTemplate: MapTileConfig.urlTemplate,
+                    subdomains: MapTileConfig.subdomains,
+                    userAgentPackageName: MapTileConfig.userAgentPackageName,
                   ),
                   if (mapData.markers.isNotEmpty)
                     MarkerLayer(markers: mapData.markers),
@@ -75,8 +76,7 @@ class CheckInMapPreview extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(Icons.map_outlined,
-                          size: 36,
-                          color: colorScheme.onSurfaceVariant),
+                          size: 36, color: colorScheme.onSurfaceVariant),
                       const SizedBox(height: 8),
                       Text(
                         '暂无带位置的打卡',
