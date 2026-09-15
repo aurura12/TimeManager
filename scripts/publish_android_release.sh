@@ -36,7 +36,7 @@ usage() {
 默认行为：
   1. 调用 build_android.sh：获取依赖、递增版本号并构建 Android arm64-v8a APK（次版本号 +1、patch 归零、构建号 +1）；
   2. 生成同名 .sha256 文件；
-  3. 在 Gitee 的 time_manager_releases 仓库创建或复用 v<版本> Release（标题为“时间块”）；
+  3. 在 Gitee 的 time_manager_releases 仓库创建或复用 <版本> Release（标题为“时间块”）；
   4. 先上传 .sha256，再上传 APK，避免手机在发布过程中拿到缺少校验摘要的安装包。
 
   默认跳过 flutter analyze 和 flutter test；需要发布前再次检查时使用 --run-tests。
@@ -213,23 +213,29 @@ create_release_or_get_id() {
   api_call GET "$release_url"
   if [[ "$API_STATUS" == "200" ]]; then
     release_id="$(extract_release_id)"
-    if [[ ! "$release_id" =~ ^[0-9]+$ ]]; then
-      log "标签接口没有返回 Release ID，改从 Release 列表查找"
-      api_call GET "$GITEE_API_BASE/releases?per_page=100"
-      require_api_success
-      release_id="$(extract_release_id)"
+    if [[ "$release_id" =~ ^[0-9]+$ ]]; then
+      log "已找到现有 Release，准备复用：$RELEASE_TAG"
+      RELEASE_ID="$release_id"
+      return
     fi
-    [[ "$release_id" =~ ^[0-9]+$ ]] || \
-      die "Gitee 已找到 Release，但响应中没有有效的 Release ID（返回结构：$(release_response_shape)）"
-    log "已找到现有 Release，准备复用：$RELEASE_TAG"
-    RELEASE_ID="$release_id"
-    return
-  fi
-  [[ "$API_STATUS" == "404" ]] || {
+
+    log "标签接口返回空结果，改从 Release 列表查找"
+    api_call GET "$GITEE_API_BASE/releases?per_page=100"
+    require_api_success
+    release_id="$(extract_release_id)"
+    if [[ "$release_id" =~ ^[0-9]+$ ]]; then
+      log "已找到现有 Release，准备复用：$RELEASE_TAG"
+      RELEASE_ID="$release_id"
+      return
+    fi
+    log "Release 列表中没有 $RELEASE_TAG，准备创建"
+  elif [[ "$API_STATUS" == "404" ]]; then
+    log "未找到 $RELEASE_TAG，准备创建"
+  else
     echo "读取 Gitee Release 失败（HTTP ${API_STATUS}）" >&2
     print_api_error
     exit 1
-  }
+  fi
 
   local release_name="$APP_NAME"
   local release_body
@@ -406,12 +412,12 @@ else
   ARTIFACT_PATH="$(resolve_path "$ARTIFACT_PATH")"
 fi
 
-RELEASE_TAG="v$release_version"
+RELEASE_TAG="$release_version"
 
 if [[ "$SKIP_BUMP" -eq 1 || "$SKIP_BUILD" -eq 1 ]]; then
   release_version="$VERSION_NAME"
   release_build="$VERSION_STR"
-  RELEASE_TAG="v$release_version"
+  RELEASE_TAG="$release_version"
 fi
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
