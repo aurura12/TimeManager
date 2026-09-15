@@ -8,7 +8,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/screens/profile_screen.dart';
 import '../models/schedule_sync_progress.dart';
 import '../providers/time_provider.dart';
-import '../services/diary_local_store.dart';
 import '../services/diary_search_service.dart';
 import '../services/on_this_day_service.dart';
 import '../theme/app_theme.dart';
@@ -35,6 +34,13 @@ class _NavEntry {
   final String label;
 }
 
+class _MainTab {
+  const _MainTab({required this.navigation, required this.builder});
+
+  final _NavEntry navigation;
+  final Widget Function() builder;
+}
+
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
 
@@ -44,6 +50,10 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _selectedIndex = 0;
+
+  late final List<_MainTab> _tabs;
+  late final List<Widget?> _tabPages;
+  final Set<int> _builtTabIndices = <int>{};
 
   // 「记录」页用 IndexedStack 常驻，离开 Tab 不会 dispose，
   // 所以刷子模式要靠这个 key 主动退出。
@@ -64,9 +74,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     // 在 initState 保存 Provider 引用，dispose 中不再使用 context（树已不稳定）
     _timeProvider = context.read<TimeProvider>();
     _timeProvider.addListener(_tryShowOnThisDay);
-
-    // 后台加载日记索引，保证首次启动也能读到已同步的日记
-    _loadDiaryIndexInBackground();
+    _tabs = _buildTabs();
+    _tabPages = List<Widget?>.filled(_tabs.length, null);
 
     // 第一帧后也尝试一次（此时数据可能已就绪）
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -81,20 +90,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  /// 后台加载日记搜索索引（App 启动时调用，避免首屏漏掉已同步日记）
-  Future<void> _loadDiaryIndexInBackground() async {
-    try {
-      final token = await DiaryLocalStore.loadToken();
-      if (token == null || token.trim().isEmpty) return;
-      if (!DiarySearchService.isLoaded && !DiarySearchService.isLoading) {
-        DiarySearchService.loadInBackground(token);
-      }
-    } catch (_) {
-      // 索引加载失败不影响主流程
-    }
-  }
-
-  /// 等待日记索引加载完成（最多等待 15 秒，超时继续）
+  /// 等待由日记页或日记搜索触发的索引加载完成（最多等待 15 秒）。
   Future<void> _waitForDiaryIndex() async {
     if (DiarySearchService.isLoaded || !DiarySearchService.isLoading) return;
     final deadline = DateTime.now().add(const Duration(seconds: 15));
@@ -167,69 +163,108 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
   }
 
-  late final List<Widget> _widgetOptions = <Widget>[
-    HomeScreen(key: _homeKey),
-    const DiaryScreen(),
-    const TravelScreen(),
-    const CheckInScreen(),
-    const TargetScreen(),
-    const ProfileScreen(),
-  ];
+  List<_MainTab> _buildTabs() {
+    final tabs = <_MainTab>[
+      _MainTab(
+        navigation: const _NavEntry(
+          icon: Icons.home_outlined,
+          selectedIcon: Icons.home,
+          label: '记录',
+        ),
+        builder: () => HomeScreen(key: _homeKey),
+      ),
+      _MainTab(
+        navigation: const _NavEntry(
+          icon: Icons.menu_book_outlined,
+          selectedIcon: Icons.menu_book,
+          label: '日记',
+        ),
+        builder: () => const DiaryScreen(),
+      ),
+      _MainTab(
+        navigation: const _NavEntry(
+          icon: Icons.card_travel_outlined,
+          selectedIcon: Icons.card_travel,
+          label: '出行',
+        ),
+        builder: () => const TravelScreen(),
+      ),
+      _MainTab(
+        navigation: const _NavEntry(
+          icon: Icons.check_circle_outline,
+          selectedIcon: Icons.check_circle,
+          label: '打卡',
+        ),
+        builder: () => const CheckInScreen(),
+      ),
+    ];
 
-  static final List<_NavEntry> _navItems = <_NavEntry>[
-    const _NavEntry(
-      icon: Icons.home_outlined,
-      selectedIcon: Icons.home,
-      label: '记录',
-    ),
-    const _NavEntry(
-      icon: Icons.menu_book_outlined,
-      selectedIcon: Icons.menu_book,
-      label: '日记',
-    ),
-    const _NavEntry(
-      icon: Icons.card_travel_outlined,
-      selectedIcon: Icons.card_travel,
-      label: '出行',
-    ),
-    const _NavEntry(
-      icon: Icons.check_circle_outline,
-      selectedIcon: Icons.check_circle,
-      label: '打卡',
-    ),
-    const _NavEntry(
-      icon: Icons.flag_outlined,
-      selectedIcon: Icons.flag,
-      label: '目标',
-    ),
-    const _NavEntry(
-      icon: Icons.person_outline,
-      selectedIcon: Icons.person,
-      label: '我的',
-    ),
-  ];
+    // 平台过滤发生在建立 Tab 列表时，后续导航和 IndexedStack 共用这份列表，
+    // 因而桌面端移除「目标」后不会留下一个错位的索引。
+    if (!isDesktopPlatform) {
+      tabs.add(
+        _MainTab(
+          navigation: const _NavEntry(
+            icon: Icons.flag_outlined,
+            selectedIcon: Icons.flag,
+            label: '目标',
+          ),
+          builder: () => const TargetScreen(),
+        ),
+      );
+    }
+
+    tabs.add(
+      _MainTab(
+        navigation: const _NavEntry(
+          icon: Icons.person_outline,
+          selectedIcon: Icons.person,
+          label: '我的',
+        ),
+        builder: () => const ProfileScreen(),
+      ),
+    );
+    return tabs;
+  }
+
+  void _ensureTabBuilt(int index) {
+    if (index < 0 ||
+        index >= _tabs.length ||
+        _builtTabIndices.contains(index)) {
+      return;
+    }
+    _tabPages[index] = _tabs[index].builder();
+    _builtTabIndices.add(index);
+  }
+
+  List<Widget> _buildTabPages() {
+    return List<Widget>.generate(
+      _tabs.length,
+      (index) => _tabPages[index] ?? const SizedBox.shrink(),
+      growable: false,
+    );
+  }
 
   void _onItemTapped(int index) {
+    if (index < 0 || index >= _tabs.length) return;
+
     // 离开「记录」页时退出刷子模式，避免回到该页还带着刷子
     if (_selectedIndex == 0 && index != 0) {
       _homeKey.currentState?.exitBrushMode();
     }
     setState(() {
       _selectedIndex = index;
+      _ensureTabBuilt(index);
     });
   }
 
   @override
   Widget build(BuildContext context) {
     final surfaces = AppSurfaces.of(context);
-    // Windows 上隐藏"目标"tab，安卓保持完整 6 个 tab
-    final List<Widget> options = List.of(_widgetOptions);
-    final List<_NavEntry> items = List.of(_navItems);
-    if (isDesktopPlatform) {
-      options.removeAt(4); // 移除 TargetScreen
-      items.removeAt(4); // 移除"目标"tab
-    }
-    final safeIndex = _selectedIndex.clamp(0, options.length - 1);
+    final safeIndex = _selectedIndex.clamp(0, _tabs.length - 1);
+    _ensureTabBuilt(safeIndex);
+    final options = _buildTabPages();
+    final items = _tabs.map((tab) => tab.navigation).toList(growable: false);
     final scheduleSyncProgress =
         context.select<TimeProvider, ScheduleSyncProgress?>(
             (p) => p.scheduleSyncProgress);
