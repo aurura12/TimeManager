@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -10,17 +11,19 @@ import '../models/coord_transform.dart';
 import '../models/known_google_users.dart';
 
 import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/map_tile_config.dart';
 
 /// 打卡地图（高德瓦片 + 标记点，WGS-84 → GCJ-02 坐标转换）
-class CheckInMapPreview extends StatelessWidget {
+class CheckInMapPreview extends StatefulWidget {
   const CheckInMapPreview({
     super.key,
     required this.records,
     this.height = 200,
     this.onTap,
     this.showLegend = true,
+    this.tileProvider,
   });
 
   final List<CheckInRecord> records;
@@ -28,23 +31,52 @@ class CheckInMapPreview extends StatelessWidget {
   final VoidCallback? onTap;
   final bool showLegend;
 
+  /// 仅用于测试注入失败/恢复中的瓦片提供器，生产环境保持 flutter_map 默认网络提供器。
+  @visibleForTesting
+  final TileProvider? tileProvider;
+
   static final _defaultCenter = () {
     final gcj = CoordTransform.wgs84ToGcj02(39.9042, 116.4074);
     return LatLng(gcj.$1, gcj.$2);
   }();
 
   @override
+  State<CheckInMapPreview> createState() => _CheckInMapPreviewState();
+}
+
+class _CheckInMapPreviewState extends State<CheckInMapPreview> {
+  final _tileFailureMonitor = MapTileFailureMonitor();
+  final _successfulTileKeys = <String>{};
+  TileProvider? _ownedTileProvider;
+  int _tileLayerGeneration = 0;
+
+  Timer? _failureEvaluationTimer;
+  Timer? _automaticRetryTimer;
+  Timer? _retryRecoveryTimer;
+  bool _showTileFailure = false;
+  bool _isRetrying = false;
+
+  @override
+  void dispose() {
+    _failureEvaluationTimer?.cancel();
+    _automaticRetryTimer?.cancel();
+    _retryRecoveryTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final located = records.where((r) => r.hasLocation).toList();
+    final surfaces = AppSurfaces.of(context);
+    final located = widget.records.where((r) => r.hasLocation).toList();
     final mapData = _aggregateMarkers(located);
 
     return GestureDetector(
-      onTap: onTap,
+      onTap: widget.onTap,
       child: ClipRRect(
         borderRadius: AppRadius.cardAll,
         child: SizedBox(
-          height: height,
+          height: widget.height,
           width: double.infinity,
           child: Stack(
             children: [
@@ -53,7 +85,7 @@ class CheckInMapPreview extends StatelessWidget {
                   initialCenter: mapData.center,
                   initialZoom: mapData.zoom,
                   interactionOptions: InteractionOptions(
-                    flags: onTap != null
+                    flags: widget.onTap != null
                         ? InteractiveFlag.none
                         : InteractiveFlag.all,
                   ),
@@ -63,49 +95,45 @@ class CheckInMapPreview extends StatelessWidget {
                     urlTemplate: MapTileConfig.urlTemplate,
                     subdomains: MapTileConfig.subdomains,
                     userAgentPackageName: MapTileConfig.userAgentPackageName,
+                    key: ValueKey<int>(_tileLayerGeneration),
+                    tileProvider: _effectiveTileProvider,
+                    evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
+                    errorTileCallback: _handleTileLoadError,
+                    tileBuilder: _observeTileLoad,
                   ),
                   if (mapData.markers.isNotEmpty)
                     MarkerLayer(markers: mapData.markers),
+                  if (located.isEmpty) _buildNoLocationState(context),
+                  if (_showTileFailure)
+                    Positioned.fill(
+                      child: _buildTileFailureOverlay(context),
+                    ),
+                  _buildAttribution(context, surfaces, colorScheme),
                 ],
               ),
-              if (located.isEmpty)
-                Container(
-                  color: colorScheme.surface.withValues(alpha: 0.72),
-                  alignment: Alignment.center,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.map_outlined,
-                          size: 36, color: colorScheme.onSurfaceVariant),
-                      const SizedBox(height: 8),
-                      Text(
-                        '暂无带位置的打卡',
-                        style: TextStyle(color: colorScheme.onSurfaceVariant),
-                      ),
-                    ],
-                  ),
-                ),
-              if (showLegend && located.isNotEmpty)
+              if (widget.showLegend && located.isNotEmpty)
                 Positioned(
-                  left: 10,
-                  bottom: 10,
+                  left: AppSpacing.sm,
+                  bottom: AppSpacing.sm,
                   child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.sm,
+                      vertical: AppSpacing.xs,
+                    ),
                     decoration: BoxDecoration(
-                      color: colorScheme.surface.withValues(alpha: 0.92),
+                      color: surfaces.card.withValues(alpha: 0.92),
                       borderRadius: AppRadius.controlAll,
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(Icons.location_on,
-                            size: 14, color: colorScheme.primary),
-                        const SizedBox(width: 4),
+                            size: AppText.caption.fontSize,
+                            color: colorScheme.primary),
+                        const SizedBox(width: AppSpacing.xs),
                         Text(
                           '${located.length} 个打卡点',
-                          style: TextStyle(
-                            fontSize: 12,
+                          style: AppText.caption.copyWith(
                             fontWeight: FontWeight.w500,
                             color: colorScheme.onSurface,
                           ),
@@ -114,14 +142,14 @@ class CheckInMapPreview extends StatelessWidget {
                     ),
                   ),
                 ),
-              if (onTap != null)
+              if (widget.onTap != null)
                 Positioned(
-                  right: 10,
-                  top: 10,
+                  right: AppSpacing.sm,
+                  top: AppSpacing.sm,
                   child: Container(
-                    padding: const EdgeInsets.all(6),
+                    padding: const EdgeInsets.all(AppSpacing.xs),
                     decoration: BoxDecoration(
-                      color: colorScheme.surface.withValues(alpha: 0.92),
+                      color: surfaces.card.withValues(alpha: 0.92),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(Icons.fullscreen,
@@ -137,7 +165,11 @@ class CheckInMapPreview extends StatelessWidget {
 
   static _MapData _aggregateMarkers(List<CheckInRecord> located) {
     if (located.isEmpty) {
-      return _MapData(center: _defaultCenter, zoom: 11, markers: const []);
+      return _MapData(
+        center: CheckInMapPreview._defaultCenter,
+        zoom: 11,
+        markers: const [],
+      );
     }
 
     // WGS-84 → GCJ-02 转换所有坐标
@@ -208,6 +240,323 @@ class CheckInMapPreview extends StatelessWidget {
     }
     return AppSemanticColors.brandSurface;
   }
+
+  Widget _buildNoLocationState(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final surfaces = AppSurfaces.of(context);
+    return Positioned.fill(
+      child: ColoredBox(
+        color: surfaces.card.withValues(alpha: 0.86),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.map_outlined,
+                size: AppSizes.iconButton,
+                color: colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                '暂无带位置的打卡',
+                style: AppText.body.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTileFailureOverlay(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final surfaces = AppSurfaces.of(context);
+    final failedCount = _tileFailureMonitor.failedTileCount;
+
+    return Semantics(
+      liveRegion: true,
+      label: _isRetrying ? '正在重试地图' : '地图加载失败',
+      child: ColoredBox(
+        color: surfaces.page.withValues(alpha: 0.88),
+        child: Center(
+          child: Container(
+            constraints:
+                const BoxConstraints(maxWidth: AppSizes.dialogMaxWidth),
+            margin: const EdgeInsets.all(AppSpacing.md),
+            padding: AppSpacing.card,
+            decoration: BoxDecoration(
+              color: surfaces.card,
+              borderRadius: AppRadius.controlAll,
+              border: Border.all(color: surfaces.border),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _isRetrying ? Icons.sync : Icons.map_outlined,
+                  size: AppSizes.iconButton,
+                  color: _isRetrying
+                      ? AppSemanticColors.readableOn(
+                          AppSemanticColors.warning,
+                          surfaces.card,
+                        )
+                      : AppSemanticColors.readableOn(
+                          AppSemanticColors.danger,
+                          surfaces.card,
+                        ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  _isRetrying ? '正在重试地图…' : '地图加载失败',
+                  style: AppText.sectionTitle.copyWith(
+                    color: colorScheme.onSurface,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  _isRetrying ? '正在重新请求地图瓦片，请稍候' : '有 $failedCount 个地图瓦片未能加载。',
+                  style: AppText.caption.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                if (!_isRetrying) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  FilledButton.icon(
+                    onPressed: _startManualRetry,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('重试地图'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(0, AppSizes.button),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAttribution(
+    BuildContext context,
+    AppSurfaces surfaces,
+    ColorScheme colorScheme,
+  ) {
+    return RichAttributionWidget(
+      alignment: AttributionAlignment.bottomRight,
+      permanentHeight: AppSizes.minTapTarget,
+      popupBackgroundColor: surfaces.card,
+      popupBorderRadius: AppRadius.controlAll,
+      attributions: [
+        TextSourceAttribution(
+          MapTileConfig.attributionSource,
+          textStyle: AppText.body.copyWith(color: colorScheme.onSurface),
+        ),
+        TextSourceAttribution(
+          MapTileConfig.privacyNotice,
+          prependCopyright: false,
+          textStyle: AppText.caption.copyWith(
+            color: colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+      openButton: (context, open) => _buildAttributionButton(
+        context,
+        open,
+        label: '© ${MapTileConfig.attributionSource}',
+        icon: Icons.info_outline,
+        semanticLabel: '地图服务与隐私说明',
+      ),
+      closeButton: (context, close) => _buildAttributionButton(
+        context,
+        close,
+        label: '收起',
+        icon: Icons.close,
+        semanticLabel: '收起地图服务与隐私说明',
+      ),
+    );
+  }
+
+  Widget _buildAttributionButton(
+    BuildContext context,
+    VoidCallback onPressed, {
+    required String label,
+    required IconData icon,
+    required String semanticLabel,
+  }) {
+    final surfaces = AppSurfaces.of(context);
+    final colorScheme = Theme.of(context).colorScheme;
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      child: Material(
+        key: const ValueKey<String>('map-attribution-button'),
+        color: surfaces.card.withValues(alpha: 0.94),
+        borderRadius: AppRadius.controlAll,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: AppRadius.controlAll,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              minHeight: AppSizes.minTapTarget,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label,
+                    style: AppText.caption.copyWith(
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  Icon(
+                    icon,
+                    size: AppText.body.fontSize,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _tileKey(TileImage tile) {
+    final coordinates = tile.coordinates;
+    return '${coordinates.z}/${coordinates.x}/${coordinates.y}';
+  }
+
+  void _handleTileLoadError(
+    TileImage tile,
+    Object _,
+    StackTrace? __,
+  ) {
+    if (!mounted || !_tileFailureMonitor.recordFailure(_tileKey(tile))) {
+      return;
+    }
+
+    if (!_showTileFailure) {
+      setState(() => _showTileFailure = true);
+    }
+    _retryRecoveryTimer?.cancel();
+    _failureEvaluationTimer?.cancel();
+    _failureEvaluationTimer = Timer(
+      MapTileConfig.failureDisplayDelay,
+      _evaluateTileFailures,
+    );
+  }
+
+  Widget _observeTileLoad(
+    BuildContext _,
+    Widget tileWidget,
+    TileImage tile,
+  ) {
+    if (!tile.loadError && tile.readyToDisplay) {
+      final key = _tileKey(tile);
+      if (_successfulTileKeys.add(key)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _handleTileLoadSuccess();
+        });
+      }
+    }
+    return tileWidget;
+  }
+
+  void _handleTileLoadSuccess() {
+    if (!mounted || !_tileFailureMonitor.hasFailures) return;
+    _failureEvaluationTimer?.cancel();
+    _automaticRetryTimer?.cancel();
+    _automaticRetryTimer = null;
+    _retryRecoveryTimer?.cancel();
+    _tileFailureMonitor.clearFailures();
+    if (!_showTileFailure && !_isRetrying) return;
+    setState(() {
+      _showTileFailure = false;
+      _isRetrying = false;
+    });
+  }
+
+  void _evaluateTileFailures() {
+    if (!mounted || !_tileFailureMonitor.hasFailures) return;
+    setState(() {
+      _showTileFailure = true;
+      _isRetrying = false;
+    });
+
+    if (_tileFailureMonitor.shouldAutomaticallyRetry) {
+      _scheduleAutomaticRetry();
+    }
+  }
+
+  void _scheduleAutomaticRetry() {
+    if (_automaticRetryTimer != null ||
+        !_tileFailureMonitor.shouldAutomaticallyRetry) {
+      return;
+    }
+
+    setState(() => _isRetrying = true);
+    _automaticRetryTimer = Timer(
+      _tileFailureMonitor.nextAutomaticRetryDelay,
+      () {
+        _automaticRetryTimer = null;
+        _startAutomaticRetry();
+      },
+    );
+  }
+
+  void _startAutomaticRetry() {
+    if (!mounted || !_tileFailureMonitor.beginAutomaticRetry()) return;
+    _startTileReset();
+  }
+
+  void _startManualRetry() {
+    if (!mounted || _isRetrying) return;
+    _tileFailureMonitor.beginManualRetry();
+    _startTileReset();
+  }
+
+  void _startTileReset() {
+    _failureEvaluationTimer?.cancel();
+    _retryRecoveryTimer?.cancel();
+    _successfulTileKeys.clear();
+    _tileLayerGeneration++;
+    if (widget.tileProvider == null) {
+      _ownedTileProvider = NetworkTileProvider();
+    }
+    setState(() {
+      _showTileFailure = true;
+      _isRetrying = true;
+    });
+    _retryRecoveryTimer = Timer(
+      MapTileConfig.retryRecoveryWindow,
+      _finishRetryObservation,
+    );
+  }
+
+  void _finishRetryObservation() {
+    if (!mounted) return;
+    if (_tileFailureMonitor.hasFailures) {
+      setState(() => _isRetrying = false);
+      return;
+    }
+    setState(() {
+      _showTileFailure = false;
+      _isRetrying = false;
+    });
+  }
+
+  TileProvider get _effectiveTileProvider =>
+      widget.tileProvider ?? (_ownedTileProvider ??= NetworkTileProvider());
 }
 
 class _MapData {
