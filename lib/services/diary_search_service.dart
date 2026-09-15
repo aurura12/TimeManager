@@ -21,6 +21,13 @@ class DiarySearchService {
   // 避免旧的磁盘缓存长期不刷新导致漏掉新增日记（如某位用户的日记）。
   static const Duration _cacheExpiry = Duration(days: 1);
   static String? _cacheDir;
+  static int _saveSequence = 0;
+  static Future<void> _saveQueue = Future<void>.value();
+
+  /// Test-only hook used to exercise disk-write failures without changing the
+  /// production cache directory permissions.
+  @visibleForTesting
+  static Future<void> Function(File file, String content)? writeTextForTesting;
 
   /// 索引进度（0.0 ~ 1.0），通过 addListener 监听变化
   static final ValueNotifier<double> progress = ValueNotifier(0);
@@ -220,41 +227,131 @@ class DiarySearchService {
     }
   }
 
-  /// 并行写入所有缓存文件
+  /// 以新一代文件集合写入所有缓存文件
   static Future<void> _saveToDisk() async {
+    final result = _saveQueue.then<void>((_) => _saveToDiskOnce());
+    _saveQueue = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    await result;
+  }
+
+  static Future<void> _saveToDiskOnce() async {
+    Directory? stagingDirectory;
+    final newContentFileNames = <String>[];
+    var committed = false;
     try {
       final dir = await _getCacheDir();
+      final generation =
+          '${DateTime.now().microsecondsSinceEpoch}_${_saveSequence++}';
+      stagingDirectory = Directory('$dir/.staging_$generation');
+      await stagingDirectory.create(recursive: true);
 
-      // 清理旧缓存
-      final existingFiles = await Directory(dir).list().toList();
-      await Future.wait(existingFiles
-          .whereType<File>()
-          .map((f) => f.delete().catchError((_) => f)));
-
-      // 并行写入所有缓存文件
       final indexLines = <String>[];
       indexLines.add(_lastLoadTime?.toIso8601String() ?? '');
 
       final entries = _cache.entries.toList();
       final keys = entries.map((e) => e.key).toList();
 
-      await Future.wait(List.generate(entries.length, (i) {
-        final fileName = 'cache_$i.txt';
-        final contentFile = File('$dir/$fileName');
-        return contentFile.writeAsString(entries[i].value);
-      }));
-
-      // 构建索引文件内容
+      // 每个内容文件先写入同一缓存目录下的 staging 目录。旧索引仍然
+      // 指向旧文件，因此在新一代完全写完前，旧缓存始终可读。
       for (int i = 0; i < entries.length; i++) {
+        final fileName = 'cache_${generation}_$i.txt';
+        final temporaryFile = File('${stagingDirectory.path}/$fileName.tmp');
+        final stagedFile = File('${stagingDirectory.path}/$fileName');
+        await _writeText(temporaryFile, entries[i].value);
+        await temporaryFile.rename(stagedFile.path);
+
         final key = keys[i];
         final sha = _cacheSha[key] ?? '';
-        indexLines.add('$key:$sha:cache_$i.txt');
+        indexLines.add('$key:$sha:$fileName');
+        newContentFileNames.add(fileName);
       }
 
-      final indexFile = File('$dir/index.txt');
-      await indexFile.writeAsString(indexLines.join('\n'));
+      // 索引同样先 flush 到临时文件，再在最后一步 rename。索引替换是
+      // 提交点：失败时旧 index.txt 仍然指向完整的旧文件集合。
+      final temporaryIndex = File('${stagingDirectory.path}/index.txt.tmp');
+      final stagedIndex = File('${stagingDirectory.path}/index.txt');
+      await _writeText(temporaryIndex, indexLines.join('\n'));
+      await temporaryIndex.rename(stagedIndex.path);
+
+      // 将已完成的内容文件移动到正式目录。文件名带 generation，不会
+      // 覆盖旧文件；旧索引在此期间仍保持有效。
+      for (final fileName in newContentFileNames) {
+        await File('${stagingDirectory.path}/$fileName')
+            .rename('$dir/$fileName');
+      }
+      await stagedIndex.rename('$dir/index.txt');
+      committed = true;
+
+      // 新索引提交后再清理旧文件。清理失败不会影响当前一代缓存读取。
+      await _removeSupersededCacheFiles(
+        Directory(dir),
+        keepFileNames: newContentFileNames.toSet(),
+      );
     } catch (e) {
       debugPrint('日记索引: 保存到磁盘失败: $e');
+    } finally {
+      if (!committed) {
+        // 新索引尚未提交，旧 index.txt 仍是有效入口。清理可能已经移入
+        // 正式目录的新文件时，不触碰旧文件和旧索引。
+        try {
+          final dir = await _getCacheDir();
+          for (final fileName in newContentFileNames) {
+            final file = File('$dir/$fileName');
+            if (await file.exists()) await file.delete();
+          }
+        } catch (_) {
+          // 清理失败只会留下未被旧索引引用的孤儿文件，不影响旧缓存。
+        }
+      }
+      if (stagingDirectory != null && await stagingDirectory.exists()) {
+        try {
+          await stagingDirectory.delete(recursive: true);
+        } catch (_) {
+          // 下一次保存时可继续使用新的 staging 目录。
+        }
+      }
+    }
+  }
+
+  static Future<void> _writeText(File file, String content) async {
+    final writer = writeTextForTesting;
+    if (writer != null) {
+      await writer(file, content);
+      return;
+    }
+    await file.writeAsString(content, flush: true);
+  }
+
+  static Future<void> _removeSupersededCacheFiles(
+    Directory dir, {
+    required Set<String> keepFileNames,
+  }) async {
+    try {
+      await for (final entity in dir.list(followLinks: false)) {
+        final fileName = entity.uri.pathSegments.last;
+        if (entity is File &&
+            fileName != 'index.txt' &&
+            !keepFileNames.contains(fileName)) {
+          try {
+            await entity.delete();
+          } catch (_) {
+            // Stale files are harmless; the committed index does not point to
+            // them anymore.
+          }
+        } else if (entity is Directory && fileName.startsWith('.staging_')) {
+          try {
+            await entity.delete(recursive: true);
+          } catch (_) {
+            // Stale staging data is safe to leave for a later cleanup.
+          }
+        }
+      }
+    } catch (_) {
+      // Cache cleanup is best effort and must not turn a committed save into
+      // a failed save.
     }
   }
 
@@ -351,7 +448,8 @@ class DiarySearchService {
   ///
   /// 搜索与"那年今日"都依赖此缓存；若只改内存不落盘，重启后会被旧的
   /// 磁盘缓存覆盖，导致刚同步的日记（尤其是另一用户的日记）丢失。
-  static Future<void> updateCache(String kind, DateTime date, String content) async {
+  static Future<void> updateCache(
+      String kind, DateTime date, String content) async {
     final key = '${kind}_${DateFormat('yyyy-MM-dd').format(date)}';
     _cache[key] = content;
     _cacheSha.remove(key);

@@ -10,6 +10,10 @@ import 'package:time_manager/services/diary_search_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  tearDown(() {
+    DiarySearchService.writeTextForTesting = null;
+  });
+
   test('updateCache 落盘后重启（重新从磁盘加载）数据完整', () async {
     // 将 path_provider 指向临时目录，避免污染真实文档目录
     final tempDir = await Directory.systemTemp.createTemp('diary_cache_test');
@@ -47,5 +51,38 @@ void main() {
     // 重启后数据完整：乖乖和晶晶的日记都还在，不再只显示一人
     expect(DiarySearchService.getCachedContent('g', date), '乖乖的日记内容');
     expect(DiarySearchService.getCachedContent('j', date), '晶晶的日记内容');
+  });
+
+  test('新缓存写入失败时，旧缓存仍可完整读取', () async {
+    final tempDir =
+        await Directory.systemTemp.createTemp('diary_cache_failure_test');
+    addTearDown(() => tempDir.delete(recursive: true));
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+      const MethodChannel('plugins.flutter.io/path_provider'),
+      (call) async {
+        if (call.method == 'getApplicationDocumentsDirectory') {
+          return tempDir.path;
+        }
+        return null;
+      },
+    );
+
+    DiarySearchService.clearCache();
+    final date = DateTime(2025, 8, 8);
+    await DiarySearchService.updateCache('g', date, '旧的乖乖日记');
+    await DiarySearchService.updateCache('j', date, '旧的晶晶日记');
+
+    DiarySearchService.writeTextForTesting = (file, content) async {
+      throw FileSystemException('模拟缓存写入失败', file.path);
+    };
+    await DiarySearchService.updateCache('g', date, '新的乖乖日记');
+
+    DiarySearchService.writeTextForTesting = null;
+    DiarySearchService.clearCache();
+    await DiarySearchService.loadInBackground('fake-token');
+
+    expect(DiarySearchService.getCachedContent('g', date), '旧的乖乖日记');
+    expect(DiarySearchService.getCachedContent('j', date), '旧的晶晶日记');
   });
 }

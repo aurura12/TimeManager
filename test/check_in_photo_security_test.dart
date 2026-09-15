@@ -30,6 +30,7 @@ void main() {
   });
 
   tearDown(() async {
+    CheckInPhotoCache.writeBytesForTesting = null;
     messenger.setMockMethodCallHandler(pathProviderChannel, null);
     if (await documentsDirectory.exists()) {
       await documentsDirectory.delete(recursive: true);
@@ -129,6 +130,29 @@ void main() {
         maxCacheBytes: validBytes.length,
       );
       expect(second, isNull);
+    });
+
+    test('new photo write failure keeps the previous cache file readable',
+        () async {
+      final firstBytes = validBytes;
+      final saved = await CheckInPhotoCache.saveBytes(
+        _validPhotoPath,
+        firstBytes,
+      );
+      expect(saved, isNotNull);
+
+      CheckInPhotoCache.writeBytesForTesting = (file, bytes) async {
+        throw FileSystemException('simulated cache write failure', file.path);
+      };
+      final replacement = await CheckInPhotoCache.saveBytes(
+        _validPhotoPath,
+        Uint8List.fromList(firstBytes),
+      );
+
+      expect(replacement, isNull);
+      final cached = await CheckInPhotoCache.getCachedFile(_validPhotoPath);
+      expect(cached, isNotNull);
+      expect(await cached!.readAsBytes(), firstBytes);
     });
 
     test('does not return a damaged existing cache file', () async {

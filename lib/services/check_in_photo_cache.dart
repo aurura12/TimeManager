@@ -1,6 +1,6 @@
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -17,6 +17,13 @@ class _PhotoCacheLocation {
 /// 打卡照片本地缓存（从 GitHub 拉取后存本地，避免重复请求）
 class CheckInPhotoCache {
   static Future<void> _writeQueue = Future<void>.value();
+  static int _temporaryFileSequence = 0;
+
+  /// Test-only hook used to exercise failures before the cache file is
+  /// replaced, while keeping the previous file in place.
+  @visibleForTesting
+  static Future<void> Function(File file, Uint8List bytes)?
+      writeBytesForTesting;
 
   static Future<T> _withWriteQueue<T>(Future<T> Function() operation) {
     final result = _writeQueue.then<T>((_) => operation());
@@ -85,6 +92,12 @@ class CheckInPhotoCache {
       await for (final entity
           in root.list(recursive: true, followLinks: false)) {
         if (entity is! File) continue;
+        final fileName = p.basename(entity.path);
+        if (fileName.startsWith('.photo-cache-') && fileName.endsWith('.tmp')) {
+          // A process may have been interrupted after the temp file was
+          // flushed but before rename. It is not part of the usable cache.
+          continue;
+        }
         final type = await FileSystemEntity.type(
           entity.path,
           followLinks: false,
@@ -143,12 +156,39 @@ class CheckInPhotoCache {
 
         // The path has already been normalized and proven to stay inside the
         // app-owned cache directory. Invalid content never reaches this write.
-        await location.file.writeAsBytes(bytes, flush: true);
+        // Keep the temporary file in the same directory so rename is atomic
+        // on the same filesystem. The old file is untouched until rename
+        // succeeds.
+        final temporaryName =
+            '.photo-cache-${DateTime.now().microsecondsSinceEpoch}-'
+            '${_temporaryFileSequence++}.tmp';
+        final temporaryFile = File(p.join(location.root.path, temporaryName));
+        try {
+          await _writeBytes(temporaryFile, bytes);
+          await temporaryFile.rename(location.file.path);
+        } finally {
+          if (await temporaryFile.exists()) {
+            try {
+              await temporaryFile.delete();
+            } catch (_) {
+              // A failed cleanup leaves only an unreferenced temporary file.
+            }
+          }
+        }
         return location.file;
       } catch (_) {
         return null;
       }
     });
+  }
+
+  static Future<void> _writeBytes(File file, Uint8List bytes) async {
+    final writer = writeBytesForTesting;
+    if (writer != null) {
+      await writer(file, bytes);
+      return;
+    }
+    await file.writeAsBytes(bytes, flush: true);
   }
 
   static Future<File?> loadOrFetch({
