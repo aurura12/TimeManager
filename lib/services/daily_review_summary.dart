@@ -47,10 +47,28 @@ class DailyReviewAiResult {
   }
 }
 
+/// A bounded local-only entry exposed to the unified search index.
+///
+/// This type deliberately contains only an already persisted final answer. It
+/// never represents a prompt, token, request, or remote response metadata.
+class DailyReviewSummarySearchEntry {
+  final DateTime date;
+  final String body;
+  final DateTime createdAt;
+
+  const DailyReviewSummarySearchEntry({
+    required this.date,
+    required this.body,
+    required this.createdAt,
+  });
+}
+
 class DailyReviewSummaryBuilder {
   static const _cachePrefix = 'daily_review_ai_cache_';
   static const cacheRetention = Duration(days: 30);
   static const payloadPrefix = 'daily_review:';
+  static const maxSearchEntries = 60;
+  static const maxSearchBodyLength = 16000;
 
   static Future<bool> isAiEnabled() => AiPrivacySettings.isEnabled();
 
@@ -116,6 +134,72 @@ class DailyReviewSummaryBuilder {
       body: body,
       fromCache: true,
     );
+  }
+
+  /// Enumerates only the current identity's known, date-keyed summary cache.
+  ///
+  /// This is intentionally separate from generation: it performs no network
+  /// request and does not change consent or enabled settings. Expiration and
+  /// the existing day-data hash check are retained so stale or malformed
+  /// cache entries never enter local search. A caller cannot raise the number
+  /// of entries or the size of an individual body beyond these limits.
+  static Future<List<DailyReviewSummarySearchEntry>> loadCachedForSearch({
+    int limit = maxSearchEntries,
+    DateTime? now,
+  }) async {
+    await AppIdentityService.load();
+    final prefs = await SharedPreferences.getInstance();
+    final safeLimit = limit.clamp(1, maxSearchEntries);
+    final prefix = AppIdentityService.dataKeyForCurrentIdentity(_cachePrefix);
+    final slotsKey =
+        AppIdentityService.dataKeyForCurrentIdentity('daily_slots');
+    final cutoff = (now ?? DateTime.now()).toUtc().subtract(cacheRetention);
+    final candidates = <DailyReviewSummarySearchEntry>[];
+
+    // Only inspect keys under the exact current-identity cache prefix. No
+    // filesystem paths or arbitrary SharedPreferences values are scanned.
+    for (final key in prefs.getKeys()) {
+      if (!key.startsWith(prefix)) continue;
+      final date = _dateFromCacheKey(key, prefix);
+      if (date == null) continue;
+
+      try {
+        final raw = prefs.getString(key);
+        final cached = _decodeCachedAi(raw);
+        if (cached == null) continue;
+        final createdAt = cached.createdAt ?? date;
+        if (createdAt.toUtc().isBefore(cutoff)) {
+          await prefs.remove(key);
+          continue;
+        }
+
+        final dataHash = _hashDayData(prefs, date, slotsKey: slotsKey);
+        if (cached.hash != dataHash) continue;
+        final body = cached.body;
+        if (body == null ||
+            body.isEmpty ||
+            SiliconFlowAiService.looksLikeThinkingProcess(body)) {
+          continue;
+        }
+
+        candidates.add(
+          DailyReviewSummarySearchEntry(
+            date: date,
+            body: _limitSearchBody(body),
+            createdAt: createdAt,
+          ),
+        );
+      } catch (_) {
+        // One corrupt cache entry must not block the remaining dates.
+      }
+    }
+
+    candidates.sort((a, b) {
+      final dateCompare = b.date.compareTo(a.date);
+      if (dateCompare != 0) return dateCompare;
+      return b.createdAt.compareTo(a.createdAt);
+    });
+    return List.unmodifiable(candidates.take(safeLimit));
   }
 
   /// 仅 AI 生成复盘（有缓存则直接返回）
@@ -370,21 +454,21 @@ class DailyReviewSummaryBuilder {
     required String dataHash,
     required String cacheKey,
     required DateTime cacheDate,
+    DateTime? now,
   }) async {
     final cachedRaw = prefs.getString(cacheKey);
     if (cachedRaw == null) return null;
     try {
-      final cached = json.decode(cachedRaw) as Map<String, dynamic>;
-      final createdAt =
-          DateTime.tryParse(cached['createdAt']?.toString() ?? '');
-      final cacheTimestamp = createdAt ?? cacheDate;
-      final cutoff = DateTime.now().toUtc().subtract(cacheRetention);
+      final cached = _decodeCachedAi(cachedRaw);
+      if (cached == null) return null;
+      final cacheTimestamp = cached.createdAt ?? cacheDate;
+      final cutoff = (now ?? DateTime.now()).toUtc().subtract(cacheRetention);
       if (cacheTimestamp.toUtc().isBefore(cutoff)) {
         await prefs.remove(cacheKey);
         return null;
       }
-      if (cached['hash'] == dataHash) {
-        final body = cached['body'] as String?;
+      if (cached.hash == dataHash) {
+        final body = cached.body;
         if (body != null &&
             body.isNotEmpty &&
             !SiliconFlowAiService.looksLikeThinkingProcess(body)) {
@@ -393,6 +477,37 @@ class DailyReviewSummaryBuilder {
       }
     } catch (_) {}
     return null;
+  }
+
+  static DateTime? _dateFromCacheKey(String key, String prefix) {
+    final value = key.substring(prefix.length);
+    final parts = value.split('-');
+    if (parts.length != 3 ||
+        parts.any((part) => part.isEmpty || !RegExp(r'^\d+$').hasMatch(part))) {
+      return null;
+    }
+    final date = DateTime.tryParse(value);
+    if (date == null || dateKey(date) != value) return null;
+    return date;
+  }
+
+  static _CachedAi? _decodeCachedAi(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    final decoded = json.decode(raw);
+    if (decoded is! Map) return null;
+    final map = Map<String, dynamic>.from(decoded);
+    final hash = map['hash']?.toString();
+    final body = map['body'] is String ? (map['body'] as String).trim() : null;
+    final createdAt = DateTime.tryParse(map['createdAt']?.toString() ?? '');
+    if (hash == null || hash.isEmpty || body == null || body.isEmpty) {
+      return null;
+    }
+    return _CachedAi(hash: hash, body: body, createdAt: createdAt);
+  }
+
+  static String _limitSearchBody(String body) {
+    if (body.length <= maxSearchBodyLength) return body;
+    return '${body.substring(0, maxSearchBodyLength - 1)}…';
   }
 
   static const _weekdayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -693,6 +808,18 @@ class DailyReviewSummaryBuilder {
     final text = hours.toStringAsFixed(1);
     return short ? '$text小时' : '$text 小时';
   }
+}
+
+class _CachedAi {
+  final String hash;
+  final String? body;
+  final DateTime? createdAt;
+
+  const _CachedAi({
+    required this.hash,
+    required this.body,
+    required this.createdAt,
+  });
 }
 
 class _DayStats {

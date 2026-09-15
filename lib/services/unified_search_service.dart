@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/category.dart';
 import '../models/check_in_document.dart';
 import '../models/check_in_goal.dart';
+import '../models/daily_review_chat_message.dart';
 import '../models/diary_kind.dart';
 import '../models/global_search_result.dart';
 import '../models/known_google_users.dart';
@@ -14,18 +15,22 @@ import '../models/travel_record.dart';
 import '../providers/time_provider.dart';
 import 'app_identity_service.dart';
 import 'check_in_local_store.dart';
+import 'daily_review_chat_store.dart';
+import 'daily_review_summary.dart';
 import 'diary_search_service.dart';
 import 'travel_local_store.dart';
 
 /// 仅从当前设备已有的本地数据建立统一搜索索引。
 ///
 /// 这个服务不会调用任何 remote service，也不会为了搜索触发同步。日记只使用
-/// 已有的内存/磁盘索引与草稿；出行、打卡只读取本地草稿。AI 复盘目前没有
-/// 稳定的本地枚举接口，因此不在本版本搜索范围内，避免耦合私有存储键。
+/// 已有的内存/磁盘索引与草稿；出行、打卡只读取本地草稿。AI 复盘只读取
+/// 当前身份下由其存储服务暴露的、受 TTL 和数量限制的本地缓存，不会触发
+/// 网络请求，也不会扫描未知路径或直接耦合未公开的存储键。
 class UnifiedSearchService {
   static const String _recentSearchesKey = 'global_search_recent_v1';
   static const int maxRecentSearches = 8;
   static const int maxSourceResults = 1000;
+  static const int maxAiSearchResults = 120;
   static const int _maxDiaryDraftLength = 16000;
 
   final TimeProvider? _timeProvider;
@@ -154,6 +159,7 @@ class UnifiedSearchService {
     await AppIdentityService.load();
     final prefs = await _preferencesLoader();
     final entries = <GlobalSearchResult>[];
+    _addAiReviewEntries(entries, await _loadAiReviewEntries());
     final provider = _timeProvider;
     if (provider != null) {
       _addScheduleEntries(entries, prefs, provider);
@@ -166,6 +172,79 @@ class UnifiedSearchService {
     if (checkIn != null) _addCheckInEntries(entries, checkIn);
 
     return _index = GlobalSearchIndex(entries);
+  }
+
+  Future<List<_AiSearchEntry>> _loadAiReviewEntries() async {
+    final entries = <_AiSearchEntry>[];
+    try {
+      final summaries = await DailyReviewSummaryBuilder.loadCachedForSearch();
+      for (final summary in summaries) {
+        entries.add(_AiSearchEntry.summary(summary));
+      }
+    } catch (_) {
+      // AI cache is optional; a failure must not hide other local modules.
+    }
+
+    try {
+      final sessions = await DailyReviewChatStore.loadSessionsForSearch();
+      for (final session in sessions) {
+        for (final message in session.session.messages) {
+          if (message.content.trim().isEmpty) continue;
+          entries.add(_AiSearchEntry.message(session.date, message));
+          if (entries.length >= maxAiSearchResults) {
+            return entries;
+          }
+        }
+      }
+    } catch (_) {
+      // A corrupt or unavailable chat cache must not block ordinary search.
+    }
+    return entries;
+  }
+
+  void _addAiReviewEntries(
+    List<GlobalSearchResult> entries,
+    List<_AiSearchEntry> aiEntries,
+  ) {
+    final identityKind = AppIdentityService.personKind;
+    for (final entry in aiEntries.take(maxAiSearchResults)) {
+      if (entry.summary != null) {
+        final body = _limitText(
+          entry.summary!.body,
+          DailyReviewSummaryBuilder.maxSearchBodyLength,
+        );
+        entries.add(
+          GlobalSearchResult(
+            type: GlobalSearchContentType.aiReview,
+            date: entry.summary!.date,
+            title: '每日复盘摘要',
+            summary: _limitText(_oneLine(body), 240),
+            details: body,
+            identityKind: identityKind,
+            entityId: 'summary:${_dateKey(entry.summary!.date)}',
+          ),
+        );
+        continue;
+      }
+
+      final message = entry.message!;
+      final content = _limitText(
+        message.content,
+        DailyReviewChatStore.maxSearchMessageContentLength,
+      );
+      final roleLabel = message.isUser ? '提问' : '回答';
+      entries.add(
+        GlobalSearchResult(
+          type: GlobalSearchContentType.aiReview,
+          date: entry.date,
+          title: '复盘对话 · $roleLabel',
+          summary: '$roleLabel：${_limitText(_oneLine(content), 240)}',
+          details: content,
+          identityKind: identityKind,
+          entityId: 'chat:${_dateKey(entry.date!)}:${message.createdAt}',
+        ),
+      );
+    }
   }
 
   void _addScheduleEntries(
@@ -651,5 +730,28 @@ class UnifiedSearchService {
     if (nickname == '乖乖' || id == 'manual-g') return DiaryKind.g;
     if (nickname == '晶晶' || id == 'manual-j') return DiaryKind.j;
     return null;
+  }
+}
+
+class _AiSearchEntry {
+  final DailyReviewSummarySearchEntry? summary;
+  final DateTime? date;
+  final DailyReviewChatMessage? message;
+
+  const _AiSearchEntry._({
+    this.summary,
+    this.date,
+    this.message,
+  });
+
+  factory _AiSearchEntry.summary(DailyReviewSummarySearchEntry summary) {
+    return _AiSearchEntry._(summary: summary);
+  }
+
+  factory _AiSearchEntry.message(
+    DateTime date,
+    DailyReviewChatMessage message,
+  ) {
+    return _AiSearchEntry._(date: date, message: message);
   }
 }

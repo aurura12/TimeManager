@@ -48,6 +48,13 @@ void main() {
         title: '阅读计划',
         summary: '时长目标 1 小时',
       ),
+      GlobalSearchResult(
+        type: GlobalSearchContentType.aiReview,
+        date: DateTime(2026, 9, 12),
+        title: '每日复盘摘要',
+        summary: '今天专注完成了重要工作',
+        details: '今天专注完成了重要工作。',
+      ),
     ]);
   }
 
@@ -88,5 +95,23 @@ void main() {
 
     expect(find.text('未找到「不存在的内容」相关本地内容'), findsOneWidget);
     expect(find.text('可尝试切换内容、身份或日期筛选'), findsOneWidget);
+  });
+
+  testWidgets('AI 复盘结果显示模块和日期并打开本地详情', (tester) async {
+    await pumpSearch(tester);
+
+    await tester.enterText(find.byType(TextField), '专注');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+
+    expect(find.text('AI复盘'), findsWidgets);
+    expect(find.text('每日复盘摘要'), findsOneWidget);
+    expect(find.textContaining('2026年9月12日'), findsOneWidget);
+
+    await tester.tap(find.text('每日复盘摘要'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('本地详情'), findsOneWidget);
+    expect(find.text('今天专注完成了重要工作。'), findsOneWidget);
   });
 }

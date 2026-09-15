@@ -256,17 +256,18 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
     await _rememberCurrentSearch();
     if (!mounted) return;
 
-    final provider = context.read<TimeProvider>();
     switch (result.type) {
       case GlobalSearchContentType.all:
         await _pushLocalDetail(result);
         return;
       case GlobalSearchContentType.timeRecord:
+        final provider = context.read<TimeProvider>();
         final date = result.date;
         if (date != null) provider.goToDate(date);
         if (Navigator.of(context).canPop()) Navigator.of(context).pop();
         return;
       case GlobalSearchContentType.category:
+        final provider = context.read<TimeProvider>();
         // 当前身份的分类可以复用现有事件历史详情；另一身份的本地分类不
         // 冒充当前 Provider 数据，改走只读本地详情页。
         if (result.identityKind == null ||
@@ -284,6 +285,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
         }
         return;
       case GlobalSearchContentType.target:
+        final provider = context.read<TimeProvider>();
         if (result.entityId != null &&
             provider.targetById(result.entityId!) != null) {
           await Navigator.of(context).push(
@@ -298,6 +300,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
       case GlobalSearchContentType.diary:
       case GlobalSearchContentType.travel:
       case GlobalSearchContentType.checkIn:
+      case GlobalSearchContentType.aiReview:
         await _pushLocalDetail(result);
         return;
     }
@@ -325,7 +328,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
           onSubmitted: (_) => unawaited(_rememberCurrentSearch()),
           style: AppText.body.copyWith(color: colorScheme.onSurface),
           decoration: InputDecoration(
-            hintText: '搜索时间、日记、出行、打卡或目标…',
+            hintText: '搜索时间、日记、出行、打卡、目标或 AI 复盘…',
             hintStyle: AppText.body.copyWith(
               color: colorScheme.onSurfaceVariant,
             ),

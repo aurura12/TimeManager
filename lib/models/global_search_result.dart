@@ -9,6 +9,7 @@ enum GlobalSearchContentType {
   travel,
   checkIn,
   target,
+  aiReview,
 }
 
 extension GlobalSearchContentTypeX on GlobalSearchContentType {
@@ -20,6 +21,7 @@ extension GlobalSearchContentTypeX on GlobalSearchContentType {
         GlobalSearchContentType.travel => '出行',
         GlobalSearchContentType.checkIn => '打卡',
         GlobalSearchContentType.target => '目标',
+        GlobalSearchContentType.aiReview => 'AI复盘',
       };
 }
 
