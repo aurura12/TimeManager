@@ -27,7 +27,7 @@ void main() {
           return SyncOperationResult.success(message: '${module.label}完成');
         },
       ),
-      store: InMemorySyncCenterStateStore(),
+      store: InMemorySyncStatusStore(),
     );
     addTearDown(controller.dispose);
 
@@ -38,7 +38,7 @@ void main() {
       controller.states.every(
         (state) =>
             state.status == SyncModuleStatus.success &&
-            state.lastSyncAt != null,
+            state.lastSuccessAt != null,
       ),
       isTrue,
     );
@@ -58,7 +58,7 @@ void main() {
           return const SyncOperationResult.success();
         },
       ),
-      store: InMemorySyncCenterStateStore(),
+      store: InMemorySyncStatusStore(),
     );
     addTearDown(controller.dispose);
 
@@ -87,7 +87,7 @@ void main() {
           return const SyncOperationResult.success();
         },
       ),
-      store: InMemorySyncCenterStateStore(),
+      store: InMemorySyncStatusStore(),
       liveStateReader: () {
         liveReads++;
         return {
@@ -123,7 +123,7 @@ void main() {
           return const SyncOperationResult.success(message: '日程同步完成');
         },
       ),
-      store: InMemorySyncCenterStateStore(),
+      store: InMemorySyncStatusStore(),
       liveStateReader: () => {
         SyncModule.schedule: const SyncModuleState(
           module: SyncModule.schedule,
@@ -165,7 +165,7 @@ void main() {
           return const SyncOperationResult.success();
         },
       ),
-      store: InMemorySyncCenterStateStore(),
+      store: InMemorySyncStatusStore(),
       liveStateReader: () => {
         SyncModule.travel: const SyncModuleState(
           module: SyncModule.travel,
@@ -202,7 +202,7 @@ void main() {
           return result.future;
         },
       ),
-      store: InMemorySyncCenterStateStore(),
+      store: InMemorySyncStatusStore(),
     );
     addTearDown(controller.dispose);
 
@@ -226,7 +226,7 @@ void main() {
               )
             : const SyncOperationResult.success(),
       ),
-      store: InMemorySyncCenterStateStore(),
+      store: InMemorySyncStatusStore(),
       // 生产 Provider 只对日程/Google 日历提供 live 状态；其它模块不应
       // 用默认的 0 覆盖本次操作返回的 pending 数量。
       liveStateReader: () => {
@@ -254,7 +254,7 @@ void main() {
             ? const SyncOperationResult.busy('已有出行同步任务')
             : const SyncOperationResult.success(),
       ),
-      store: InMemorySyncCenterStateStore(),
+      store: InMemorySyncStatusStore(),
     );
     addTearDown(controller.dispose);
 
@@ -274,7 +274,7 @@ void main() {
           return const SyncOperationResult.success();
         },
       ),
-      store: InMemorySyncCenterStateStore(),
+      store: InMemorySyncStatusStore(),
     );
     addTearDown(controller.dispose);
 
@@ -299,5 +299,105 @@ void main() {
       expect(find.text(module.label), findsOneWidget);
     }
     expect(find.text('全部重试'), findsOneWidget);
+  });
+
+  testWidgets('首次安装时同步中心显示「尚未检查」而不是「未同步」', (tester) async {
+    final controller = SyncCenterController(
+      operations: _operationsFor(
+        (module) => () async => const SyncOperationResult.success(),
+      ),
+      store: InMemorySyncStatusStore(),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: SyncCenterScreen(controller: controller),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('尚未检查'), findsNWidgets(SyncModule.values.length));
+    expect(find.text('未同步'), findsNothing);
+    expect(find.text('最后成功：暂无记录'), findsNWidgets(SyncModule.values.length));
+  });
+
+  testWidgets('日程页等外部入口同步成功后，打开同步中心立即显示已同步', (tester) async {
+    final coordinator = SyncStatusCoordinator(
+      store: InMemorySyncStatusStore(),
+      scopeResolver: (_) => 'g',
+    );
+    addTearDown(coordinator.dispose);
+
+    // 模拟日程页/后台自动同步直接上报结果，整个过程没有经过同步中心。
+    coordinator.report(
+      SyncModule.schedule,
+      const SyncOperationResult.success(message: '日程同步完成'),
+      source: '日程页',
+    );
+    expect(
+      coordinator.stateFor(SyncModule.schedule).status,
+      SyncModuleStatus.success,
+    );
+
+    final controller = SyncCenterController(
+      operations: _operationsFor(
+        (module) => () async => const SyncOperationResult.success(),
+      ),
+      coordinator: coordinator,
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: SyncCenterScreen(controller: controller),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final scheduleState = controller.stateFor(SyncModule.schedule);
+    expect(scheduleState.status, SyncModuleStatus.success);
+    expect(scheduleState.lastSuccessAt, isNotNull);
+    expect(find.text('已同步'), findsOneWidget);
+    expect(find.text('日程同步完成'), findsOneWidget);
+    expect(
+      find.text('最后成功：暂无记录'),
+      findsNWidgets(SyncModule.values.length - 1),
+    );
+  });
+
+  test('刷新页面状态不会把已同步重置为尚未检查', () async {
+    final coordinator = SyncStatusCoordinator(
+      store: InMemorySyncStatusStore(),
+      scopeResolver: (_) => 'g',
+    );
+    addTearDown(coordinator.dispose);
+
+    final controller = SyncCenterController(
+      operations: _operationsFor(
+        (module) => () async => const SyncOperationResult.success(),
+      ),
+      coordinator: coordinator,
+      liveStateReader: () => {
+        SyncModule.schedule: const SyncModuleState(
+          module: SyncModule.schedule,
+          status: SyncModuleStatus.idle,
+        ),
+      },
+      authoritativeLiveStateModules: const {SyncModule.schedule},
+    );
+    addTearDown(controller.dispose);
+
+    await controller.retry(SyncModule.schedule);
+    final successAt = controller.stateFor(SyncModule.schedule).lastSuccessAt;
+    expect(successAt, isNotNull);
+
+    await controller.refresh();
+
+    final refreshed = controller.stateFor(SyncModule.schedule);
+    expect(refreshed.status, SyncModuleStatus.success);
+    expect(refreshed.lastSuccessAt, successAt);
   });
 }

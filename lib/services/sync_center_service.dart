@@ -1,8 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/sync_center_state.dart';
 import '../models/travel_record.dart';
@@ -11,8 +9,16 @@ import 'check_in_sync_service.dart';
 import 'diary_gitee_service.dart';
 import 'diary_local_store.dart';
 import 'diary_search_service.dart';
+import 'sync_status_coordinator.dart';
 import 'travel_gitee_service.dart';
 import 'travel_local_store.dart';
+
+export 'sync_status_coordinator.dart'
+    show
+        InMemorySyncStatusStore,
+        SharedPreferencesSyncStatusStore,
+        SyncStatusCoordinator,
+        SyncStatusStore;
 
 typedef SyncCenterOperation = Future<SyncOperationResult> Function();
 
@@ -23,72 +29,6 @@ typedef SyncCenterOperation = Future<SyncOperationResult> Function();
 /// 可以覆盖同步中心状态；未提供可靠 reader 的模块继续使用最近一次业务操作
 /// 的结果，避免用默认的 0 清掉待同步照片或其他失败信息。
 typedef SyncCenterLiveStateReader = Map<SyncModule, SyncModuleState> Function();
-
-/// 同步中心状态的本地存储。只保存状态和时间，不保存任何凭据。
-abstract interface class SyncCenterStateStore {
-  Future<Map<SyncModule, SyncModuleState>> load();
-
-  Future<void> save(Iterable<SyncModuleState> states);
-}
-
-class SharedPreferencesSyncCenterStateStore implements SyncCenterStateStore {
-  static const String storageKey = 'sync_center_state_v1';
-
-  @override
-  Future<Map<SyncModule, SyncModuleState>> load() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(storageKey);
-      if (raw == null || raw.trim().isEmpty) return const {};
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return const {};
-
-      final result = <SyncModule, SyncModuleState>{};
-      for (final module in SyncModule.values) {
-        final value = decoded[module.storageKey];
-        if (value is Map) {
-          result[module] = SyncModuleState.fromJson(
-            module,
-            Map<String, dynamic>.from(value),
-          );
-        }
-      }
-      return result;
-    } catch (_) {
-      return const {};
-    }
-  }
-
-  @override
-  Future<void> save(Iterable<SyncModuleState> states) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final payload = <String, dynamic>{
-        for (final state in states) state.module.storageKey: state.toJson(),
-      };
-      await prefs.setString(storageKey, jsonEncode(payload));
-    } catch (_) {
-      // 状态展示失败不能影响业务数据同步。
-    }
-  }
-}
-
-/// 用于单元测试或宿主暂时不需要持久化时的内存状态存储。
-class InMemorySyncCenterStateStore implements SyncCenterStateStore {
-  InMemorySyncCenterStateStore([
-    Map<SyncModule, SyncModuleState>? initial,
-  ]) : _states = {...?initial};
-
-  Map<SyncModule, SyncModuleState> _states;
-
-  @override
-  Future<Map<SyncModule, SyncModuleState>> load() async => {..._states};
-
-  @override
-  Future<void> save(Iterable<SyncModuleState> states) async {
-    _states = {for (final state in states) state.module: state};
-  }
-}
 
 /// 业务同步入口的集合。同步中心只编排，不复制各模块的远端协议。
 class SyncCenterOperations {
@@ -248,32 +188,36 @@ class SyncCenterOperations {
   }
 }
 
-/// 同步中心的状态编排器。所有“全部重试”操作按模块串行执行。
+/// 同步中心的状态编排器。状态本身由全局 [SyncStatusCoordinator] 持有，
+/// 因此日程页、出行页和后台自动同步的结果与同步中心共享同一份数据；
+/// 控制器只负责编排「全部重试」和防止同模块重复发起。
 class SyncCenterController extends ChangeNotifier {
   SyncCenterController({
     required SyncCenterOperations operations,
-    SyncCenterStateStore? store,
+    SyncStatusCoordinator? coordinator,
+    SyncStatusStore? store,
     SyncCenterLiveStateReader? liveStateReader,
     Set<SyncModule>? authoritativeLiveStateModules,
   })  : _operations = operations,
-        _store = store ?? SharedPreferencesSyncCenterStateStore(),
+        _coordinator = coordinator ?? SyncStatusCoordinator(store: store),
+        _ownsCoordinator = coordinator == null,
         _liveStateReader = liveStateReader,
         _authoritativeLiveStateModules = authoritativeLiveStateModules == null
             ? liveStateReader == null
                 ? const <SyncModule>{}
                 : Set.unmodifiable(SyncModule.values)
-            : Set.unmodifiable(authoritativeLiveStateModules),
-        _states = {
-          for (final module in SyncModule.values)
-            module: SyncModuleState(module: module),
-        };
+            : Set.unmodifiable(authoritativeLiveStateModules) {
+    _coordinator.addListener(_notify);
+  }
 
   factory SyncCenterController.forProvider(
     TimeProvider provider, {
-    SyncCenterStateStore? store,
+    SyncStatusCoordinator? coordinator,
+    SyncStatusStore? store,
   }) {
     return SyncCenterController(
       operations: SyncCenterOperations.production(provider),
+      coordinator: coordinator,
       store: store,
       liveStateReader: () => _liveStatesForProvider(provider),
       authoritativeLiveStateModules: const {
@@ -284,31 +228,27 @@ class SyncCenterController extends ChangeNotifier {
   }
 
   final SyncCenterOperations _operations;
-  final SyncCenterStateStore _store;
+  final SyncStatusCoordinator _coordinator;
+  final bool _ownsCoordinator;
   final SyncCenterLiveStateReader? _liveStateReader;
   final Set<SyncModule> _authoritativeLiveStateModules;
-  final Map<SyncModule, SyncModuleState> _states;
   final Set<SyncModule> _runningModules = {};
   Future<void>? _initializing;
   bool _initialized = false;
   bool _allRetrying = false;
   bool _disposed = false;
 
-  List<SyncModuleState> get states => SyncModule.values
-      .map((module) => _states[module]!)
-      .toList(growable: false);
+  SyncStatusCoordinator get coordinator => _coordinator;
 
-  SyncModuleState stateFor(SyncModule module) => _states[module]!;
+  List<SyncModuleState> get states => _coordinator.states;
+
+  SyncModuleState stateFor(SyncModule module) => _coordinator.stateFor(module);
 
   bool get isInitialized => _initialized;
   bool get isRetrying => _allRetrying || _runningModules.isNotEmpty;
   bool isRetryingModule(SyncModule module) => _runningModules.contains(module);
-  int get pendingCount => states.fold(
-        0,
-        (total, state) =>
-            total + state.pendingUploadCount + state.pendingDownloadCount,
-      );
-  bool get hasIssue => states.any((state) => state.hasIssue);
+  int get pendingCount => _coordinator.pendingCount;
+  bool get hasIssue => _coordinator.hasIssue;
 
   Future<void> initialize() {
     if (_initialized) return Future<void>.value();
@@ -316,32 +256,19 @@ class SyncCenterController extends ChangeNotifier {
   }
 
   Future<void> _initialize() async {
-    final loaded = await _store.load();
-    for (final module in SyncModule.values) {
-      final state = loaded[module];
-      if (state == null) continue;
-      // 应用在上次同步中退出时，不能把“同步中”永久显示为进行中。
-      _states[module] = state.status == SyncModuleStatus.syncing ||
-              state.status == SyncModuleStatus.busy
-          ? state.copyWith(
-              status: state.hasPending
-                  ? SyncModuleStatus.pending
-                  : SyncModuleStatus.idle,
-              message: '上次同步未完成，可重试',
-            )
-          : state;
-    }
+    await _coordinator.initialize();
+    if (_disposed) return;
     _initialized = true;
+    // 刷新只读取实时 pending/进行中状态，不会把已经成功的时间重置。
     _refreshLiveState();
-    await _persist();
     _notify();
   }
 
   Future<void> refresh() async {
     await initialize();
     if (_disposed) return;
+    _coordinator.refreshContext();
     _refreshLiveState();
-    await _persist();
     _notify();
   }
 
@@ -372,7 +299,6 @@ class SyncCenterController extends ChangeNotifier {
       _allRetrying = false;
       if (!_disposed) {
         _refreshLiveState(preserveOperationResults: completedModules);
-        await _persist();
         _notify();
       }
     }
@@ -385,9 +311,10 @@ class SyncCenterController extends ChangeNotifier {
   }) async {
     if (_disposed || (!fromAll && _allRetrying)) return;
     _runningModules.add(module);
-    _states[module] = _states[module]!.copyWith(
-      status: SyncModuleStatus.syncing,
+    _coordinator.begin(
+      module,
       message: '正在同步${module.label}',
+      source: _allRetrying ? '同步中心（全部重试）' : '同步中心',
     );
     _notify();
 
@@ -400,7 +327,11 @@ class SyncCenterController extends ChangeNotifier {
       }
       if (_disposed) return;
 
-      _applyResult(module, result);
+      _coordinator.report(
+        module,
+        result,
+        source: _allRetrying ? '同步中心（全部重试）' : '同步中心',
+      );
       _runningModules.remove(module);
       final live = _readLiveState();
       if (result.status == SyncModuleStatus.busy) {
@@ -416,7 +347,6 @@ class SyncCenterController extends ChangeNotifier {
           module,
         },
       );
-      await _persist();
       _notify();
     } finally {
       // 无论业务操作、live reader 或持久化是否异常，都不能遗留“正在重试”锁。
@@ -424,88 +354,39 @@ class SyncCenterController extends ChangeNotifier {
     }
   }
 
-  void _applyResult(SyncModule module, SyncOperationResult result) {
-    final previous = _states[module]!;
-    final hasPending =
-        result.pendingUploadCount > 0 || result.pendingDownloadCount > 0;
-    if (result.succeeded) {
-      _states[module] = previous.copyWith(
-        status:
-            hasPending ? SyncModuleStatus.pending : SyncModuleStatus.success,
-        lastSyncAt: DateTime.now(),
-        pendingUploadCount: result.pendingUploadCount,
-        pendingDownloadCount: result.pendingDownloadCount,
-        failureCount: 0,
-        conflictCount: 0,
-        message: result.message ?? '同步完成',
-        details: const <String>[],
-      );
-      return;
-    }
-    if (result.status == SyncModuleStatus.disabled) {
-      _states[module] = previous.copyWith(
-        status: SyncModuleStatus.disabled,
-        message: result.message,
-      );
-      return;
-    }
-    if (result.status == SyncModuleStatus.busy) {
-      // 先记录业务层的 busy 结果；_recoverBusyState 会在 live reader
-      // 明确显示任务已结束时回落，避免把 stale busy 永久留在卡片上。
-      _states[module] = previous.copyWith(
-        status: SyncModuleStatus.busy,
-        message: result.message,
-      );
-      return;
-    }
-
-    _states[module] = previous.copyWith(
-      status: result.status,
-      pendingUploadCount:
-          hasPending ? result.pendingUploadCount : previous.pendingUploadCount,
-      pendingDownloadCount: hasPending
-          ? result.pendingDownloadCount
-          : previous.pendingDownloadCount,
-      failureCount: previous.failureCount + 1,
-      conflictCount: result.status == SyncModuleStatus.conflict
-          ? (result.conflictCount > 0 ? result.conflictCount : 1)
-          : previous.conflictCount,
-      message: result.message ?? '同步未完成',
-      details: result.details,
-    );
-  }
-
   void _refreshLiveState({
     Set<SyncModule> preserveOperationResults = const <SyncModule>{},
     Map<SyncModule, SyncModuleState>? liveState,
   }) {
     final live = liveState ?? _readLiveState();
-    for (final module in SyncModule.values) {
-      if (preserveOperationResults.contains(module) ||
-          !_authoritativeLiveStateModules.contains(module)) {
-        continue;
+    _coordinator.batch(() {
+      for (final module in SyncModule.values) {
+        if (preserveOperationResults.contains(module) ||
+            !_authoritativeLiveStateModules.contains(module)) {
+          continue;
+        }
+        final next = live[module];
+        if (next == null) continue;
+        _coordinator.update(module, (current) {
+          // 失败、离线、冲突是业务操作返回的终态，live reader 只有实时
+          // pending/status 能力，不能把这些结果改回 syncing/idle。
+          final preservePending = current.hasIssue ||
+              (current.hasPending &&
+                  (next.status == SyncModuleStatus.busy ||
+                      next.status == SyncModuleStatus.syncing));
+          return current.copyWith(
+            enabled: next.enabled,
+            status: _statusAfterLiveState(current, next),
+            pendingUploadCount: preservePending
+                ? current.pendingUploadCount
+                : next.pendingUploadCount,
+            pendingDownloadCount: preservePending
+                ? current.pendingDownloadCount
+                : next.pendingDownloadCount,
+          );
+        });
       }
-      final current = _states[module]!;
-      final next = live[module];
-      if (next == null) continue;
-
-      // 失败、离线、冲突是业务操作返回的终态，live reader 只有实时
-      // pending/status 能力，不能把这些结果改回 syncing/idle。
-      final preservePending = current.hasIssue ||
-          (current.hasPending &&
-              (next.status == SyncModuleStatus.busy ||
-                  next.status == SyncModuleStatus.syncing));
-      _states[module] = current.copyWith(
-        enabled: next.enabled,
-        status: _statusAfterLiveState(current, next),
-        pendingUploadCount: preservePending
-            ? current.pendingUploadCount
-            : next.pendingUploadCount,
-        pendingDownloadCount: preservePending
-            ? current.pendingDownloadCount
-            : next.pendingDownloadCount,
-      );
-    }
+    });
   }
 
   Map<SyncModule, SyncModuleState> _readLiveState() {
@@ -541,7 +422,7 @@ class SyncCenterController extends ChangeNotifier {
       SyncModuleStatus.busy ||
       SyncModuleStatus.pending ||
       SyncModuleStatus.disabled =>
-        current.lastSyncAt == null
+        current.lastSuccessAt == null
             ? SyncModuleStatus.idle
             : SyncModuleStatus.success,
       _ => current.status,
@@ -552,35 +433,34 @@ class SyncCenterController extends ChangeNotifier {
     SyncModule module,
     SyncModuleState? liveState,
   ) {
-    final current = _states[module]!;
-    if (current.status != SyncModuleStatus.busy) return;
-    final next =
-        _authoritativeLiveStateModules.contains(module) ? liveState : null;
-    if (next != null &&
-        (next.status == SyncModuleStatus.busy ||
-            next.status == SyncModuleStatus.syncing)) {
-      return;
-    }
+    _coordinator.update(module, (current) {
+      if (current.status != SyncModuleStatus.busy) return current;
+      final next =
+          _authoritativeLiveStateModules.contains(module) ? liveState : null;
+      if (next != null &&
+          (next.status == SyncModuleStatus.busy ||
+              next.status == SyncModuleStatus.syncing)) {
+        return current;
+      }
 
-    final hasPending = next?.hasPending ?? current.hasPending;
-    _states[module] = current.copyWith(
-      enabled: next?.enabled ?? current.enabled,
-      status: next?.enabled == false
-          ? SyncModuleStatus.disabled
-          : hasPending
-              ? SyncModuleStatus.pending
-              : current.lastSyncAt == null
-                  ? SyncModuleStatus.idle
-                  : SyncModuleStatus.success,
-      pendingUploadCount: next?.pendingUploadCount ??
-          (hasPending ? current.pendingUploadCount : 0),
-      pendingDownloadCount: next?.pendingDownloadCount ??
-          (hasPending ? current.pendingDownloadCount : 0),
-      message: next == null ? current.message : '同步任务已结束，可重试',
-    );
+      final hasPending = next?.hasPending ?? current.hasPending;
+      return current.copyWith(
+        enabled: next?.enabled ?? current.enabled,
+        status: next?.enabled == false
+            ? SyncModuleStatus.disabled
+            : hasPending
+                ? SyncModuleStatus.pending
+                : current.lastSuccessAt == null
+                    ? SyncModuleStatus.idle
+                    : SyncModuleStatus.success,
+        pendingUploadCount: next?.pendingUploadCount ??
+            (hasPending ? current.pendingUploadCount : 0),
+        pendingDownloadCount: next?.pendingDownloadCount ??
+            (hasPending ? current.pendingDownloadCount : 0),
+        message: next == null ? current.message : '同步任务已结束，可重试',
+      );
+    });
   }
-
-  Future<void> _persist() => _store.save(states);
 
   void _notify() {
     if (!_disposed) notifyListeners();
@@ -589,6 +469,8 @@ class SyncCenterController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _coordinator.removeListener(_notify);
+    if (_ownsCoordinator) _coordinator.dispose();
     super.dispose();
   }
 

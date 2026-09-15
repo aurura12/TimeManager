@@ -3,10 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import '../utils/platform_features.dart';
 
+import '../models/sync_center_state.dart';
 import '../models/travel_record.dart';
 import '../services/diary_local_store.dart';
+import '../services/sync_status_coordinator.dart';
 import '../services/travel_gitee_service.dart';
 import '../services/travel_local_store.dart';
 
@@ -34,9 +37,14 @@ class _TravelScreenState extends State<TravelScreen> {
   bool _processing = false;
   int _touchedIndex = -1;
 
+  /// 全局同步状态中心。允许为空：独立构建出行页（例如页面级测试）时没
+  /// 有 Provider 树，此时只跳过状态上报。
+  SyncStatusCoordinator? _statusCoordinator;
+
   @override
   void initState() {
     super.initState();
+    _statusCoordinator = context.read<SyncStatusCoordinator?>();
     _selectedDate = _normalizedDate(DateTime.now());
     _calendarMonth = DateTime(_selectedDate.year, _selectedDate.month);
     _loadInitial();
@@ -174,6 +182,19 @@ class _TravelScreenState extends State<TravelScreen> {
     await TravelLocalStore.saveDraft(_document.toMarkdown());
   }
 
+  void _reportTravel(SyncOperationResult result, {String source = '出行页'}) {
+    _statusCoordinator?.report(SyncModule.travel, result, source: source);
+  }
+
+  void _markTravelPending() {
+    _statusCoordinator?.markPending(
+      SyncModule.travel,
+      uploadCount: 1,
+      message: '有出行记录待上传',
+      source: '出行页',
+    );
+  }
+
   Future<DateTime?> _pickDate({
     required DateTime initialDate,
     DatePickerMode initialMode = DatePickerMode.day,
@@ -233,6 +254,7 @@ class _TravelScreenState extends State<TravelScreen> {
       _calendarMonth = DateTime(normalizedDate.year, normalizedDate.month);
     });
     await _saveDraft();
+    _markTravelPending();
     return true;
   }
 
@@ -279,6 +301,7 @@ class _TravelScreenState extends State<TravelScreen> {
     });
 
     await _saveDraft();
+    _markTravelPending();
     await _pushToGitHub();
   }
 
@@ -479,6 +502,9 @@ class _TravelScreenState extends State<TravelScreen> {
       if (!silent) {
         _showMessage('未配置当前平台同步 Token，请先配置日记模块 token');
       }
+      _reportTravel(
+        const SyncOperationResult.offline('出行远端未连接，本地记录会保留'),
+      );
       return;
     }
     final ok = await _ensureToken();
@@ -517,6 +543,9 @@ class _TravelScreenState extends State<TravelScreen> {
         }
         _document = _document.mergeRemotePreservingLocalDeletions(doc);
         await _saveDraft();
+        _reportTravel(
+          const SyncOperationResult.success(message: '出行记录已拉取'),
+        );
         if (!silent) {
           _showMessage(
             tombstoneConflicts.isNotEmpty
@@ -530,6 +559,7 @@ class _TravelScreenState extends State<TravelScreen> {
         if (!silent) {
           _showMessage('解析远端记录失败: $e');
         }
+        _reportTravel(SyncOperationResult.failed('解析远端出行记录失败：$e'));
       }
       setState(() => _processing = false);
       return;
@@ -539,16 +569,30 @@ class _TravelScreenState extends State<TravelScreen> {
       if (!silent) {
         _showMessage('远端暂无出行记录文件');
       }
+      _reportTravel(
+        const SyncOperationResult.success(message: '远端暂无出行记录文件'),
+      );
       return;
     }
     if (!silent) {
       _showMessage(result.error ?? '拉取失败');
     }
+    _reportTravel(
+      SyncOperationResult.failed('出行同步失败：${result.error ?? '拉取失败'}'),
+    );
   }
 
   Future<void> _pushToGitHub() async {
     final ok = await _ensureToken();
-    if (!ok) return;
+    if (!ok) {
+      _reportTravel(
+        const SyncOperationResult.offline(
+          '出行远端未连接，本地记录会保留',
+          pendingUploadCount: 1,
+        ),
+      );
+      return;
+    }
     await _saveDraft();
     setState(() => _processing = true);
 
@@ -562,6 +606,12 @@ class _TravelScreenState extends State<TravelScreen> {
     if (!pull.success && !pull.notFound) {
       setState(() => _processing = false);
       _showMessage('远端读取失败，已中止同步：${pull.error ?? '未知错误'}');
+      _reportTravel(
+        SyncOperationResult.failed(
+          '出行同步失败：${pull.error ?? '远端记录不可读'}',
+          pendingUploadCount: 1,
+        ),
+      );
       return;
     }
     if (pull.success && pull.content != null) {
@@ -574,6 +624,13 @@ class _TravelScreenState extends State<TravelScreen> {
           final preview = remoteOnly.take(5).join('、');
           _showMessage(
             '远端有本地没有的记录（$preview），已中止同步，请先执行「拉取」',
+          );
+          _reportTravel(
+            SyncOperationResult.conflict(
+              '远端有本地没有的出行记录，请先在出行页执行「拉取」',
+              conflictCount: remoteOnly.length,
+              details: remoteOnly.take(10).toList(growable: false),
+            ),
           );
           return;
         }
@@ -589,11 +646,24 @@ class _TravelScreenState extends State<TravelScreen> {
                   '已中止同步，请先执行「拉取」并确认处理'
               : '本地与远端同日记录内容不同（$preview$suffix），'
                   '已中止同步，请先执行「拉取」并确认覆盖');
+          _reportTravel(
+            SyncOperationResult.conflict(
+              '本地与远端出行记录存在内容冲突，请先在出行页确认',
+              conflictCount: conflicting.length,
+              details: conflicting.take(10).toList(growable: false),
+            ),
+          );
           return;
         }
       } catch (_) {
         setState(() => _processing = false);
         _showMessage('远端记录格式无法解析，已中止同步以保护远端数据');
+        _reportTravel(
+          const SyncOperationResult.failed(
+            '出行同步失败：远端记录格式无法解析',
+            pendingUploadCount: 1,
+          ),
+        );
         return;
       }
     }
@@ -623,9 +693,20 @@ class _TravelScreenState extends State<TravelScreen> {
       }
       await _saveDraft();
       _showMessage(result.created ? '同步成功（已新建远端文件）' : '同步成功');
+      _reportTravel(
+        SyncOperationResult.success(
+          message: result.created ? '出行记录已同步（新建远端文件）' : '出行记录已同步',
+        ),
+      );
       return;
     }
     _showMessage(result.error ?? '同步失败');
+    _reportTravel(
+      SyncOperationResult.failed(
+        '出行同步失败：${result.error ?? '远端写入失败'}',
+        pendingUploadCount: 1,
+      ),
+    );
   }
 
   void _showMessage(String text) {

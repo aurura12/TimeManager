@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../models/check_in_goal.dart';
 import '../models/check_in_record.dart';
@@ -8,6 +9,7 @@ import '../models/check_in_view_filter.dart';
 import '../models/known_google_users.dart';
 import '../services/app_identity_service.dart';
 import '../services/check_in_sync_service.dart';
+import '../services/sync_status_coordinator.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
@@ -27,13 +29,18 @@ class CheckInScreen extends StatefulWidget {
 }
 
 class _CheckInScreenState extends State<CheckInScreen> {
-  final _sync = CheckInSyncService();
+  late final CheckInSyncService _sync;
   CheckInViewFilter _filter = CheckInViewFilter.all;
   late final StreamSubscription<void> _identitySubscription;
 
   @override
   void initState() {
     super.initState();
+    // 打卡同步结果直接写入全局同步状态中心，同步中心无需重新同步即可
+    // 看到最近一次成功时间。Provider 不存在时（页面级测试）允许为空。
+    _sync = CheckInSyncService(
+      statusCoordinator: context.read<SyncStatusCoordinator?>(),
+    );
     _identitySubscription = AppIdentityService.changes.listen((_) {
       if (mounted) setState(() {});
     });

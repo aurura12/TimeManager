@@ -33,6 +33,7 @@ import '../models/diary_kind.dart';
 import '../models/google_calendar_user.dart';
 import '../services/app_user_identity_store.dart';
 import '../services/app_identity_service.dart';
+import '../services/sync_status_coordinator.dart';
 import 'target_stats_cache.dart';
 import '../utils/schedule_view_dates.dart';
 import '../utils/calendar_time_range.dart';
@@ -534,6 +535,7 @@ class TimeProvider with ChangeNotifier {
   final ScheduleSyncDependencies _scheduleSyncDependencies;
   final TargetSyncDependencies _targetSyncDependencies;
   final AppLogService _appLogService;
+  final SyncStatusCoordinator? _statusCoordinator;
   final Future<bool> Function()? _saveDataOverride;
   final void Function(String key)? _scheduleSnapshotWriteObserver;
   final void Function(String phase)? _scheduleSnapshotJournalPhaseObserver;
@@ -548,6 +550,63 @@ class TimeProvider with ChangeNotifier {
   bool _scheduleIdentityMutationInProgress = false;
   bool _deferredScheduleSaveRequested = false;
   int _googleSyncGeneration = 0;
+
+  /// 同步中心发起的同步由控制器统一上报结果，Provider 内部入口（自动同步、
+  /// 页面手动同步）才自行上报，避免同一次操作被记录两次失败次数。
+  bool _centerOwnsSyncReporting = false;
+
+  /// 日程/分类/目标当前同步身份对应的状态上下文。切换身份后新的同步会
+  /// 写到新身份的状态键上，不会覆盖另一个身份的同步时间。
+  String get _scheduleSyncScope =>
+      _hasSelectedScheduleUser ? _scheduleUser.code : 'unbound';
+
+  String get _googleSyncScope => AppIdentityService.googleUser?.id ?? 'none';
+
+  int get _pendingScheduleUploadCount => <String>{
+        ..._pendingScheduleGiteeDateKeys,
+        ...pendingGiteeSyncDates,
+      }.length;
+
+  void _reportSyncBegin(
+    SyncModule module, {
+    String? message,
+    String? scope,
+    String source = 'App 内同步',
+  }) {
+    if (_centerOwnsSyncReporting) return;
+    _statusCoordinator?.begin(
+      module,
+      message: message,
+      scope: scope,
+      source: source,
+    );
+  }
+
+  void _reportSyncResult(
+    SyncModule module,
+    SyncOperationResult result, {
+    String? scope,
+    String source = 'App 内同步',
+  }) {
+    if (_centerOwnsSyncReporting) return;
+    _statusCoordinator?.report(module, result, scope: scope, source: source);
+  }
+
+  /// 本地修改后立即标记待上传，让同步中心无需等待下一次同步。
+  void _reportSyncPending(
+    SyncModule module, {
+    required int uploadCount,
+    String? message,
+    String source = 'App 内同步',
+  }) {
+    _statusCoordinator?.markPending(
+      module,
+      uploadCount: uploadCount,
+      message: message,
+      source: source,
+      scope: _scheduleSyncScope,
+    );
+  }
 
   void _recordAppError(
     String message,
@@ -1423,6 +1482,7 @@ class TimeProvider with ChangeNotifier {
     Duration categoryPullCooldown = _defaultCategoryPullCooldown,
     TargetSyncDependencies? targetSyncDependencies,
     AppLogService? appLogService,
+    SyncStatusCoordinator? statusCoordinator,
     Future<bool> Function()? saveDataOverride,
     void Function(String key)? scheduleSnapshotWriteObserver,
     void Function(String phase)? scheduleSnapshotJournalPhaseObserver,
@@ -1445,6 +1505,7 @@ class TimeProvider with ChangeNotifier {
                 ? TargetSyncDependencies.production()
                 : TargetSyncDependencies.disabled()),
         _appLogService = appLogService ?? AppLogService.instance,
+        _statusCoordinator = statusCoordinator,
         _saveDataOverride = saveDataOverride,
         _scheduleSnapshotWriteObserver = scheduleSnapshotWriteObserver,
         _scheduleSnapshotJournalPhaseObserver =
@@ -2191,6 +2252,12 @@ class TimeProvider with ChangeNotifier {
     _pendingScheduleGiteeDateKeys.add(target);
     _scheduleGiteeDateRevisions[target] =
         (_scheduleGiteeDateRevisions[target] ?? 0) + 1;
+    _reportSyncPending(
+      SyncModule.schedule,
+      uploadCount: _pendingScheduleUploadCount,
+      message: '有日程修改待上传',
+      source: '日程页',
+    );
     _scheduleGiteeTimer?.cancel();
     _scheduleGiteeTimer = Timer(_scheduleGiteeDebounce, () {
       _scheduleGiteeTimer = null;
@@ -2243,6 +2310,11 @@ class TimeProvider with ChangeNotifier {
       return;
     }
     _scheduleGiteeSyncing = true;
+    _reportSyncBegin(
+      SyncModule.schedule,
+      message: '正在同步日程 $effectiveDateKey',
+      source: '日程页',
+    );
     _startScheduleSyncProgress('正在同步日程 $effectiveDateKey', total: 1);
     try {
       final token = await _scheduleSyncDependencies.loadToken();
@@ -2252,6 +2324,14 @@ class TimeProvider with ChangeNotifier {
         _addScheduleSyncStatus('未配置同步 Token');
         _addSyncStatus("未配置同步 Token");
         _failScheduleSyncProgress('同步失败：未配置同步 Token');
+        _reportSyncResult(
+          SyncModule.schedule,
+          const SyncOperationResult.offline(
+            '日程远端未连接，本地修改会保留',
+            pendingUploadCount: 1,
+          ),
+          source: '日程页',
+        );
         return;
       }
 
@@ -2288,6 +2368,14 @@ class TimeProvider with ChangeNotifier {
         if (!_syncStatusController.isClosed) {
           _addSyncStatus("日程同步成功");
         }
+        _reportSyncResult(
+          SyncModule.schedule,
+          SyncOperationResult.success(
+            message: '日程同步完成：$effectiveDateKey',
+            pendingUploadCount: _pendingScheduleUploadCount,
+          ),
+          source: '日程页',
+        );
         Future.delayed(const Duration(seconds: 3), () {
           _addScheduleSyncStatus('');
         });
@@ -2301,6 +2389,14 @@ class TimeProvider with ChangeNotifier {
         if (!_syncStatusController.isClosed) {
           _addSyncStatus("日程同步失败");
         }
+        _reportSyncResult(
+          SyncModule.schedule,
+          SyncOperationResult.failed(
+            '日程同步失败：$effectiveDateKey',
+            pendingUploadCount: 1,
+          ),
+          source: '日程页',
+        );
       }
     } catch (e, stackTrace) {
       _addScheduleSyncStatus('同步失败: $e');
@@ -2309,6 +2405,14 @@ class TimeProvider with ChangeNotifier {
       if (!_syncStatusController.isClosed) {
         _addSyncStatus("日程同步失败: $e");
       }
+      _reportSyncResult(
+        SyncModule.schedule,
+        SyncOperationResult.failed(
+          '日程同步失败：$e',
+          pendingUploadCount: 1,
+        ),
+        source: '日程页',
+      );
     } finally {
       if (_scheduleSyncProgress != null &&
           !_scheduleSyncProgress!.isFinished &&
@@ -2614,6 +2718,11 @@ class TimeProvider with ChangeNotifier {
       source: 'schedule_sync',
     );
     _startScheduleSyncProgress('正在准备同步所有日程');
+    _reportSyncBegin(
+      SyncModule.schedule,
+      message: '正在同步全部日程',
+      source: '日程页',
+    );
     // 取消可能正在等待的当日自动同步
     _scheduleGiteeTimer?.cancel();
     try {
@@ -2623,6 +2732,14 @@ class TimeProvider with ChangeNotifier {
           token.isEmpty) {
         _addScheduleSyncStatus('未配置同步 Token');
         _failScheduleSyncProgress('同步失败：未配置同步 Token');
+        _reportSyncResult(
+          SyncModule.schedule,
+          const SyncOperationResult.offline(
+            '日程远端未连接，本地修改会保留',
+            pendingUploadCount: 1,
+          ),
+          source: '日程页',
+        );
         return;
       }
 
@@ -2639,6 +2756,11 @@ class TimeProvider with ChangeNotifier {
       if (dateKeys.isEmpty) {
         _addScheduleSyncStatus('无日程');
         _finishScheduleSyncProgress('无日程', completed: 0, total: 0);
+        _reportSyncResult(
+          SyncModule.schedule,
+          const SyncOperationResult.success(message: '暂无日程需要同步'),
+          source: '日程页',
+        );
         return;
       }
 
@@ -2705,6 +2827,14 @@ class TimeProvider with ChangeNotifier {
         '全量日程同步完成：$done/$total 天',
         source: 'schedule_sync',
       );
+      _reportSyncResult(
+        SyncModule.schedule,
+        SyncOperationResult.success(
+          message: done == total ? '全部日程同步完成 ($total 天)' : '日程同步完成 $done/$total',
+          pendingUploadCount: _pendingScheduleUploadCount,
+        ),
+        source: '日程页',
+      );
       Future.delayed(const Duration(seconds: 3), () {
         _addScheduleSyncStatus('');
       });
@@ -2712,6 +2842,14 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('全量同步失败: $e');
       _failScheduleSyncProgress('全量同步失败：$e');
       _recordAppError('全量日程同步失败', e, stackTrace);
+      _reportSyncResult(
+        SyncModule.schedule,
+        SyncOperationResult.failed(
+          '日程同步失败：$e',
+          pendingUploadCount: 1,
+        ),
+        source: '日程页',
+      );
     } finally {
       if (_scheduleSyncProgress != null &&
           !_scheduleSyncProgress!.isFinished &&
@@ -3314,6 +3452,12 @@ class TimeProvider with ChangeNotifier {
     }
     _targetsGiteePending = true;
     _targetsUserCode = _scheduleUser.code;
+    _reportSyncPending(
+      SyncModule.targets,
+      uploadCount: 1,
+      message: '有目标修改待上传',
+      source: '目标页',
+    );
     _targetsGiteeTimer?.cancel();
     _targetsGiteeTimer = Timer(_scheduleGiteeDebounce, () {
       _targetsGiteeTimer = null;
@@ -3326,6 +3470,14 @@ class TimeProvider with ChangeNotifier {
   /// 返回结果给同步中心，避免后台同步虽然记录了失败日志，但手动同步
   /// 被错误地展示成“已完成”或只有“未完成”的模糊状态。
   Future<SyncOperationResult> _syncTargetsToGitee() async {
+    final scope = _scheduleSyncScope;
+    _reportSyncBegin(SyncModule.targets, scope: scope, source: '目标');
+    final result = await _syncTargetsToGiteeInternal();
+    _reportSyncResult(SyncModule.targets, result, scope: scope, source: '目标');
+    return result;
+  }
+
+  Future<SyncOperationResult> _syncTargetsToGiteeInternal() async {
     if (!_isScheduleIdentityReady ||
         _scheduleOverwriteJournalCleanupPending ||
         _scheduleOverwriteInProgress ||
@@ -3444,6 +3596,14 @@ class TimeProvider with ChangeNotifier {
 
   /// 从 Gitee 拉取当前身份目标并与本地合并，不在此阶段推送。
   Future<SyncOperationResult> _pullTargetsFromGitee() async {
+    final scope = _scheduleSyncScope;
+    _reportSyncBegin(SyncModule.targets, scope: scope, source: '目标');
+    final result = await _pullTargetsFromGiteeInternal();
+    _reportSyncResult(SyncModule.targets, result, scope: scope, source: '目标');
+    return result;
+  }
+
+  Future<SyncOperationResult> _pullTargetsFromGiteeInternal() async {
     if (!_isScheduleIdentityReady ||
         _scheduleOverwriteJournalCleanupPending ||
         _remoteViewTransitionInProgress ||
@@ -3569,6 +3729,12 @@ class TimeProvider with ChangeNotifier {
     }
     // 捕获归属身份，避免随后切换身份导致同步到错误身份的文件
     _categoriesUserCode = _scheduleUser.code;
+    _reportSyncPending(
+      SyncModule.categories,
+      uploadCount: 1,
+      message: '有分类修改待上传',
+      source: '日程页',
+    );
     _categoriesGiteeTimer?.cancel();
     _categoriesGiteeTimer = Timer(const Duration(seconds: 3), () {
       unawaited(_syncCategoriesToGitee());
@@ -3586,6 +3752,11 @@ class TimeProvider with ChangeNotifier {
     _categoriesGiteeSyncing = true;
     final userCode =
         _categoriesUserCode.isEmpty ? _scheduleUser.code : _categoriesUserCode;
+    _reportSyncBegin(
+      SyncModule.categories,
+      scope: userCode,
+      source: '日程页',
+    );
     try {
       final token = await _categorySyncDependencies.loadToken();
       if (!_isScheduleReady ||
@@ -3594,6 +3765,17 @@ class TimeProvider with ChangeNotifier {
           _scheduleUser.code != userCode ||
           token == null ||
           token.isEmpty) {
+        if (token == null || token.isEmpty) {
+          _reportSyncResult(
+            SyncModule.categories,
+            const SyncOperationResult.offline(
+              '分类远端未连接，本地修改会保留',
+              pendingUploadCount: 1,
+            ),
+            scope: userCode,
+            source: '日程页',
+          );
+        }
         return;
       }
 
@@ -3620,6 +3802,15 @@ class TimeProvider with ChangeNotifier {
             source: 'schedule_sync',
           );
           _addScheduleSyncStatus('分类同步中止：远端数据格式无效');
+          _reportSyncResult(
+            SyncModule.categories,
+            const SyncOperationResult.failed(
+              '分类同步失败：远端分类文件格式无效',
+              pendingUploadCount: 1,
+            ),
+            scope: userCode,
+            source: '日程页',
+          );
           return;
         }
         remoteDoc = parseCategoryDocument(pullResult.content);
@@ -3633,6 +3824,15 @@ class TimeProvider with ChangeNotifier {
           source: 'schedule_sync',
         );
         _addScheduleSyncStatus('分类同步中止：远端读取失败');
+        _reportSyncResult(
+          SyncModule.categories,
+          SyncOperationResult.failed(
+            '分类同步失败：${pullResult.error ?? '远端分类不可读'}',
+            pendingUploadCount: 1,
+          ),
+          scope: userCode,
+          source: '日程页',
+        );
         return;
       }
       final merged = mergeCategoryDocuments(local: localDoc, remote: remoteDoc);
@@ -3653,6 +3853,15 @@ class TimeProvider with ChangeNotifier {
           source: 'schedule_sync',
         );
         _addScheduleSyncStatus('分类推送失败：${pushResult.error ?? '未知错误'}');
+        _reportSyncResult(
+          SyncModule.categories,
+          SyncOperationResult.failed(
+            '分类同步失败：${pushResult.error ?? '推送失败'}',
+            pendingUploadCount: 1,
+          ),
+          scope: userCode,
+          source: '日程页',
+        );
         return;
       }
       if (!_isScheduleReady ||
@@ -3668,9 +3877,24 @@ class TimeProvider with ChangeNotifier {
       );
       if (!applied) {
         _addScheduleSyncStatus('分类同步状态已变化，本地结果未应用');
+        _reportSyncResult(
+          SyncModule.categories,
+          const SyncOperationResult.failed(
+            '分类同步状态已变化，本地结果未应用',
+            pendingUploadCount: 1,
+          ),
+          scope: userCode,
+          source: '日程页',
+        );
         return;
       }
       _addScheduleSyncStatus('分类已同步');
+      _reportSyncResult(
+        SyncModule.categories,
+        const SyncOperationResult.success(message: '分类同步完成'),
+        scope: userCode,
+        source: '日程页',
+      );
       Future.delayed(const Duration(seconds: 3), () {
         _addScheduleSyncStatus('');
       });
@@ -3678,6 +3902,15 @@ class TimeProvider with ChangeNotifier {
       debugPrint('分类同步失败: $e');
       _recordAppError('分类同步失败', e, stackTrace);
       _addScheduleSyncStatus('分类同步失败: $e');
+      _reportSyncResult(
+        SyncModule.categories,
+        SyncOperationResult.failed(
+          '分类同步失败：$e',
+          pendingUploadCount: 1,
+        ),
+        scope: userCode,
+        source: '日程页',
+      );
     } finally {
       _categoriesGiteeSyncing = false;
     }
@@ -3697,13 +3930,29 @@ class TimeProvider with ChangeNotifier {
   ///
   /// 普通后台恢复使用冷却时间，手动同步和身份切换可以强制刷新。
   Future<bool> pullCategoriesFromGitee({bool force = false}) async {
+    final result = await _pullCategoriesFromGiteeResult(force: force);
+    // null 表示这次没有真正发起远端请求（未就绪、冷却中或已有任务），
+    // 不应该把它记成一次成功或失败。
+    if (result == null) return false;
+    _reportSyncResult(
+      SyncModule.categories,
+      result,
+      scope: _scheduleSyncScope,
+      source: '日程页',
+    );
+    return result.succeeded;
+  }
+
+  Future<SyncOperationResult?> _pullCategoriesFromGiteeResult({
+    bool force = false,
+  }) async {
     if (!_isScheduleIdentityReady ||
         _scheduleIdentityMutationInProgress ||
         _scheduleOverwriteJournalCleanupPending ||
         _remoteViewEnabled ||
         _remoteViewTransitionInProgress ||
         !_hasSelectedScheduleUser) {
-      return false;
+      return null;
     }
 
     final userCode = _scheduleUser.code;
@@ -3712,9 +3961,9 @@ class TimeProvider with ChangeNotifier {
         _lastCategoryPullAt != null &&
         _lastCategoryPullUserCode == userCode &&
         now.difference(_lastCategoryPullAt!) < _categoryPullCooldown) {
-      return false;
+      return null;
     }
-    if (_categoriesGiteeSyncing) return false;
+    if (_categoriesGiteeSyncing) return null;
 
     _categoriesGiteeSyncing = true;
     try {
@@ -3722,7 +3971,10 @@ class TimeProvider with ChangeNotifier {
       if (!_canContinueCategoryPull(userCode) ||
           token == null ||
           token.isEmpty) {
-        return false;
+        return const SyncOperationResult.offline(
+          '分类远端未连接，本地修改会保留',
+          pendingUploadCount: 1,
+        );
       }
 
       // 记录请求时间而不是成功时间，避免网络失败时连续恢复前台造成重试风暴。
@@ -3732,7 +3984,7 @@ class TimeProvider with ChangeNotifier {
         token: token,
         userCode: userCode,
       );
-      if (!_canContinueCategoryPull(userCode)) return false;
+      if (!_canContinueCategoryPull(userCode)) return null;
       if (!pullResult.success || pullResult.content == null) {
         _appLogService.warning(
           pullResult.notFound
@@ -3740,7 +3992,10 @@ class TimeProvider with ChangeNotifier {
               : '分类拉取失败：${pullResult.error ?? '远端数据不可用'}',
           source: 'schedule_sync',
         );
-        return false;
+        return SyncOperationResult.failed(
+          '分类同步失败：${pullResult.error ?? '远端数据不可用'}',
+          pendingUploadCount: 1,
+        );
       }
 
       final localCategories = List<Category>.from(_categories);
@@ -3775,17 +4030,20 @@ class TimeProvider with ChangeNotifier {
           '分类拉取结果未应用：$userCode（同步状态已变化）',
           source: 'schedule_sync',
         );
-        return false;
+        return const SyncOperationResult.failed(
+          '分类同步状态已变化，本地结果未应用',
+          pendingUploadCount: 1,
+        );
       }
       _appLogService.info(
         '分类拉取成功：$userCode（远端 ${remoteDoc.categories.length} 个，合并后 ${merged.categories.length} 个）',
         source: 'schedule_sync',
       );
-      return true;
+      return const SyncOperationResult.success(message: '分类同步完成');
     } catch (e, stackTrace) {
       debugPrint('分类拉取失败: $e');
       _recordAppError('分类拉取失败', e, stackTrace);
-      return false;
+      return SyncOperationResult.failed('分类同步失败：$e');
     } finally {
       _categoriesGiteeSyncing = false;
     }
@@ -4336,6 +4594,19 @@ class TimeProvider with ChangeNotifier {
   /// 同步中心使用这个按模块的包装入口。底层同步实现仍由本 Provider
   /// 持有，因而能复用已有锁、pending 日期和远端合并逻辑。
   Future<SyncOperationResult> syncModuleForCenter(SyncModule module) async {
+    // 由同步中心发起的同步，结果由控制器统一上报；这里的内部入口不再
+    // 重复上报，否则同一次失败会被记两次。
+    _centerOwnsSyncReporting = true;
+    try {
+      return await _syncModuleForCenterInternal(module);
+    } finally {
+      _centerOwnsSyncReporting = false;
+    }
+  }
+
+  Future<SyncOperationResult> _syncModuleForCenterInternal(
+    SyncModule module,
+  ) async {
     if (!_isInitialLoadFinished || !_scheduleUserLoadFinished) {
       return const SyncOperationResult.offline('本地同步状态仍在准备，请稍后重试');
     }
@@ -4401,9 +4672,16 @@ class TimeProvider with ChangeNotifier {
           } else {
             await synchronizeCalendar();
           }
-          return SyncOperationResult.success(
+          // 只有真正没有剩余待同步日期才算成功，避免部分失败被展示成
+          // “已完成”，掩盖需要重试的日期。
+          if (pendingGoogleSyncDates.isNotEmpty) {
+            return SyncOperationResult.failed(
+              '部分 Google 日历同步失败（剩余${pendingGoogleSyncDates.length}天）',
+              pendingUploadCount: pendingGoogleSyncDates.length,
+            );
+          }
+          return const SyncOperationResult.success(
             message: 'Google 日历同步完成',
-            pendingUploadCount: pendingGoogleSyncDates.length,
           );
       }
     } catch (e, stackTrace) {
@@ -4474,6 +4752,10 @@ class TimeProvider with ChangeNotifier {
         !googleCalendarSyncEnabled) {
       if (!delay) {
         _addSyncStatus('Google 日历同步已关闭');
+        _statusCoordinator?.reportDisabled(
+          SyncModule.googleCalendar,
+          'Google 日历同步已关闭',
+        );
       }
       return;
     }
@@ -4495,6 +4777,17 @@ class TimeProvider with ChangeNotifier {
       }
 
       if (!_isGoogleCalendarSignedIn) {
+        _reportSyncResult(
+          SyncModule.googleCalendar,
+          SyncOperationResult.offline(
+            GoogleCalendarService.needsCalendarReconnect
+                ? '日历未连接，请在设置中重新连接'
+                : '未登录 Google 账号，无法同步',
+            pendingUploadCount: pendingGoogleSyncDates.length,
+          ),
+          scope: _googleSyncScope,
+          source: 'Google 日历',
+        );
         if (!delay) {
           final msg = GoogleCalendarService.needsCalendarReconnect
               ? '日历未连接，请在设置中重新连接'
@@ -4505,6 +4798,11 @@ class TimeProvider with ChangeNotifier {
       }
 
       _isSyncing = true;
+      _reportSyncBegin(
+        SyncModule.googleCalendar,
+        scope: _googleSyncScope,
+        source: 'Google 日历',
+      );
       try {
         _addSyncStatus("开始同步");
         if (delay) await Future.delayed(const Duration(milliseconds: 500));
@@ -4556,6 +4854,15 @@ class TimeProvider with ChangeNotifier {
 
         if (success) {
           _clearPendingGoogleForDate();
+          _reportSyncResult(
+            SyncModule.googleCalendar,
+            SyncOperationResult.success(
+              message: pullOk ? 'Google 日历同步完成' : 'Google 日历同步完成（日历拉取失败）',
+              pendingUploadCount: pendingGoogleSyncDates.length,
+            ),
+            scope: _googleSyncScope,
+            source: 'Google 日历',
+          );
           if (!delay) {
             if (!pullOk) {
               _addSyncStatus("同步成功（日历拉取失败）");
@@ -4563,11 +4870,22 @@ class TimeProvider with ChangeNotifier {
               _addSyncStatus("同步成功");
             }
           }
-        } else if (!delay) {
-          if (!pullOk) {
-            _addSyncStatus("从 Google 日历拉取失败");
-          } else {
-            _addSyncStatus("同步失败，请稍后重试");
+        } else {
+          _reportSyncResult(
+            SyncModule.googleCalendar,
+            SyncOperationResult.failed(
+              pullOk ? 'Google 日历同步失败，请稍后重试' : '从 Google 日历拉取失败',
+              pendingUploadCount: pendingGoogleSyncDates.length,
+            ),
+            scope: _googleSyncScope,
+            source: 'Google 日历',
+          );
+          if (!delay) {
+            if (!pullOk) {
+              _addSyncStatus("从 Google 日历拉取失败");
+            } else {
+              _addSyncStatus("同步失败，请稍后重试");
+            }
           }
         }
 
@@ -4749,8 +5067,23 @@ class TimeProvider with ChangeNotifier {
       notifyListeners();
       if (pendingGoogleSyncDates.isEmpty && allSuccess) {
         _addSyncStatus("同步成功");
+        _reportSyncResult(
+          SyncModule.googleCalendar,
+          const SyncOperationResult.success(message: 'Google 日历同步完成'),
+          scope: _googleSyncScope,
+          source: 'Google 日历',
+        );
       } else {
         _addSyncStatus("部分同步失败（剩余${pendingGoogleSyncDates.length}天）");
+        _reportSyncResult(
+          SyncModule.googleCalendar,
+          SyncOperationResult.failed(
+            '部分 Google 日历同步失败（剩余${pendingGoogleSyncDates.length}天）',
+            pendingUploadCount: pendingGoogleSyncDates.length,
+          ),
+          scope: _googleSyncScope,
+          source: 'Google 日历',
+        );
       }
     } finally {
       _isSyncing = false;

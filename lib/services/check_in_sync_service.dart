@@ -10,6 +10,7 @@ import '../models/check_in_record.dart';
 import '../models/diary_kind.dart';
 import '../models/google_calendar_user.dart';
 import '../models/known_google_users.dart';
+import '../models/sync_center_state.dart';
 import 'app_user_identity_store.dart';
 import 'check_in_gitee_service.dart';
 import 'check_in_image_service.dart';
@@ -20,6 +21,7 @@ import 'check_in_photo_resource.dart';
 import 'diary_local_store.dart';
 import 'google_calendar_service.dart';
 import 'app_identity_service.dart';
+import 'sync_status_coordinator.dart';
 import '../utils/platform_features.dart';
 
 class CheckInSyncResult {
@@ -54,6 +56,12 @@ class CheckInSyncResult {
 /// 打卡数据同步编排
 class CheckInSyncService {
   static const _pendingPhotoCleanupKey = 'check_in_pending_photo_cleanup_v1';
+
+  CheckInSyncService({SyncStatusCoordinator? statusCoordinator})
+      : _statusCoordinator = statusCoordinator;
+
+  /// 全局同步状态中心。为空时只跳过状态上报（页面级测试等场景）。
+  final SyncStatusCoordinator? _statusCoordinator;
 
   CheckInDocument _document = CheckInDocument.empty;
   bool _loading = false;
@@ -254,6 +262,12 @@ class CheckInSyncService {
   }
 
   Future<CheckInSyncResult> pullFromGitHub() async {
+    final result = await _pullFromGitHubInternal();
+    _reportSyncResult(result, fallbackMessage: '打卡数据已拉取');
+    return result;
+  }
+
+  Future<CheckInSyncResult> _pullFromGitHubInternal() async {
     return _synchronized(() async {
       _syncing = true;
       _lastError = null;
@@ -289,6 +303,12 @@ class CheckInSyncService {
   }
 
   Future<CheckInSyncResult> pushToGitHub() async {
+    final result = await _pushToGitHubSerialized();
+    _reportSyncResult(result, fallbackMessage: '打卡数据已同步');
+    return result;
+  }
+
+  Future<CheckInSyncResult> _pushToGitHubSerialized() async {
     return _synchronized(() async {
       _syncing = true;
       _lastError = null;
@@ -300,6 +320,41 @@ class CheckInSyncService {
         _syncing = false;
       }
     });
+  }
+
+  /// 把一次打卡同步结果写入全局状态中心，让同步中心无需从打卡页发起也能
+  /// 看到最新的成功时间或失败原因。
+  void _reportSyncResult(
+    CheckInSyncResult result, {
+    required String fallbackMessage,
+  }) {
+    final coordinator = _statusCoordinator;
+    if (coordinator == null) return;
+
+    if (result.success) {
+      coordinator.report(
+        SyncModule.checkIn,
+        SyncOperationResult.success(
+          message: result.warning ?? fallbackMessage,
+          // 照片部分失败时业务层通过 warning 提示，仍有内容待重试。
+          pendingUploadCount: result.warning == null ? 0 : 1,
+        ),
+        source: '打卡页',
+      );
+      return;
+    }
+
+    final message = result.error ?? '打卡同步失败';
+    final offline = message.contains('未配置') ||
+        message.contains('身份') ||
+        message.contains('Token');
+    coordinator.report(
+      SyncModule.checkIn,
+      offline
+          ? SyncOperationResult.offline(message, pendingUploadCount: 1)
+          : SyncOperationResult.failed(message, pendingUploadCount: 1),
+      source: '打卡页',
+    );
   }
 
   /// 写操作（推送/删除）前先拉取远端并合并进 [_document]。

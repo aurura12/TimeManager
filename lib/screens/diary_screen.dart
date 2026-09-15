@@ -3,13 +3,17 @@ import '../utils/platform_features.dart';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 
 import '../models/diary_kind.dart';
 import '../models/diary_search_result.dart';
+import '../models/remote_sync_platform.dart';
+import '../models/sync_center_state.dart';
 import '../services/diary_gitee_service.dart';
 import '../services/diary_local_store.dart';
 import '../services/diary_search_service.dart';
 import '../services/app_identity_service.dart';
+import '../services/sync_status_coordinator.dart';
 import '../utils/diary_remote_path_utils.dart';
 import 'diary_search_screen.dart';
 
@@ -58,9 +62,37 @@ class _DiaryScreenState extends State<DiaryScreen> {
   Set<String> _jDiaryDateKeys = {};
   late final StreamSubscription<void> _identitySubscription;
 
+  /// 全局同步状态中心。允许为空：独立构建日记页时没有 Provider 树，
+  /// 此时只跳过状态上报。
+  SyncStatusCoordinator? _statusCoordinator;
+
+  /// 日记按「身份 + 远端平台」隔离同步状态。
+  String get _diarySyncScope =>
+      '${_kind.code}:${RemoteSyncPlatform.gitee.name}';
+
+  void _reportDiary(SyncOperationResult result) {
+    _statusCoordinator?.report(
+      SyncModule.diary,
+      result,
+      scope: _diarySyncScope,
+      source: '日记页',
+    );
+  }
+
+  void _markDiaryPending() {
+    _statusCoordinator?.markPending(
+      SyncModule.diary,
+      uploadCount: 1,
+      message: '有日记草稿待上传',
+      source: '日记页',
+      scope: _diarySyncScope,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
+    _statusCoordinator = context.read<SyncStatusCoordinator?>();
     _bodyController.addListener(_onBodyChanged);
     _identitySubscription = AppIdentityService.changes.listen((_) {
       if (!mounted) return;
@@ -294,6 +326,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (_suppressBodyListener) return;
     _startedAt ??= DateTime.now();
     _dirtySinceContextLoaded = true;
+    _markDiaryPending();
     _saveDebounce?.cancel();
     _saveDebounce = Timer(const Duration(milliseconds: 350), () {
       _saveDraftNow();
@@ -695,7 +728,12 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   Future<void> _pullDiary() async {
     final ok = await _ensureToken();
-    if (!ok) return;
+    if (!ok) {
+      _reportDiary(
+        const SyncOperationResult.offline('日记远端未连接，本地草稿会保留'),
+      );
+      return;
+    }
 
     setState(() => _processing = true);
     final path = await _findRemotePathForCurrentContext(refresh: true);
@@ -756,6 +794,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       await DiarySearchService.updateCache(_kind.code, _selectedDate, raw);
       if (!mounted) return;
       _showMessage('拉取成功（已覆盖本地）');
+      _reportDiary(const SyncOperationResult.success(message: '日记已拉取'));
       setState(() => _processing = false);
       return;
     }
@@ -764,9 +803,15 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (result.notFound) {
       _setCurrentDiaryBaseline(path: null, sha: null, notFound: true);
       _showMessage('远端不存在该日记文件');
+      _reportDiary(
+        const SyncOperationResult.success(message: '远端暂无该日记文件'),
+      );
       return;
     }
     _showMessage(result.error ?? '拉取失败');
+    _reportDiary(
+      SyncOperationResult.failed('日记同步失败：${result.error ?? '拉取失败'}'),
+    );
   }
 
   Future<void> _pushDiary() async {
@@ -779,6 +824,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
             ? '请先在设置中完成 Google 登录'
             : '请先在设置中选择“乖乖”或“晶晶”身份',
       );
+      _reportDiary(
+        const SyncOperationResult.offline('日记远端未连接，本地草稿会保留'),
+      );
       return;
     }
     if (_kind != identityKind) {
@@ -788,7 +836,15 @@ class _DiaryScreenState extends State<DiaryScreen> {
       return;
     }
     final ok = await _ensureToken();
-    if (!ok) return;
+    if (!ok) {
+      _reportDiary(
+        const SyncOperationResult.offline(
+          '日记远端未连接，本地草稿会保留',
+          pendingUploadCount: 1,
+        ),
+      );
+      return;
+    }
 
     _startedAt ??= DateTime.now();
     await _saveDraftNow();
@@ -861,12 +917,28 @@ class _DiaryScreenState extends State<DiaryScreen> {
       await DiarySearchService.updateCache(_kind.code, _selectedDate, markdown);
       _dirtySinceContextLoaded = false;
       _showMessage(result.created ? '同步成功（已新建远端文件）' : '同步成功');
+      _reportDiary(
+        SyncOperationResult.success(
+          message: result.created ? '日记已同步（新建远端文件）' : '日记已同步',
+        ),
+      );
       return;
     }
     if (result.conflict) {
       _showMessage('远端日记已被其他设备更新，请先拉取确认后再推送');
+      _reportDiary(
+        const SyncOperationResult.conflict(
+          '远端日记已被其他设备更新，请先拉取确认后再推送',
+        ),
+      );
     } else {
       _showMessage(result.error ?? '同步失败');
+      _reportDiary(
+        SyncOperationResult.failed(
+          '日记同步失败：${result.error ?? '推送失败'}',
+          pendingUploadCount: 1,
+        ),
+      );
     }
   }
 

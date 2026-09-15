@@ -5,7 +5,6 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../models/sync_center_state.dart';
-import '../providers/time_provider.dart';
 import '../services/sync_center_service.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
@@ -27,21 +26,14 @@ class SyncCenterScreen extends StatefulWidget {
 
 class _SyncCenterScreenState extends State<SyncCenterScreen> {
   late final SyncCenterController _controller;
-  late final bool _ownsController;
 
   @override
   void initState() {
     super.initState();
-    _ownsController = widget.controller == null;
-    _controller = widget.controller ??
-        SyncCenterController.forProvider(context.read<TimeProvider>());
+    // 生产环境使用全局控制器：日程页/出行页/后台同步上报的状态与这里
+    // 共享同一份数据，因此重新打开页面不会退回“尚未检查”。
+    _controller = widget.controller ?? context.read<SyncCenterController>();
     unawaited(_controller.initialize());
-  }
-
-  @override
-  void dispose() {
-    if (_ownsController) _controller.dispose();
-    super.dispose();
   }
 
   @override
@@ -181,7 +173,7 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
             ),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              '最后同步：${_formatLastSync(state.lastSyncAt)}',
+              '最后成功：${_formatLastSuccess(state.lastSuccessAt)}',
               style: AppText.caption.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
@@ -193,6 +185,16 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
                 color: state.hasPending ? color : colorScheme.onSurfaceVariant,
               ),
             ),
+            if (state.lastAttemptAt != null &&
+                state.status != SyncModuleStatus.success) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                '最近尝试：${_formatLastSuccess(state.lastAttemptAt)}',
+                style: AppText.caption.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
             if (issue.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.xs),
               Text(
@@ -271,8 +273,8 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
     );
   }
 
-  String _formatLastSync(DateTime? value) {
-    if (value == null) return '尚未成功同步';
+  String _formatLastSuccess(DateTime? value) {
+    if (value == null) return '暂无记录';
     return DateFormat('yyyy-MM-dd HH:mm').format(value);
   }
 

@@ -16,6 +16,7 @@ import 'screens/global_search_screen.dart';
 import 'services/app_log_service.dart';
 import 'services/home_widget_action_router.dart';
 import 'services/home_widget_service.dart';
+import 'services/sync_center_service.dart';
 import 'services/windows_legacy_preferences_migration.dart';
 import 'widgets/desktop_shortcut_host.dart';
 
@@ -390,7 +391,22 @@ Future<void> _initializeAndRunApplication({
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (context) => TimeProvider()),
+        // 所有同步入口（同步中心、日程页、出行页、日记页、打卡、后台自动
+        // 同步）共用同一个状态中心，避免各自维护一份状态。
+        ChangeNotifierProvider<SyncStatusCoordinator>(
+          create: (context) => SyncStatusCoordinator(),
+        ),
+        ChangeNotifierProvider<TimeProvider>(
+          create: (context) => TimeProvider(
+            statusCoordinator: context.read<SyncStatusCoordinator>(),
+          ),
+        ),
+        ChangeNotifierProvider<SyncCenterController>(
+          create: (context) => SyncCenterController.forProvider(
+            context.read<TimeProvider>(),
+            coordinator: context.read<SyncStatusCoordinator>(),
+          ),
+        ),
         ChangeNotifierProvider(create: (context) => ThemeModeProvider()),
       ],
       child: AppRecoveryBoundary(
