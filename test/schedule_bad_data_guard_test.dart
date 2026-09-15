@@ -123,6 +123,10 @@ String _keyOf(DateTime date) {
   return '$y-$m-$d';
 }
 
+/// 日程夹具里时间块的颜色：必须是不透明 ARGB（0xFF 开头），与 app 写出的
+/// `c` 值一致，否则同一个槽位会被判成"内容不同"。
+const int _kSlotColor = 0xFF9CB86A;
+
 List<dynamic> _slotsOf(TimeProvider provider, String dateKey) {
   final map = provider.toBackupMap()['dailySlots'] as Map<String, dynamic>;
   return (map[dateKey] as List?) ?? const [];
@@ -406,18 +410,152 @@ void main() {
       );
       addTearDown(provider.dispose);
 
-      // 远端内容更新（ts 更大），合并本会采纳远端；但推送被拒后不应写回本地。
+      // 本地 60 槽必须上传，远端独有 114 槽（ts 更大）本会写回本地；
+      // 但推送被拒后不应写回本地。
       state.remoteContents['g/2026-09-08'] =
-          '{"updated_at":3000,"slots":[{"i":60,"l":"对方内容","ts":2000}]}';
+          '{"updated_at":3000,"slots":[{"i":114,"l":"对方内容","ts":2000}]}';
 
       await provider.syncScheduleToGitee(dateKey: '2026-09-08');
 
       expect(state.uploads, hasLength(1));
+      final slots = provider.getSlotsForDate('2026-09-08')!;
       expect(
-        provider.getSlotsForDate('2026-09-08')?[60].label,
+        slots[60].label,
         '跑步',
         reason: '推送失败时本地不能被远端内容覆盖',
       );
+      expect(slots[114].recorded, isFalse);
+    });
+  });
+
+  group('内容未变化时不上传', () {
+    test('只有 updated_at 不同：不上传、本地保留原内容', () async {
+      final state = _RemoteState();
+      final provider = await _createProvider(
+        initialPreferences: {
+          'daily_slots':
+              '{"2026-09-06":[{"i":60,"l":"跑步","c":$_kSlotColor,"ts":1000}]}',
+        },
+        state: state,
+      );
+      addTearDown(provider.dispose);
+
+      // 槽位内容与本地完全一致，仅文件级 updated_at 不同。
+      state.remoteContents['g/2026-09-06'] =
+          '{"updated_at":9999,"slots":[{"i":60,"l":"跑步","c":$_kSlotColor,"ts":1000}]}';
+
+      await provider.syncScheduleToGitee(dateKey: '2026-09-06');
+
+      expect(state.uploads, isEmpty, reason: '内容一致时不应产生新提交');
+      expect(provider.getSlotsForDate('2026-09-06')![60].label, '跑步');
+      expect(provider.pendingGiteeSyncDates, isNot(contains('2026-09-06')));
+    });
+
+    test('字段顺序与槽位顺序不同不算变化：不上传', () async {
+      final state = _RemoteState();
+      final provider = await _createProvider(
+        initialPreferences: {
+          'daily_slots':
+              '{"2026-09-06":[{"i":60,"l":"跑步","c":$_kSlotColor,"ts":1000},{"i":114,"l":"阅读","ts":1000}]}',
+        },
+        state: state,
+      );
+      addTearDown(provider.dispose);
+
+      state.remoteContents['g/2026-09-06'] =
+          '{"updated_at":8888,"slots":[{"ts":1000,"l":"阅读","i":114},{"c":$_kSlotColor,"ts":1000,"i":60,"l":"跑步"}]}';
+
+      await provider.syncScheduleToGitee(dateKey: '2026-09-06');
+
+      expect(state.uploads, isEmpty);
+    });
+
+    test('日程内容变化：正常上传并携带新 updated_at', () async {
+      final state = _RemoteState();
+      final provider = await _createProvider(
+        initialPreferences: {
+          'daily_slots':
+              '{"2026-09-06":[{"i":60,"l":"跑步","c":1,"ts":2000}]}',
+        },
+        state: state,
+      );
+      addTearDown(provider.dispose);
+
+      state.remoteContents['g/2026-09-06'] =
+          '{"updated_at":1000,"slots":[{"i":60,"l":"跑步","c":1,"ts":1000}]}';
+
+      await provider.syncScheduleToGitee(dateKey: '2026-09-06');
+
+      expect(state.uploads, hasLength(1));
+      final uploaded =
+          json.decode(state.uploads.single.content) as Map<String, dynamic>;
+      expect(uploaded['updated_at'], isA<int>());
+      expect(uploaded['updated_at'], greaterThan(1000));
+      expect((uploaded['slots'] as List).single['l'], '跑步');
+    });
+
+    test('远端有本地缺失的新内容：不上传但写回本地', () async {
+      final state = _RemoteState();
+      final provider = await _createProvider(
+        initialPreferences: {
+          'daily_slots':
+              '{"2026-09-06":[{"i":60,"l":"跑步","c":1,"ts":1000}]}',
+        },
+        state: state,
+      );
+      addTearDown(provider.dispose);
+
+      // 远端是本地内容的超集（本地内容已在远端），合并结果 == 远端槽位。
+      state.remoteContents['g/2026-09-06'] =
+          '{"updated_at":5000,"slots":[{"i":60,"l":"跑步","c":$_kSlotColor,"ts":1000},{"i":114,"l":"对方新增","ts":4000}]}';
+
+      await provider.syncScheduleToGitee(dateKey: '2026-09-06');
+
+      expect(state.uploads, isEmpty);
+      final slots = provider.getSlotsForDate('2026-09-06')!;
+      expect(slots[114].recorded, isTrue);
+      expect(slots[114].label, '对方新增');
+      expect(slots[60].label, '跑步');
+    });
+
+    test('清空日程：本地为空时仍上传空内容', () async {
+      final state = _RemoteState();
+      // 09-06 本地无任何记录（日程已清空），远端还留着旧内容。
+      final provider = await _createProvider(state: state);
+      addTearDown(provider.dispose);
+      state.remoteContents['g/2026-09-06'] =
+          '{"updated_at":1000,"slots":[{"i":60,"l":"跑步","c":1,"ts":1000}]}';
+
+      await provider.syncScheduleToGitee(dateKey: '2026-09-06');
+
+      expect(state.uploads, hasLength(1), reason: '清空必须能推到远端');
+      final uploaded =
+          json.decode(state.uploads.single.content) as Map<String, dynamic>;
+      expect(uploaded['slots'], isEmpty);
+      expect(provider.getSlotsForDate('2026-09-06')?[60].recorded, isFalse);
+    });
+
+    test('同步成功后重复同步同一天：不再产生上传', () async {
+      final state = _RemoteState();
+      final provider = await _createProvider(
+        initialPreferences: {
+          'daily_slots':
+              '{"2026-09-06":[{"i":60,"l":"跑步","c":$_kSlotColor,"ts":2000}]}',
+        },
+        state: state,
+      );
+      addTearDown(provider.dispose);
+      state.remoteContents['g/2026-09-06'] =
+          '{"updated_at":1000,"slots":[{"i":60,"l":"跑步","c":$_kSlotColor,"ts":1000}]}';
+
+      await provider.syncScheduleToGitee(dateKey: '2026-09-06');
+      expect(state.uploads, hasLength(1), reason: '内容变化时需要上传');
+      // 模拟服务端已落盘本次上传的内容
+      state.remoteContents['g/2026-09-06'] = state.uploads.single.content;
+
+      await provider.syncScheduleToGitee(dateKey: '2026-09-06');
+
+      expect(state.uploads, hasLength(1), reason: '内容未变化时不应再上传');
     });
   });
 }

@@ -2323,7 +2323,9 @@ class TimeProvider with ChangeNotifier {
   }
 
   /// 推送单个日期日程到 Gitee：先拉取远端 → 槽位级"后写覆盖"合并 → 推送。
-  /// 成功后把合并结果写回本地，保证本地与远端一致。
+  /// 合并结果与远端槽位内容一致时不推送（避免只刷新同步就产生无意义的
+  /// `updated_at` 提交），但仍会把远端的新内容写回本地。
+  /// 推送成功后把合并结果写回本地，保证本地与远端一致。
   Future<bool> _pushScheduleDay(
     String dateKey,
     List<TimeSlot> slots, {
@@ -2407,7 +2409,37 @@ class TimeProvider with ChangeNotifier {
       return false;
     }
 
-    // 3) 生成差异描述（对比远端原内容与合并结果）
+    // 3) 内容判定：合并结果与远端槽位内容一致时，这次同步不会改变远端内容
+    //    （例如只重跑了一次同步或失败重试）。此时不上传、不产生新提交、保留
+    //    远端原有的 updated_at，只在本地缺少远端新内容时把内容写回本地。
+    if (scheduleSlotsEquivalent(merged, remote.slots)) {
+      final latestLocal = _serializeRecordedSlots(slots);
+      final finalEntries = mergeScheduleSlots(
+        localEntries: latestLocal,
+        remoteEntries: merged,
+      );
+      if (!scheduleSlotsEquivalent(finalEntries, latestLocal)) {
+        // 远端有本地缺失的新内容：仍同步回本地。
+        _applyScheduleEntriesToSlots(slots, finalEntries);
+        _markSlotsDirty(dateKey);
+        _targetStatsCache.invalidateDate(dateKey);
+        final saved = await _saveData();
+        if (!_canContinueScheduleSync(userCode) || !saved) return false;
+        notifyListeners();
+        _appLogService.info(
+          '日程已同步到本地（远端内容较新，无需上传）：$dateKey',
+          source: 'schedule_sync',
+        );
+      } else {
+        _appLogService.info(
+          '日程推送跳过：$dateKey 槽位内容与远端一致',
+          source: 'schedule_sync',
+        );
+      }
+      return true;
+    }
+
+    // 4) 生成差异描述（对比远端原内容与合并结果）
     final commitMessage = _buildScheduleDiffMessage(
       userLabel,
       dateKey,
@@ -2415,7 +2447,7 @@ class TimeProvider with ChangeNotifier {
       merged,
     );
 
-    // 4) 推送合并结果（新格式包装）
+    // 5) 推送合并结果（新格式包装）
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final content = json.encode({
       'updated_at': nowMs,
@@ -2444,7 +2476,7 @@ class TimeProvider with ChangeNotifier {
       return false;
     }
 
-    // 5) 将合并结果写回本地（含远端更新的槽位），保证本地 == 远端。
+    // 6) 将合并结果写回本地（含远端更新的槽位），保证本地 == 远端。
     //    注意：拉取远端期间用户可能已继续编辑本地，写回前用最新本地
     //    状态再做一次"后写覆盖"合并，避免把同步期间的新修改覆盖回旧数据。
     final latestLocal = _serializeRecordedSlots(slots);

@@ -207,6 +207,37 @@ List<Map<String, dynamic>> scheduleEntriesForPush({
   );
 }
 
+/// 判断两组槽位内容是否等价（忽略槽位顺序、字段顺序与 null 字段）。
+///
+/// 用于推送前判断"这次同步是否真的会改变远端内容"：内容等价时不必上传，
+/// 也就不会产生只有 `updated_at` 变化的无意义提交。
+bool scheduleSlotsEquivalent(
+  List<Map<String, dynamic>> a,
+  List<Map<String, dynamic>> b,
+) {
+  if (a.length != b.length) return false;
+  final left = a.map(_canonicalEntry).toList()..sort();
+  final right = b.map(_canonicalEntry).toList()..sort();
+  for (var i = 0; i < left.length; i++) {
+    if (left[i] != right[i]) return false;
+  }
+  return true;
+}
+
+/// 生成与字段顺序无关的条目规范形式：键排序，丢弃 null 与 `false` 标记
+/// （`del`/`fc` 只在为 true 时有语义），整数型 double 归一成 int。
+String _canonicalEntry(Map<String, dynamic> entry) {
+  final keys = entry.keys.map((k) => k.toString()).toList()..sort();
+  final normalized = <String, dynamic>{};
+  for (final key in keys) {
+    final value = entry[key];
+    if (value == null || value == false) continue;
+    normalized[key] =
+        value is double && value == value.toInt() ? value.toInt() : value;
+  }
+  return json.encode(normalized);
+}
+
 int _indexOf(Map<String, dynamic> e) => (e['i'] as num?)?.toInt() ?? -1;
 
 int _tsOf(Map<String, dynamic> e) => (e['ts'] as num?)?.toInt() ?? 0;
