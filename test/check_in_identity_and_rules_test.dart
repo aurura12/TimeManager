@@ -124,6 +124,84 @@ void main() {
 
       expect(error, '这一天已经打卡，不能重复补打卡');
     });
+
+    test('每天 3 次目标在达到上限前允许继续打卡，补打卡也按当天计数', () {
+      final current = DateTime.now();
+      final today = DateTime(current.year, current.month, current.day);
+      final now = today.add(const Duration(hours: 12));
+      final goal = _goal(targetCount: 3);
+      final first = _record(
+        id: 'r1',
+        timestamp: today.add(const Duration(hours: 8)),
+      );
+      final second = _record(
+        id: 'r2',
+        timestamp: today.add(const Duration(hours: 9)),
+      );
+      final third = _record(
+        id: 'r3',
+        timestamp: today.add(const Duration(hours: 10)),
+      );
+
+      expect(
+        CheckInSyncService.validateCheckInRequest(
+          goal: goal,
+          existingRecords: [first],
+          userId: 'manual-g',
+          userEmail: _guaiEmail,
+          now: now,
+        ),
+        isNull,
+      );
+      expect(
+        CheckInSyncService.validateCheckInRequest(
+          goal: goal,
+          existingRecords: [first, second],
+          userId: 'manual-g',
+          userEmail: _guaiEmail,
+          now: now,
+          backfillDate: now,
+        ),
+        isNull,
+      );
+      expect(
+        CheckInSyncService.validateCheckInRequest(
+          goal: goal,
+          existingRecords: [first, second, third],
+          userId: 'manual-g',
+          userEmail: _guaiEmail,
+          now: now,
+          backfillDate: now,
+        ),
+        '今天已达到 3 次，不能继续打卡',
+      );
+
+      final goalWithRecords = goal.copyWith(records: [first, second]);
+      expect(
+        goalWithRecords.isCompletedTodayBy('manual-g', email: _guaiEmail),
+        isFalse,
+      );
+      expect(
+        goal.copyWith(records: [first, second, third]).isCompletedTodayBy(
+          'manual-g',
+          email: _guaiEmail,
+        ),
+        isTrue,
+      );
+
+      // 其他日期仍是独立的计数窗口，不能被今天的上限误伤。
+      expect(
+        CheckInSyncService.validateCheckInRequest(
+          goal: goal,
+          existingRecords: [first, second, third],
+          userId: 'manual-g',
+          userEmail: _guaiEmail,
+          now: now,
+          backfillDate: now.subtract(const Duration(days: 1)),
+        ),
+        isNull,
+      );
+    });
   });
 
   group('打卡目标生命周期与服务层规则', () {

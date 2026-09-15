@@ -213,4 +213,46 @@ void main() {
     expect(find.text('打开目标'), findsOneWidget);
     provider.dispose();
   });
+
+  testWidgets('详情页手动删除不会误关闭搜索结果上一层', (tester) async {
+    final target = _makeTarget();
+    final provider = await _createProvider(
+      tester,
+      saveSucceeds: true,
+      initialTarget: target,
+    );
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: provider,
+        child: MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => TargetDetailScreen(targetId: target.id),
+                    ),
+                  );
+                },
+                child: const Text('搜索结果页'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('搜索结果页'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.delete_outline));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TargetDetailScreen), findsNothing);
+    expect(find.text('搜索结果页'), findsOneWidget);
+    provider.dispose();
+  });
 }

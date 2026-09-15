@@ -76,6 +76,7 @@ bool isEditableShortcutContext(BuildContext? context) {
 
 typedef _DesktopShortcutCallback = Object? Function(
   DesktopShortcutActionType type,
+  BuildContext? context,
 );
 
 class _DesktopShortcutAction extends ContextAction<DesktopShortcutIntent> {
@@ -92,8 +93,8 @@ class _DesktopShortcutAction extends ContextAction<DesktopShortcutIntent> {
     DesktopShortcutIntent intent, [
     BuildContext? context,
   ]) {
-    // Esc 是退出当前弹层/临时模式的控制键，即使焦点在输入框里也应可用；
-    // 其余动作在编辑焦点内全部让给文字编辑器。
+    // Esc 仍交给宿主决定是否关闭当前临时状态；宿主必须结合当前路由
+    // 判断是否真的是可关闭弹层。其余动作在编辑焦点内全部让给文字编辑器。
     if (intent.type != DesktopShortcutActionType.escape &&
         isEditableShortcutContext(context)) {
       return false;
@@ -106,7 +107,7 @@ class _DesktopShortcutAction extends ContextAction<DesktopShortcutIntent> {
     DesktopShortcutIntent intent, [
     BuildContext? context,
   ]) {
-    return callback(intent.type);
+    return callback(intent.type, context);
   }
 
   @override
@@ -138,6 +139,7 @@ class DesktopShortcutHost extends StatelessWidget {
     this.onToday,
     this.onOpenSearch,
     this.onEscape,
+    this.onEscapeWithContext,
     this.enabled,
     this.macOS,
   });
@@ -151,6 +153,10 @@ class DesktopShortcutHost extends StatelessWidget {
 
   /// 返回 true 表示已关闭某个状态，false 表示继续让事件向上冒泡。
   final bool Function()? onEscape;
+
+  /// 带当前键盘焦点上下文的 Esc 回调。用于根层区分表单页和
+  /// barrierDismissible 的 PopupRoute；保留 [onEscape] 兼容页面内快捷键。
+  final bool Function(BuildContext? context)? onEscapeWithContext;
 
   final bool? enabled;
   final bool? macOS;
@@ -213,11 +219,13 @@ class DesktopShortcutHost extends StatelessWidget {
         actions: <Type, Action<Intent>>{
           DesktopShortcutIntent: _DesktopShortcutAction(
             isAvailable: (type) => type == DesktopShortcutActionType.escape
-                ? onEscape != null
+                ? onEscape != null || onEscapeWithContext != null
                 : callbacks[type] != null,
-            callback: (type) {
+            callback: (type, context) {
               if (type == DesktopShortcutActionType.escape) {
-                return onEscape?.call() ?? false;
+                return onEscapeWithContext?.call(context) ??
+                    onEscape?.call() ??
+                    false;
               }
               callbacks[type]?.call();
               return null;

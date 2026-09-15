@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -118,6 +119,53 @@ void main() {
     expect(find.text('启动失败: /Users/mac/private/app.json'), findsNothing);
     expect(find.textContaining('#0'), findsNothing);
     expect(find.text('错误编号：STARTUP-89ABCDEF'), findsOneWidget);
+    expect(
+      find.text(safeErrorDescription(SafeErrorPageKind.startup)),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('启动失败页重试会执行启动回调而不是只重建错误页', (tester) async {
+    var startupAttempts = 0;
+    final startupRecovery = StartupRecoveryController(() async {
+      startupAttempts++;
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SafeErrorPage(
+          kind: SafeErrorPageKind.startup,
+          errorCode: 'STARTUP-89ABCDEF',
+          onReload: () => unawaited(startupRecovery.retry()),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('重新加载当前界面'));
+    await tester.pump();
+
+    expect(startupAttempts, 1);
+  });
+
+  test('启动重试不会并发执行，并会在启动回调完成后解除忙碌状态', () async {
+    final release = Completer<void>();
+    var startupAttempts = 0;
+    final startupRecovery = StartupRecoveryController(() async {
+      startupAttempts++;
+      await release.future;
+    });
+
+    final firstAttempt = startupRecovery.retry();
+    final duplicateAttempt = startupRecovery.retry();
+
+    expect(startupRecovery.isRetrying, isTrue);
+    expect(startupAttempts, 1);
+    await duplicateAttempt;
+    expect(startupAttempts, 1);
+
+    release.complete();
+    await firstAttempt;
+    expect(startupRecovery.isRetrying, isFalse);
   });
 
   testWidgets('重新加载只重建当前界面子树，不重新创建控制器', (tester) async {

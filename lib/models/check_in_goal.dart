@@ -141,6 +141,12 @@ class CheckInGoal {
 
   bool get isActive => !isArchived && !isNotStarted && !isExpired;
 
+  /// 是否应出现在主打卡列表中。
+  ///
+  /// 未开始目标仍需可查看、编辑和删除，因此不能复用 [isActive]；只有归档
+  /// 和已过期目标不在主列表中。
+  bool get isVisibleInMainList => !isArchived && !isExpired;
+
   /// 判断某个本地日期是否落在目标的含首尾日期范围内。
   bool allowsCheckInAt(DateTime date) {
     final day = DateTime(date.year, date.month, date.day);
@@ -159,19 +165,28 @@ class CheckInGoal {
   int get totalCheckIns => records.length;
 
   int currentPeriodCountFor(String? userId, {String? email}) {
-    final now = DateTime.now();
+    return countForPeriodAt(DateTime.now(), userId, email: email);
+  }
+
+  /// 统计指定用户在 [date] 所属目标周期内的打卡次数。
+  int countForPeriodAt(DateTime date, String? userId, {String? email}) {
     return records
         .where((r) =>
-            _matchesUser(r, userId, email) &&
-            _isInCurrentPeriod(r.timestamp, now))
+            _matchesUser(r, userId, email) && isInPeriodAt(r.timestamp, date))
         .length;
   }
 
+  /// 当前目标周期是否已经达到目标次数。
+  ///
+  /// 对 daily 目标来说，这就是“今天是否已经达到 targetCount 次”；对 weekly
+  /// 和 monthly 目标则按对应周期累计，供 UI 和服务层使用同一套规则。
+  bool isPeriodCompleteAt(DateTime date, String userId, {String? email}) {
+    return targetCount > 0 &&
+        countForPeriodAt(date, userId, email: email) >= targetCount;
+  }
+
   bool isCompletedTodayBy(String userId, {String? email}) {
-    final now = DateTime.now();
-    return records.any(
-      (r) => _matchesUser(r, userId, email) && _isSameDay(r.timestamp, now),
-    );
+    return isPeriodCompleteAt(DateTime.now(), userId, email: email);
   }
 
   /// 连续打卡天数。
@@ -235,19 +250,20 @@ class CheckInGoal {
   bool _isSameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
-  bool _isInCurrentPeriod(DateTime ts, DateTime now) {
+  /// 判断 [timestamp] 是否落在 [date] 所属的目标周期内。
+  bool isInPeriodAt(DateTime timestamp, DateTime date) {
     switch (period) {
       case CheckInPeriod.daily:
-        return _isSameDay(ts, now);
+        return _isSameDay(timestamp, date);
       case CheckInPeriod.weekly:
-        final weekStart = now.subtract(Duration(days: now.weekday - 1));
-        final tsDay = DateTime(ts.year, ts.month, ts.day);
+        final weekStart = date.subtract(Duration(days: date.weekday - 1));
+        final tsDay = DateTime(timestamp.year, timestamp.month, timestamp.day);
         final startDay =
             DateTime(weekStart.year, weekStart.month, weekStart.day);
         final endDay = startDay.add(const Duration(days: 6)); // 本周日
         return !tsDay.isBefore(startDay) && !tsDay.isAfter(endDay);
       case CheckInPeriod.monthly:
-        return ts.year == now.year && ts.month == now.month;
+        return timestamp.year == date.year && timestamp.month == date.month;
     }
   }
 

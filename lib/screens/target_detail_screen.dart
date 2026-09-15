@@ -70,6 +70,10 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                         ),
                         TextButton(
                           onPressed: () {
+                            // 本次删除会主动关闭详情页；先标记为已处理，避免
+                            // Provider 通知触发空目标重建后再次 post-frame pop，
+                            // 把搜索结果页等上一层也误关闭。
+                            _deletionNoticeScheduled = true;
                             timeProvider.deleteTarget(target);
                             Navigator.pop(dialogContext);
                             if (mounted && Navigator.of(context).canPop()) {

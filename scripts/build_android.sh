@@ -32,14 +32,14 @@ usage() {
   1. 获取依赖、运行分析和测试；
   2. 自动把 pubspec.yaml 的版本号 +1（patch 和构建号都加，如 1.93.0+1 → 1.93.1+2）；
   3. 构建 Android arm64-v8a release APK；
-  4. 把 APK 复制到 dist/ 目录（文件名带版本号）；
+  4. 把 APK 和同名 .sha256 摘要复制到 dist/ 目录（文件名带版本号）；
   5. 提交 pubspec.yaml 版本号变更并 push，让每次构建后工作区干净。
 
 选项：
   --skip-tests             跳过 flutter analyze 和 flutter test
   --skip-bump              不自动递增版本号，用当前版本直接构建
   --no-git                 构建完成后不自动 git 提交和推送（默认会提交并 push）
-  --no-copy                构建后不复制到 dist/，只保留默认输出路径
+  --no-copy                构建后不复制到 dist/，只保留默认输出路径（仍生成 .sha256）
   --target-platform PLAT   目标架构：android-arm | android-arm64 | android-x64，默认 android-arm64
   --dist-dir DIR           覆盖 APK 输出目录，默认 <项目根>/dist
   --dry-run                只预览本次将要递增到的版本号，不修改任何文件、不构建
@@ -180,6 +180,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   fi
   echo "目标架构：$TARGET_PLATFORM"
   echo "APK 输出：build/app/outputs/flutter-apk/$APK_FILE"
+  echo "摘要输出：build/app/outputs/flutter-apk/$APK_FILE.sha256"
   exit 0
 fi
 
@@ -229,10 +230,12 @@ if [[ "$NO_COPY" -eq 0 ]]; then
     *) DIST_DIR="$REPO_ROOT/$DIST_DIR" ;;
   esac
   mkdir -p "$DIST_DIR"
-  DIST_APK="$DIST_DIR/$APP_NAME-v$VERSION_NAME-$APK_LABEL.apk"
+  DIST_APK="$DIST_DIR/time_manager-v$VERSION_NAME-$APK_LABEL.apk"
   cp "$SOURCE_APK" "$DIST_APK"
+  bash "$REPO_ROOT/scripts/generate_update_metadata.sh" "$DIST_APK"
   log "构建完成：$DIST_APK"
 else
+  bash "$REPO_ROOT/scripts/generate_update_metadata.sh" "$SOURCE_APK"
   log "构建完成：$SOURCE_APK"
 fi
 

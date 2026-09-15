@@ -112,8 +112,42 @@ class GlobalSearchIndex {
 
   GlobalSearchIndex(Iterable<GlobalSearchResult> entries)
       : entries = List.unmodifiable(
-          entries.take(maxIndexedEntries),
+          _fairlyBoundEntries(entries),
         );
+
+  /// 按内容类型轮转截断，避免先加入的大量时间记录把出行、打卡或日记
+  /// 完全挤出索引。每种类型至少会在有数据时获得机会，仍保持总量上限。
+  static List<GlobalSearchResult> _fairlyBoundEntries(
+    Iterable<GlobalSearchResult> source,
+  ) {
+    final all = source.toList(growable: false);
+    if (all.length <= maxIndexedEntries) return all;
+
+    final buckets = <GlobalSearchContentType, List<GlobalSearchResult>>{
+      for (final type in GlobalSearchContentType.values)
+        type: <GlobalSearchResult>[],
+    };
+    for (final entry in all) {
+      buckets[entry.type]!.add(entry);
+    }
+
+    final result = <GlobalSearchResult>[];
+    var offset = 0;
+    while (result.length < maxIndexedEntries) {
+      var added = false;
+      for (final type in GlobalSearchContentType.values) {
+        final bucket = buckets[type]!;
+        if (offset < bucket.length) {
+          result.add(bucket[offset]);
+          added = true;
+          if (result.length == maxIndexedEntries) break;
+        }
+      }
+      if (!added) break;
+      offset++;
+    }
+    return result;
+  }
 
   List<GlobalSearchResult> search(
     String query, {

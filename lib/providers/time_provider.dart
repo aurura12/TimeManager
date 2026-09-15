@@ -3290,7 +3290,10 @@ class TimeProvider with ChangeNotifier {
   }
 
   /// 将本地目标与远端合并后推送。远端请求失败时保留 pending，绝不推送。
-  Future<void> _syncTargetsToGitee() async {
+  ///
+  /// 返回结果给同步中心，避免后台同步虽然记录了失败日志，但手动同步
+  /// 被错误地展示成“已完成”或只有“未完成”的模糊状态。
+  Future<SyncOperationResult> _syncTargetsToGitee() async {
     if (!_isScheduleIdentityReady ||
         _scheduleOverwriteJournalCleanupPending ||
         _scheduleOverwriteInProgress ||
@@ -3298,11 +3301,11 @@ class TimeProvider with ChangeNotifier {
         _remoteViewEnabled ||
         !_hasSelectedScheduleUser ||
         !_targetsGiteePending) {
-      return;
+      return const SyncOperationResult.offline('目标同步尚未准备好');
     }
     if (_targetsGiteeSyncing) {
       _scheduleTargetsRetry();
-      return;
+      return const SyncOperationResult.busy('已有目标同步任务正在进行，请稍后再试');
     }
 
     _targetsGiteeSyncing = true;
@@ -3315,20 +3318,28 @@ class TimeProvider with ChangeNotifier {
           '目标同步未开始：未配置同步 Token',
           source: 'target_sync',
         );
-        return;
+        return const SyncOperationResult.offline(
+          '目标远端未连接，本地目标会保留',
+          pendingUploadCount: 1,
+        );
       }
 
       final pullResult = await _targetSyncDependencies.pullTargets(
         token: token,
         userCode: userCode,
       );
-      if (!_canContinueTargetSync(userCode)) return;
+      if (!_canContinueTargetSync(userCode)) {
+        return const SyncOperationResult.offline('身份已切换，已取消本次目标同步');
+      }
       if (!pullResult.success && !pullResult.notFound) {
         _appLogService.warning(
           '目标同步失败：${pullResult.error ?? '远端目标不可用'}',
           source: 'target_sync',
         );
-        return;
+        return SyncOperationResult.failed(
+          '目标同步失败：${pullResult.error ?? '远端目标不可用'}',
+          pendingUploadCount: 1,
+        );
       }
 
       final remoteDoc = pullResult.notFound
@@ -3339,7 +3350,10 @@ class TimeProvider with ChangeNotifier {
           '目标同步失败：远端目标格式无效',
           source: 'target_sync',
         );
-        return;
+        return const SyncOperationResult.failed(
+          '目标同步失败：远端目标格式无效',
+          pendingUploadCount: 1,
+        );
       }
 
       final localDoc = TargetDocument(
@@ -3363,13 +3377,18 @@ class TimeProvider with ChangeNotifier {
         expectedSha: pullResult.success ? pullResult.sha : null,
         expectNotFound: pullResult.notFound,
       );
-      if (!_canContinueTargetSync(userCode)) return;
+      if (!_canContinueTargetSync(userCode)) {
+        return const SyncOperationResult.offline('身份已切换，已取消本次目标同步');
+      }
       if (!pushResult.success) {
         _appLogService.warning(
           '目标同步失败：${pushResult.error ?? '推送失败'}',
           source: 'target_sync',
         );
-        return;
+        return SyncOperationResult.failed(
+          '目标同步失败：${pushResult.error ?? '推送失败'}',
+          pendingUploadCount: 1,
+        );
       }
 
       _applyMergedTargets(merged);
@@ -3378,22 +3397,27 @@ class TimeProvider with ChangeNotifier {
         '目标同步成功：$userCode（${merged.targets.length} 个）',
         source: 'target_sync',
       );
+      return const SyncOperationResult.success(message: '目标同步完成');
     } catch (e, stackTrace) {
       debugPrint('目标同步失败: $e');
       _recordAppError('目标同步失败', e, stackTrace);
+      return SyncOperationResult.failed(
+        '目标同步失败，请稍后重试',
+        pendingUploadCount: _targetsGiteePending ? 1 : 0,
+      );
     } finally {
       _targetsGiteeSyncing = false;
     }
   }
 
   /// 从 Gitee 拉取当前身份目标并与本地合并，不在此阶段推送。
-  Future<void> _pullTargetsFromGitee() async {
+  Future<SyncOperationResult> _pullTargetsFromGitee() async {
     if (!_isScheduleIdentityReady ||
         _scheduleOverwriteJournalCleanupPending ||
         _remoteViewTransitionInProgress ||
         _remoteViewEnabled ||
         !_hasSelectedScheduleUser) {
-      return;
+      return const SyncOperationResult.offline('目标同步尚未准备好');
     }
     // 身份切换可能发生在旧身份的拉取尚未结束时。不要丢掉新身份的拉取请求，
     // 等当前请求释放锁后重新按当前身份执行。
@@ -3401,7 +3425,7 @@ class TimeProvider with ChangeNotifier {
       Future<void>.delayed(const Duration(milliseconds: 100), () {
         if (!_isDisposed) unawaited(_pullTargetsFromGitee());
       });
-      return;
+      return const SyncOperationResult.busy('已有目标同步任务正在进行，请稍后再试');
     }
 
     _targetsGiteeSyncing = true;
@@ -3413,14 +3437,16 @@ class TimeProvider with ChangeNotifier {
           '目标拉取未开始：未配置同步 Token',
           source: 'target_sync',
         );
-        return;
+        return const SyncOperationResult.offline('目标远端未连接，本地目标会保留');
       }
 
       final pullResult = await _targetSyncDependencies.pullTargets(
         token: token,
         userCode: userCode,
       );
-      if (!_canContinueTargetSync(userCode)) return;
+      if (!_canContinueTargetSync(userCode)) {
+        return const SyncOperationResult.offline('身份已切换，已取消本次目标同步');
+      }
       if (pullResult.notFound) {
         _appLogService.warning(
           '目标拉取无数据：$userCode',
@@ -3430,15 +3456,22 @@ class TimeProvider with ChangeNotifier {
         // 允许后续同步把本地目标作为首份文档上传；空本地数据不主动建空文件。
         if (_targets.isNotEmpty) {
           _markTargetsGiteePending();
+          return const SyncOperationResult.success(
+            message: '远端暂无目标文件，已保留本地目标待上传',
+            pendingUploadCount: 1,
+          );
         }
-        return;
+        return const SyncOperationResult.success(message: '暂无目标需要同步');
       }
       if (!pullResult.success || pullResult.content == null) {
         _appLogService.warning(
           '目标拉取失败：${pullResult.error ?? '远端目标不可用'}',
           source: 'target_sync',
         );
-        return;
+        return SyncOperationResult.failed(
+          '目标同步失败：${pullResult.error ?? '远端目标不可用'}',
+          pendingUploadCount: _targetsGiteePending ? 1 : 0,
+        );
       }
 
       final remoteDoc = parseTargetDocument(pullResult.content);
@@ -3447,7 +3480,7 @@ class TimeProvider with ChangeNotifier {
           '目标拉取失败：远端目标格式无效',
           source: 'target_sync',
         );
-        return;
+        return const SyncOperationResult.failed('目标同步失败：远端目标格式无效');
       }
       final localDoc = TargetDocument(
         updatedAt: _targetsDocUpdatedAt,
@@ -3463,9 +3496,11 @@ class TimeProvider with ChangeNotifier {
         '目标拉取成功：$userCode（远端 ${remoteDoc.targets.length} 个，合并后 ${merged.targets.length} 个）',
         source: 'target_sync',
       );
+      return const SyncOperationResult.success(message: '目标同步完成');
     } catch (e, stackTrace) {
       debugPrint('目标拉取失败: $e');
       _recordAppError('目标拉取失败', e, stackTrace);
+      return SyncOperationResult.failed('目标同步失败，请稍后重试');
     } finally {
       _targetsGiteeSyncing = false;
     }
@@ -4321,14 +4356,9 @@ class TimeProvider with ChangeNotifier {
           _targetsGiteeTimer?.cancel();
           _targetsGiteeTimer = null;
           if (hadPending) {
-            await _syncTargetsToGitee();
-            return _targetsGiteePending
-                ? const SyncOperationResult.failed('目标同步未完成，请稍后重试',
-                    pendingUploadCount: 1)
-                : const SyncOperationResult.success(message: '目标同步完成');
+            return await _syncTargetsToGitee();
           }
-          await _pullTargetsFromGitee();
-          return const SyncOperationResult.success(message: '目标同步完成');
+          return await _pullTargetsFromGitee();
         case SyncModule.diary:
         case SyncModule.travel:
         case SyncModule.checkIn:

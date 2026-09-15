@@ -57,6 +57,18 @@ void main() {
       expect(goal.isActive, isTrue);
     });
 
+    test('未来目标仍在主列表可见范围内，便于查看、编辑和删除', () {
+      final today = _today();
+      final future = _goal(
+        startDate: today.add(const Duration(days: 3)),
+        endDate: today.add(const Duration(days: 9)),
+      );
+
+      expect(future.isNotStartedAt(today), isTrue);
+      expect(future.isVisibleInMainList, isTrue);
+      expect(future.isArchived, isFalse);
+    });
+
     test('未设置结束日期时永不过期', () {
       final goal = _goal();
       expect(goal.isExpired, isFalse);

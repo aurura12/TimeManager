@@ -4,7 +4,8 @@
 ;   2. 用 Inno Setup 编译本脚本：
 ;      "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" scripts\installer.iss
 ;   3. 产物：installer_output\time_manager_setup_<版本>.exe
-;   4. 上传到 Gitee time_manager_releases 仓库 release 资产（tag 与版本一致）
+;   4. 运行 scripts\generate_update_metadata.ps1 installer_output\time_manager_setup_<版本>.exe
+;   5. 将 exe 和同名 .exe.sha256 一起上传到 Gitee release（tag 与版本一致）
 ;
 ; 版本号需与 pubspec.yaml 的 version 保持一致（只取前三段，如 1.84.0+1 → 1.84.0）
 

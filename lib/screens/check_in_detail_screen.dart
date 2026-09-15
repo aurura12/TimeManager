@@ -419,7 +419,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
           ),
         ],
       ),
-      floatingActionButton: _isMine
+      floatingActionButton: _isMine && !_goal.isNotStarted
           ? Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Column(

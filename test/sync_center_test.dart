@@ -72,6 +72,119 @@ void main() {
     expect(state.details, ['2026-09-15']);
   });
 
+  test('没有可靠打卡 live reader 时保留远端照片部分失败的待上传数', () async {
+    var liveReads = 0;
+    final controller = SyncCenterController(
+      operations: _operationsFor(
+        (module) => () async {
+          if (module == SyncModule.checkIn) {
+            return const SyncOperationResult.success(
+              message: '打卡数据已同步，部分照片待重试',
+              pendingUploadCount: 1,
+              pendingDownloadCount: 2,
+            );
+          }
+          return const SyncOperationResult.success();
+        },
+      ),
+      store: InMemorySyncCenterStateStore(),
+      liveStateReader: () {
+        liveReads++;
+        return {
+          for (final module in SyncModule.values)
+            module: SyncModuleState(module: module),
+        };
+      },
+      // 只有日程的 Provider 状态能可靠提供实时计数；打卡照片没有
+      // live reader，默认的 0 不能覆盖 push 结果。
+      authoritativeLiveStateModules: const {SyncModule.schedule},
+    );
+    addTearDown(controller.dispose);
+
+    await controller.retry(SyncModule.checkIn);
+
+    final state = controller.stateFor(SyncModule.checkIn);
+    expect(liveReads, greaterThan(0));
+    expect(state.status, SyncModuleStatus.pending);
+    expect(state.pendingUploadCount, 1);
+    expect(state.pendingDownloadCount, 2);
+    expect(state.failureCount, 0);
+    expect(state.conflictCount, 0);
+  });
+
+  test('busy 任务在 live reader 回落后可再次重试并恢复为已同步', () async {
+    var calls = 0;
+    final controller = SyncCenterController(
+      operations: _operationsFor(
+        (module) => () async {
+          if (module == SyncModule.schedule && calls++ == 0) {
+            return const SyncOperationResult.busy('已有同步任务正在进行，请稍后再试');
+          }
+          return const SyncOperationResult.success(message: '日程同步完成');
+        },
+      ),
+      store: InMemorySyncCenterStateStore(),
+      liveStateReader: () => {
+        SyncModule.schedule: const SyncModuleState(
+          module: SyncModule.schedule,
+          status: SyncModuleStatus.idle,
+        ),
+      },
+      authoritativeLiveStateModules: const {SyncModule.schedule},
+    );
+    addTearDown(controller.dispose);
+
+    await controller.retry(SyncModule.schedule);
+    expect(
+        controller.stateFor(SyncModule.schedule).status, SyncModuleStatus.idle);
+    expect(
+      controller.stateFor(SyncModule.schedule).message,
+      '同步任务已结束，可重试',
+    );
+    expect(controller.isRetrying, isFalse);
+
+    await controller.retry(SyncModule.schedule);
+    expect(calls, 2);
+    expect(
+      controller.stateFor(SyncModule.schedule).status,
+      SyncModuleStatus.success,
+    );
+    expect(controller.isRetrying, isFalse);
+  });
+
+  test('live reader 不会把业务失败和冲突结果改回同步中', () async {
+    final controller = SyncCenterController(
+      operations: _operationsFor(
+        (module) => () async {
+          if (module == SyncModule.travel) {
+            return const SyncOperationResult.conflict(
+              '远端出行记录需要确认',
+              conflictCount: 2,
+            );
+          }
+          return const SyncOperationResult.success();
+        },
+      ),
+      store: InMemorySyncCenterStateStore(),
+      liveStateReader: () => {
+        SyncModule.travel: const SyncModuleState(
+          module: SyncModule.travel,
+          status: SyncModuleStatus.syncing,
+        ),
+      },
+      authoritativeLiveStateModules: const {SyncModule.travel},
+    );
+    addTearDown(controller.dispose);
+
+    await controller.retry(SyncModule.travel);
+    await controller.refresh();
+
+    final state = controller.stateFor(SyncModule.travel);
+    expect(state.status, SyncModuleStatus.conflict);
+    expect(state.failureCount, 1);
+    expect(state.conflictCount, 2);
+  });
+
   test('同一模块已有重试时不会重复发起危险并发同步', () async {
     final entered = Completer<void>();
     final result = Completer<SyncOperationResult>();
@@ -101,6 +214,55 @@ void main() {
     expect(calls, 1);
     result.complete(const SyncOperationResult.success());
     await first;
+  });
+
+  test('操作结果中的待同步数量不会被不完整的 live reader 清零', () async {
+    final controller = SyncCenterController(
+      operations: _operationsFor(
+        (module) => () async => module == SyncModule.checkIn
+            ? const SyncOperationResult.success(
+                message: '照片部分失败',
+                pendingUploadCount: 1,
+              )
+            : const SyncOperationResult.success(),
+      ),
+      store: InMemorySyncCenterStateStore(),
+      // 生产 Provider 只对日程/Google 日历提供 live 状态；其它模块不应
+      // 用默认的 0 覆盖本次操作返回的 pending 数量。
+      liveStateReader: () => {
+        SyncModule.schedule: const SyncModuleState(
+          module: SyncModule.schedule,
+        ),
+        SyncModule.googleCalendar: const SyncModuleState(
+          module: SyncModule.googleCalendar,
+        ),
+      },
+    );
+    addTearDown(controller.dispose);
+
+    await controller.retry(SyncModule.checkIn);
+
+    final state = controller.stateFor(SyncModule.checkIn);
+    expect(state.status, SyncModuleStatus.pending);
+    expect(state.pendingUploadCount, 1);
+  });
+
+  test('busy 操作结束后不会把模块永久卡在已有任务进行中', () async {
+    final controller = SyncCenterController(
+      operations: _operationsFor(
+        (module) => () async => module == SyncModule.travel
+            ? const SyncOperationResult.busy('已有出行同步任务')
+            : const SyncOperationResult.success(),
+      ),
+      store: InMemorySyncCenterStateStore(),
+    );
+    addTearDown(controller.dispose);
+
+    await controller.retry(SyncModule.travel);
+
+    final state = controller.stateFor(SyncModule.travel);
+    expect(state.status, SyncModuleStatus.idle);
+    expect(state.message, '已有出行同步任务');
   });
 
   testWidgets('同步中心展示七个模块并支持单模块重试', (tester) async {

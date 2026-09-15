@@ -57,19 +57,19 @@ class _CheckInScreenState extends State<CheckInScreen> {
   List<CheckInGoal> get _allGoals => _sync.goalsWithRecords;
 
   List<CheckInGoal> get _filteredGoals {
-    final activeGoals = _allGoals.where((g) => g.isActive).toList();
+    final visibleGoals = _allGoals.where((g) => g.isVisibleInMainList).toList();
     switch (_filter) {
       case CheckInViewFilter.all:
-        return activeGoals;
+        return visibleGoals;
       case CheckInViewFilter.guaiGuai:
-        return activeGoals
+        return visibleGoals
             .where((g) => g.isOwnedBy(
                   '',
                   email: KnownGoogleUsers.guaiGuaiEmail,
                 ))
             .toList();
       case CheckInViewFilter.jingJing:
-        return activeGoals
+        return visibleGoals
             .where((g) => g.isOwnedBy(
                   '',
                   email: KnownGoogleUsers.jingJingEmail,
@@ -353,15 +353,42 @@ class _CheckInScreenState extends State<CheckInScreen> {
         const SizedBox(height: 12),
         if (_filteredGoals.isEmpty)
           _buildGoalsEmptyHint(colorScheme)
-        else
-          ..._filteredGoals.map(
-            (goal) => _buildGoalCard(goal, colorScheme, userId),
-          ),
+        else ...[
+          if (_filteredGoals.any((goal) => goal.isNotStarted)) ...[
+            _buildGoalGroupLabel('未开始', colorScheme),
+            ..._filteredGoals
+                .where((goal) => goal.isNotStarted)
+                .map((goal) => _buildGoalCard(goal, colorScheme, userId)),
+          ],
+          if (_filteredGoals.any((goal) => !goal.isNotStarted)) ...[
+            if (_filteredGoals.any((goal) => goal.isNotStarted))
+              const SizedBox(height: 4),
+            if (_filteredGoals.any((goal) => goal.isNotStarted))
+              _buildGoalGroupLabel('进行中', colorScheme),
+            ..._filteredGoals
+                .where((goal) => !goal.isNotStarted)
+                .map((goal) => _buildGoalCard(goal, colorScheme, userId)),
+          ],
+        ],
         if (_archivedCount > 0) ...[
           const SizedBox(height: 16),
           _buildArchiveEntry(colorScheme),
         ],
       ],
+    );
+  }
+
+  Widget _buildGoalGroupLabel(String label, ColorScheme colorScheme) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+          color: colorScheme.onSurfaceVariant,
+        ),
+      ),
     );
   }
 
@@ -603,6 +630,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
         goal.isOwnedBy(userId, email: _sync.currentUser?.email);
     final checked = userId != null &&
         goal.isCompletedTodayBy(userId, email: _sync.currentUser?.email);
+    final canCheckIn = isMine && !goal.isNotStarted;
     // “全部”只改变目标列表，不应把每个目标的进度改成全用户聚合。
     // 目标卡始终按目标所有者统计，并同时传入 email 兼容手动/Google 两种 id。
     final progressUserId = goal.ownerId;
@@ -655,7 +683,10 @@ class _CheckInScreenState extends State<CheckInScreen> {
                         ],
                       ),
                     ),
-                    if (checked) _badge('已打卡', onCardColor, cardColor),
+                    if (goal.isNotStarted)
+                      _badge('未开始', Icons.schedule, onCardColor, cardColor)
+                    else if (checked)
+                      _badge('已打卡', Icons.check, onCardColor, cardColor),
                   ],
                 ),
                 const SizedBox(height: 14),
@@ -703,8 +734,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
                       style: TextStyle(fontSize: 12, color: mutedColor),
                     ),
                     const Spacer(),
-                    // 补打卡 — 自己的目标始终显示，不受当天是否已打卡影响
-                    if (isMine) ...[
+                    // 补打卡 — 已开始的自己的目标始终显示，不受当天是否已打卡影响
+                    if (canCheckIn) ...[
                       TextButton(
                         onPressed: () => _backfillCheckIn(goal),
                         style: TextButton.styleFrom(
@@ -717,8 +748,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
                             const Text('补打卡', style: TextStyle(fontSize: 12)),
                       ),
                     ],
-                    // 打卡 — 仅当天未打卡时显示
-                    if (isMine && !checked) ...[
+                    // 打卡 — 仅目标周期未达到次数上限时显示
+                    if (canCheckIn && !checked) ...[
                       const SizedBox(width: 4),
                       TextButton.icon(
                         onPressed: () => _quickCheckIn(goal),
@@ -753,7 +784,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
   /// [color] 是卡片的前景色（黑或白），[surface] 是卡片底色。
   /// 徽标底是 [color] 淡涂 20% 的结果，所以图标/文字必须按**涂后的底**重算，
   /// 不能继续用 [color]。
-  Widget _badge(String text, Color color, Color surface) {
+  Widget _badge(String text, IconData icon, Color color, Color surface) {
     final bg = AppSemanticColors.tint(color, surface, 0.2);
     final fg = AppSemanticColors.onColor(bg);
     return Container(
@@ -765,7 +796,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.check, size: 14, color: fg),
+          Icon(icon, size: 14, color: fg),
           const SizedBox(width: 4),
           Text(text,
               style: TextStyle(

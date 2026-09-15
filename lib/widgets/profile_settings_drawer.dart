@@ -451,6 +451,15 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               ),
             ] else
               const Text('暂无更新说明'),
+            if (!updateInfo.canAutoInstall) ...[
+              const SizedBox(height: 12),
+              Text(
+                '该发布缺少可信的 SHA-256 校验摘要，仅可打开发布页手动下载；应用不会自动安装。',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ),
+            ],
           ],
         ),
         actions: [
@@ -460,18 +469,25 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('下载更新'),
+            child: Text(updateInfo.canAutoInstall ? '下载更新' : '打开发布页'),
           ),
         ],
       ),
     );
 
     if (confirmed == true && context.mounted) {
-      await UpdateService.downloadAndInstall(
-        updateInfo.downloadUrl,
-        updateInfo.version,
-        context,
-      );
+      if (updateInfo.canAutoInstall) {
+        await UpdateService.downloadAndInstall(
+          updateInfo.downloadUrl,
+          updateInfo.version,
+          context,
+        );
+      } else if (!await UpdateService.openReleasePage(updateInfo.version) &&
+          context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法打开发布页，请稍后重试')),
+        );
+      }
     }
   }
 

@@ -65,4 +65,39 @@ void main() {
     expect(index.search('目标'), hasLength(1));
     expect(index.search('目标', startDate: DateTime(2026, 9, 1)), isEmpty);
   });
+
+  test('达到索引上限时仍保留后加入的出行和打卡类型', () {
+    final entries = <GlobalSearchResult>[
+      for (var i = 0; i < GlobalSearchIndex.maxIndexedEntries; i++)
+        GlobalSearchResult(
+          type: GlobalSearchContentType.timeRecord,
+          date: DateTime(2026, 1, 1),
+          title: '时间记录 $i',
+          summary: '历史记录',
+        ),
+      GlobalSearchResult(
+        type: GlobalSearchContentType.travel,
+        date: DateTime(2026, 9, 15),
+        title: '远端出行',
+        summary: '西湖',
+      ),
+      GlobalSearchResult(
+        type: GlobalSearchContentType.checkIn,
+        date: DateTime(2026, 9, 15),
+        title: '远端打卡',
+        summary: '西湖',
+      ),
+    ];
+
+    final index = GlobalSearchIndex(entries);
+
+    expect(
+      index.search('远端', contentType: GlobalSearchContentType.travel),
+      hasLength(1),
+    );
+    expect(
+      index.search('远端', contentType: GlobalSearchContentType.checkIn),
+      hasLength(1),
+    );
+  });
 }

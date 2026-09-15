@@ -149,13 +149,23 @@ class CheckInSyncService {
     if (goal.requirePhoto && !hasPhoto) return '请先添加打卡照片';
     if (goal.requireLocation && !hasLocation) return '请先获取打卡位置';
 
-    final duplicate = existingRecords.any(
-      (record) =>
-          record.goalId == goal.id &&
-          record.belongsTo(userId, userEmail) &&
-          _isSameLocalDay(record.timestamp, effectiveDate),
-    );
-    if (duplicate) return '这一天已经打卡，不能重复补打卡';
+    final periodCount = existingRecords
+        .where(
+          (record) =>
+              record.goalId == goal.id &&
+              record.belongsTo(userId, userEmail) &&
+              goal.isInPeriodAt(record.timestamp, effectiveDate),
+        )
+        .length;
+    if (goal.targetCount > 0 && periodCount >= goal.targetCount) {
+      if (goal.period == CheckInPeriod.daily && goal.targetCount == 1) {
+        return '这一天已经打卡，不能重复补打卡';
+      }
+      return goal.period == CheckInPeriod.daily
+          ? '${_isSameLocalDay(effectiveDate, now) ? '今天' : '该日期'}已达到 '
+              '${goal.targetCount} 次，不能继续打卡'
+          : '本周期已达到 ${goal.targetCount} 次，不能继续打卡';
+    }
     return null;
   }
 

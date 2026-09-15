@@ -214,9 +214,8 @@ class CheckInDocument {
     final records = <CheckInRecord>[];
     if (recordsRaw is List) {
       for (final item in recordsRaw) {
-        if (item is! Map) continue;
-        final map = item.map((k, v) => MapEntry(k.toString(), v));
-        records.add(CheckInRecord.fromJson(map));
+        final record = _tryParseRecord(item);
+        if (record != null) records.add(record);
       }
     }
     records.sort((a, b) => b.timestamp.compareTo(a.timestamp));
@@ -243,6 +242,67 @@ class CheckInDocument {
       deletedGoalIds: deletedGoals,
       deletedRecordIds: deletedRecords,
     );
+  }
+
+  /// 解析单条记录时隔离损坏数据，避免一条旧/坏记录阻断整个文档同步。
+  ///
+  /// 正常文档仍使用 [CheckInRecord.fromJson] 的既有格式；这里只在进入模型
+  /// 前拒绝缺少必填字段或字段类型明显错误的条目，并将解析异常限制在当前条目。
+  static CheckInRecord? _tryParseRecord(Object? item) {
+    if (item is! Map) return null;
+
+    try {
+      final map = item.map((k, v) => MapEntry(k.toString(), v));
+      if (!_isValidRecordShape(map)) return null;
+      return CheckInRecord.fromJson(map);
+    } on Object {
+      // 单条损坏记录不应让其他有效记录无法同步。
+      return null;
+    }
+  }
+
+  static bool _isValidRecordShape(Map<String, dynamic> map) {
+    const requiredStringFields = [
+      'id',
+      'goal_id',
+      'user_id',
+      'user_email',
+      'timestamp',
+    ];
+    for (final field in requiredStringFields) {
+      final value = map[field];
+      if (value is! String || value.trim().isEmpty) return false;
+    }
+
+    if (DateTime.tryParse(map['timestamp'] as String) == null) return false;
+
+    const optionalStringFields = [
+      'user_display_name',
+      'location_name',
+      'photo_path',
+      'note',
+    ];
+    for (final field in optionalStringFields) {
+      final value = map[field];
+      if (value != null && value is! String) return false;
+    }
+
+    for (final field in ['latitude', 'longitude']) {
+      final value = map[field];
+      if (value != null && !_isFiniteNumber(value)) return false;
+    }
+
+    final isBackfill = map['is_backfill'];
+    return isBackfill == null || isBackfill is bool;
+  }
+
+  static bool _isFiniteNumber(Object value) {
+    if (value is num) return value.isFinite;
+    if (value is String) {
+      final parsed = double.tryParse(value);
+      return parsed != null && parsed.isFinite;
+    }
+    return false;
   }
 
   /// 仓库内照片路径，如 images/乖乖/{recordId}.jpg

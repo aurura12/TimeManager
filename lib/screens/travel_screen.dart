@@ -74,9 +74,20 @@ class _TravelScreenState extends State<TravelScreen> {
   Set<String> get _recordDateKeys =>
       _document.records.map((e) => e.dateKey).toSet();
 
+  int _nextRecordVersion(String dateKey) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final deletedAt = _document.deletedAtByDate[dateKey];
+    if (deletedAt == null || now > deletedAt) return now;
+    // 防止系统时钟回拨或同一毫秒内重新新增，确保复活版本严格晚于
+    // tombstone，而不是在下一次同步时再次被判定为删除。
+    return deletedAt + 1;
+  }
+
   /// 本地有、远端没有的日期。
   Set<String> _localOnlyDateKeys(TravelRecordsDocument remote) =>
-      _recordDateKeys.difference(remote.records.map((e) => e.dateKey).toSet());
+      _recordDateKeys
+          .difference(remote.records.map((e) => e.dateKey).toSet())
+          .difference(remote.deletedDateKeys);
 
   /// 远端有、本地没有的日期。
   Set<String> _remoteOnlyDateKeys(TravelRecordsDocument remote) =>
@@ -87,17 +98,25 @@ class _TravelScreenState extends State<TravelScreen> {
   Future<bool> _confirmOverwriteLocal({
     required Set<String> localOnlyKeys,
     required Set<String> conflictingKeys,
+    Set<String> tombstoneConflictKeys = const {},
   }) async {
     if (!mounted) return false;
     final localPreview = localOnlyKeys.take(5).join('、');
     final localSuffix = localOnlyKeys.length > 5 ? ' 等' : '';
-    final conflictPreview = conflictingKeys.take(5).join('、');
-    final conflictSuffix = conflictingKeys.length > 5 ? ' 等' : '';
+    final contentConflictKeys =
+        conflictingKeys.difference(tombstoneConflictKeys);
+    final contentConflictPreview = contentConflictKeys.take(5).join('、');
+    final contentConflictSuffix = contentConflictKeys.length > 5 ? ' 等' : '';
     final details = <String>[
       if (localOnlyKeys.isNotEmpty)
         '本地有 ${localOnlyKeys.length} 天记录不在远端（$localPreview$localSuffix）',
-      if (conflictingKeys.isNotEmpty)
-        '本地与远端有 ${conflictingKeys.length} 天内容不同（$conflictPreview$conflictSuffix）',
+      if (tombstoneConflictKeys.isNotEmpty)
+        '本地重新记录与远端删除标记有 ${tombstoneConflictKeys.length} 天版本冲突（'
+            '${tombstoneConflictKeys.take(5).join('、')}'
+            '${tombstoneConflictKeys.length > 5 ? ' 等' : ''}）',
+      if (contentConflictKeys.isNotEmpty)
+        '本地与远端有 ${contentConflictKeys.length} 天内容不同（'
+            '$contentConflictPreview$contentConflictSuffix）',
     ].join('；');
     final confirmed = await showDialog<bool>(
       context: context,
@@ -185,6 +204,9 @@ class _TravelScreenState extends State<TravelScreen> {
       date: normalizedDate,
       location: location.trim(),
       event: event.trim(),
+      updatedAt: _nextRecordVersion(
+        DateFormat('yyyy-MM-dd').format(normalizedDate),
+      ),
     );
 
     final previousDateKey = previousDate == null
@@ -476,6 +498,7 @@ class _TravelScreenState extends State<TravelScreen> {
         // 静默拉取（进页面自动触发）一律保留本地；手动拉取需用户确认。
         final localOnly = _localOnlyDateKeys(doc);
         final conflicting = _document.conflictingDateKeys(doc);
+        final tombstoneConflicts = _document.tombstoneConflictDateKeys(doc);
         if (localOnly.isNotEmpty || conflicting.isNotEmpty) {
           if (silent) {
             setState(() => _processing = false);
@@ -484,6 +507,7 @@ class _TravelScreenState extends State<TravelScreen> {
           final confirmed = await _confirmOverwriteLocal(
             localOnlyKeys: localOnly,
             conflictingKeys: conflicting,
+            tombstoneConflictKeys: tombstoneConflicts,
           );
           if (!confirmed || !mounted) {
             setState(() => _processing = false);
@@ -495,9 +519,11 @@ class _TravelScreenState extends State<TravelScreen> {
         await _saveDraft();
         if (!silent) {
           _showMessage(
-            locallyDeletedRemoteLive.isEmpty
-                ? '拉取成功（已覆盖本地）'
-                : '拉取成功（保留本地待同步删除）',
+            tombstoneConflicts.isNotEmpty
+                ? '拉取成功（已按版本处理删除与重新记录冲突）'
+                : locallyDeletedRemoteLive.isEmpty
+                    ? '拉取成功（已覆盖本地）'
+                    : '拉取成功（保留本地待同步删除）',
           );
         }
       } catch (e) {
@@ -553,12 +579,16 @@ class _TravelScreenState extends State<TravelScreen> {
         }
         final conflicting = _document.conflictingDateKeys(remote);
         if (conflicting.isNotEmpty) {
+          final tombstoneConflicts =
+              _document.tombstoneConflictDateKeys(remote);
           setState(() => _processing = false);
           final preview = conflicting.take(5).join('、');
           final suffix = conflicting.length > 5 ? ' 等' : '';
-          _showMessage(
-            '本地与远端同日记录内容不同（$preview$suffix），已中止同步，请先执行「拉取」并确认覆盖',
-          );
+          _showMessage(tombstoneConflicts.isNotEmpty
+              ? '本地重新记录与远端删除标记存在版本冲突（$preview$suffix），'
+                  '已中止同步，请先执行「拉取」并确认处理'
+              : '本地与远端同日记录内容不同（$preview$suffix），'
+                  '已中止同步，请先执行「拉取」并确认覆盖');
           return;
         }
       } catch (_) {

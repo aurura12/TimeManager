@@ -5,11 +5,13 @@ TravelRecord _record({
   required String date,
   required String location,
   required String event,
+  int updatedAt = 0,
 }) {
   return TravelRecord(
     date: DateTime.parse(date),
     location: location,
     event: event,
+    updatedAt: updatedAt,
   );
 }
 
@@ -165,7 +167,12 @@ title: 出行记录
 
   test('本地重新新增日期会覆盖远端旧 tombstone', () {
     final local = TravelRecordsDocument(records: [
-      _record(date: '2026-09-14', location: '上海', event: '重新出发'),
+      _record(
+        date: '2026-09-14',
+        location: '上海',
+        event: '重新出发',
+        updatedAt: 101,
+      ),
     ]);
     final remote = TravelRecordsDocument(
       records: const [],
@@ -176,5 +183,106 @@ title: 出行记录
 
     expect(outgoing.recordDateKeys, {'2026-09-14'});
     expect(outgoing.deletedAtByDate, isEmpty);
+  });
+
+  test('删除后同日重新新增会按更新版本自动复活 tombstone', () {
+    final deleted = TravelRecordsDocument(records: [
+      _record(date: '2026-09-14', location: '杭州', event: '散步'),
+    ]).deleteByDate(
+      DateTime(2026, 9, 14),
+      deletedAt: DateTime.fromMillisecondsSinceEpoch(100),
+    );
+    final readded = deleted.upsert(
+      _record(
+        date: '2026-09-14',
+        location: '上海',
+        event: '重新出发',
+      ),
+    );
+    final remote = TravelRecordsDocument(
+      records: const [],
+      deletedAtByDate: const {'2026-09-14': 100},
+    );
+
+    expect(readded.records.single.updatedAt, greaterThan(100));
+    expect(readded.tombstoneConflictDateKeys(remote), isEmpty);
+    expect(readded.conflictingDateKeys(remote), isEmpty);
+
+    final pulled = readded.mergeRemotePreservingLocalDeletions(remote);
+    expect(pulled.recordDateKeys, {'2026-09-14'});
+    expect(pulled.records.single.location, '上海');
+    expect(pulled.deletedAtByDate, isEmpty);
+
+    final outgoing = readded.preparePush(remote);
+    expect(outgoing.recordDateKeys, {'2026-09-14'});
+    expect(outgoing.records.single.location, '上海');
+    expect(outgoing.deletedAtByDate, isEmpty);
+  });
+
+  test('普通新增也会写入版本，避免后续 tombstone 无法判定新旧', () {
+    final saved = TravelRecordsDocument(records: const []).upsert(
+      _record(date: '2026-09-16', location: '苏州', event: '游览'),
+    );
+
+    expect(saved.records.single.updatedAt, greaterThan(0));
+  });
+
+  test('远端较新的 tombstone 保留删除并要求处理版本冲突', () {
+    final local = TravelRecordsDocument(records: [
+      _record(
+        date: '2026-09-14',
+        location: '上海',
+        event: '重新出发',
+        updatedAt: 100,
+      ),
+    ]);
+    final remote = TravelRecordsDocument(
+      records: const [],
+      deletedAtByDate: const {'2026-09-14': 200},
+    );
+
+    expect(local.tombstoneConflictDateKeys(remote), {'2026-09-14'});
+    expect(local.conflictingDateKeys(remote), {'2026-09-14'});
+
+    // 合并本身以较新的远端删除为准；UI 会在进入这里前要求用户确认，
+    // 因此不会静默丢失本地重新新增的记录。
+    final pulled = local.mergeRemotePreservingLocalDeletions(remote);
+    expect(pulled.records, isEmpty);
+    expect(pulled.deletedAtByDate, {'2026-09-14': 200});
+
+    final outgoing = local.preparePush(remote);
+    expect(outgoing.records, isEmpty);
+    expect(outgoing.deletedAtByDate, {'2026-09-14': 200});
+  });
+
+  test('缺少记录版本时不自动复活远端 tombstone', () {
+    final local = TravelRecordsDocument(records: [
+      _record(date: '2026-09-14', location: '上海', event: '旧记录'),
+    ]);
+    final remote = TravelRecordsDocument(
+      records: const [],
+      deletedAtByDate: const {'2026-09-14': 200},
+    );
+
+    expect(local.tombstoneConflictDateKeys(remote), {'2026-09-14'});
+    expect(
+      local.mergeRemotePreservingLocalDeletions(remote).recordDateKeys,
+      isEmpty,
+    );
+  });
+
+  test('记录版本可以通过 Markdown 往返保存', () {
+    final source = TravelRecordsDocument(records: [
+      _record(
+        date: '2026-09-14',
+        location: '上海',
+        event: '重新出发',
+        updatedAt: 101,
+      ),
+    ]);
+
+    final parsed = TravelRecordsDocument.fromMarkdown(source.toMarkdown());
+
+    expect(parsed.records.single.updatedAt, 101);
   });
 }

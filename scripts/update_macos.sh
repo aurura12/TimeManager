@@ -33,6 +33,7 @@ usage() {
   -h, --help               显示帮助
 
 说明：脚本只替换应用程序本体，不删除 ~/Library 下的应用数据、偏好设置或钥匙串内容。
+      需要生成可发布的 DMG 及 SHA-256 伴随文件时，请使用 scripts/package_macos_release.sh。
 EOF
 }
 

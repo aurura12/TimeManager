@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:time_manager/main.dart' show isDismissiblePopupRoute;
 import 'package:time_manager/widgets/desktop_shortcut_host.dart';
 
 Future<void> _sendShortcut(
@@ -30,6 +31,7 @@ Widget _shortcutProbe({
   required bool enabled,
   required bool macOS,
   bool Function()? onEscape,
+  bool Function(BuildContext? context)? onEscapeWithContext,
   TextEditingController? controller,
 }) {
   return MaterialApp(
@@ -46,6 +48,7 @@ Widget _shortcutProbe({
             calls.add(DesktopShortcutActionType.escape);
             return true;
           },
+      onEscapeWithContext: onEscapeWithContext,
       child: Scaffold(
         body: controller == null
             ? const Focus(
@@ -175,6 +178,90 @@ void main() {
 
     expect(calls, isEmpty);
     expect(controller.text, 'abc');
+  });
+
+  testWidgets('输入框中按 Esc 不会关闭添加/编辑表单页', (tester) async {
+    final controller = TextEditingController(text: '待保存内容');
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DesktopShortcutHost(
+          enabled: true,
+          macOS: false,
+          onEscapeWithContext: (focusContext) {
+            final route =
+                focusContext == null ? null : ModalRoute.of(focusContext);
+            if (!isDismissiblePopupRoute(route)) return false;
+            Navigator.of(focusContext!).pop();
+            return true;
+          },
+          child: Scaffold(
+            body: Column(
+              children: [
+                const Text('添加/编辑目标'),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await _sendShortcut(tester, LogicalKeyboardKey.escape);
+
+    expect(find.text('添加/编辑目标'), findsOneWidget);
+    expect(controller.text, '待保存内容');
+  });
+
+  testWidgets('Esc 可以关闭带输入框的可关闭弹层', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DesktopShortcutHost(
+          enabled: true,
+          macOS: false,
+          onEscapeWithContext: (focusContext) {
+            final route =
+                focusContext == null ? null : ModalRoute.of(focusContext);
+            if (!isDismissiblePopupRoute(route)) return false;
+            Navigator.of(focusContext!).pop();
+            return true;
+          },
+          child: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () {
+                  showDialog<void>(
+                    context: context,
+                    builder: (_) => const AlertDialog(
+                      content: TextField(
+                        key: ValueKey<String>('popup-input'),
+                        autofocus: true,
+                      ),
+                    ),
+                  );
+                },
+                child: const Text('打开弹层'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('打开弹层'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('popup-input')), findsOneWidget);
+
+    await _sendShortcut(tester, LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey<String>('popup-input')), findsNothing);
+    expect(find.text('打开弹层'), findsOneWidget);
   });
 
   testWidgets('Esc 没有页面内状态时继续向上冒泡', (tester) async {

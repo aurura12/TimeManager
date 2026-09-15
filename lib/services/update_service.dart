@@ -28,6 +28,9 @@ class UpdateInfo {
     required this.releaseNotes,
     this.sha256,
   });
+
+  /// Whether the release metadata is sufficient for verified automatic install.
+  bool get canAutoInstall => UpdateService._isValidSha256(sha256);
 }
 
 class UpdateCheckResult {
@@ -42,21 +45,28 @@ class UpdateCheckResult {
 
 class UpdateService {
   static String get _owner => RemoteRepoConfig.giteeOwner;
-  static String get _repo => 'time_manager_releases'; // 公开仓库，专用发布 APK
+  static String get _repo => 'time_manager_releases'; // 公开仓库，专用发布安装包
   static String get _token => DiaryGiteeConfig.hardcodedToken;
 
   static const Duration _checkTimeout = Duration(seconds: 10);
   static const Duration _downloadConnectTimeout = Duration(seconds: 20);
   static const int _maxDownloadBytes = 512 * 1024 * 1024;
   static const int _maxDiscardBytes = 64 * 1024;
+  static const int _maxChecksumMetadataBytes = 8 * 1024;
   static const int _maxRedirects = 5;
   static const int _maxRetries = 1;
+  static const String _checksumAssetSuffix = '.sha256';
+  static const String _missingChecksumMessage =
+      '发布包缺少可信的 SHA-256 校验信息，无法自动安装；请打开发布页手动下载并自行校验。';
 
   static final RegExp _safeVersionPattern = RegExp(
     r'^v?\d+(?:\.\d+){1,3}(?:-[0-9A-Za-z](?:[0-9A-Za-z.-]*[0-9A-Za-z])?)?(?:\+[0-9A-Za-z](?:[0-9A-Za-z.-]*[0-9A-Za-z])?)?$',
   );
   static final RegExp _safeAssetNamePattern = RegExp(r'^[A-Za-z0-9._-]+$');
   static final RegExp _sha256Pattern = RegExp(r'^[a-f0-9]{64}$');
+  static final RegExp _checksumManifestLinePattern = RegExp(
+    r'^\s*([a-fA-F0-9]{64})\s+(\*?[A-Za-z0-9._-]+)\s*$',
+  );
 
   // The existing UI passes only URL and version to downloadAndInstall. Keep
   // the digest from the most recent check so that API compatibility is not
@@ -177,8 +187,44 @@ class UpdateService {
     return null;
   }
 
+  /// Release metadata contract: each installer asset may be accompanied by a
+  /// same-name `.sha256` asset containing one standard sha256sum line, for
+  /// example: `64-hex-digest  time_manager_v1.96.0.apk`.
+  static String? _parseSha256Manifest(
+    String content,
+    String expectedAssetName,
+  ) {
+    final lines = content
+        .replaceFirst('\uFEFF', '')
+        .split(RegExp(r'\r?\n'))
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList(growable: false);
+    if (lines.length != 1) return null;
+
+    final match = _checksumManifestLinePattern.firstMatch(lines.single);
+    if (match == null) return null;
+
+    final reportedName = match.group(2)!;
+    final normalizedName =
+        reportedName.startsWith('*') ? reportedName.substring(1) : reportedName;
+    if (normalizedName != expectedAssetName) return null;
+
+    return _normalizeSha256Value(match.group(1));
+  }
+
   static bool _isValidSha256(String? value) =>
       value != null && _sha256Pattern.hasMatch(value.trim().toLowerCase());
+
+  static Uri? _assetDownloadUri(Map<String, dynamic> asset) {
+    for (final key in const ['url', 'browser_download_url']) {
+      final candidate = _readString(asset[key]);
+      if (candidate == null) continue;
+      final uri = _parseAllowedDownloadUri(candidate.trim());
+      if (uri != null) return uri;
+    }
+    return null;
+  }
 
   static bool _isPathInside(Directory root, File candidate) {
     final normalizedRoot = p.normalize(p.absolute(root.path));
@@ -257,6 +303,62 @@ class UpdateService {
     throw const _UpdateFailure('更新重定向次数过多，已停止自动安装');
   }
 
+  static Future<String?> _fetchSha256Manifest(
+    http.Client client,
+    Uri uri,
+    String expectedAssetName,
+  ) async {
+    try {
+      final response = await _sendGetFollowingRedirects(
+        client,
+        uri,
+        headers: _downloadHeaders,
+      ).timeout(_checkTimeout);
+
+      if (response.statusCode != HttpStatus.ok) {
+        final statusCode = response.statusCode;
+        await _discardResponseBody(response);
+        AppLogService.instance.warning(
+          '发布摘要资产下载失败（HTTP $statusCode）',
+          source: 'update',
+        );
+        return null;
+      }
+
+      final contentBytes = <int>[];
+      var received = 0;
+      await for (final chunk in response.stream.timeout(_checkTimeout)) {
+        if (chunk.length > _maxChecksumMetadataBytes - received) {
+          AppLogService.instance.warning(
+            '发布摘要资产超过大小限制，自动安装不可用',
+            source: 'update',
+          );
+          return null;
+        }
+        contentBytes.addAll(chunk);
+        received += chunk.length;
+      }
+
+      final content = utf8.decode(contentBytes, allowMalformed: false);
+      final digest = _parseSha256Manifest(content, expectedAssetName);
+      if (digest == null) {
+        AppLogService.instance.warning(
+          '发布摘要资产格式无效，自动安装不可用：${uri.pathSegments.last}',
+          source: 'update',
+        );
+      }
+      return digest;
+    } catch (e, stackTrace) {
+      AppLogService.instance.warning(
+        '读取发布 SHA-256 摘要失败，当前仅可手动下载',
+        source: 'update',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return null;
+    }
+  }
+
   /// Check whether Gitee has published a newer release.
   static Future<UpdateCheckResult> checkForUpdate() async {
     _lastCheckedUpdate = null;
@@ -315,6 +417,7 @@ class UpdateService {
         final String assetSuffix = updateAssetSuffix;
         String? installUrl;
         String? assetSha256;
+        String? installerAssetName;
         final assets = data['assets'] is List<dynamic>
             ? data['assets'] as List<dynamic>
             : const <dynamic>[];
@@ -325,26 +428,17 @@ class UpdateService {
           final name = _readString(asset['name']) ?? '';
           debugPrint('检查更新: asset=$name');
           if (_isSafeAssetName(name, assetSuffix)) {
-            final candidateUrls = [
-              _readString(asset['url']),
-              _readString(asset['browser_download_url']),
-            ];
-            for (final candidate in candidateUrls) {
-              if (candidate == null) continue;
-              final allowedUri = _parseAllowedDownloadUri(candidate.trim());
-              if (allowedUri != null) {
-                installUrl = allowedUri.toString();
-                break;
-              }
-            }
-            assetSha256 = _extractSha256(asset);
-            if (installUrl == null) {
+            final allowedUri = _assetDownloadUri(asset);
+            if (allowedUri == null) {
               AppLogService.instance.warning(
                 '发布资产下载地址不受信任，已跳过：$name',
                 source: 'update',
               );
               continue;
             }
+            installUrl = allowedUri.toString();
+            installerAssetName = name;
+            assetSha256 = _extractSha256(asset);
             break;
           }
         }
@@ -357,29 +451,62 @@ class UpdateService {
           return const UpdateCheckResult(error: '未找到可信的可下载安装包');
         }
 
-        if (assetSha256 == null) {
-          AppLogService.instance.warning(
-            '发布资产未提供可信 SHA-256 摘要，自动安装将安全失败；请配置发布元数据摘要',
-            source: 'update',
-          );
-        }
-
         final currentVersion = await _getCurrentVersion();
         debugPrint('检查更新: 当前版本=$currentVersion, 最新版本=$tagName');
         final isNewer = _isNewerVersion(tagName, currentVersion);
 
-        if (isNewer) {
-          final updateInfo = UpdateInfo(
-            version: tagName,
-            downloadUrl: installUrl,
-            releaseNotes: body,
-            sha256: assetSha256,
-          );
-          _lastCheckedUpdate = updateInfo;
-          return UpdateCheckResult(info: updateInfo);
+        if (!isNewer) {
+          return const UpdateCheckResult();
         }
 
-        return const UpdateCheckResult();
+        if (assetSha256 == null && installerAssetName != null) {
+          final checksumAssetName = '$installerAssetName$_checksumAssetSuffix';
+          Map<String, dynamic>? checksumAsset;
+          for (final rawAsset in assets) {
+            if (rawAsset is! Map) continue;
+            final candidate = Map<String, dynamic>.from(rawAsset);
+            if (_readString(candidate['name']) == checksumAssetName) {
+              checksumAsset = candidate;
+              break;
+            }
+          }
+
+          final checksumUri =
+              checksumAsset == null ? null : _assetDownloadUri(checksumAsset);
+          if (checksumUri != null) {
+            final metadataClient = http.Client();
+            try {
+              assetSha256 = await _fetchSha256Manifest(
+                metadataClient,
+                checksumUri,
+                installerAssetName,
+              );
+            } finally {
+              metadataClient.close();
+            }
+          } else if (checksumAsset != null) {
+            AppLogService.instance.warning(
+              '发布摘要资产下载地址不受信任，自动安装不可用：$checksumAssetName',
+              source: 'update',
+            );
+          }
+        }
+
+        if (assetSha256 == null) {
+          AppLogService.instance.warning(
+            '发布资产未提供可信 SHA-256 摘要，当前仅可手动下载；请上传同名 .sha256 发布资产',
+            source: 'update',
+          );
+        }
+
+        final updateInfo = UpdateInfo(
+          version: tagName,
+          downloadUrl: installUrl,
+          releaseNotes: body,
+          sha256: assetSha256,
+        );
+        _lastCheckedUpdate = updateInfo;
+        return UpdateCheckResult(info: updateInfo);
       } on TimeoutException catch (e, stackTrace) {
         debugPrint('检查更新超时: $e');
         AppLogService.instance.warning(
@@ -419,25 +546,82 @@ class UpdateService {
   }
 
   static bool _isNewerVersion(String newVersion, String currentVersion) {
-    final newV = _normalizeVersion(newVersion);
-    final currentV = _normalizeVersion(currentVersion);
-
-    final newParts = newV.split('.');
-    final currentParts = currentV.split('.');
-
-    for (int i = 0; i < newParts.length; i++) {
-      if (i >= currentParts.length) return true;
-      final newNum = int.tryParse(newParts[i]) ?? 0;
-      final currentNum = int.tryParse(currentParts[i]) ?? 0;
-      if (newNum > currentNum) return true;
-      if (newNum < currentNum) return false;
-    }
-    return false;
+    return _compareVersions(newVersion, currentVersion) > 0;
   }
 
-  /// 归一化版本号：去前导 v、+build 元数据与预发布后缀，只留数字段。
-  static String _normalizeVersion(String version) =>
-      version.replaceFirst(RegExp(r'^v'), '').split('+').first.split('-').first;
+  /// 归一化版本号：去前导 v 和 +build 元数据，但保留预发布后缀。
+  static String _normalizeVersion(String version) {
+    var normalized = version.trim();
+    if (normalized.startsWith('v')) {
+      normalized = normalized.substring(1);
+    }
+    final buildIndex = normalized.indexOf('+');
+    if (buildIndex >= 0) {
+      normalized = normalized.substring(0, buildIndex);
+    }
+    return normalized;
+  }
+
+  static int _compareVersions(String left, String right) {
+    final leftParts = _parseVersionForComparison(left);
+    final rightParts = _parseVersionForComparison(right);
+
+    final coreLength = leftParts.core.length > rightParts.core.length
+        ? leftParts.core.length
+        : rightParts.core.length;
+    for (var i = 0; i < coreLength; i++) {
+      final leftNumber = i < leftParts.core.length ? leftParts.core[i] : 0;
+      final rightNumber = i < rightParts.core.length ? rightParts.core[i] : 0;
+      if (leftNumber != rightNumber) {
+        return leftNumber.compareTo(rightNumber);
+      }
+    }
+
+    final leftPreRelease = leftParts.preRelease;
+    final rightPreRelease = rightParts.preRelease;
+    if (leftPreRelease.isEmpty && rightPreRelease.isEmpty) return 0;
+    if (leftPreRelease.isEmpty) return 1;
+    if (rightPreRelease.isEmpty) return -1;
+
+    final identifierLength = leftPreRelease.length > rightPreRelease.length
+        ? leftPreRelease.length
+        : rightPreRelease.length;
+    for (var i = 0; i < identifierLength; i++) {
+      if (i >= leftPreRelease.length) return -1;
+      if (i >= rightPreRelease.length) return 1;
+
+      final leftIdentifier = leftPreRelease[i];
+      final rightIdentifier = rightPreRelease[i];
+      if (leftIdentifier == rightIdentifier) continue;
+
+      final leftNumber = int.tryParse(leftIdentifier);
+      final rightNumber = int.tryParse(rightIdentifier);
+      if (leftNumber != null && rightNumber != null) {
+        return leftNumber.compareTo(rightNumber);
+      }
+      if (leftNumber != null) return -1;
+      if (rightNumber != null) return 1;
+      return leftIdentifier.compareTo(rightIdentifier);
+    }
+    return 0;
+  }
+
+  static _ParsedVersion _parseVersionForComparison(String version) {
+    final normalized = _normalizeVersion(version);
+    final separatorIndex = normalized.indexOf('-');
+    final coreText = separatorIndex >= 0
+        ? normalized.substring(0, separatorIndex)
+        : normalized;
+    final preReleaseText =
+        separatorIndex >= 0 ? normalized.substring(separatorIndex + 1) : '';
+    final core = coreText
+        .split('.')
+        .map((part) => int.tryParse(part) ?? 0)
+        .toList(growable: false);
+    final preRelease =
+        preReleaseText.isEmpty ? const <String>[] : preReleaseText.split('.');
+    return _ParsedVersion(core: core, preRelease: preRelease);
+  }
 
   static String _formatSpeed(int bytesPerSecond) {
     if (bytesPerSecond < 1024) {
@@ -486,9 +670,7 @@ class UpdateService {
       throw const _UpdateFailure('更新下载地址不受信任，已停止自动安装');
     }
     if (!_isValidSha256(expectedSha256)) {
-      throw const _UpdateFailure(
-        '发布包未提供可信的 SHA-256 校验信息，无法自动安装',
-      );
+      throw const _UpdateFailure(_missingChecksumMessage);
     }
     if (maxBytes <= 0) {
       throw const _UpdateFailure('更新包大小限制无效');
@@ -570,6 +752,29 @@ class UpdateService {
       _extractSha256(asset);
 
   @visibleForTesting
+  static String? parseSha256ManifestForTesting(
+    String content,
+    String expectedAssetName,
+  ) =>
+      _parseSha256Manifest(content, expectedAssetName);
+
+  @visibleForTesting
+  static String normalizeVersionForTesting(String version) =>
+      _normalizeVersion(version);
+
+  @visibleForTesting
+  static int compareVersionsForTesting(String left, String right) =>
+      _compareVersions(left, right);
+
+  @visibleForTesting
+  static Future<String?> fetchSha256ManifestForTesting({
+    required http.Client client,
+    required Uri uri,
+    required String expectedAssetName,
+  }) =>
+      _fetchSha256Manifest(client, uri, expectedAssetName);
+
+  @visibleForTesting
   static Future<void> downloadVerifiedFileForTesting({
     required http.Client client,
     required Uri uri,
@@ -610,9 +815,7 @@ class UpdateService {
               ?.trim()
               .toLowerCase();
       if (!_isValidSha256(digest)) {
-        throw const _UpdateFailure(
-          '发布包未提供可信的 SHA-256 校验信息，无法自动安装',
-        );
+        throw const _UpdateFailure(_missingChecksumMessage);
       }
 
       if (context.mounted) {
@@ -784,18 +987,25 @@ class UpdateService {
     }
   }
 
+  static Future<bool> openReleasePage(String version) async {
+    final safeTag = _isSafeVersion(version) ? version : 'latest';
+    final releasePageUrl = Uri.https(
+      'gitee.com',
+      '/$_owner/$_repo/releases/tag/$safeTag',
+    );
+    if (!await canLaunchUrl(releasePageUrl)) return false;
+    return launchUrl(
+      releasePageUrl,
+      mode: LaunchMode.externalApplication,
+    );
+  }
+
   static void _showDownloadFailedDialog(
     BuildContext context,
     String version,
     int? statusCode, {
     String? message,
   }) {
-    final safeTag = _isSafeVersion(version) ? version : 'latest';
-    final releasePageUrl = Uri.https(
-      'gitee.com',
-      '/$_owner/$_repo/releases/tag/$safeTag',
-    ).toString();
-
     final displayMessage = message ??
         (statusCode == 401 || statusCode == 403
             ? '下载被拒绝，通常是私有仓库权限不足，或者 release 资产需要登录后访问。'
@@ -814,10 +1024,7 @@ class UpdateService {
           FilledButton(
             onPressed: () async {
               Navigator.pop(context);
-              final uri = Uri.parse(releasePageUrl);
-              if (await canLaunchUrl(uri)) {
-                await launchUrl(uri, mode: LaunchMode.externalApplication);
-              }
+              await openReleasePage(version);
             },
             child: const Text('打开发布页'),
           ),
@@ -879,6 +1086,13 @@ class _DownloadingDialog extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ParsedVersion {
+  final List<int> core;
+  final List<String> preRelease;
+
+  const _ParsedVersion({required this.core, required this.preRelease});
 }
 
 class _UpdateFailure implements Exception {

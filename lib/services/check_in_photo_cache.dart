@@ -81,13 +81,10 @@ class CheckInPhotoCache {
     }
   }
 
-  static Future<int> _cacheSize(
-    Directory root, {
-    required int stopAt,
-  }) async {
-    if (!await root.exists()) return 0;
-
-    var total = 0;
+  static Future<List<({File file, int size, DateTime modified})>> _cacheFiles(
+      Directory root) async {
+    final files = <({File file, int size, DateTime modified})>[];
+    if (!await root.exists()) return files;
     try {
       await for (final entity
           in root.list(recursive: true, followLinks: false)) {
@@ -103,15 +100,14 @@ class CheckInPhotoCache {
           followLinks: false,
         );
         if (type != FileSystemEntityType.file) continue;
-        total += await entity.length();
-        if (total > stopAt) return total;
+        final stat = await entity.stat();
+        files.add((file: entity, size: stat.size, modified: stat.modified));
       }
     } catch (_) {
-      // Treat an unreadable cache as full so a failed scan cannot lead to an
-      // unbounded write.
-      return stopAt + 1;
+      // An unreadable entry is not a candidate for eviction; saveBytes will
+      // fail closed if it cannot establish enough free space.
     }
-    return total;
+    return files;
   }
 
   static Future<File?> saveBytes(
@@ -137,9 +133,10 @@ class CheckInPhotoCache {
           return null;
         }
 
-        final currentSize = await _cacheSize(
-          location.root,
-          stopAt: maxCacheBytes,
+        final cacheFiles = await _cacheFiles(location.root);
+        var currentSize = cacheFiles.fold<int>(
+          0,
+          (total, entry) => total + entry.size,
         );
         var existingSize = 0;
         if (await location.file.exists()) {
@@ -151,7 +148,27 @@ class CheckInPhotoCache {
           existingSize = await location.file.length();
         }
         if (currentSize - existingSize + bytes.length > maxCacheBytes) {
-          return null;
+          // 淘汰最久未修改的其它照片，避免缓存达到上限后新照片静默
+          // 变成“未拍照”。当前要替换的文件不能被淘汰。
+          final destinationPath = p.normalize(location.file.path);
+          final candidates = cacheFiles
+              .where((entry) => p.normalize(entry.file.path) != destinationPath)
+              .toList()
+            ..sort((a, b) => a.modified.compareTo(b.modified));
+          for (final candidate in candidates) {
+            if (currentSize - existingSize + bytes.length <= maxCacheBytes) {
+              break;
+            }
+            try {
+              await candidate.file.delete();
+              currentSize -= candidate.size;
+            } catch (_) {
+              // 继续尝试下一个候选；如果仍然空间不足，下面安全失败。
+            }
+          }
+          if (currentSize - existingSize + bytes.length > maxCacheBytes) {
+            return null;
+          }
         }
 
         // The path has already been normalized and proven to stay inside the

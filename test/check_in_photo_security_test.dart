@@ -116,7 +116,8 @@ void main() {
       );
     });
 
-    test('cache enforces its total size limit', () async {
+    test('cache reaches its total size limit by evicting the oldest photo',
+        () async {
       final first = await CheckInPhotoCache.saveBytes(
         _validPhotoPath,
         validBytes,
@@ -129,7 +130,15 @@ void main() {
         validBytes,
         maxCacheBytes: validBytes.length,
       );
-      expect(second, isNull);
+      expect(second, isNotNull);
+      expect(
+        await CheckInPhotoCache.getCachedFile(_validPhotoPath),
+        isNull,
+      );
+      expect(
+        (await CheckInPhotoCache.getCachedFile('images/乖乖/456.jpg'))?.path,
+        second?.path,
+      );
     });
 
     test('new photo write failure keeps the previous cache file readable',

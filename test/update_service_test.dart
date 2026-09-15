@@ -107,6 +107,101 @@ void main() {
     expect(UpdateService.extractSha256ForTesting({}), isNull);
   });
 
+  test('parses only a checksum manifest that names the exact installer', () {
+    const digest =
+        '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824';
+    const assetName = 'time_manager_v1.96.0.apk';
+
+    expect(
+      UpdateService.parseSha256ManifestForTesting(
+        '$digest  $assetName\n',
+        assetName,
+      ),
+      digest,
+    );
+    expect(
+      UpdateService.parseSha256ManifestForTesting(
+        '$digest *$assetName\n',
+        assetName,
+      ),
+      digest,
+    );
+    expect(
+      UpdateService.parseSha256ManifestForTesting(
+        '$digest  another.apk\n',
+        assetName,
+      ),
+      isNull,
+    );
+    expect(
+      UpdateService.parseSha256ManifestForTesting(
+        '$digest  $assetName\n$digest  extra.apk\n',
+        assetName,
+      ),
+      isNull,
+    );
+    expect(
+      UpdateService.parseSha256ManifestForTesting(
+        'not-a-digest  $assetName\n',
+        assetName,
+      ),
+      isNull,
+    );
+  });
+
+  test('fetches a trusted checksum sidecar with a bounded response', () async {
+    const digest =
+        '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824';
+    const assetName = 'time_manager_v1.96.0.apk';
+    final client = _FakeClient([
+      _FakeResponse(
+        statusCode: HttpStatus.ok,
+        chunks: [utf8.encode('$digest  $assetName\n')],
+      ),
+    ]);
+
+    final result = await UpdateService.fetchSha256ManifestForTesting(
+      client: client,
+      uri: Uri.parse(
+        'https://gitee.com/${RemoteRepoConfig.giteeOwner}/time_manager_releases/attach_files/123/$assetName.sha256',
+      ),
+      expectedAssetName: assetName,
+    );
+
+    expect(result, digest);
+    expect(client.requestCount, 1);
+  });
+
+  test('keeps prerelease identifiers when normalizing versions', () {
+    expect(
+      UpdateService.normalizeVersionForTesting('v1.96.0-beta.1+12'),
+      '1.96.0-beta.1',
+    );
+  });
+
+  test('compares beta and prerelease versions using SemVer precedence', () {
+    int compare(String left, String right) =>
+        UpdateService.compareVersionsForTesting(left, right);
+
+    expect(compare('1.96.0-beta.1', '1.96.0-beta.2'), lessThan(0));
+    expect(compare('1.96.0-beta.2', '1.96.0-beta.10'), lessThan(0));
+    expect(compare('1.96.0-alpha', '1.96.0-beta.1'), lessThan(0));
+    expect(compare('1.96.0-rc.1', '1.96.0'), lessThan(0));
+    expect(compare('1.96.0', '1.96.0-beta.9'), greaterThan(0));
+    expect(compare('1.96.0+1', 'v1.96.0+2'), 0);
+    expect(compare('1.97.0-beta.1', '1.96.9'), greaterThan(0));
+  });
+
+  test('marks an update without a digest as manual-download only', () {
+    const info = UpdateInfo(
+      version: '1.96.0',
+      downloadUrl:
+          'https://gitee.com/example/time_manager_releases/releases/download/1.96.0/app.apk',
+      releaseNotes: '',
+    );
+    expect(info.canAutoInstall, isFalse);
+  });
+
   test('downloads, hashes, and writes a verified file', () async {
     final body = utf8.encode('hello');
     final digest = sha256.convert(body).toString();

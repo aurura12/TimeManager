@@ -26,17 +26,42 @@ enum SafeErrorPageKind {
   startup,
 }
 
-/// Controls a safe interface-only recovery.
+/// Controls a safe interface-only recovery after the application is running.
 ///
-/// The controller deliberately lives below the providers in [main]. Bumping
-/// the generation recreates the current interface subtree while retaining the
-/// existing provider instances, so recovery cannot initialize a second set of
-/// providers or rerun application bootstrap.
+/// Bumping the generation recreates the current interface subtree while
+/// retaining the existing provider instances. Startup recovery is handled by
+/// [StartupRecoveryController] instead and performs a full startup attempt.
 class AppRecoveryController extends ValueNotifier<int> {
   AppRecoveryController() : super(0);
 
   void reloadCurrentInterface() {
     value++;
+  }
+}
+
+typedef StartupRetryCallback = Future<void> Function();
+
+/// Runs a failed startup again without allowing duplicate concurrent attempts.
+///
+/// A retry is intentionally different from [AppRecoveryController]: it calls
+/// the bootstrap callback, which recreates providers and reruns dependency
+/// initialization instead of only rebuilding the error page.
+class StartupRecoveryController {
+  StartupRecoveryController(this._retryStartup);
+
+  final StartupRetryCallback _retryStartup;
+  bool _isRetrying = false;
+
+  bool get isRetrying => _isRetrying;
+
+  Future<void> retry() async {
+    if (_isRetrying) return;
+    _isRetrying = true;
+    try {
+      await _retryStartup();
+    } finally {
+      _isRetrying = false;
+    }
   }
 }
 
@@ -79,7 +104,7 @@ String safeErrorDescription(SafeErrorPageKind kind) {
     case SafeErrorPageKind.render:
       return '问题详情已记录。你可以返回上一页，或重新加载当前界面。';
     case SafeErrorPageKind.startup:
-      return '问题详情已记录。重新加载只会恢复当前安全界面，不会重复初始化应用。';
+      return '问题详情已记录。重新加载会重新执行应用启动和依赖初始化。';
   }
 }
 
@@ -125,6 +150,14 @@ String normalizeErrorReferenceCode(String value) {
     normalized,
   );
   return match?.group(0) ?? 'ERR-00000000';
+}
+
+/// 根层 Esc 只允许关闭真正可关闭的顶层弹层。
+///
+/// 页面路由（例如添加/编辑表单）即使可以 pop，也不能被这个快捷键
+/// 当作临时弹层关闭；输入框中的 Esc 因此不会静默丢弃整页表单。
+bool isDismissiblePopupRoute(Route<dynamic>? route) {
+  return route is PopupRoute && route.isCurrent && route.barrierDismissible;
 }
 
 class SafeErrorPage extends StatelessWidget {
@@ -287,9 +320,9 @@ void installGlobalLogErrorHandlers(AppLogService service) {
 
 void _runStartupFailurePage({
   required AppLogService service,
-  required AppRecoveryController recoveryController,
   required Object error,
   required StackTrace stackTrace,
+  required StartupRetryCallback retryStartup,
 }) {
   final code = buildErrorReferenceCode(
     scope: 'STARTUP',
@@ -302,19 +335,92 @@ void _runStartupFailurePage({
     error: error,
     stackTrace: stackTrace,
   );
+  final retryController = StartupRecoveryController(retryStartup);
   runApp(
     MaterialApp(
       theme: AppTheme.light(),
-      home: AppRecoveryBoundary(
-        controller: recoveryController,
-        child: SafeErrorPage(
-          kind: SafeErrorPageKind.startup,
-          errorCode: code,
-          onReload: recoveryController.reloadCurrentInterface,
-        ),
+      home: SafeErrorPage(
+        kind: SafeErrorPageKind.startup,
+        errorCode: code,
+        onReload: () => unawaited(retryController.retry()),
       ),
     ),
   );
+}
+
+Future<void> _initializeAndRunApplication({
+  required AppLogService appLogService,
+  required AppRecoveryController recoveryController,
+}) async {
+  final migrationResult = await WindowsLegacyPreferencesMigration().migrate();
+  if (migrationResult.didMigrate) {
+    debugPrint(
+      'Windows legacy preferences migrated: '
+      '${migrationResult.migratedKeyCount} keys',
+    );
+  } else if (migrationResult.status == WindowsLegacyMigrationStatus.failed) {
+    final code = buildErrorReferenceCode(
+      scope: 'MIGRATE',
+      error: migrationResult.error ?? StateError('migration failed'),
+    );
+    appLogService.error(
+      'Windows legacy preferences migration failed [$code]',
+      source: 'startup',
+      error: migrationResult.error,
+    );
+  }
+
+  try {
+    await appLogService.initialize();
+  } catch (error, stackTrace) {
+    final code = buildErrorReferenceCode(
+      scope: 'LOG',
+      error: error,
+      stackTrace: stackTrace,
+    );
+    appLogService.error(
+      '应用日志初始化失败 [$code]',
+      source: 'startup',
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+  HttpOverrides.global = _StableHttpOverrides();
+
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (context) => TimeProvider()),
+        ChangeNotifierProvider(create: (context) => ThemeModeProvider()),
+      ],
+      child: AppRecoveryBoundary(
+        controller: recoveryController,
+        child: const TimeManagerApp(),
+      ),
+    ),
+  );
+}
+
+Future<void> _startApplication({
+  required AppLogService appLogService,
+  required AppRecoveryController recoveryController,
+}) async {
+  try {
+    await _initializeAndRunApplication(
+      appLogService: appLogService,
+      recoveryController: recoveryController,
+    );
+  } catch (error, stackTrace) {
+    _runStartupFailurePage(
+      service: appLogService,
+      error: error,
+      stackTrace: stackTrace,
+      retryStartup: () => _startApplication(
+        appLogService: appLogService,
+        recoveryController: recoveryController,
+      ),
+    );
+  }
 }
 
 void main() async {
@@ -327,61 +433,35 @@ void main() async {
     recoveryController: recoveryController,
   );
 
-  try {
-    final migrationResult = await WindowsLegacyPreferencesMigration().migrate();
-    if (migrationResult.didMigrate) {
-      debugPrint(
-        'Windows legacy preferences migrated: '
-        '${migrationResult.migratedKeyCount} keys',
-      );
-    } else if (migrationResult.status == WindowsLegacyMigrationStatus.failed) {
-      final code = buildErrorReferenceCode(
-        scope: 'MIGRATE',
-        error: migrationResult.error ?? StateError('migration failed'),
-      );
-      appLogService.error(
-        'Windows legacy preferences migration failed [$code]',
-        source: 'startup',
-        error: migrationResult.error,
-      );
-    }
+  await _startApplication(
+    appLogService: appLogService,
+    recoveryController: recoveryController,
+  );
+}
 
-    try {
-      await appLogService.initialize();
-    } catch (error, stackTrace) {
-      final code = buildErrorReferenceCode(
-        scope: 'LOG',
-        error: error,
-        stackTrace: stackTrace,
-      );
-      appLogService.error(
-        '应用日志初始化失败 [$code]',
-        source: 'startup',
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-    HttpOverrides.global = _StableHttpOverrides();
+class _RootRouteTracker extends NavigatorObserver {
+  Route<dynamic>? _topRoute;
 
-    runApp(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider(create: (context) => TimeProvider()),
-          ChangeNotifierProvider(create: (context) => ThemeModeProvider()),
-        ],
-        child: AppRecoveryBoundary(
-          controller: recoveryController,
-          child: const TimeManagerApp(),
-        ),
-      ),
-    );
-  } catch (error, stackTrace) {
-    _runStartupFailurePage(
-      service: appLogService,
-      recoveryController: recoveryController,
-      error: error,
-      stackTrace: stackTrace,
-    );
+  Route<dynamic>? get topRoute => _topRoute;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _topRoute = route;
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _topRoute = previousRoute;
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (_topRoute == route) _topRoute = previousRoute;
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    if (_topRoute == oldRoute || oldRoute == null) _topRoute = newRoute;
   }
 }
 
@@ -395,6 +475,7 @@ class TimeManagerApp extends StatefulWidget {
 class _TimeManagerAppState extends State<TimeManagerApp> {
   StreamSubscription<Uri?>? _homeWidgetClicks;
   HomeWidgetActionRequest? _pendingHomeWidgetAction;
+  final _RootRouteTracker _rootRouteTracker = _RootRouteTracker();
 
   @override
   void initState() {
@@ -465,6 +546,7 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
     final timeProvider = context.read<TimeProvider>();
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
+      navigatorObservers: <NavigatorObserver>[_rootRouteTracker],
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: themeMode,
@@ -493,9 +575,16 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
             ),
           );
         },
-        onEscape: () {
+        onEscapeWithContext: (_) {
           final navigator = rootNavigatorKey.currentState;
-          if (navigator == null || !navigator.canPop()) return false;
+          final topRoute = _rootRouteTracker.topRoute;
+          if (navigator == null ||
+              !navigator.canPop() ||
+              !isDismissiblePopupRoute(topRoute)) {
+            return false;
+          }
+          // 不以焦点所在路由作为关闭条件：部分弹层不会主动抢焦点，
+          // 但只要顶层确实是可关闭 PopupRoute，Esc 就应保持可用。
           navigator.pop();
           return true;
         },

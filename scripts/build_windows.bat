@@ -32,7 +32,7 @@ exit /b 1
 echo   OK: build\windows\x64\runner\Release\
 
 echo.
-echo [3/4] Check Inno Setup and build installer
+echo [3/5] Check Inno Setup and build installer
 set "ISCC="
 if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if exist "C:\Program Files\Inno Setup 6\ISCC.exe" set "ISCC=C:\Program Files\Inno Setup 6\ISCC.exe"
@@ -52,10 +52,27 @@ echo   Install from https://jrsoftware.org/isinfo.php
 :iscc_done
 
 echo.
-echo [4/4] Check version
+echo [4/5] Generate SHA-256 release metadata
+if not exist "installer_output\*.exe" goto no_installer_metadata
+for %%F in ("installer_output\*.exe") do (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\generate_update_metadata.ps1" "%%~fF"
+  if errorlevel 1 (
+    echo   [ERROR] Failed to generate SHA-256 for %%~nxF
+    pause
+    exit /b 1
+  )
+)
+goto metadata_done
+:no_installer_metadata
+echo   [WARN] No installer found; no SHA-256 metadata was generated
+:metadata_done
+
+echo.
+echo [5/5] Check version
 for /f "tokens=2 delims= " %%v in ('findstr /b "version:" pubspec.yaml') do set "PUBSPEC_VER=%%v"
 echo   pubspec.yaml version: %PUBSPEC_VER%
-echo   Make sure installer.iss MyAppVersion matches.
+echo   Make sure installer.iss MyAppVersion matches before publishing.
+echo   Upload each installer together with its .sha256 file to Gitee release.
 
 echo.
 echo Done!

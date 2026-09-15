@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/screens/profile_screen.dart';
 import '../models/schedule_sync_progress.dart';
 import '../providers/time_provider.dart';
+import '../services/diary_local_store.dart';
 import '../services/diary_search_service.dart';
 import '../services/on_this_day_service.dart';
 import '../theme/app_theme.dart';
@@ -76,11 +77,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _timeProvider.addListener(_tryShowOnThisDay);
     _tabs = _buildTabs();
     _tabPages = List<Widget?>.filled(_tabs.length, null);
+    // 日记索引不能等用户第一次打开“日记”页才加载，否则启动后的“那年今日”
+    // 和全局搜索会漏掉只存在于远端缓存中的历史日记。
+    unawaited(_loadDiaryIndexInBackground());
 
     // 第一帧后也尝试一次（此时数据可能已就绪）
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _tryShowOnThisDay();
     });
+  }
+
+  Future<void> _loadDiaryIndexInBackground() async {
+    final token = await DiaryLocalStore.loadToken();
+    if (token == null || token.trim().isEmpty) return;
+    await DiarySearchService.loadInBackground(token);
   }
 
   @override

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/diary_kind.dart';
 import 'package:time_manager/models/target.dart';
+import 'package:time_manager/models/sync_center_state.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/services/app_identity_service.dart';
 import 'package:time_manager/services/schedule_gitee_service.dart';
@@ -267,6 +268,10 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 150));
 
     expect(pushCount, 0);
+
+    final centerResult = await provider.syncModuleForCenter(SyncModule.targets);
+    expect(centerResult.status, SyncModuleStatus.failed);
+    expect(centerResult.message, contains('目标同步失败'));
   });
 
   test('目标推送带上本次拉取得到的 sha（乐观并发）', () async {

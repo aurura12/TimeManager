@@ -15,6 +15,13 @@ import 'travel_gitee_service.dart';
 import 'travel_local_store.dart';
 
 typedef SyncCenterOperation = Future<SyncOperationResult> Function();
+
+/// 读取宿主当前实时同步状态。
+///
+/// 返回值是部分映射：只有确实能提供可靠实时状态的模块才应返回。控制器
+/// 会结合控制器构造函数的 `authoritativeLiveStateModules` 参数决定哪些模块
+/// 可以覆盖同步中心状态；未提供可靠 reader 的模块继续使用最近一次业务操作
+/// 的结果，避免用默认的 0 清掉待同步照片或其他失败信息。
 typedef SyncCenterLiveStateReader = Map<SyncModule, SyncModuleState> Function();
 
 /// 同步中心状态的本地存储。只保存状态和时间，不保存任何凭据。
@@ -247,9 +254,15 @@ class SyncCenterController extends ChangeNotifier {
     required SyncCenterOperations operations,
     SyncCenterStateStore? store,
     SyncCenterLiveStateReader? liveStateReader,
+    Set<SyncModule>? authoritativeLiveStateModules,
   })  : _operations = operations,
         _store = store ?? SharedPreferencesSyncCenterStateStore(),
         _liveStateReader = liveStateReader,
+        _authoritativeLiveStateModules = authoritativeLiveStateModules == null
+            ? liveStateReader == null
+                ? const <SyncModule>{}
+                : Set.unmodifiable(SyncModule.values)
+            : Set.unmodifiable(authoritativeLiveStateModules),
         _states = {
           for (final module in SyncModule.values)
             module: SyncModuleState(module: module),
@@ -263,12 +276,17 @@ class SyncCenterController extends ChangeNotifier {
       operations: SyncCenterOperations.production(provider),
       store: store,
       liveStateReader: () => _liveStatesForProvider(provider),
+      authoritativeLiveStateModules: const {
+        SyncModule.schedule,
+        SyncModule.googleCalendar,
+      },
     );
   }
 
   final SyncCenterOperations _operations;
   final SyncCenterStateStore _store;
   final SyncCenterLiveStateReader? _liveStateReader;
+  final Set<SyncModule> _authoritativeLiveStateModules;
   final Map<SyncModule, SyncModuleState> _states;
   final Set<SyncModule> _runningModules = {};
   Future<void>? _initializing;
@@ -338,23 +356,33 @@ class SyncCenterController extends ChangeNotifier {
     await initialize();
     if (_disposed || _allRetrying || _runningModules.isNotEmpty) return;
     _allRetrying = true;
+    final completedModules = <SyncModule>{};
     _notify();
     try {
       for (final module in SyncModule.values) {
         if (_disposed) return;
-        await _runOne(module, fromAll: true);
+        await _runOne(
+          module,
+          fromAll: true,
+          preserveLiveResults: completedModules,
+        );
+        completedModules.add(module);
       }
     } finally {
       _allRetrying = false;
       if (!_disposed) {
-        _refreshLiveState();
+        _refreshLiveState(preserveOperationResults: completedModules);
         await _persist();
         _notify();
       }
     }
   }
 
-  Future<void> _runOne(SyncModule module, {bool fromAll = false}) async {
+  Future<void> _runOne(
+    SyncModule module, {
+    bool fromAll = false,
+    Set<SyncModule> preserveLiveResults = const <SyncModule>{},
+  }) async {
     if (_disposed || (!fromAll && _allRetrying)) return;
     _runningModules.add(module);
     _states[module] = _states[module]!.copyWith(
@@ -363,21 +391,37 @@ class SyncCenterController extends ChangeNotifier {
     );
     _notify();
 
-    SyncOperationResult result;
     try {
-      result = await _operations.run(module);
-    } catch (error) {
-      result = SyncOperationResult.failed('${module.label}同步失败：$error');
-    }
-    if (_disposed) {
+      SyncOperationResult result;
+      try {
+        result = await _operations.run(module);
+      } catch (error) {
+        result = SyncOperationResult.failed('${module.label}同步失败：$error');
+      }
+      if (_disposed) return;
+
+      _applyResult(module, result);
       _runningModules.remove(module);
-      return;
+      final live = _readLiveState();
+      if (result.status == SyncModuleStatus.busy) {
+        _recoverBusyState(module, live[module]);
+      }
+
+      // 当前操作的返回值是这一轮最可靠的结果；后续模块的 live 刷新不能
+      // 把它重新覆盖。retryAll 还会保护已经完成的模块。
+      _refreshLiveState(
+        liveState: live,
+        preserveOperationResults: {
+          ...preserveLiveResults,
+          module,
+        },
+      );
+      await _persist();
+      _notify();
+    } finally {
+      // 无论业务操作、live reader 或持久化是否异常，都不能遗留“正在重试”锁。
+      _runningModules.remove(module);
     }
-    _applyResult(module, result);
-    _runningModules.remove(module);
-    _refreshLiveState();
-    await _persist();
-    _notify();
   }
 
   void _applyResult(SyncModule module, SyncOperationResult result) {
@@ -406,6 +450,8 @@ class SyncCenterController extends ChangeNotifier {
       return;
     }
     if (result.status == SyncModuleStatus.busy) {
+      // 先记录业务层的 busy 结果；_recoverBusyState 会在 live reader
+      // 明确显示任务已结束时回落，避免把 stale busy 永久留在卡片上。
       _states[module] = previous.copyWith(
         status: SyncModuleStatus.busy,
         message: result.message,
@@ -429,36 +475,109 @@ class SyncCenterController extends ChangeNotifier {
     );
   }
 
-  void _refreshLiveState() {
-    final reader = _liveStateReader;
-    if (reader == null) return;
-    final live = reader();
+  void _refreshLiveState({
+    Set<SyncModule> preserveOperationResults = const <SyncModule>{},
+    Map<SyncModule, SyncModuleState>? liveState,
+  }) {
+    final live = liveState ?? _readLiveState();
     for (final module in SyncModule.values) {
+      if (preserveOperationResults.contains(module) ||
+          !_authoritativeLiveStateModules.contains(module)) {
+        continue;
+      }
       final current = _states[module]!;
       final next = live[module];
       if (next == null) continue;
-      var status = current.status;
-      if (!next.enabled) {
-        status = SyncModuleStatus.disabled;
-      } else if (next.status == SyncModuleStatus.syncing) {
-        status = SyncModuleStatus.syncing;
-      } else if (next.hasPending && !current.hasIssue) {
-        status = SyncModuleStatus.pending;
-      } else if (!next.hasPending &&
-          current.status == SyncModuleStatus.pending) {
-        status = current.lastSyncAt == null
-            ? SyncModuleStatus.idle
-            : SyncModuleStatus.success;
-      } else if (current.status == SyncModuleStatus.disabled) {
-        status = SyncModuleStatus.idle;
-      }
+
+      // 失败、离线、冲突是业务操作返回的终态，live reader 只有实时
+      // pending/status 能力，不能把这些结果改回 syncing/idle。
+      final preservePending = current.hasIssue ||
+          (current.hasPending &&
+              (next.status == SyncModuleStatus.busy ||
+                  next.status == SyncModuleStatus.syncing));
       _states[module] = current.copyWith(
         enabled: next.enabled,
-        status: status,
-        pendingUploadCount: next.pendingUploadCount,
-        pendingDownloadCount: next.pendingDownloadCount,
+        status: _statusAfterLiveState(current, next),
+        pendingUploadCount: preservePending
+            ? current.pendingUploadCount
+            : next.pendingUploadCount,
+        pendingDownloadCount: preservePending
+            ? current.pendingDownloadCount
+            : next.pendingDownloadCount,
       );
     }
+  }
+
+  Map<SyncModule, SyncModuleState> _readLiveState() {
+    final reader = _liveStateReader;
+    if (reader == null) return const <SyncModule, SyncModuleState>{};
+    try {
+      return Map<SyncModule, SyncModuleState>.from(reader());
+    } catch (_) {
+      // 实时状态只是辅助展示；reader 异常不能阻断业务结果落地，也不能
+      // 让当前模块遗留 syncing/busy 锁。
+      return const <SyncModule, SyncModuleState>{};
+    }
+  }
+
+  SyncModuleStatus _statusAfterLiveState(
+    SyncModuleState current,
+    SyncModuleState next,
+  ) {
+    if (!next.enabled) return SyncModuleStatus.disabled;
+    if (current.hasIssue) return current.status;
+    if (next.status == SyncModuleStatus.syncing) {
+      return SyncModuleStatus.syncing;
+    }
+    if (next.status == SyncModuleStatus.busy) {
+      return SyncModuleStatus.busy;
+    }
+    if (next.hasPending) return SyncModuleStatus.pending;
+
+    // live reader 已明确报告任务不再运行且没有 pending，清掉旧的
+    // syncing/busy/pending；其他已经完成或空闲的状态保持原样。
+    return switch (current.status) {
+      SyncModuleStatus.syncing ||
+      SyncModuleStatus.busy ||
+      SyncModuleStatus.pending ||
+      SyncModuleStatus.disabled =>
+        current.lastSyncAt == null
+            ? SyncModuleStatus.idle
+            : SyncModuleStatus.success,
+      _ => current.status,
+    };
+  }
+
+  void _recoverBusyState(
+    SyncModule module,
+    SyncModuleState? liveState,
+  ) {
+    final current = _states[module]!;
+    if (current.status != SyncModuleStatus.busy) return;
+    final next =
+        _authoritativeLiveStateModules.contains(module) ? liveState : null;
+    if (next != null &&
+        (next.status == SyncModuleStatus.busy ||
+            next.status == SyncModuleStatus.syncing)) {
+      return;
+    }
+
+    final hasPending = next?.hasPending ?? current.hasPending;
+    _states[module] = current.copyWith(
+      enabled: next?.enabled ?? current.enabled,
+      status: next?.enabled == false
+          ? SyncModuleStatus.disabled
+          : hasPending
+              ? SyncModuleStatus.pending
+              : current.lastSyncAt == null
+                  ? SyncModuleStatus.idle
+                  : SyncModuleStatus.success,
+      pendingUploadCount: next?.pendingUploadCount ??
+          (hasPending ? current.pendingUploadCount : 0),
+      pendingDownloadCount: next?.pendingDownloadCount ??
+          (hasPending ? current.pendingDownloadCount : 0),
+      message: next == null ? current.message : '同步任务已结束，可重试',
+    );
   }
 
   Future<void> _persist() => _store.save(states);
@@ -488,15 +607,9 @@ class SyncCenterController extends ChangeNotifier {
                 : SyncModuleStatus.idle,
         pendingUploadCount: schedulePending,
       ),
-      SyncModule.categories: const SyncModuleState(
-        module: SyncModule.categories,
-      ),
-      SyncModule.targets: const SyncModuleState(
-        module: SyncModule.targets,
-      ),
-      SyncModule.diary: const SyncModuleState(module: SyncModule.diary),
-      SyncModule.travel: const SyncModuleState(module: SyncModule.travel),
-      SyncModule.checkIn: const SyncModuleState(module: SyncModule.checkIn),
+      // 这些模块没有可同步读取的 TimeProvider live state。不要用常量 0
+      // 覆盖 _runOne 返回的待上传/待下载数量和失败结果；同步操作本身的
+      // SyncOperationResult 才是当前一次运行的权威结果。
       SyncModule.googleCalendar: SyncModuleState(
         module: SyncModule.googleCalendar,
         enabled: provider.googleCalendarSyncEnabled,

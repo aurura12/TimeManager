@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:time_manager/models/check_in_document.dart';
@@ -106,6 +108,56 @@ void main() {
 
       final merged = CheckInDocument.merge(local, remote);
       expect(merged.goals.length, 2);
+    });
+  });
+
+  group('CheckInDocument 损坏记录容错', () {
+    test('坏记录夹在有效记录中时跳过，剩余记录仍可继续合并', () {
+      final older = _record('r-old', 'g1', DateTime(2026, 1, 1));
+      final newer = _record('r-new', 'g1', DateTime(2026, 1, 3));
+      final markdown = _markdownFor({
+        'version': CheckInDocument.currentVersion,
+        'goals': [_goal('g1').toJson()],
+        'records': [
+          newer.toJson(),
+          {
+            'id': 'r-broken',
+            'goal_id': 'g1',
+            'user_id': 'uid',
+            'user_email': 'test@example.com',
+            // 旧数据缺少 timestamp，不能阻断整个文档。
+          },
+          older.toJson(),
+        ],
+      });
+
+      final parsed = CheckInDocument.fromMarkdown(markdown);
+      expect(parsed.records.map((record) => record.id), ['r-new', 'r-old']);
+
+      final merged = CheckInDocument.merge(CheckInDocument.empty, parsed);
+      expect(merged.records.map((record) => record.id), ['r-new', 'r-old']);
+    });
+
+    test('字段类型错误或非法时间戳只会丢弃对应记录', () {
+      final valid = _record('r-valid', 'g1', DateTime(2026, 1, 2));
+      final markdown = _markdownFor({
+        'version': CheckInDocument.currentVersion,
+        'goals': [_goal('g1').toJson()],
+        'records': [
+          {
+            'id': 'r-invalid',
+            'goal_id': 'g1',
+            'user_id': 'uid',
+            'user_email': 'test@example.com',
+            'timestamp': {'not': 'a timestamp'},
+            'latitude': 'not-a-number',
+          },
+          valid.toJson(),
+        ],
+      });
+
+      final parsed = CheckInDocument.fromMarkdown(markdown);
+      expect(parsed.records.map((record) => record.id), ['r-valid']);
     });
   });
 
@@ -281,4 +333,12 @@ void main() {
       expect(doc.deletedGoalIds, {'gone'});
     });
   });
+}
+
+String _markdownFor(Map<String, dynamic> payload) {
+  return '---\n'
+      'title: 打卡数据\n'
+      'updated_at: 2026-01-01 00:00:00\n'
+      '---\n'
+      '${const JsonEncoder.withIndent('  ').convert(payload)}\n';
 }

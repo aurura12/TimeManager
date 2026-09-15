@@ -93,7 +93,15 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
     }
     _debounceTimer?.cancel();
     if (query.trim().isEmpty) {
-      setState(() => _results = const []);
+      // 使已发出的异步搜索失效，避免清空输入后旧结果回填。
+      _searchRevision++;
+      if (mounted) {
+        setState(() {
+          _results = const [];
+          _loading = false;
+          _loadError = null;
+        });
+      }
       return;
     }
     _debounceTimer = Timer(const Duration(milliseconds: 260), () {
@@ -106,7 +114,11 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
     final revision = ++_searchRevision;
     if (query.isEmpty) {
       if (!mounted) return;
-      setState(() => _results = const []);
+      setState(() {
+        _results = const [];
+        _loading = false;
+        _loadError = null;
+      });
       return;
     }
 
@@ -276,7 +288,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
             MaterialPageRoute(
               builder: (_) => EventDetailScreen(
                 eventName: result.title,
-                tabIndex: 0,
+                tabIndex: 3,
               ),
             ),
           );
