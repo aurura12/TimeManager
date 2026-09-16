@@ -92,6 +92,32 @@ void main() {
     expect(result.pushSucceeded, isTrue);
   });
 
+  test('failed pull does not push the stale local day', () async {
+    const dateKey = '2026-08-23';
+    final slots = _emptyDay();
+    slots[42]
+      ..recorded = true
+      ..label = '本地修改';
+    final dailySlots = <String, List<TimeSlot>>{dateKey: slots};
+    var pushCalls = 0;
+
+    final result = await synchronizePendingGoogleDay(
+      dailySlots: dailySlots,
+      dateKey: dateKey,
+      explicitlyPending: true,
+      createSlots: _emptyDay,
+      pull: () async => false,
+      push: (_) async {
+        pushCalls++;
+        return true;
+      },
+    );
+
+    expect(result.pullSucceeded, isFalse);
+    expect(result.pushSucceeded, isFalse);
+    expect(pushCalls, 0);
+  });
+
   test('tombstone authorizes push even when the date is not pending', () async {
     const dateKey = '2026-08-23';
     final slots = _emptyDay();

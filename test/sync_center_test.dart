@@ -18,6 +18,65 @@ SyncCenterOperations _operationsFor(
 }
 
 void main() {
+  test('初始化前不让默认 live 状态覆盖持久待同步，状态就绪后再刷新', () async {
+    final ready = Completer<void>();
+    final liveSource = ValueNotifier<int>(0);
+    var livePending = 2;
+    var liveReads = 0;
+    final scheduleKey = SyncStatusCoordinator.defaultContextKeyFor(
+      SyncModule.schedule,
+    );
+    final controller = SyncCenterController(
+      operations: _operationsFor(
+        (module) => () async => const SyncOperationResult.success(),
+      ),
+      store: InMemorySyncStatusStore({
+        scheduleKey: const SyncModuleState(
+          module: SyncModule.schedule,
+          status: SyncModuleStatus.pending,
+          pendingUploadCount: 2,
+        ),
+      }),
+      loadIdentityBeforeState: false,
+      waitForLiveState: () => ready.future,
+      liveStateSource: liveSource,
+      liveStateReader: () {
+        liveReads++;
+        return {
+          SyncModule.schedule: SyncModuleState(
+            module: SyncModule.schedule,
+            status: livePending > 0
+                ? SyncModuleStatus.pending
+                : SyncModuleStatus.idle,
+            pendingUploadCount: livePending,
+          ),
+        };
+      },
+      authoritativeLiveStateModules: const {SyncModule.schedule},
+    );
+    addTearDown(() {
+      liveSource.dispose();
+      controller.dispose();
+    });
+
+    final initialization = controller.initialize();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.isInitialized, isFalse);
+    expect(controller.stateFor(SyncModule.schedule).pendingUploadCount, 2);
+    expect(liveReads, 0);
+
+    ready.complete();
+    await initialization;
+    expect(liveReads, greaterThan(0));
+    expect(controller.stateFor(SyncModule.schedule).pendingUploadCount, 2);
+
+    livePending = 0;
+    liveSource.value++;
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.stateFor(SyncModule.schedule).pendingUploadCount, 0);
+  });
+
   test('全部重试按模块串行执行并保存成功状态', () async {
     final calls = <SyncModule>[];
     final controller = SyncCenterController(

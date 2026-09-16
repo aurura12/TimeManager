@@ -192,7 +192,10 @@ class CheckInSyncService {
       AppIdentityService.isGoogleMode && GoogleCalendarService.isSignedIn;
 
   /// 初始化：读本地 → 拉远端 → 合并
-  Future<void> initialize({bool silent = false}) async {
+  Future<void> initialize({
+    bool silent = false,
+    bool retryPhotoCleanup = true,
+  }) async {
     if (!silent) _loading = true;
     _lastError = null;
     try {
@@ -238,7 +241,8 @@ class CheckInSyncService {
       }
 
       // 目标删除成功但照片清理失败时，保留的路径会在后续启动自动重试。
-      unawaited(retryPendingPhotoCleanup());
+      // 同步中心需要把这一步纳入本次结果，因此由它显式关闭并单独等待。
+      if (retryPhotoCleanup) unawaited(retryPendingPhotoCleanup());
     } finally {
       if (!silent) _loading = false;
     }

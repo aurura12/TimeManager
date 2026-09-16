@@ -9,6 +9,7 @@ import 'package:shared_preferences_platform_interface/shared_preferences_platfor
 import 'package:time_manager/models/category.dart';
 import 'package:time_manager/models/diary_kind.dart';
 import 'package:time_manager/models/target.dart';
+import 'package:time_manager/models/sync_center_state.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/services/google_calendar_service.dart';
@@ -1003,6 +1004,45 @@ void main() {
     expect(googleUploads, 0);
     expect(provider.getSlotsForDate('2026-09-06'), isNull);
     expect(provider.hasInitializationFailure, isTrue);
+  });
+
+  test('同步中心入口在 Google 拉取失败时不推送旧本地副本', () async {
+    var googleUploads = 0;
+    final dependencies = ScheduleSyncDependencies(
+      loadToken: () async => 'fake-token',
+      listPaths: ({required token, required userCode}) async =>
+          ScheduleGiteeListWithShaResult.success(const {}),
+      pullDay: ({required token, required dateKey, required userCode}) async =>
+          ScheduleGiteePullResult.error('测试禁止读取'),
+      pullGoogleDay: (_) async => null,
+      pushGoogleDay: (slots, date) async {
+        googleUploads++;
+        return true;
+      },
+    );
+    final provider = await _createProvider(
+      failPull: false,
+      initialPreferences: {
+        'daily_slots': '{"2026-09-06":[{"i":0,"l":"本地修改","ts":1000}]}',
+        'pending_google_sync_dates': <String>['2026-09-06'],
+      },
+      dependencies: dependencies,
+      googleCalendarSyncPlatformOverride: true,
+      googleCalendarSignedInOverride: true,
+    );
+    addTearDown(provider.dispose);
+
+    provider.goToDate(DateTime(2026, 9, 6));
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    final result = await provider.syncModuleForCenter(
+      SyncModule.googleCalendar,
+    );
+
+    expect(result.status, SyncModuleStatus.failed);
+    expect(result.pendingUploadCount, greaterThan(0));
+    expect(provider.pendingGoogleSyncDates, contains('2026-09-06'));
+    expect(googleUploads, 0);
   });
 
   test('overwrite pull failure preserves all local and pending state',

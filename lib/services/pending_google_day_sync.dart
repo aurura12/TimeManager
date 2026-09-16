@@ -27,6 +27,14 @@ Future<PendingGoogleDaySyncResult> synchronizePendingGoogleDay({
       pushSucceeded: false,
     );
   }
+  if (!pullSucceeded) {
+    // 没有拿到远端最新版本时不能继续推送本地副本，否则一次拉取失败
+    // 就可能把远端更新覆盖掉；调用方会据此保留 pending 并展示失败。
+    return PendingGoogleDaySyncResult(
+      pullSucceeded: false,
+      pushSucceeded: false,
+    );
+  }
   final pulledSlots = dailySlots[dateKey];
   final hasLocalScheduleState = _hasLocalScheduleState(pulledSlots);
 

@@ -162,19 +162,33 @@ class SyncCenterOperations {
   static Future<SyncOperationResult> _syncCheckIn(
     CheckInSyncService sync,
   ) async {
-    await sync.initialize(silent: true);
+    await sync.initialize(silent: true, retryPhotoCleanup: false);
     final result = await sync.pushToGitHub();
-    if (result.success) {
-      return SyncOperationResult.success(
-        message: result.warning ?? '打卡数据已同步',
-        pendingUploadCount: result.warning == null ? 0 : 1,
+    if (!result.success) {
+      final message = result.error ?? '打卡同步失败';
+      if (message.contains('未配置') || message.contains('身份')) {
+        return SyncOperationResult.offline(message, pendingUploadCount: 1);
+      }
+      return SyncOperationResult.failed(message, pendingUploadCount: 1);
+    }
+
+    // pushToGitHub 只代表打卡主文档完成。照片清理是删除目标/记录后的
+    // 第二个远端操作，必须等待它的真实结果，否则同步中心会把仍有孤儿
+    // 照片待清理的状态误报为“全部完成”。
+    final cleanup = await sync.retryPendingPhotoCleanup();
+    if (!cleanup.success) {
+      return SyncOperationResult.failed(
+        '打卡数据已同步，但${cleanup.error ?? '照片清理失败'}',
+        pendingUploadCount: 1,
       );
     }
-    final message = result.error ?? '打卡同步失败';
-    if (message.contains('未配置') || message.contains('身份')) {
-      return SyncOperationResult.offline(message);
+    if (cleanup.warning != null) {
+      return SyncOperationResult.pending(
+        '打卡数据已同步，但${cleanup.warning}',
+        pendingUploadCount: 1,
+      );
     }
-    return SyncOperationResult.failed(message);
+    return const SyncOperationResult.success(message: '打卡数据已同步');
   }
 }
 
@@ -187,6 +201,8 @@ class SyncCenterController extends ChangeNotifier {
     SyncStatusCoordinator? coordinator,
     SyncStatusStore? store,
     bool loadIdentityBeforeState = true,
+    Future<void> Function()? waitForLiveState,
+    Listenable? liveStateSource,
     SyncCenterLiveStateReader? liveStateReader,
     Set<SyncModule>? authoritativeLiveStateModules,
   })  : _operations = operations,
@@ -196,6 +212,8 @@ class SyncCenterController extends ChangeNotifier {
               loadIdentityBeforeState: loadIdentityBeforeState,
             ),
         _ownsCoordinator = coordinator == null,
+        _waitForLiveState = waitForLiveState,
+        _liveStateSource = liveStateSource,
         _liveStateReader = liveStateReader,
         _authoritativeLiveStateModules = authoritativeLiveStateModules == null
             ? liveStateReader == null
@@ -203,6 +221,7 @@ class SyncCenterController extends ChangeNotifier {
                 : Set.unmodifiable(SyncModule.values)
             : Set.unmodifiable(authoritativeLiveStateModules) {
     _coordinator.addListener(_notify);
+    _liveStateSource?.addListener(_scheduleLiveStateRefresh);
   }
 
   factory SyncCenterController.forProvider(
@@ -216,6 +235,8 @@ class SyncCenterController extends ChangeNotifier {
       coordinator: coordinator,
       store: store,
       loadIdentityBeforeState: loadIdentityBeforeState,
+      waitForLiveState: provider.waitForSyncReady,
+      liveStateSource: provider,
       liveStateReader: () => _liveStatesForProvider(provider),
       authoritativeLiveStateModules: const {
         SyncModule.schedule,
@@ -227,6 +248,8 @@ class SyncCenterController extends ChangeNotifier {
   final SyncCenterOperations _operations;
   final SyncStatusCoordinator _coordinator;
   final bool _ownsCoordinator;
+  final Future<void> Function()? _waitForLiveState;
+  final Listenable? _liveStateSource;
   final SyncCenterLiveStateReader? _liveStateReader;
   final Set<SyncModule> _authoritativeLiveStateModules;
   final Set<SyncModule> _runningModules = {};
@@ -234,6 +257,7 @@ class SyncCenterController extends ChangeNotifier {
   bool _initialized = false;
   bool _allRetrying = false;
   bool _disposed = false;
+  bool _liveRefreshScheduled = false;
 
   SyncStatusCoordinator get coordinator => _coordinator;
 
@@ -260,7 +284,15 @@ class SyncCenterController extends ChangeNotifier {
   }
 
   Future<void> _initialize() async {
-    await _coordinator.initialize();
+    final waitForLiveState = _waitForLiveState;
+    if (waitForLiveState == null) {
+      await _coordinator.initialize();
+    } else {
+      await Future.wait<void>([
+        _coordinator.initialize(),
+        waitForLiveState(),
+      ]);
+    }
     if (_disposed) return;
     _initialized = true;
     // 刷新只读取实时 pending/进行中状态，不会把已经成功的时间重置。
@@ -473,10 +505,24 @@ class SyncCenterController extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
+  void _scheduleLiveStateRefresh() {
+    if (_disposed || !_initialized || _liveRefreshScheduled) return;
+    _liveRefreshScheduled = true;
+    scheduleMicrotask(() {
+      _liveRefreshScheduled = false;
+      if (_disposed || !_initialized) return;
+      // Provider 的身份切换会在状态尚未完全落地时先发一次通知；放到微任务
+      // 中刷新，确保读到的是切换后的 pending，而不是中间态的空集合。
+      _refreshLiveState(preserveOperationResults: _runningModules);
+      _notify();
+    });
+  }
+
   @override
   void dispose() {
     _disposed = true;
     _coordinator.removeListener(_notify);
+    _liveStateSource?.removeListener(_scheduleLiveStateRefresh);
     if (_ownsCoordinator) _coordinator.dispose();
     super.dispose();
   }
@@ -484,12 +530,13 @@ class SyncCenterController extends ChangeNotifier {
   static Map<SyncModule, SyncModuleState> _liveStatesForProvider(
     TimeProvider provider,
   ) {
+    if (!provider.isSyncStateReady) return const {};
     final schedulePending = provider.pendingGiteeSyncDates.length;
     final googlePending = provider.pendingGoogleSyncDates.length;
     return {
       SyncModule.schedule: SyncModuleState(
         module: SyncModule.schedule,
-        status: provider.hasScheduleSyncInFlight
+        status: provider.hasScheduleModuleSyncInFlight
             ? SyncModuleStatus.syncing
             : schedulePending > 0
                 ? SyncModuleStatus.pending
@@ -504,7 +551,7 @@ class SyncCenterController extends ChangeNotifier {
         enabled: provider.googleCalendarSyncEnabled,
         status: !provider.googleCalendarSyncEnabled
             ? SyncModuleStatus.disabled
-            : provider.hasScheduleSyncInFlight
+            : provider.hasGoogleCalendarSyncInFlight
                 ? SyncModuleStatus.syncing
                 : googlePending > 0
                     ? SyncModuleStatus.pending
