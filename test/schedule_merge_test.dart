@@ -222,7 +222,7 @@ void main() {
       expect(remoteFirst.first['l'], 'B');
     });
 
-    test('两侧都没有 ts 时仍使用稳定判据', () {
+    test('两侧都没有 ts 时远端优先，避免旧本地条目覆盖远端', () {
       final local = [
         {'i': 0, 'l': '日历 A', 'fc': true},
       ];
@@ -230,17 +230,27 @@ void main() {
         {'i': 0, 'l': '日历 B', 'fc': true},
       ];
 
-      final localFirst = mergeScheduleSlots(
+      final merged = mergeScheduleSlots(
         localEntries: local,
         remoteEntries: remote,
       );
-      final remoteFirst = mergeScheduleSlots(
-        localEntries: remote,
-        remoteEntries: local,
+
+      expect(merged.first['l'], '日历 B');
+    });
+
+    test('无 ts 且可见内容相同时保留远端元数据', () {
+      final merged = mergeScheduleSlots(
+        localEntries: const [
+          {'i': 0, 'l': '同一个日程', 'c': 1},
+        ],
+        remoteEntries: const [
+          {'i': 0, 'l': '同一个日程', 'c': 1, 'cid': 'remote-category'},
+        ],
       );
 
-      expect(localFirst.first['l'], '日历 B');
-      expect(remoteFirst.first['l'], '日历 B');
+      expect(merged, [
+        {'i': 0, 'l': '同一个日程', 'c': 1, 'cid': 'remote-category'},
+      ]);
     });
 
     test('同时间戳时墓碑优先于 live 条目', () {

@@ -33,7 +33,9 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
     // 生产环境使用全局控制器：日程页/出行页/后台同步上报的状态与这里
     // 共享同一份数据，因此重新打开页面不会退回“尚未检查”。
     _controller = widget.controller ?? context.read<SyncCenterController>();
-    unawaited(_controller.initialize());
+    // 打开页面时先完成本地状态初始化，再在后台做轻量远端检查；页面本身
+    // 不等待远端历史日程逐天读取，避免进入同步中心被网络延迟卡住。
+    unawaited(_controller.refresh());
   }
 
   @override

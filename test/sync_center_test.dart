@@ -18,6 +18,39 @@ SyncCenterOperations _operationsFor(
 }
 
 void main() {
+  test('刷新同步中心会执行配置的实时检查', () async {
+    var checks = 0;
+    final controller = SyncCenterController(
+      operations: SyncCenterOperations(
+        operations: {
+          for (final module in SyncModule.values)
+            module: () async => const SyncOperationResult.success(),
+        },
+        checks: {
+          SyncModule.schedule: () async {
+            checks++;
+            return const SyncOperationResult.success(
+              message: '已确认本地与远端日程一致',
+            );
+          },
+        },
+      ),
+      store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.refresh();
+    expect(checks, 1);
+    expect(
+      controller.stateFor(SyncModule.schedule).status,
+      SyncModuleStatus.success,
+    );
+
+    await controller.refresh();
+    expect(checks, 2);
+  });
+
   test('初始化前不让默认 live 状态覆盖持久待同步，状态就绪后再刷新', () async {
     final ready = Completer<void>();
     final liveSource = ValueNotifier<int>(0);

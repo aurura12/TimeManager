@@ -33,15 +33,30 @@ typedef SyncCenterLiveStateReader = Map<SyncModule, SyncModuleState> Function();
 /// 业务同步入口的集合。同步中心只编排，不复制各模块的远端协议。
 class SyncCenterOperations {
   SyncCenterOperations(
-      {required Map<SyncModule, SyncCenterOperation> operations})
-      : _operations = Map.unmodifiable(operations);
+      {required Map<SyncModule, SyncCenterOperation> operations,
+      Map<SyncModule, SyncCenterOperation> checks = const {}})
+      : _operations = Map.unmodifiable(operations),
+        _checks = Map.unmodifiable(checks);
 
   final Map<SyncModule, SyncCenterOperation> _operations;
+  final Map<SyncModule, SyncCenterOperation> _checks;
+
+  Set<SyncModule> get checkableModules => _checks.keys.toSet();
+
+  SyncCenterOperation? checkFor(SyncModule module) => _checks[module];
 
   Future<SyncOperationResult> run(SyncModule module) async {
     final operation = _operations[module];
     if (operation == null) {
       return SyncOperationResult.failed('${module.label}暂不支持同步');
+    }
+    return operation();
+  }
+
+  Future<SyncOperationResult> check(SyncModule module) async {
+    final operation = _checks[module];
+    if (operation == null) {
+      return SyncOperationResult.skipped('${module.label}暂不支持实时检查');
     }
     return operation();
   }
@@ -61,6 +76,9 @@ class SyncCenterOperations {
         SyncModule.diary: diary.sync,
         SyncModule.travel: _syncTravel,
         SyncModule.checkIn: () => _syncCheckIn(checkIn),
+      },
+      checks: {
+        SyncModule.schedule: provider.checkScheduleSyncState,
       },
     );
   }
@@ -306,6 +324,7 @@ class SyncCenterController extends ChangeNotifier {
     _coordinator.refreshContext();
     _refreshLiveState();
     _notify();
+    await _runChecks();
   }
 
   Future<void> retry(SyncModule module) async {
@@ -344,13 +363,19 @@ class SyncCenterController extends ChangeNotifier {
     SyncModule module, {
     bool fromAll = false,
     Set<SyncModule> preserveLiveResults = const <SyncModule>{},
+    SyncCenterOperation? operation,
+    bool checking = false,
   }) async {
-    if (_disposed || (!fromAll && _allRetrying)) return;
+    if (_disposed ||
+        (!fromAll && _allRetrying) ||
+        _runningModules.contains(module)) {
+      return;
+    }
     _runningModules.add(module);
     final scope = _coordinator.scopeFor(module);
     _coordinator.begin(
       module,
-      message: '正在同步${module.label}',
+      message: checking ? '正在检查${module.label}' : '正在同步${module.label}',
       source: _allRetrying ? '同步中心（全部重试）' : '同步中心',
       scope: scope,
     );
@@ -359,7 +384,8 @@ class SyncCenterController extends ChangeNotifier {
     try {
       SyncOperationResult result;
       try {
-        result = await _operations.run(module);
+        result =
+            await (operation == null ? _operations.run(module) : operation());
       } catch (error) {
         result = SyncOperationResult.failed('${module.label}同步失败：$error');
       }
@@ -390,6 +416,19 @@ class SyncCenterController extends ChangeNotifier {
     } finally {
       // 无论业务操作、live reader 或持久化是否异常，都不能遗留“正在重试”锁。
       _runningModules.remove(module);
+    }
+  }
+
+  Future<void> _runChecks() async {
+    for (final module in _operations.checkableModules) {
+      if (_disposed) return;
+      final operation = _operations.checkFor(module);
+      if (operation == null) continue;
+      await _runOne(
+        module,
+        operation: operation,
+        checking: true,
+      );
     }
   }
 

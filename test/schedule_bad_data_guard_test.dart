@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/category.dart';
 import 'package:time_manager/models/diary_kind.dart';
+import 'package:time_manager/models/sync_center_state.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/services/schedule_gitee_service.dart';
 import 'package:time_manager/services/schedule_sync_dependencies.dart';
@@ -362,8 +363,7 @@ void main() {
       final state = _RemoteState();
       final provider = await _createProvider(
         initialPreferences: {
-          'daily_slots':
-              '{"2026-09-06":[{"i":60,"l":"跑步","c":1,"ts":1000}]}',
+          'daily_slots': '{"2026-09-06":[{"i":60,"l":"跑步","c":1,"ts":1000}]}',
         },
         state: state,
       );
@@ -384,8 +384,7 @@ void main() {
       final state = _RemoteState();
       final provider = await _createProvider(
         initialPreferences: {
-          'daily_slots':
-              '{"2026-09-07":[{"i":60,"l":"跑步","c":1,"ts":1000}]}',
+          'daily_slots': '{"2026-09-07":[{"i":60,"l":"跑步","c":1,"ts":1000}]}',
         },
         state: state,
       );
@@ -403,8 +402,7 @@ void main() {
       final state = _RemoteState()..pushFails = true;
       final provider = await _createProvider(
         initialPreferences: {
-          'daily_slots':
-              '{"2026-09-08":[{"i":60,"l":"跑步","c":1,"ts":1000}]}',
+          'daily_slots': '{"2026-09-08":[{"i":60,"l":"跑步","c":1,"ts":1000}]}',
         },
         state: state,
       );
@@ -470,12 +468,66 @@ void main() {
       expect(state.uploads, isEmpty);
     });
 
+    test('旧本地条目无 ts 时保留远端元数据且不上传', () async {
+      final state = _RemoteState();
+      final provider = await _createProvider(
+        initialPreferences: {
+          'daily_slots': '{"2026-09-06":[{"i":60,"l":"远端元数据测试","c":1}]}',
+        },
+        state: state,
+      );
+      addTearDown(provider.dispose);
+
+      // 两侧显示内容相同，但远端有本地旧数据没有的分类元数据，且双方都
+      // 没有可靠的槽位修改时间。远端应作为同步基线，不应产生新提交。
+      state.remoteContents['g/2026-09-06'] =
+          '[{"i":60,"l":"远端元数据测试","c":1,"cid":"remote-category"}]';
+
+      await provider.syncScheduleToGitee(dateKey: '2026-09-06');
+
+      expect(state.uploads, isEmpty);
+      expect(
+        provider.getSlotsForDate('2026-09-06')![60].categoryId,
+        'remote-category',
+      );
+    });
+
+    test('状态检查首次读取正文，后续仅比较远端文件 SHA', () async {
+      final state = _RemoteState();
+      final remoteFiles = <String, String>{
+        'schedule/g/2026-09-06.json': 'sha-g/2026-09-06',
+      };
+      state.remoteContents['g/2026-09-06'] = '[{"i":60,"l":"状态检查缓存","c":1}]';
+      final provider = await _createProvider(
+        initialPreferences: {
+          'daily_slots': '{"2026-09-06":[{"i":60,"l":"状态检查缓存","c":1}]}',
+        },
+        state: state,
+        remoteFiles: remoteFiles,
+      );
+      addTearDown(provider.dispose);
+
+      final first = await provider.checkScheduleSyncState();
+      expect(first.status, SyncModuleStatus.success);
+      expect(state.pullRequests, ['g/2026-09-06']);
+
+      state.pullRequests.clear();
+      final second = await provider.checkScheduleSyncState();
+      expect(second.status, SyncModuleStatus.success);
+      expect(state.pullRequests, isEmpty);
+
+      remoteFiles['schedule/g/2026-09-06.json'] = 'sha-g/2026-09-06-v2';
+      state.remoteContents['g/2026-09-06'] = '[{"i":60,"l":"状态检查缓存已更新","c":1}]';
+      final third = await provider.checkScheduleSyncState();
+      expect(third.status, SyncModuleStatus.success);
+      expect(state.pullRequests, ['g/2026-09-06']);
+    });
+
     test('日程内容变化：正常上传并携带新 updated_at', () async {
       final state = _RemoteState();
       final provider = await _createProvider(
         initialPreferences: {
-          'daily_slots':
-              '{"2026-09-06":[{"i":60,"l":"跑步","c":1,"ts":2000}]}',
+          'daily_slots': '{"2026-09-06":[{"i":60,"l":"跑步","c":1,"ts":2000}]}',
         },
         state: state,
       );
@@ -498,8 +550,7 @@ void main() {
       final state = _RemoteState();
       final provider = await _createProvider(
         initialPreferences: {
-          'daily_slots':
-              '{"2026-09-06":[{"i":60,"l":"跑步","c":1,"ts":1000}]}',
+          'daily_slots': '{"2026-09-06":[{"i":60,"l":"跑步","c":1,"ts":1000}]}',
         },
         state: state,
       );

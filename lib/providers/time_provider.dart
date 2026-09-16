@@ -21,6 +21,7 @@ import '../services/schedule_day_merge.dart';
 import '../services/schedule_gitee_service.dart';
 import '../services/schedule_overwrite.dart';
 import '../services/schedule_sync_dependencies.dart';
+import '../services/schedule_sync_manifest_store.dart';
 import '../services/category_document_merge.dart';
 import '../services/category_sync_dependencies.dart';
 import '../services/target_document_merge.dart';
@@ -56,6 +57,22 @@ class BackupPreview {
     required this.categoryCount,
     required this.templateCount,
   });
+}
+
+class _ScheduleCheckDateResult {
+  const _ScheduleCheckDateResult({
+    this.error,
+    this.pendingKind,
+    this.remoteAuthoritativeEntries,
+    this.remoteSha,
+  });
+
+  final String? error;
+  final String? pendingKind;
+  final List<Map<String, dynamic>>? remoteAuthoritativeEntries;
+  final String? remoteSha;
+
+  bool get isSuccess => error == null && pendingKind == null;
 }
 
 class _ParsedBackup {
@@ -712,6 +729,7 @@ class TimeProvider with ChangeNotifier {
 
   bool get _hasScheduleSyncInFlight =>
       _scheduleGiteeSyncing ||
+      _scheduleSyncChecking ||
       _allScheduleSyncing ||
       _allSchedulePulling ||
       _isSyncing ||
@@ -727,6 +745,7 @@ class TimeProvider with ChangeNotifier {
   /// 不包含分类、目标或 Google 日历，避免不同模块互相显示“同步中”。
   bool get hasScheduleModuleSyncInFlight =>
       _scheduleGiteeSyncing ||
+      _scheduleSyncChecking ||
       _allScheduleSyncing ||
       _allSchedulePulling ||
       _scheduleMergePullsInProgress > 0;
@@ -2247,6 +2266,8 @@ class TimeProvider with ChangeNotifier {
   Timer? _scheduleSyncProgressClearTimer;
   ScheduleSyncProgress? _scheduleSyncProgress;
   bool _scheduleGiteeSyncing = false;
+  bool _scheduleSyncChecking = false;
+  Future<SyncOperationResult>? _scheduleCheckFuture;
   bool _scheduleOverwriteInProgress = false;
   int _scheduleMergePullsInProgress = 0;
   int _googleCalendarPullsInProgress = 0;
@@ -2285,6 +2306,7 @@ class TimeProvider with ChangeNotifier {
       _allSchedulePulling ||
       _isSyncing ||
       _scheduleOverwriteInProgress ||
+      _scheduleSyncChecking ||
       _remoteViewTransitionInProgress ||
       _remoteViewEnabled ||
       _scheduleMergePullsInProgress > 0 ||
@@ -2343,6 +2365,390 @@ class TimeProvider with ChangeNotifier {
     for (final target in targets) {
       await syncScheduleToGitee(dateKey: target);
     }
+  }
+
+  /// 只读检查当前身份的日程是否与远端一致。
+  ///
+  /// 先读取远端文件列表的 SHA，再只拉取新增、变化或本地发生变化的日期。
+  /// 检查不会调用 push 接口；远端优先的旧条目只会安全地写回本地，避免
+  /// 同步中心打开时制造提交。
+  Future<SyncOperationResult> checkScheduleSyncState() {
+    final ongoing = _scheduleCheckFuture;
+    if (ongoing != null) return ongoing;
+    final future = _checkScheduleSyncState();
+    _scheduleCheckFuture = future;
+    future.then<void>(
+      (_) {
+        if (identical(_scheduleCheckFuture, future)) {
+          _scheduleCheckFuture = null;
+        }
+      },
+      onError: (Object _, StackTrace __) {
+        if (identical(_scheduleCheckFuture, future)) {
+          _scheduleCheckFuture = null;
+        }
+      },
+    );
+    return future;
+  }
+
+  Future<SyncOperationResult> _checkScheduleSyncState() async {
+    if (!_isInitialLoadFinished || !_scheduleUserLoadFinished) {
+      return const SyncOperationResult.offline('本地同步状态仍在准备，请稍后重试');
+    }
+    if (_initializationFailed) {
+      return SyncOperationResult.offline(
+        _initializationFailureMessage ?? '本地数据未准备好，暂时无法检查',
+      );
+    }
+    if (_isDisposed) {
+      return const SyncOperationResult.failed('同步服务已结束，请重新打开应用');
+    }
+    if (_remoteViewEnabled) {
+      return const SyncOperationResult.skipped('远程视图下不检查本地同步状态');
+    }
+    if (!_hasSelectedScheduleUser) {
+      return const SyncOperationResult.offline('请先在“我的”中选择身份后再检查');
+    }
+    if (_hasScheduleSyncInFlight) {
+      return const SyncOperationResult.busy('已有日程同步任务正在进行，请稍后再试');
+    }
+
+    final selectedUserCode = _scheduleUser.code;
+    _scheduleSyncChecking = true;
+    notifyListeners();
+    try {
+      final token = await _scheduleSyncDependencies.loadToken();
+      if (!_canContinueScheduleSync(selectedUserCode) ||
+          token == null ||
+          token.isEmpty) {
+        return const SyncOperationResult.offline(
+          '日程远端未连接，暂时无法检查',
+        );
+      }
+
+      final listResult = await _scheduleSyncDependencies.listPaths(
+        token: token,
+        userCode: selectedUserCode,
+      );
+      if (!_canContinueScheduleSync(selectedUserCode)) {
+        return const SyncOperationResult.skipped('日程身份已变化，检查已取消');
+      }
+      if (!listResult.success) {
+        return SyncOperationResult.failed(
+          '日程状态检查失败：${listResult.error ?? '远端日程列表不可用'}',
+          pendingUploadCount: _pendingScheduleUploadCount,
+        );
+      }
+
+      final remoteDates = <String>{};
+      final remoteShaByDate = <String, String>{};
+      for (final entry in listResult.pathShaMap.entries) {
+        final dateKey = ScheduleOverwriteSnapshot.dateKeyFromCanonicalPath(
+          entry.key,
+          userCode: selectedUserCode,
+        );
+        if (dateKey == null || entry.value.trim().isEmpty) continue;
+        remoteDates.add(dateKey);
+        remoteShaByDate[dateKey] = entry.value;
+      }
+
+      final localEntriesByDate = _localScheduleEntriesByDate();
+      final previousManifest =
+          await ScheduleSyncManifestStore.load(selectedUserCode);
+      if (!_canContinueScheduleSync(selectedUserCode)) {
+        return const SyncOperationResult.skipped('日程身份已变化，检查已取消');
+      }
+
+      final allDates = <String>{
+        ...remoteDates,
+        ...localEntriesByDate.keys,
+        ...pendingGiteeSyncDates,
+        ..._pendingScheduleGiteeDateKeys,
+        ...?previousManifest?.remoteDates,
+        ...?previousManifest?.localFingerprintByDate.keys,
+        ...?previousManifest?.pendingKinds.keys,
+      };
+      final sortedDates = allDates.toList()..sort();
+      final datesToInspect = <String>{};
+      for (final dateKey in sortedDates) {
+        if (_scheduleCheckNeedsInspection(
+          dateKey: dateKey,
+          previousManifest: previousManifest,
+          remoteDates: remoteDates,
+          remoteShaByDate: remoteShaByDate,
+          localEntriesByDate: localEntriesByDate,
+        )) {
+          datesToInspect.add(dateKey);
+        }
+      }
+
+      final revisionsAtStart = <String, int>{
+        for (final dateKey in datesToInspect)
+          dateKey: _scheduleGiteeDateRevisions[dateKey] ?? 0,
+      };
+      final inspected = <String, _ScheduleCheckDateResult>{};
+      final inspectList = datesToInspect.toList()..sort();
+      // Contents API 自身也限制并发为 4；按批次读取，避免一次打开同步中心
+      // 就创建大量请求，同时保留远端检查的并发效率。
+      const batchSize = 4;
+      for (var offset = 0; offset < inspectList.length; offset += batchSize) {
+        if (!_canContinueScheduleSync(selectedUserCode)) {
+          return const SyncOperationResult.skipped('日程身份已变化，检查已取消');
+        }
+        final batch = inspectList.skip(offset).take(batchSize);
+        final results = await Future.wait(
+          batch.map(
+            (dateKey) => _checkScheduleDate(
+              token: token,
+              userCode: selectedUserCode,
+              dateKey: dateKey,
+              remoteDates: remoteDates,
+              remoteShaByDate: remoteShaByDate,
+              localEntries: localEntriesByDate[dateKey] ?? const [],
+            ),
+          ),
+        );
+        for (var index = 0; index < results.length; index++) {
+          inspected[inspectList[offset + index]] = results[index];
+        }
+      }
+
+      final pendingKinds = <String, String>{
+        ...?previousManifest?.pendingKinds,
+      };
+      pendingKinds.removeWhere((dateKey, _) => !allDates.contains(dateKey));
+      var localChanged = false;
+      final failedDetails = <String>[];
+
+      for (final dateKey in inspectList) {
+        final result = inspected[dateKey];
+        if (result == null) continue;
+        pendingKinds.remove(dateKey);
+        if (result.error != null) {
+          pendingKinds[dateKey] = 'error';
+          failedDetails.add('$dateKey：${result.error}');
+          continue;
+        }
+
+        final revisionChanged = (_scheduleGiteeDateRevisions[dateKey] ?? 0) !=
+            revisionsAtStart[dateKey];
+        if (revisionChanged) {
+          pendingKinds[dateKey] = 'upload';
+          _markScheduleGiteePendingWithoutScheduling(dateKey);
+          continue;
+        }
+
+        if (result.pendingKind != null) {
+          pendingKinds[dateKey] = result.pendingKind!;
+          _markScheduleGiteePendingWithoutScheduling(dateKey);
+          continue;
+        }
+
+        if (result.remoteAuthoritativeEntries != null) {
+          final daySlots =
+              _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
+          _applyScheduleEntriesToSlots(
+            daySlots,
+            result.remoteAuthoritativeEntries!,
+          );
+          _markSlotsDirty(dateKey);
+          _targetStatsCache.invalidateDate(dateKey);
+          localChanged = true;
+        }
+        _clearScheduleGiteePendingWithoutScheduling(dateKey);
+        if (result.remoteSha != null && remoteDates.contains(dateKey)) {
+          remoteShaByDate[dateKey] = result.remoteSha!;
+        }
+      }
+
+      // 检查过程中如果用户编辑了新日期，不能让本次检查覆盖它的缓存事实。
+      // 这些日期会在下一次检查中继续作为增量目标。
+      for (final dateKey in <String>{
+        ...pendingGiteeSyncDates,
+        ..._pendingScheduleGiteeDateKeys,
+      }) {
+        pendingKinds.putIfAbsent(dateKey, () => 'upload');
+      }
+
+      if (localChanged) _syncDirty = true;
+      if (localChanged || _syncDirty) {
+        final saved = await _saveData();
+        if (!_canContinueScheduleSync(selectedUserCode) || !saved) {
+          return const SyncOperationResult.failed('日程状态检查后的本地保存失败');
+        }
+        notifyListeners();
+      }
+
+      final finalLocalEntriesByDate = _localScheduleEntriesByDate();
+      final finalDates = <String>{
+        ...allDates,
+        ...finalLocalEntriesByDate.keys,
+        ...pendingKinds.keys,
+      };
+      final localFingerprintByDate = <String, String>{
+        for (final dateKey in finalDates)
+          dateKey: scheduleEntriesFingerprint(
+            finalLocalEntriesByDate[dateKey] ?? const [],
+          ),
+      };
+      final manifestSaved = await ScheduleSyncManifestStore.save(
+        selectedUserCode,
+        ScheduleSyncManifest(
+          remoteDates: remoteDates,
+          remoteShaByDate: remoteShaByDate,
+          localFingerprintByDate: localFingerprintByDate,
+          pendingKinds: pendingKinds,
+        ),
+      );
+      if (!manifestSaved) {
+        _appLogService.warning(
+          '日程状态检查基线保存失败，下次将重新检查变化日期',
+          source: 'schedule_sync',
+        );
+      }
+
+      final pendingUploadCount =
+          pendingKinds.values.where((kind) => kind == 'upload').length;
+      if (failedDetails.isNotEmpty) {
+        return SyncOperationResult.failed(
+          '日程状态检查失败：${failedDetails.length} 天无法确认',
+          pendingUploadCount: pendingUploadCount,
+          details: failedDetails.take(10).toList(growable: false),
+        );
+      }
+      if (pendingUploadCount > 0) {
+        final pendingDates = pendingKinds.entries
+            .where((entry) => entry.value == 'upload')
+            .map((entry) => entry.key)
+            .take(10)
+            .toList(growable: false);
+        return SyncOperationResult.pending(
+          '发现 $pendingUploadCount 天本地日程待同步',
+          pendingUploadCount: pendingUploadCount,
+          details: pendingDates,
+        );
+      }
+      return const SyncOperationResult.success(
+        message: '已确认本地与远端日程一致',
+      );
+    } catch (error, stackTrace) {
+      _recordAppError('日程状态检查失败', error, stackTrace);
+      return SyncOperationResult.failed('日程状态检查失败：$error');
+    } finally {
+      _scheduleSyncChecking = false;
+      notifyListeners();
+    }
+  }
+
+  Map<String, List<Map<String, dynamic>>> _localScheduleEntriesByDate() {
+    final result = <String, List<Map<String, dynamic>>>{};
+    for (final entry in _dailySlots.entries) {
+      final dateKey = _normalizeDateKey(entry.key);
+      final serialized = _serializeRecordedSlots(entry.value);
+      if (serialized.isNotEmpty) result[dateKey] = serialized;
+    }
+    return result;
+  }
+
+  bool _scheduleCheckNeedsInspection({
+    required String dateKey,
+    required ScheduleSyncManifest? previousManifest,
+    required Set<String> remoteDates,
+    required Map<String, String> remoteShaByDate,
+    required Map<String, List<Map<String, dynamic>>> localEntriesByDate,
+  }) {
+    if (previousManifest == null) return true;
+    if (previousManifest.pendingKinds[dateKey] == 'error') return true;
+
+    final hadRemote = previousManifest.remoteDates.contains(dateKey);
+    final hasRemote = remoteDates.contains(dateKey);
+    if (hadRemote != hasRemote) return true;
+    if (hasRemote &&
+        previousManifest.remoteShaByDate[dateKey] != remoteShaByDate[dateKey]) {
+      return true;
+    }
+
+    final currentFingerprint = scheduleEntriesFingerprint(
+      localEntriesByDate[dateKey] ?? const [],
+    );
+    if (previousManifest.localFingerprintByDate[dateKey] !=
+        currentFingerprint) {
+      return true;
+    }
+
+    final wasKnown = previousManifest.remoteDates.contains(dateKey) ||
+        previousManifest.localFingerprintByDate.containsKey(dateKey) ||
+        previousManifest.pendingKinds.containsKey(dateKey);
+    return !wasKnown;
+  }
+
+  Future<_ScheduleCheckDateResult> _checkScheduleDate({
+    required String token,
+    required String userCode,
+    required String dateKey,
+    required Set<String> remoteDates,
+    required Map<String, String> remoteShaByDate,
+    required List<Map<String, dynamic>> localEntries,
+  }) async {
+    List<Map<String, dynamic>> remoteEntries = const [];
+    String? remoteSha;
+    if (remoteDates.contains(dateKey)) {
+      final pullResult = await _scheduleSyncDependencies.pullDay(
+        token: token,
+        dateKey: dateKey,
+        userCode: userCode,
+      );
+      if (pullResult.notFound) {
+        return const _ScheduleCheckDateResult(
+          error: '远端文件在检查过程中消失，请重试',
+        );
+      }
+      if (!pullResult.success || pullResult.content == null) {
+        return _ScheduleCheckDateResult(
+          error: pullResult.error ?? '远端日程读取失败',
+        );
+      }
+      final parsed = parseScheduleContent(pullResult.content);
+      if (!parsed.isValid) {
+        return _ScheduleCheckDateResult(
+          error: parsed.error ?? '远端日程格式异常',
+        );
+      }
+      remoteEntries = parsed.slots;
+      remoteSha = pullResult.sha ?? remoteShaByDate[dateKey];
+    }
+
+    final merged = mergeScheduleSlots(
+      localEntries: localEntries,
+      remoteEntries: remoteEntries,
+    );
+    if (scheduleSlotsEquivalent(merged, remoteEntries)) {
+      return _ScheduleCheckDateResult(
+        remoteAuthoritativeEntries:
+            scheduleSlotsEquivalent(merged, localEntries) ? null : merged,
+        remoteSha: remoteSha,
+      );
+    }
+    return _ScheduleCheckDateResult(
+      pendingKind: 'upload',
+      remoteSha: remoteSha,
+    );
+  }
+
+  void _markScheduleGiteePendingWithoutScheduling(String dateKey) {
+    if (_pendingSyncState.giteeDates.add(dateKey)) {
+      _syncDirty = true;
+    }
+  }
+
+  void _clearScheduleGiteePendingWithoutScheduling(String dateKey) {
+    var changed = _pendingScheduleGiteeDateKeys.remove(dateKey);
+    if (_pendingSyncState.giteeDates.contains(dateKey)) {
+      _pendingSyncState.clearGitee(dateKey);
+      changed = true;
+    }
+    if (changed) _syncDirty = true;
   }
 
   /// 推送指定日期日程到 Gitee（每人独立文件）

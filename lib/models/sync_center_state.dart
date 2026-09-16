@@ -272,11 +272,13 @@ class SyncOperationResult {
     String message, {
     int pendingUploadCount = 0,
     int pendingDownloadCount = 0,
+    List<String> details = const <String>[],
   }) : this(
           status: SyncModuleStatus.failed,
           message: message,
           pendingUploadCount: pendingUploadCount,
           pendingDownloadCount: pendingDownloadCount,
+          details: details,
         );
 
   const SyncOperationResult.conflict(

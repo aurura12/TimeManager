@@ -130,8 +130,9 @@ ScheduleDayMergeResult parseScheduleContent(String? content) {
 
 /// 合并本地与远端槽位。
 ///
-/// - 两侧都有同一槽位：`ts` 大者胜；时间戳相等时墓碑优先，同类条目使用
-///   与参数顺序无关的稳定判据；
+/// - 两侧都有同一槽位：`ts` 大者胜；时间戳相等时墓碑优先；两侧都没有
+///   可靠时间戳（`ts` 缺失或为 0）时远端优先，避免无法证明为新修改的
+///   本地旧数据覆盖远端元数据；正数时间戳相等时使用与参数顺序无关的稳定判据；
 /// - 仅一侧有：保留该侧（union）。tombstone（`del: true`）与 live entry
 ///   都携带 `ts`，通常与普通槽位一样参与"大者胜"比较；
 /// - Google 来源墓碑（`del: true, fc: true`）只能删除 Google live entry，
@@ -171,6 +172,12 @@ List<Map<String, dynamic>> mergeScheduleSlots({
           // 时间戳缺失时两侧通常都是 0；删除优先可避免旧 live 条目
           // 在平局中把已有删除撤销。
           merged.add(_isTombstone(local) ? local : remote);
+        } else if (localTs == 0) {
+          // 两侧都没有可靠的修改时间，无法证明本地条目比远端更新。
+          // 远端是同步基线，因此保留远端完整条目（包括 cid/eid/fc 等
+          // 元数据），避免旧本地数据在全量同步时制造无意义提交或删掉
+          // 远端已有的元数据。
+          merged.add(remote);
         } else {
           // 不能在平局时取 local：local/remote 只是调用方视角，交换参数后
           // 会让两台设备各自坚持自己的版本。规范化后按稳定字符串比较，
@@ -222,6 +229,20 @@ bool scheduleSlotsEquivalent(
     if (left[i] != right[i]) return false;
   }
   return true;
+}
+
+/// 生成槽位内容的轻量指纹，用于判断本地某一天是否自上次检查后发生变化。
+///
+/// 这不是安全哈希，只是增量检查缓存的变更检测器；实际同步前仍会再次
+/// 使用 [scheduleSlotsEquivalent] 做完整比较。
+String scheduleEntriesFingerprint(List<Map<String, dynamic>> entries) {
+  final canonical = entries.map(_canonicalEntry).toList()..sort();
+  var hash = 2166136261;
+  for (final byte in utf8.encode(json.encode(canonical))) {
+    hash ^= byte;
+    hash = (hash * 16777619) & 4294967295;
+  }
+  return hash.toRadixString(16).padLeft(16, '0');
 }
 
 /// 生成与字段顺序无关的条目规范形式：键排序，丢弃 null 与 `false` 标记
