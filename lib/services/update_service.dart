@@ -109,9 +109,9 @@ class UpdateService {
         _safeAssetNamePattern.hasMatch(name);
   }
 
-  static bool _isAllowedDownloadUri(Uri uri) {
+  static bool _hasSafeDownloadUriParts(Uri uri, String expectedHost) {
     if (uri.scheme.toLowerCase() != 'https' ||
-        uri.host.toLowerCase() != 'gitee.com' ||
+        uri.host.toLowerCase() != expectedHost ||
         uri.userInfo.isNotEmpty ||
         (uri.port != 0 && uri.port != 443) ||
         uri.fragment.isNotEmpty) {
@@ -131,6 +131,14 @@ class UpdateService {
     if (segments.any((segment) => segment == '.' || segment == '..')) {
       return false;
     }
+
+    return true;
+  }
+
+  static bool _isAllowedDownloadUri(Uri uri) {
+    if (!_hasSafeDownloadUriParts(uri, 'gitee.com')) return false;
+
+    final segments = uri.pathSegments;
 
     final isApiAsset = segments.length >= 8 &&
         segments[0] == 'api' &&
@@ -158,6 +166,19 @@ class UpdateService {
         segments[2] == 'releases' &&
         segments[3] == 'download' &&
         segments[4].isNotEmpty;
+  }
+
+  /// Gitee's release download endpoint redirects the file body to its
+  /// attachment CDN. This host is accepted only as a one-hop redirect from a
+  /// previously validated Gitee download URL (see _sendGetFollowingRedirects).
+  static bool _isAllowedGiteeCdnUri(Uri uri) {
+    if (!_hasSafeDownloadUriParts(uri, 'foruda.gitee.com')) return false;
+
+    final segments = uri.pathSegments;
+    return segments.length >= 3 &&
+        segments[0] == 'attach_file' &&
+        RegExp(r'^\d+$').hasMatch(segments[1]) &&
+        _safeAssetNamePattern.hasMatch(segments[2]);
   }
 
   static Uri? _parseAllowedDownloadUri(String rawUrl) {
@@ -267,6 +288,7 @@ class UpdateService {
 
     var currentUri = uri;
     var currentHeaders = Map<String, String>.from(headers);
+    var usedGiteeCdnRedirect = false;
 
     for (var redirectCount = 0;
         redirectCount <= maxRedirects;
@@ -288,9 +310,14 @@ class UpdateService {
       }
 
       final nextUri = _resolveRedirectUri(currentUri, location);
-      if (!_isAllowedDownloadUri(nextUri)) {
+      final isAllowedGiteeUri = _isAllowedDownloadUri(nextUri);
+      final isAllowedGiteeCdnRedirect = !usedGiteeCdnRedirect &&
+          currentUri.host.toLowerCase() == 'gitee.com' &&
+          _isAllowedGiteeCdnUri(nextUri);
+      if (!isAllowedGiteeUri && !isAllowedGiteeCdnRedirect) {
         throw const _UpdateFailure('更新重定向地址不受信任，已停止自动安装');
       }
+      if (isAllowedGiteeCdnRedirect) usedGiteeCdnRedirect = true;
       // 跨主机重定向：移除 Authorization，防止 token 泄露给第三方
       if (nextUri.host != currentUri.host &&
           currentHeaders.containsKey('Authorization')) {

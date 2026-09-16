@@ -26,12 +26,14 @@ class _FakeClient extends http.BaseClient {
   final List<_FakeResponse> responses;
   int requestCount = 0;
   Uri? lastUri;
+  final List<Map<String, String>> requestHeaders = [];
 
   _FakeClient(this.responses);
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     lastUri = request.url;
+    requestHeaders.add(Map<String, String>.from(request.headers));
     final response = responses[requestCount++];
     return http.StreamedResponse(
       Stream<List<int>>.fromIterable(response.chunks),
@@ -83,6 +85,12 @@ void main() {
     expect(
       UpdateService.isAllowedDownloadUrlForTesting(
         'https://gitee.com/${RemoteRepoConfig.giteeOwner}/other_repo/attach_files/123/app.apk',
+      ),
+      isFalse,
+    );
+    expect(
+      UpdateService.isAllowedDownloadUrlForTesting(
+        'https://foruda.gitee.com/attach_file/123/app.apk?token=test&ts=123',
       ),
       isFalse,
     );
@@ -411,6 +419,45 @@ void main() {
     );
 
     expect(client.requestCount, 2);
+    expect(await destination.readAsString(), 'hello');
+  });
+
+  test('follows Gitee attachment CDN redirects without forwarding auth',
+      () async {
+    final body = utf8.encode('hello');
+    final digest = sha256.convert(body).toString();
+    final destination = File(p.join(tempDirectory.path, 'installer.apk'));
+    final client = _FakeClient([
+      const _FakeResponse(
+        statusCode: HttpStatus.found,
+        headers: {
+          'location':
+              'https://foruda.gitee.com/attach_file/123/app.apk?token=test&ts=123&attname=app.apk',
+        },
+      ),
+      _FakeResponse(
+        statusCode: HttpStatus.ok,
+        chunks: [body],
+        contentLength: body.length,
+      ),
+    ]);
+
+    await UpdateService.downloadVerifiedFileForTesting(
+      client: client,
+      uri: Uri.parse(
+        'https://gitee.com/${RemoteRepoConfig.giteeOwner}/time_manager_releases/attach_files/123/app.apk',
+      ),
+      destination: destination,
+      expectedSha256: digest,
+      maxBytes: 64,
+    );
+
+    expect(client.requestCount, 2);
+    expect(
+      client.requestHeaders[1].keys
+          .any((key) => key.toLowerCase() == 'authorization'),
+      isFalse,
+    );
     expect(await destination.readAsString(), 'hello');
   });
 }
