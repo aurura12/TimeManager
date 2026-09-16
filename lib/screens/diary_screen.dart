@@ -13,6 +13,7 @@ import '../services/diary_gitee_service.dart';
 import '../services/diary_local_store.dart';
 import '../services/diary_search_service.dart';
 import '../services/app_identity_service.dart';
+import '../services/sync_operation_lock.dart';
 import '../services/sync_status_coordinator.dart';
 import '../utils/diary_remote_path_utils.dart';
 import 'diary_search_screen.dart';
@@ -79,6 +80,19 @@ class _DiaryScreenState extends State<DiaryScreen> {
     );
   }
 
+  void _reportDiarySkipped(String message) {
+    _reportDiary(SyncOperationResult.skipped(message));
+  }
+
+  void _beginDiarySync() {
+    _statusCoordinator?.begin(
+      SyncModule.diary,
+      scope: _diarySyncScope,
+      source: '日记页',
+      message: '正在同步日记',
+    );
+  }
+
   void _markDiaryPending() {
     _statusCoordinator?.markPending(
       SyncModule.diary,
@@ -118,8 +132,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     final kind = identityKind ?? await DiaryLocalStore.loadPreferredKind();
     _token = token;
     _kind = kind;
-    await _loadDraftForCurrentContext();
-    _dirtySinceContextLoaded = false;
+    _dirtySinceContextLoaded = await _loadDraftForCurrentContext();
     if (!mounted) return;
     setState(() => _loading = false);
     _refreshCurrentContextFromRemote(_contextRequestId,
@@ -221,6 +234,15 @@ class _DiaryScreenState extends State<DiaryScreen> {
       sha: notFound ? null : sha,
       notFound: notFound,
     );
+    unawaited(
+      DiaryLocalStore.saveRemoteBaseline(
+        _kind,
+        _selectedDate,
+        path: notFound ? null : path,
+        sha: notFound ? null : sha,
+        notFound: notFound,
+      ),
+    );
   }
 
   Future<void> _updateDiaryDateKeys() async {
@@ -300,14 +322,51 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return matched.first;
   }
 
-  Future<void> _loadDraftForCurrentContext() async {
+  Future<({String? path, String? sha, bool notFound})?>
+      _loadCurrentDiaryBaseline() async {
+    final key = _contextKey(_kind, _selectedDate);
+    final persisted = await DiaryLocalStore.loadRemoteBaseline(
+      _kind,
+      _selectedDate,
+    );
+    if (persisted == null) {
+      // 保留当前页刚刚通过拉取/推送得到的基线，避免异步落盘尚未完成时
+      // 把一个有效的内存基线误判成不存在。
+      return _diaryRemoteBaselines[key];
+    }
+    final baseline = (
+      path: persisted.notFound ? null : persisted.path,
+      sha: persisted.notFound ? null : persisted.sha,
+      notFound: persisted.notFound,
+    );
+    _diaryRemoteBaselines[key] = baseline;
+    return baseline;
+  }
+
+  Future<bool> _loadDraftForCurrentContext() async {
     final body = await DiaryLocalStore.loadDraftBody(_kind, _selectedDate);
     final startedAt =
         await DiaryLocalStore.loadDraftStartedAt(_kind, _selectedDate);
+    final baseline = await DiaryLocalStore.loadRemoteBaseline(
+      _kind,
+      _selectedDate,
+    );
+    final pending = await DiaryLocalStore.isDraftPending(_kind, _selectedDate);
+    final baselineKey = _contextKey(_kind, _selectedDate);
+    if (baseline == null) {
+      _diaryRemoteBaselines.remove(baselineKey);
+    } else {
+      _diaryRemoteBaselines[baselineKey] = (
+        path: baseline.notFound ? null : baseline.path,
+        sha: baseline.notFound ? null : baseline.sha,
+        notFound: baseline.notFound,
+      );
+    }
     _suppressBodyListener = true;
     _bodyController.text = body ?? '';
     _suppressBodyListener = false;
     _startedAt = startedAt;
+    return pending;
   }
 
   Future<void> _saveDraftNow() async {
@@ -326,6 +385,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (_suppressBodyListener) return;
     _startedAt ??= DateTime.now();
     _dirtySinceContextLoaded = true;
+    unawaited(DiaryLocalStore.markDraftPending(_kind, _selectedDate));
     _markDiaryPending();
     _saveDebounce?.cancel();
     _saveDebounce = Timer(const Duration(milliseconds: 350), () {
@@ -368,8 +428,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       _selectedDate = DateTime(date.year, date.month, date.day);
     }
 
-    await _loadDraftForCurrentContext();
-    _dirtySinceContextLoaded = false;
+    _dirtySinceContextLoaded = await _loadDraftForCurrentContext();
     if (!mounted || requestId != _contextRequestId) return;
     setState(() {});
 
@@ -422,6 +481,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     _startedAt = startedAt ?? DateTime.now();
     _contextRemotePathOverrides[_contextKey(_kind, _selectedDate)] = remotePath;
     await _saveDraftNow();
+    await DiaryLocalStore.clearDraftPending(_kind, _selectedDate);
     if (!mounted || requestId != _contextRequestId) return;
     setState(() {});
   }
@@ -547,6 +607,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     _suppressBodyListener = false;
     _startedAt = startedAt ?? DateTime.now();
     await _saveDraftNow();
+    await DiaryLocalStore.clearDraftPending(_kind, _selectedDate);
     if (!mounted) return;
     setState(() {});
     _showMessage('已载入：$path');
@@ -726,7 +787,17 @@ class _DiaryScreenState extends State<DiaryScreen> {
     );
   }
 
-  Future<void> _pullDiary() async {
+  Future<void> _pullDiary() {
+    return SyncOperationLock.instance.run(
+      SyncModule.diary,
+      () {
+        _beginDiarySync();
+        return _pullDiaryInternal();
+      },
+    );
+  }
+
+  Future<void> _pullDiaryInternal() async {
     final ok = await _ensureToken();
     if (!ok) {
       _reportDiary(
@@ -735,11 +806,20 @@ class _DiaryScreenState extends State<DiaryScreen> {
       return;
     }
 
+    if (!mounted) {
+      _reportDiarySkipped('日记拉取未执行：页面已关闭');
+      return;
+    }
     setState(() => _processing = true);
     final path = await _findRemotePathForCurrentContext(refresh: true);
+    if (!mounted) {
+      _reportDiarySkipped('日记拉取未执行：页面已关闭');
+      return;
+    }
     if (path == null && _lastContextPathAmbiguous) {
       setState(() => _processing = false);
       _showMessage('该日期命中多个远程文件，请从左侧文件树点开目标文件');
+      _reportDiarySkipped('该日期命中多个远程文件，日记拉取未执行');
       return;
     }
     final targetPath = path ?? _buildFileName();
@@ -747,7 +827,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
       token: _token!,
       path: targetPath,
     );
-    if (!mounted) return;
+    if (!mounted) {
+      _reportDiarySkipped('日记拉取未执行：页面已关闭');
+      return;
+    }
     if (result.success) {
       // 本地有未保存修改时先确认，避免覆盖
       if (_dirtySinceContextLoaded) {
@@ -771,6 +854,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         if (confirmed != true) {
           if (!mounted) return;
           setState(() => _processing = false);
+          _reportDiarySkipped('已取消日记拉取');
           return;
         }
         if (!mounted) return;
@@ -790,9 +874,13 @@ class _DiaryScreenState extends State<DiaryScreen> {
       );
       _dirtySinceContextLoaded = false;
       await _saveDraftNow();
+      await DiaryLocalStore.clearDraftPending(_kind, _selectedDate);
       // 刷新搜索缓存并落盘，避免重启后读到旧内容
       await DiarySearchService.updateCache(_kind.code, _selectedDate, raw);
-      if (!mounted) return;
+      if (!mounted) {
+        _reportDiary(const SyncOperationResult.success(message: '日记已拉取'));
+        return;
+      }
       _showMessage('拉取成功（已覆盖本地）');
       _reportDiary(const SyncOperationResult.success(message: '日记已拉取'));
       setState(() => _processing = false);
@@ -802,9 +890,17 @@ class _DiaryScreenState extends State<DiaryScreen> {
     setState(() => _processing = false);
     if (result.notFound) {
       _setCurrentDiaryBaseline(path: null, sha: null, notFound: true);
+      if (_bodyController.text.trim().isEmpty) {
+        await DiaryLocalStore.clearDraftPending(_kind, _selectedDate);
+      }
       _showMessage('远端不存在该日记文件');
       _reportDiary(
-        const SyncOperationResult.success(message: '远端暂无该日记文件'),
+        _bodyController.text.trim().isEmpty
+            ? const SyncOperationResult.success(message: '远端暂无该日记文件')
+            : const SyncOperationResult.pending(
+                '远端暂无该日记文件，本地草稿待上传',
+                pendingUploadCount: 1,
+              ),
       );
       return;
     }
@@ -814,7 +910,17 @@ class _DiaryScreenState extends State<DiaryScreen> {
     );
   }
 
-  Future<void> _pushDiary() async {
+  Future<void> _pushDiary() {
+    return SyncOperationLock.instance.run(
+      SyncModule.diary,
+      () {
+        _beginDiarySync();
+        return _pushDiaryInternal();
+      },
+    );
+  }
+
+  Future<void> _pushDiaryInternal() async {
     await AppIdentityService.load();
     final identityKind = AppIdentityService.personKind;
     _selectedIdentityKind = identityKind;
@@ -833,6 +939,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       _showMessage(
         '当前日记分区与${isDesktopPlatform ? ' Windows' : ''}用户身份不一致，请先切换回正确分区',
       );
+      _reportDiarySkipped('当前日记分区与身份不一致，日记推送未执行');
       return;
     }
     final ok = await _ensureToken();
@@ -848,17 +955,27 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
     _startedAt ??= DateTime.now();
     await _saveDraftNow();
-    if (!mounted) return;
+    if (!mounted) {
+      _reportDiarySkipped('日记推送未执行：页面已关闭');
+      return;
+    }
 
     setState(() => _processing = true);
     final remotePath = await _findRemotePathForCurrentContext(refresh: true);
+    if (!mounted) {
+      _reportDiarySkipped('日记推送未执行：页面已关闭');
+      return;
+    }
     if (remotePath == null && _lastContextPathAmbiguous) {
       setState(() => _processing = false);
       _showMessage('该日期命中多个远程文件，请先从左侧文件树点开后再同步');
+      _reportDiarySkipped('该日期命中多个远程文件，日记推送未执行');
       return;
     }
     final fileName = remotePath ?? _buildFileName();
-    final baseline = _diaryRemoteBaselines[_contextKey(_kind, _selectedDate)];
+    // 同步中心可能在本页离开期间更新了持久化基线；推送前必须重读，不能
+    // 继续使用旧的内存 SHA。
+    final baseline = await _loadCurrentDiaryBaseline();
     String? expectedSha;
     var expectNotFound = false;
     if (remotePath != null) {
@@ -868,6 +985,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
           baseline.sha == null) {
         setState(() => _processing = false);
         _showMessage('尚未取得这篇日记的编辑基线，请先拉取远端内容后再推送');
+        _reportDiarySkipped('尚未取得日记编辑基线，推送未执行');
         return;
       }
       expectedSha = baseline.sha;
@@ -875,11 +993,13 @@ class _DiaryScreenState extends State<DiaryScreen> {
       if (baseline != null && !baseline.notFound) {
         setState(() => _processing = false);
         _showMessage('远端日记路径发生变化，请先拉取远端内容后再推送');
+        _reportDiarySkipped('远端日记路径发生变化，推送未执行');
         return;
       }
       if (baseline == null && !_remoteDiaryListingAvailable) {
         setState(() => _processing = false);
         _showMessage('尚未确认远端日记状态，请先刷新后再推送');
+        _reportDiarySkipped('尚未确认远端日记状态，推送未执行');
         return;
       }
       expectNotFound = true;
@@ -894,7 +1014,29 @@ class _DiaryScreenState extends State<DiaryScreen> {
       expectedSha: expectedSha,
       expectNotFound: expectNotFound,
     );
-    if (!mounted) return;
+    if (!mounted) {
+      if (result.success) {
+        _reportDiary(
+          SyncOperationResult.success(
+            message: result.created ? '日记已同步（新建远端文件）' : '日记已同步',
+          ),
+        );
+      } else if (result.conflict) {
+        _reportDiary(
+          const SyncOperationResult.conflict(
+            '远端日记已被其他设备更新，请先拉取确认后再推送',
+          ),
+        );
+      } else {
+        _reportDiary(
+          SyncOperationResult.failed(
+            '日记同步失败：${result.error ?? '推送失败'}',
+            pendingUploadCount: 1,
+          ),
+        );
+      }
+      return;
+    }
     setState(() => _processing = false);
 
     if (result.success) {
@@ -911,10 +1053,12 @@ class _DiaryScreenState extends State<DiaryScreen> {
         // 写入已经成功，但兼容接口没有返回新版本号。清掉基线，避免下次
         // 编辑把未知版本当成已确认版本覆盖；下一次推送前会要求重新拉取。
         _diaryRemoteBaselines.remove(_contextKey(_kind, _selectedDate));
+        await DiaryLocalStore.removeRemoteBaseline(_kind, _selectedDate);
         await _fetchRemoteDiaryPathsSilently(forceRefresh: true);
       }
       // 本地更新单文件搜索缓存并落盘，立即可搜到（无需重拉全仓库）
       await DiarySearchService.updateCache(_kind.code, _selectedDate, markdown);
+      await DiaryLocalStore.clearDraftPending(_kind, _selectedDate);
       _dirtySinceContextLoaded = false;
       _showMessage(result.created ? '同步成功（已新建远端文件）' : '同步成功');
       _reportDiary(

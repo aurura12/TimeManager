@@ -198,6 +198,45 @@ void main() {
     expect(parsed.deletedCategories['b'], 789);
   });
 
+  test('分类业务内容相同但 updated_at 不同，不需要再次上传', () {
+    final left = CategoryDocument(
+      updatedAt: 100,
+      categories: [cat('a', '工作', 456)],
+      deletedCategories: {'b': 789},
+    );
+    final right = CategoryDocument(
+      updatedAt: 999,
+      categories: [cat('a', '工作', 456)],
+      deletedCategories: {'b': 789},
+    );
+
+    expect(categoryDocumentsEquivalent(left, right), isTrue);
+  });
+
+  test('分类列表顺序属于业务内容，纯重排不能判定为等价', () {
+    final left = CategoryDocument(
+      categories: [cat('a', '工作', 456), cat('b', '学习', 456)],
+    );
+    final right = CategoryDocument(
+      categories: [cat('b', '学习', 456), cat('a', '工作', 456)],
+    );
+
+    expect(categoryDocumentsEquivalent(left, right), isFalse);
+  });
+
+  test('分类业务内容不同，必须继续上传', () {
+    final left = CategoryDocument(
+      updatedAt: 100,
+      categories: [cat('a', '本地', 456)],
+    );
+    final right = CategoryDocument(
+      updatedAt: 999,
+      categories: [cat('a', '远端', 456)],
+    );
+
+    expect(categoryDocumentsEquivalent(left, right), isFalse);
+  });
+
   test('解析失败/空返回空文档', () {
     expect(parseCategoryDocument(null).updatedAt, 0);
     expect(parseCategoryDocument('bad json').categories, isEmpty);

@@ -235,6 +235,19 @@ class AppIdentityService {
     }
   }
 
+  /// 让不拥有身份状态的宿主（例如 Windows 的 [TimeProvider]）把已确认的
+  /// 手动身份同步到进程内视图。持久化由调用方负责，这里只更新共享上下文
+  /// 并通知同步状态中心，避免出现“业务身份是 g、状态中心仍是 unbound”。
+  static void adoptManualKind(DiaryKind? kind) {
+    _mode = AppIdentityMode.manual;
+    // 桌面端调用方可能只读到了当前版本的 secure storage，而 load()
+    // 已经通过 legacy preference 解析出了旧身份。此时 null 表示“没有
+    // 新值”，不能把刚解析出的 legacy 身份抹掉。
+    if (kind != null) _manualKind = kind;
+    _loaded = true;
+    _notifyChanged();
+  }
+
   static void notifyChanged() => _notifyChanged();
 
   static void _notifyChanged() {

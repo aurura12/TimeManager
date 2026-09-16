@@ -100,6 +100,22 @@ void main() {
       expect(doc.deletedRecordIds, isEmpty);
     });
 
+    test('业务内容相同但 Markdown 更新时间不同，视为相同文档', () {
+      final document = CheckInDocument(
+        goals: [_goal('g1')],
+        records: [],
+      );
+      final other = CheckInDocument.fromMarkdown('''
+---
+title: 打卡数据
+updated_at: 2099-01-01 00:00:00
+---
+${document.toSyncPayload()}
+''');
+
+      expect(document.toSyncPayload(), other.toSyncPayload());
+    });
+
     test('常规 union 合并行为不回归', () {
       final g1 = _goal('g1');
       final g2 = _goal('g2');

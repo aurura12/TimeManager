@@ -29,6 +29,7 @@ enum SyncModuleStatus {
   syncing,
   success,
   pending,
+  skipped,
   offline,
   failed,
   conflict,
@@ -44,6 +45,7 @@ extension SyncModuleStatusX on SyncModuleStatus {
         SyncModuleStatus.syncing => '同步中',
         SyncModuleStatus.success => '已同步',
         SyncModuleStatus.pending => '待同步',
+        SyncModuleStatus.skipped => '未执行',
         SyncModuleStatus.offline => '离线待恢复',
         SyncModuleStatus.failed => '同步失败',
         SyncModuleStatus.conflict => '有冲突',
@@ -170,10 +172,10 @@ class SyncModuleState {
       // v1 只保存了 lastSyncAt，且当时它同时代表尝试和成功。迁移时按成功
       // 时间读取，让老用户的“最后成功”时间不丢失。
       lastSuccessAt: DateTime.tryParse(
-            json['lastSuccessAt']?.toString() ??
-                json['lastSyncAt']?.toString() ??
-                '',
-          ),
+        json['lastSuccessAt']?.toString() ??
+            json['lastSyncAt']?.toString() ??
+            '',
+      ),
       pendingUploadCount: _nonNegativeInt(json['pendingUploadCount']),
       pendingDownloadCount: _nonNegativeInt(json['pendingDownloadCount']),
       failureCount: _nonNegativeInt(json['failureCount']),
@@ -230,6 +232,31 @@ class SyncOperationResult {
           pendingDownloadCount: pendingDownloadCount,
         );
 
+  /// 本次调用没有真正执行远端同步，例如远程视图下主动跳过推送。
+  ///
+  /// 这不是成功，也不是失败：同步中心应保留此前的待同步事实和成功时间。
+  const SyncOperationResult.skipped(String message)
+      : this(status: SyncModuleStatus.skipped, message: message);
+
+  /// 同步流程只完成了部分工作，仍有数据待处理。
+  ///
+  /// 与 [success] 分开，避免把“仍有待同步”误当成一次完整成功并更新
+  /// 最近成功时间。
+  const SyncOperationResult.pending(
+    String message, {
+    int pendingUploadCount = 0,
+    int pendingDownloadCount = 0,
+    int conflictCount = 0,
+    List<String> details = const <String>[],
+  }) : this(
+          status: SyncModuleStatus.pending,
+          message: message,
+          pendingUploadCount: pendingUploadCount,
+          pendingDownloadCount: pendingDownloadCount,
+          conflictCount: conflictCount,
+          details: details,
+        );
+
   const SyncOperationResult.offline(
     String message, {
     int pendingUploadCount = 0,
@@ -255,10 +282,14 @@ class SyncOperationResult {
   const SyncOperationResult.conflict(
     String message, {
     int conflictCount = 1,
+    int pendingUploadCount = 0,
+    int pendingDownloadCount = 0,
     List<String> details = const <String>[],
   }) : this(
           status: SyncModuleStatus.conflict,
           message: message,
+          pendingUploadCount: pendingUploadCount,
+          pendingDownloadCount: pendingDownloadCount,
           conflictCount: conflictCount,
           details: details,
         );

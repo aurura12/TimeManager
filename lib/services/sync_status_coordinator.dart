@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/diary_kind.dart';
+import '../models/google_calendar_user.dart';
 import '../models/remote_sync_platform.dart';
 import '../models/sync_center_state.dart';
 import 'app_identity_service.dart';
@@ -61,7 +62,80 @@ class SharedPreferencesSyncStatusStore implements SyncStatusStore {
         );
       });
     }
+    _migrateLegacyTravelScopes(result);
     return result;
+  }
+
+  static const String _globalTravelContextKey = 'travel:global:gitee';
+
+  /// v2 首次发布时出行仍按 g/j 身份保存状态，后来出行文件改为全局单文件。
+  /// 将旧上下文合并到新上下文，避免升级后丢失待上传数和最近状态。
+  void _migrateLegacyTravelScopes(Map<String, SyncModuleState> states) {
+    final legacyKeys = states.keys.where((key) {
+      final parts = key.split(':');
+      return parts.length == 3 &&
+          parts[0] == SyncModule.travel.storageKey &&
+          parts[1] != 'global' &&
+          parts[2] == RemoteSyncPlatform.gitee.name;
+    }).toList(growable: false);
+    if (legacyKeys.isEmpty) return;
+
+    SyncModuleState? merged = states[_globalTravelContextKey];
+    for (final key in legacyKeys) {
+      final legacy = states.remove(key);
+      if (legacy == null) continue;
+      final current = merged;
+      merged = current == null ? legacy : _mergeTravelStates(current, legacy);
+    }
+    if (merged != null) {
+      states[_globalTravelContextKey] = merged.copyWith(
+        scope: 'global:${RemoteSyncPlatform.gitee.name}',
+      );
+    }
+  }
+
+  SyncModuleState _mergeTravelStates(
+    SyncModuleState first,
+    SyncModuleState second,
+  ) {
+    final firstTime = _stateTimestamp(first);
+    final secondTime = _stateTimestamp(second);
+    final latest = secondTime != null &&
+            (firstTime == null || secondTime.isAfter(firstTime))
+        ? second
+        : first;
+    final pendingUpload = first.pendingUploadCount > second.pendingUploadCount
+        ? first.pendingUploadCount
+        : second.pendingUploadCount;
+    final pendingDownload =
+        first.pendingDownloadCount > second.pendingDownloadCount
+            ? first.pendingDownloadCount
+            : second.pendingDownloadCount;
+    return latest.copyWith(
+      status: pendingUpload > 0 || pendingDownload > 0
+          ? SyncModuleStatus.pending
+          : latest.status,
+      lastAttemptAt: _latestDate(first.lastAttemptAt, second.lastAttemptAt),
+      lastSuccessAt: _latestDate(first.lastSuccessAt, second.lastSuccessAt),
+      pendingUploadCount: pendingUpload,
+      pendingDownloadCount: pendingDownload,
+      failureCount: first.failureCount > second.failureCount
+          ? first.failureCount
+          : second.failureCount,
+      conflictCount: first.conflictCount > second.conflictCount
+          ? first.conflictCount
+          : second.conflictCount,
+      scope: 'global:${RemoteSyncPlatform.gitee.name}',
+    );
+  }
+
+  static DateTime? _stateTimestamp(SyncModuleState state) =>
+      _latestDate(state.lastAttemptAt, state.lastSuccessAt);
+
+  static DateTime? _latestDate(DateTime? first, DateTime? second) {
+    if (first == null) return second;
+    if (second == null) return first;
+    return first.isAfter(second) ? first : second;
   }
 
   Map<String, SyncModuleState> _migrateLegacy(String? raw) {
@@ -80,7 +154,9 @@ class SharedPreferencesSyncStatusStore implements SyncStatusStore {
       result[SyncStatusCoordinator.defaultContextKeyFor(module)] =
           state.copyWith(
         status: state.enabled
-            ? (state.hasPending ? SyncModuleStatus.pending : SyncModuleStatus.idle)
+            ? (state.hasPending
+                ? SyncModuleStatus.pending
+                : SyncModuleStatus.idle)
             : SyncModuleStatus.disabled,
         lastAttemptAt: null,
         lastSuccessAt: null,
@@ -131,7 +207,9 @@ class SyncStatusCoordinator extends ChangeNotifier {
   SyncStatusCoordinator({
     SyncStatusStore? store,
     SyncScopeResolver? scopeResolver,
+    bool loadIdentityBeforeState = true,
   })  : _store = store ?? SharedPreferencesSyncStatusStore(),
+        _loadIdentityBeforeState = loadIdentityBeforeState,
         _scopeResolver = scopeResolver ?? defaultScopeFor {
     // 身份/账号切换后要立刻按新上下文展示，否则页面会停留在上一个身份
     // 的“已同步”时间上。
@@ -142,6 +220,7 @@ class SyncStatusCoordinator extends ChangeNotifier {
   }
 
   final SyncStatusStore _store;
+  final bool _loadIdentityBeforeState;
   final SyncScopeResolver _scopeResolver;
   final Map<String, SyncModuleState> _states = {};
   StreamSubscription<void>? _identitySubscription;
@@ -151,17 +230,26 @@ class SyncStatusCoordinator extends ChangeNotifier {
   bool _disposed = false;
   bool _suppressNotify = false;
 
-  /// 默认上下文：日程/分类/目标/日记/出行/打卡按当前身份隔离，Google
-  /// 日历按 Google 账号隔离。
-  static String defaultScopeFor(SyncModule module) {
+  /// 默认上下文：日程/分类/目标/日记/打卡按当前身份隔离，出行文件是
+  /// 全局单文件，Google 日历按 Google 账号隔离。
+  static String defaultScopeFor(
+    SyncModule module, {
+    GoogleCalendarUser? fallbackUser,
+  }) {
     if (module == SyncModule.googleCalendar) {
       return AppIdentityService.googleUser?.id ?? 'none';
     }
-    final person = AppIdentityService.personKind?.code ?? 'unbound';
-    if (module == SyncModule.diary || module == SyncModule.travel) {
-      return '$person:${RemoteSyncPlatform.gitee.name}';
+    if (module == SyncModule.travel) {
+      return 'global:${RemoteSyncPlatform.gitee.name}';
     }
-    return person;
+    final person = AppIdentityService.personKind ??
+        (fallbackUser == null
+            ? null
+            : AppIdentityResolver.google(fallbackUser)?.person);
+    if (module == SyncModule.diary) {
+      return '${person?.code ?? 'unbound'}:${RemoteSyncPlatform.gitee.name}';
+    }
+    return person?.code ?? 'unbound';
   }
 
   static String defaultContextKeyFor(SyncModule module) =>
@@ -170,12 +258,26 @@ class SyncStatusCoordinator extends ChangeNotifier {
   String contextKeyFor(SyncModule module, {String? scope}) =>
       '${module.storageKey}:${scope ?? _scopeResolver(module)}';
 
+  /// 返回一次操作应使用的上下文。控制器会在开始同步时捕获它，保证
+  /// 操作前后身份变化不会把 begin 和 result 写入两个不同状态。
+  String scopeFor(SyncModule module) => _scopeResolver(module);
+
   Future<void> initialize() {
     if (_loaded) return Future<void>.value();
     return _initializing ??= _initialize();
   }
 
   Future<void> _initialize() async {
+    // 旧版状态迁移需要当前身份作为上下文。若先读盘再加载身份，迁移后的
+    // 状态会被错误地写入 unbound，随后真实身份就看不到这份状态。
+    if (_loadIdentityBeforeState) {
+      try {
+        await AppIdentityService.load();
+      } catch (_) {
+        // 身份加载失败不应阻断业务同步；此时使用 unbound 隔离上下文，等
+        // 身份服务恢复后通过 changes 重新展示当前状态。
+      }
+    }
     final loaded = await _store.load();
     if (_disposed) return;
     for (final entry in loaded.entries) {
@@ -209,9 +311,8 @@ class SyncStatusCoordinator extends ChangeNotifier {
     notifyListeners();
   }
 
-  List<SyncModuleState> get states => SyncModule.values
-      .map(stateFor)
-      .toList(growable: false);
+  List<SyncModuleState> get states =>
+      SyncModule.values.map(stateFor).toList(growable: false);
 
   SyncModuleState stateFor(SyncModule module) =>
       _states[contextKeyFor(module)] ?? SyncModuleState(module: module);
@@ -307,6 +408,20 @@ class SyncStatusCoordinator extends ChangeNotifier {
       scope: scope ?? current.scope,
     );
 
+    if (result.succeeded && hasPending) {
+      // 部分完成仍然是“待同步”，不是一次完整成功；最近成功时间必须保留
+      // 上一次真正清空待处理项的时间。
+      return base.copyWith(
+        status: SyncModuleStatus.pending,
+        lastAttemptAt: now,
+        pendingUploadCount: result.pendingUploadCount,
+        pendingDownloadCount: result.pendingDownloadCount,
+        failureCount: current.failureCount,
+        conflictCount: 0,
+        message: result.message ?? '仍有内容待同步',
+        details: result.details,
+      );
+    }
     if (result.succeeded) {
       return base.copyWith(
         status:
@@ -319,6 +434,32 @@ class SyncStatusCoordinator extends ChangeNotifier {
         conflictCount: 0,
         message: result.message ?? '同步完成',
         details: const <String>[],
+      );
+    }
+    if (result.status == SyncModuleStatus.pending) {
+      return base.copyWith(
+        status: SyncModuleStatus.pending,
+        lastAttemptAt: now,
+        pendingUploadCount:
+            hasPending ? result.pendingUploadCount : current.pendingUploadCount,
+        pendingDownloadCount: hasPending
+            ? result.pendingDownloadCount
+            : current.pendingDownloadCount,
+        // “仍有待处理”不是完整成功，保留此前最近一次真正成功的时间。
+        failureCount: current.failureCount,
+        conflictCount: result.conflictCount > 0
+            ? result.conflictCount
+            : current.conflictCount,
+        message: result.message ?? '仍有内容待同步',
+        details: result.details,
+      );
+    }
+    if (result.status == SyncModuleStatus.skipped) {
+      return base.copyWith(
+        status: SyncModuleStatus.skipped,
+        // 未执行不是同步尝试，不应改写最近尝试/成功时间或待同步数量。
+        message: result.message,
+        details: result.details,
       );
     }
     if (result.status == SyncModuleStatus.disabled) {

@@ -1,11 +1,18 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:time_manager/models/diary_kind.dart';
+import 'package:time_manager/models/google_calendar_user.dart';
+import 'package:time_manager/models/known_google_users.dart';
 import 'package:time_manager/models/sync_center_state.dart';
+import 'package:time_manager/services/app_identity_service.dart';
 import 'package:time_manager/services/sync_status_coordinator.dart';
 
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+    AppIdentityService.resetForTesting();
   });
 
   test('首次安装的模块显示为尚未检查，而不是未同步', () {
@@ -13,6 +20,7 @@ void main() {
 
     final coordinator = SyncStatusCoordinator(
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
       scopeResolver: (_) => 'g',
     );
     addTearDown(coordinator.dispose);
@@ -26,6 +34,7 @@ void main() {
   test('成功的同步会记录成功时间并清除待上传', () async {
     final coordinator = SyncStatusCoordinator(
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
       scopeResolver: (_) => 'g',
     );
     addTearDown(coordinator.dispose);
@@ -57,6 +66,7 @@ void main() {
   test('待上传数量是绝对值，连续编辑不会累加', () {
     final coordinator = SyncStatusCoordinator(
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
       scopeResolver: (_) => 'g',
     );
     addTearDown(coordinator.dispose);
@@ -69,6 +79,7 @@ void main() {
   test('失败会保留上一次成功时间并累加失败次数', () {
     final coordinator = SyncStatusCoordinator(
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
       scopeResolver: (_) => 'g',
     );
     addTearDown(coordinator.dispose);
@@ -121,6 +132,7 @@ void main() {
     final store = InMemorySyncStatusStore();
     final first = SyncStatusCoordinator(
       store: store,
+      loadIdentityBeforeState: false,
       scopeResolver: (_) => 'g',
     );
     first.report(
@@ -133,6 +145,7 @@ void main() {
 
     final second = SyncStatusCoordinator(
       store: store,
+      loadIdentityBeforeState: false,
       scopeResolver: (_) => 'g',
     );
     addTearDown(second.dispose);
@@ -162,9 +175,62 @@ void main() {
     expect(state.status, SyncModuleStatus.idle);
   });
 
+  test('v2 旧出行身份状态会迁移到全局上下文并保留待处理数量', () async {
+    final older = SyncModuleState(
+      module: SyncModule.travel,
+      status: SyncModuleStatus.success,
+      lastSuccessAt: DateTime(2026, 9, 1),
+      pendingUploadCount: 1,
+      scope: 'g:gitee',
+    );
+    final newer = SyncModuleState(
+      module: SyncModule.travel,
+      status: SyncModuleStatus.failed,
+      lastAttemptAt: DateTime(2026, 9, 2),
+      pendingUploadCount: 3,
+      pendingDownloadCount: 2,
+      failureCount: 2,
+      scope: 'j:gitee',
+    );
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      SharedPreferencesSyncStatusStore.storageKey: jsonEncode({
+        'travel:g:gitee': older.toJson(),
+        'travel:j:gitee': newer.toJson(),
+      }),
+    });
+
+    final loaded = await SharedPreferencesSyncStatusStore().load();
+    final migrated = loaded['travel:global:gitee'];
+
+    expect(migrated, isNotNull);
+    expect(loaded.keys, isNot(contains('travel:g:gitee')));
+    expect(loaded.keys, isNot(contains('travel:j:gitee')));
+    expect(migrated!.scope, 'global:gitee');
+    expect(migrated.status, SyncModuleStatus.pending);
+    expect(migrated.pendingUploadCount, 3);
+    expect(migrated.pendingDownloadCount, 2);
+    expect(migrated.lastSuccessAt, older.lastSuccessAt);
+  });
+
+  test('打卡 scope 可使用统一 resolver 的备用用户身份', () {
+    final user = GoogleCalendarUser(
+      id: 'manual-g',
+      email: KnownGoogleUsers.guaiGuaiEmail,
+    );
+
+    expect(
+      SyncStatusCoordinator.defaultScopeFor(
+        SyncModule.checkIn,
+        fallbackUser: user,
+      ),
+      'g',
+    );
+  });
+
   test('业务层的 busy 结果不会累加失败次数', () {
     final coordinator = SyncStatusCoordinator(
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
       scopeResolver: (_) => 'g',
     );
     addTearDown(coordinator.dispose);
@@ -178,5 +244,80 @@ void main() {
     expect(state.status, SyncModuleStatus.busy);
     expect(state.failureCount, 0);
     expect(state.lastAttemptAt, isNull);
+  });
+
+  test('仍有待同步的结果不会伪造最近成功时间', () {
+    final previousSuccess = DateTime(2026, 9, 1);
+    final current = SyncModuleState(
+      module: SyncModule.diary,
+      status: SyncModuleStatus.success,
+      lastSuccessAt: previousSuccess,
+    );
+
+    final next = SyncStatusCoordinator.applyResult(
+      current,
+      const SyncOperationResult.pending(
+        '有 1 篇日记待上传',
+        pendingUploadCount: 1,
+      ),
+    );
+
+    expect(next.status, SyncModuleStatus.pending);
+    expect(next.pendingUploadCount, 1);
+    expect(next.lastSuccessAt, previousSuccess);
+    expect(next.lastAttemptAt, isNotNull);
+    expect(next.failureCount, 0);
+  });
+
+  test('成功结果如果仍带待同步数量，也不会伪造最近成功时间', () {
+    final previousSuccess = DateTime(2026, 9, 1);
+    final current = SyncModuleState(
+      module: SyncModule.diary,
+      status: SyncModuleStatus.success,
+      lastSuccessAt: previousSuccess,
+    );
+
+    final next = SyncStatusCoordinator.applyResult(
+      current,
+      const SyncOperationResult.success(
+        message: '已同步部分内容',
+        pendingUploadCount: 1,
+      ),
+    );
+
+    expect(next.status, SyncModuleStatus.pending);
+    expect(next.pendingUploadCount, 1);
+    expect(next.lastSuccessAt, previousSuccess);
+    expect(next.failureCount, 0);
+  });
+
+  test('未执行的结果不会清除已有待同步状态', () {
+    final previousSuccess = DateTime(2026, 9, 1);
+    final current = SyncModuleState(
+      module: SyncModule.schedule,
+      status: SyncModuleStatus.pending,
+      lastSuccessAt: previousSuccess,
+      pendingUploadCount: 2,
+    );
+
+    final next = SyncStatusCoordinator.applyResult(
+      current,
+      const SyncOperationResult.skipped('远程视图下不推送'),
+    );
+
+    expect(next.status, SyncModuleStatus.skipped);
+    expect(next.pendingUploadCount, 2);
+    expect(next.lastSuccessAt, previousSuccess);
+    expect(next.lastAttemptAt, isNull);
+  });
+
+  test('出行状态使用全局远端上下文', () {
+    AppIdentityService.adoptManualKind(DiaryKind.j);
+    final first = SyncStatusCoordinator.defaultScopeFor(SyncModule.travel);
+    AppIdentityService.adoptManualKind(DiaryKind.g);
+    final second = SyncStatusCoordinator.defaultScopeFor(SyncModule.travel);
+
+    expect(first, 'global:gitee');
+    expect(second, first);
   });
 }

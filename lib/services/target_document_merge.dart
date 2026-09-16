@@ -77,6 +77,29 @@ String encodeTargetDocument(TargetDocument doc, {required int nowMs}) {
   });
 }
 
+/// 比较目标文档的业务内容，不比较每次写入都会变化的 `updated_at`。
+///
+/// 同步前必须先做这个判断：如果本地与远端经过合并后没有业务差异，
+/// 就不应再次 PUT 一个只改变文档时间的空提交。
+bool targetDocumentsEquivalent(TargetDocument left, TargetDocument right) {
+  final leftDeleted = <String, int>{};
+  for (final id in left.deletedTargets.keys.toList()..sort()) {
+    leftDeleted[id] = left.deletedTargets[id]!;
+  }
+  final rightDeleted = <String, int>{};
+  for (final id in right.deletedTargets.keys.toList()..sort()) {
+    rightDeleted[id] = right.deletedTargets[id]!;
+  }
+  return json.encode({
+        'targets': left.targets.map((target) => target.toJson()).toList(),
+        'deletedTargets': leftDeleted,
+      }) ==
+      json.encode({
+        'targets': right.targets.map((target) => target.toJson()).toList(),
+        'deletedTargets': rightDeleted,
+      });
+}
+
 /// 双向合并本地与远端目标文档。
 TargetDocument mergeTargetDocuments({
   required TargetDocument local,

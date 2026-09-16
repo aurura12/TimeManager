@@ -261,6 +261,38 @@ String encodeCategoryDocument(CategoryDocument doc, {required int nowMs}) {
   });
 }
 
+/// 比较分类文档的业务内容，不比较每次写入都会变化的 `updated_at`。
+///
+/// 分类编辑、规范化和远端拉取都可能只改变文档时间而不改变实际分类。
+/// 同步重试遇到这种情况时应直接确认完成，避免制造重复提交。
+bool categoryDocumentsEquivalent(
+  CategoryDocument left,
+  CategoryDocument right,
+) {
+  final leftCategories =
+      normalizeCategoriesForStorage(left.categories).categories;
+  final rightCategories =
+      normalizeCategoriesForStorage(right.categories).categories;
+  final leftDeleted = <String, int>{};
+  for (final id in left.deletedCategories.keys.toList()..sort()) {
+    leftDeleted[id] = left.deletedCategories[id]!;
+  }
+  final rightDeleted = <String, int>{};
+  for (final id in right.deletedCategories.keys.toList()..sort()) {
+    rightDeleted[id] = right.deletedCategories[id]!;
+  }
+  return json.encode({
+        'categories':
+            leftCategories.map((category) => category.toJson()).toList(),
+        'deletedCategories': leftDeleted,
+      }) ==
+      json.encode({
+        'categories':
+            rightCategories.map((category) => category.toJson()).toList(),
+        'deletedCategories': rightDeleted,
+      });
+}
+
 /// 双向合并本地与远端分类文档。
 ///
 /// 规则：

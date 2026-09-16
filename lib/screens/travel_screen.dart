@@ -10,6 +10,7 @@ import '../models/sync_center_state.dart';
 import '../models/travel_record.dart';
 import '../services/diary_local_store.dart';
 import '../services/sync_status_coordinator.dart';
+import '../services/sync_operation_lock.dart';
 import '../services/travel_gitee_service.dart';
 import '../services/travel_local_store.dart';
 
@@ -183,7 +184,12 @@ class _TravelScreenState extends State<TravelScreen> {
   }
 
   void _reportTravel(SyncOperationResult result, {String source = '出行页'}) {
-    _statusCoordinator?.report(SyncModule.travel, result, source: source);
+    _statusCoordinator?.report(
+      SyncModule.travel,
+      result,
+      scope: SyncStatusCoordinator.defaultScopeFor(SyncModule.travel),
+      source: source,
+    );
   }
 
   void _markTravelPending() {
@@ -191,6 +197,7 @@ class _TravelScreenState extends State<TravelScreen> {
       SyncModule.travel,
       uploadCount: 1,
       message: '有出行记录待上传',
+      scope: SyncStatusCoordinator.defaultScopeFor(SyncModule.travel),
       source: '出行页',
     );
   }
@@ -496,7 +503,14 @@ class _TravelScreenState extends State<TravelScreen> {
     return false;
   }
 
-  Future<void> _pullFromGitHub({bool silent = false}) async {
+  Future<void> _pullFromGitHub({bool silent = false}) {
+    return SyncOperationLock.instance.run(
+      SyncModule.travel,
+      () => _pullFromGitHubInternal(silent: silent),
+    );
+  }
+
+  Future<void> _pullFromGitHubInternal({bool silent = false}) async {
     final token = (_token ?? '').trim();
     if (token.isEmpty) {
       if (!silent) {
@@ -509,6 +523,7 @@ class _TravelScreenState extends State<TravelScreen> {
     }
     final ok = await _ensureToken();
     if (!ok) return;
+    if (!mounted) return;
     setState(() => _processing = true);
     final result = await TravelGiteeService.pullFile(
       token: _token!,
@@ -535,16 +550,25 @@ class _TravelScreenState extends State<TravelScreen> {
             conflictingKeys: conflicting,
             tombstoneConflictKeys: tombstoneConflicts,
           );
-          if (!confirmed || !mounted) {
+          if (!confirmed) {
+            if (!mounted) return;
             setState(() => _processing = false);
             _showMessage('已取消拉取，本地记录保持不变');
             return;
           }
+          if (!mounted) return;
         }
-        _document = _document.mergeRemotePreservingLocalDeletions(doc);
+        final merged = _document.mergeRemotePreservingLocalDeletions(doc);
+        _document = merged;
         await _saveDraft();
+        final stillPending = merged.toSyncPayload() != doc.toSyncPayload();
         _reportTravel(
-          const SyncOperationResult.success(message: '出行记录已拉取'),
+          stillPending
+              ? const SyncOperationResult.pending(
+                  '已拉取远端记录，但本地仍有删除/新增待上传',
+                  pendingUploadCount: 1,
+                )
+              : const SyncOperationResult.success(message: '出行记录已拉取'),
         );
         if (!silent) {
           _showMessage(
@@ -561,6 +585,7 @@ class _TravelScreenState extends State<TravelScreen> {
         }
         _reportTravel(SyncOperationResult.failed('解析远端出行记录失败：$e'));
       }
+      if (!mounted) return;
       setState(() => _processing = false);
       return;
     }
@@ -570,7 +595,12 @@ class _TravelScreenState extends State<TravelScreen> {
         _showMessage('远端暂无出行记录文件');
       }
       _reportTravel(
-        const SyncOperationResult.success(message: '远端暂无出行记录文件'),
+        _document.records.isEmpty && _document.deletedDateKeys.isEmpty
+            ? const SyncOperationResult.success(message: '远端暂无出行记录文件')
+            : const SyncOperationResult.pending(
+                '远端暂无出行记录文件，本地记录待上传',
+                pendingUploadCount: 1,
+              ),
       );
       return;
     }
@@ -582,7 +612,14 @@ class _TravelScreenState extends State<TravelScreen> {
     );
   }
 
-  Future<void> _pushToGitHub() async {
+  Future<void> _pushToGitHub() {
+    return SyncOperationLock.instance.run(
+      SyncModule.travel,
+      _pushToGitHubInternal,
+    );
+  }
+
+  Future<void> _pushToGitHubInternal() async {
     final ok = await _ensureToken();
     if (!ok) {
       _reportTravel(
@@ -594,6 +631,7 @@ class _TravelScreenState extends State<TravelScreen> {
       return;
     }
     await _saveDraft();
+    if (!mounted) return;
     setState(() => _processing = true);
 
     // 先读远端：读不到就中止，绝不用本地内容覆盖一个未知状态的远端。
@@ -674,6 +712,21 @@ class _TravelScreenState extends State<TravelScreen> {
         ? _document
         : _document.preparePush(remoteDocument);
     final content = outgoing.toMarkdown();
+    if (remoteDocument != null &&
+        outgoing.toSyncPayload() == remoteDocument.toSyncPayload()) {
+      if (mounted) {
+        setState(() {
+          _document = outgoing;
+          _processing = false;
+        });
+      }
+      await _saveDraft();
+      _showMessage('已确认与远端一致，无需重复提交');
+      _reportTravel(
+        const SyncOperationResult.success(message: '出行记录已确认同步'),
+      );
+      return;
+    }
     final latest = outgoing.records.isEmpty ? null : outgoing.records.first;
     final result = await TravelGiteeService.pushFile(
       token: _token!,
@@ -685,7 +738,23 @@ class _TravelScreenState extends State<TravelScreen> {
       expectedSha: remoteSha,
       expectNotFound: remoteWasNotFound,
     );
-    if (!mounted) return;
+    if (!mounted) {
+      if (result.success) {
+        _reportTravel(
+          SyncOperationResult.success(
+            message: result.created ? '出行记录已同步（新建远端文件）' : '出行记录已同步',
+          ),
+        );
+      } else {
+        _reportTravel(
+          SyncOperationResult.failed(
+            '出行同步失败：${result.error ?? '远端写入失败'}',
+            pendingUploadCount: 1,
+          ),
+        );
+      }
+      return;
+    }
     setState(() => _processing = false);
     if (result.success) {
       if (mounted) {

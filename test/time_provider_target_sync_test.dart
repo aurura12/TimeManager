@@ -48,8 +48,9 @@ Future<void> waitUntil(bool Function() condition) async {
 
 Future<TimeProvider> createProvider(
   Map<String, Object> preferences,
-  TargetSyncDependencies targetDependencies,
-) async {
+  TargetSyncDependencies targetDependencies, {
+  Duration scheduleGiteeDebounce = Duration.zero,
+}) async {
   SharedPreferences.setMockInitialValues(preferences);
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
       .setMockMethodCallHandler(
@@ -57,7 +58,7 @@ Future<TimeProvider> createProvider(
     (call) async => null,
   );
   final provider = TimeProvider(
-    scheduleGiteeDebounce: Duration.zero,
+    scheduleGiteeDebounce: scheduleGiteeDebounce,
     identityModePlatformOverride: true,
     scheduleSyncDependencies: _offlineScheduleDependencies(),
     targetSyncDependencies: targetDependencies,
@@ -198,6 +199,54 @@ void main() {
 
     final pushed = parseTargetDocument(pushedContents.single);
     expect(pushed.targets.single.name, '新目标');
+  });
+
+  test('重试时远端已包含相同目标不会重复推送', () async {
+    TargetDocument? remote;
+    var pushCount = 0;
+    final dependencies = TargetSyncDependencies(
+      loadToken: () async => 'token',
+      pullTargets: ({required token, required userCode}) async {
+        final document = remote;
+        if (document == null) return TargetGiteePullResult.notFound();
+        return TargetGiteePullResult.success(
+          encodeTargetDocument(document, nowMs: 999),
+          'sha-existing',
+        );
+      },
+      pushTargets: ({
+        required token,
+        required userCode,
+        required content,
+        required commitMessage,
+        String? expectedSha,
+        bool expectNotFound = false,
+      }) async {
+        pushCount++;
+        return TargetGiteePushResult.success(created: false);
+      },
+    );
+    final provider = await createProvider(
+      {
+        AppIdentityService.modeKey: 'manual',
+        AppIdentityService.legacyScheduleUserKey: 'g',
+      },
+      dependencies,
+      scheduleGiteeDebounce: const Duration(hours: 1),
+    );
+    addTearDown(provider.dispose);
+
+    provider.addTarget(makeTarget('same', '同一目标', 0));
+    remote = TargetDocument(
+      updatedAt: 999,
+      targets: [provider.targets.single],
+    );
+
+    final result = await provider.syncModuleForCenter(SyncModule.targets);
+
+    expect(result.status, SyncModuleStatus.success);
+    expect(result.message, '目标已确认与远端一致');
+    expect(pushCount, 0);
   });
 
   test('已有本地目标且远端文件不存在时会完成首次上传', () async {

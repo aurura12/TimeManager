@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/category.dart';
 import 'package:time_manager/models/diary_kind.dart';
+import 'package:time_manager/models/sync_center_state.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/services/app_identity_service.dart';
 import 'package:time_manager/services/category_document_merge.dart';
@@ -19,6 +20,7 @@ class _CategoryRemoteState {
   final List<String> pullRequests = [];
   final List<({String userCode, String? expectedSha, bool expectNotFound})>
       pushRequests = [];
+  final List<String> pushedContents = [];
 }
 
 ScheduleSyncDependencies _offlineScheduleDependencies() {
@@ -55,6 +57,7 @@ CategorySyncDependencies _categoryDependencies(_CategoryRemoteState state) {
         expectedSha: expectedSha,
         expectNotFound: expectNotFound,
       ));
+      state.pushedContents.add(content);
       return CategoryGiteePushResult.success(created: false);
     },
   );
@@ -188,6 +191,59 @@ void main() {
     expect(state.pushRequests.last.userCode, 'g');
     expect(state.pushRequests.last.expectedSha, 'sha-g');
     expect(state.pushRequests.last.expectNotFound, isFalse);
+  });
+
+  test('重试时远端已包含相同分类不会重复推送', () async {
+    final state = _CategoryRemoteState();
+    final provider = await _createProvider(state);
+    addTearDown(provider.dispose);
+
+    provider.addCategory(Category(name: '本地分类', color: Colors.green));
+    state.contents['g'] = encodeCategoryDocument(
+      CategoryDocument(
+        updatedAt: 999,
+        categories: List<Category>.from(provider.categories),
+      ),
+      nowMs: 999,
+    );
+
+    final result = await provider.syncModuleForCenter(SyncModule.categories);
+
+    expect(result.status, SyncModuleStatus.success);
+    expect(result.message, '分类已确认与远端一致');
+    expect(state.pushRequests, isEmpty);
+  });
+
+  test('远端分类仅格式不规范时，重试仍会推送规范化修复', () async {
+    final state = _CategoryRemoteState();
+    final provider = await _createProvider(state);
+    addTearDown(provider.dispose);
+
+    // 先制造一个待上传状态，再让远端只存在名称首尾空白的格式问题。
+    provider.addCategory(Category(name: '本地分类', color: Colors.green));
+    final categories = provider.categories.toList(growable: false);
+    final malformedCategories = [
+      categories.first.copyWith(name: ' ${categories.first.name} '),
+      ...categories.skip(1),
+    ];
+    state.contents['g'] = jsonEncode({
+      'updated_at': 999,
+      'categories':
+          malformedCategories.map((category) => category.toJson()).toList(),
+      'deletedCategories': const <String, int>{},
+    });
+
+    final result = await provider.syncModuleForCenter(SyncModule.categories);
+
+    expect(result.status, SyncModuleStatus.success);
+    expect(state.pushRequests, hasLength(1));
+    expect(state.pushedContents, hasLength(1));
+    final pushed = parseCategoryDocument(state.pushedContents.single);
+    expect(
+      pushed.categories
+          .every((category) => category.name == category.name.trim()),
+      isTrue,
+    );
   });
 
   test('新增和重命名分类时阻止重复名称，并规范首尾空白', () async {

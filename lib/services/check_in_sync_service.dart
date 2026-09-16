@@ -21,6 +21,7 @@ import 'check_in_photo_resource.dart';
 import 'diary_local_store.dart';
 import 'google_calendar_service.dart';
 import 'app_identity_service.dart';
+import 'sync_operation_lock.dart';
 import 'sync_status_coordinator.dart';
 import '../utils/platform_features.dart';
 
@@ -68,19 +69,15 @@ class CheckInSyncService {
   bool _syncing = false;
   String? _lastError;
 
-  /// Serializes async operations to prevent concurrent mutation of _document.
-  Future<void>? _pendingOperation;
-
-  Future<T> _synchronized<T>(Future<T> Function() action) async {
-    final prev = _pendingOperation;
-    final completer = Completer<void>();
-    _pendingOperation = completer.future;
-    try {
-      if (prev != null) await prev;
-      return await action();
-    } finally {
-      completer.complete();
-    }
+  /// Serializes async operations across all check-in service instances.
+  Future<T> _synchronized<T>(
+    Future<T> Function() action, {
+    void Function()? onStarted,
+  }) {
+    return SyncOperationLock.instance.run(SyncModule.checkIn, () async {
+      onStarted?.call();
+      return action();
+    });
   }
 
   CheckInDocument get document => _document;
@@ -262,12 +259,23 @@ class CheckInSyncService {
   }
 
   Future<CheckInSyncResult> pullFromGitHub() async {
-    final result = await _pullFromGitHubInternal();
-    _reportSyncResult(result, fallbackMessage: '打卡数据已拉取');
+    await AppIdentityService.load();
+    final scope = _syncScope;
+    final result = await _pullFromGitHubInternal(
+      onStarted: () => _reportSyncBegin(scope: scope, source: '打卡页'),
+    );
+    _reportSyncResult(
+      result,
+      fallbackMessage: '打卡数据已拉取',
+      scope: scope,
+      source: '打卡页',
+    );
     return result;
   }
 
-  Future<CheckInSyncResult> _pullFromGitHubInternal() async {
+  Future<CheckInSyncResult> _pullFromGitHubInternal({
+    void Function()? onStarted,
+  }) async {
     return _synchronized(() async {
       _syncing = true;
       _lastError = null;
@@ -299,16 +307,27 @@ class CheckInSyncService {
       } finally {
         _syncing = false;
       }
-    });
+    }, onStarted: onStarted);
   }
 
   Future<CheckInSyncResult> pushToGitHub() async {
-    final result = await _pushToGitHubSerialized();
-    _reportSyncResult(result, fallbackMessage: '打卡数据已同步');
+    await AppIdentityService.load();
+    final scope = _syncScope;
+    final result = await _pushToGitHubSerialized(
+      onStarted: () => _reportSyncBegin(scope: scope, source: '打卡页'),
+    );
+    _reportSyncResult(
+      result,
+      fallbackMessage: '打卡数据已同步',
+      scope: scope,
+      source: '打卡页',
+    );
     return result;
   }
 
-  Future<CheckInSyncResult> _pushToGitHubSerialized() async {
+  Future<CheckInSyncResult> _pushToGitHubSerialized({
+    void Function()? onStarted,
+  }) async {
     return _synchronized(() async {
       _syncing = true;
       _lastError = null;
@@ -319,7 +338,7 @@ class CheckInSyncService {
       } finally {
         _syncing = false;
       }
-    });
+    }, onStarted: onStarted);
   }
 
   /// 把一次打卡同步结果写入全局状态中心，让同步中心无需从打卡页发起也能
@@ -327,6 +346,8 @@ class CheckInSyncService {
   void _reportSyncResult(
     CheckInSyncResult result, {
     required String fallbackMessage,
+    required String scope,
+    required String source,
   }) {
     final coordinator = _statusCoordinator;
     if (coordinator == null) return;
@@ -339,7 +360,8 @@ class CheckInSyncService {
           // 照片部分失败时业务层通过 warning 提示，仍有内容待重试。
           pendingUploadCount: result.warning == null ? 0 : 1,
         ),
-        source: '打卡页',
+        scope: scope,
+        source: source,
       );
       return;
     }
@@ -353,7 +375,24 @@ class CheckInSyncService {
       offline
           ? SyncOperationResult.offline(message, pendingUploadCount: 1)
           : SyncOperationResult.failed(message, pendingUploadCount: 1),
-      source: '打卡页',
+      scope: scope,
+      source: source,
+    );
+  }
+
+  void _reportSyncBegin({required String scope, required String source}) {
+    _statusCoordinator?.begin(
+      SyncModule.checkIn,
+      scope: scope,
+      source: source,
+      message: '正在同步打卡',
+    );
+  }
+
+  String get _syncScope {
+    return SyncStatusCoordinator.defaultScopeFor(
+      SyncModule.checkIn,
+      fallbackUser: _manualUser,
     );
   }
 
@@ -362,34 +401,50 @@ class CheckInSyncService {
   /// [error] 非 null 表示远端不可读或格式异常，调用方必须中止本次写操作，
   /// 绝不能用本地内容覆盖远端。[sha] / [notFound] 是这次读取到的远端版本，
   /// 应原样交给随后的写入做乐观并发校验。
-  Future<({String? error, String? sha, bool notFound})> _pullAndMergeForWrite(
-    String token,
-  ) async {
+  Future<
+      ({
+        String? error,
+        String? sha,
+        bool notFound,
+        CheckInDocument? remoteDocument,
+      })> _pullAndMergeForWrite(String token) async {
     final pull = await CheckInGiteeService.pullText(
       token: token,
       path: CheckInDocument.filePath,
     );
     if (pull.notFound) {
-      return (error: null, sha: null, notFound: true);
+      return (
+        error: null,
+        sha: null,
+        notFound: true,
+        remoteDocument: CheckInDocument.empty,
+      );
     }
     if (!pull.success || pull.content == null) {
       return (
         error: '远端读取失败，已中止同步：${pull.error ?? '未知错误'}',
         sha: null,
         notFound: false,
+        remoteDocument: null,
       );
     }
     try {
       final remote = CheckInDocument.fromMarkdown(pull.content!);
       _document = CheckInDocument.merge(_document, remote);
+      return (
+        error: null,
+        sha: pull.sha,
+        notFound: false,
+        remoteDocument: remote,
+      );
     } catch (e) {
       return (
         error: '远端打卡数据格式异常，已中止同步以保护数据：$e',
         sha: null,
         notFound: false,
+        remoteDocument: null,
       );
     }
-    return (error: null, sha: pull.sha, notFound: false);
   }
 
   Future<CheckInSyncResult> _pushToGitHubInternal() async {
@@ -402,6 +457,14 @@ class CheckInSyncService {
     final pull = await _pullAndMergeForWrite(token);
     if (pull.error != null) {
       return CheckInSyncResult.fail(pull.error!);
+    }
+
+    // 合并后的业务内容已经等于远端时，不再因为 Markdown 的 updated_at
+    // 变化而重复提交。远端不存在且本地为空时也无需创建空文件。
+    if (pull.remoteDocument != null &&
+        _document.toSyncPayload() == pull.remoteDocument!.toSyncPayload()) {
+      await CheckInLocalStore.saveDraft(_document);
+      return CheckInSyncResult.ok(_document);
     }
 
     final userLabel = currentUser?.label ?? '?';
@@ -422,7 +485,9 @@ class CheckInSyncService {
   }
 
   Future<CheckInSyncResult> saveGoal(CheckInGoal goal) async {
-    return _synchronized(() async {
+    await AppIdentityService.load();
+    final scope = _syncScope;
+    final result = await _synchronized(() async {
       _syncing = true;
       _lastError = null;
       try {
@@ -465,11 +530,20 @@ class CheckInSyncService {
       } finally {
         _syncing = false;
       }
-    });
+    }, onStarted: () => _reportSyncBegin(scope: scope, source: '打卡页'));
+    _reportSyncResult(
+      result,
+      fallbackMessage: '打卡目标已同步',
+      scope: scope,
+      source: '打卡页',
+    );
+    return result;
   }
 
   Future<CheckInSyncResult> deleteGoal(CheckInGoal goal) async {
-    return _synchronized(() async {
+    await AppIdentityService.load();
+    final scope = _syncScope;
+    final result = await _synchronized(() async {
       _syncing = true;
       _lastError = null;
       try {
@@ -529,18 +603,34 @@ class CheckInSyncService {
       } finally {
         _syncing = false;
       }
-    });
+    }, onStarted: () => _reportSyncBegin(scope: scope, source: '打卡页'));
+    _reportSyncResult(
+      result,
+      fallbackMessage: '打卡目标已删除并同步',
+      scope: scope,
+      source: '打卡页',
+    );
+    return result;
   }
 
   Future<CheckInSyncResult> deleteCheckInRecord(
     CheckInGoal goal,
     CheckInRecord record,
   ) async {
+    await AppIdentityService.load();
+    final scope = _syncScope;
     final user = await _requireUser();
     if (!hasIdentity || user == null) {
-      return CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
+      final result = CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
+      _reportSyncResult(
+        result,
+        fallbackMessage: '打卡记录已删除并同步',
+        scope: scope,
+        source: '打卡页',
+      );
+      return result;
     }
-    return _synchronized(() async {
+    final result = await _synchronized(() async {
       _syncing = true;
       _lastError = null;
       try {
@@ -602,7 +692,14 @@ class CheckInSyncService {
       } finally {
         _syncing = false;
       }
-    });
+    }, onStarted: () => _reportSyncBegin(scope: scope, source: '打卡页'));
+    _reportSyncResult(
+      result,
+      fallbackMessage: '打卡记录已删除并同步',
+      scope: scope,
+      source: '打卡页',
+    );
+    return result;
   }
 
   Future<CheckInSyncResult> submitCheckIn({
@@ -612,12 +709,21 @@ class CheckInSyncService {
     DateTime? backfillDate,
     bool isBackfill = false,
   }) async {
+    await AppIdentityService.load();
+    final scope = _syncScope;
     final user = await _requireUser();
     if (!hasIdentity || user == null) {
-      return CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
+      final result = CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
+      _reportSyncResult(
+        result,
+        fallbackMessage: '打卡数据已同步',
+        scope: scope,
+        source: '打卡页',
+      );
+      return result;
     }
 
-    return _synchronized(() async {
+    final result = await _synchronized(() async {
       _syncing = true;
       try {
         final now = DateTime.now();
@@ -706,7 +812,14 @@ class CheckInSyncService {
       } finally {
         _syncing = false;
       }
-    });
+    }, onStarted: () => _reportSyncBegin(scope: scope, source: '打卡页'));
+    _reportSyncResult(
+      result,
+      fallbackMessage: '打卡数据已同步',
+      scope: scope,
+      source: '打卡页',
+    );
+    return result;
   }
 
   Future<File?> loadPhoto(String photoPath) async {
@@ -717,7 +830,9 @@ class CheckInSyncService {
 
   /// 重试此前已完成目标删除、但照片文件清理失败的任务。
   Future<CheckInSyncResult> retryPendingPhotoCleanup() async {
-    return _synchronized(() async {
+    await AppIdentityService.load();
+    final scope = _syncScope;
+    final result = await _synchronized(() async {
       _syncing = true;
       try {
         final token = await _requireToken();
@@ -737,7 +852,14 @@ class CheckInSyncService {
       } finally {
         _syncing = false;
       }
-    });
+    }, onStarted: () => _reportSyncBegin(scope: scope, source: '打卡后台'));
+    _reportSyncResult(
+      result,
+      fallbackMessage: '打卡照片清理已完成',
+      scope: scope,
+      source: '打卡后台',
+    );
+    return result;
   }
 
   Future<String?> _requireToken() async {

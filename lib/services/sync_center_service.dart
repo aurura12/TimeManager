@@ -6,9 +6,9 @@ import '../models/sync_center_state.dart';
 import '../models/travel_record.dart';
 import '../providers/time_provider.dart';
 import 'check_in_sync_service.dart';
-import 'diary_gitee_service.dart';
 import 'diary_local_store.dart';
-import 'diary_search_service.dart';
+import 'diary_sync_service.dart';
+import 'sync_operation_lock.dart';
 import 'sync_status_coordinator.dart';
 import 'travel_gitee_service.dart';
 import 'travel_local_store.dart';
@@ -48,6 +48,7 @@ class SyncCenterOperations {
 
   factory SyncCenterOperations.production(TimeProvider provider) {
     final checkIn = CheckInSyncService();
+    final diary = DiarySyncService();
     return SyncCenterOperations(
       operations: {
         for (final module in [
@@ -57,36 +58,21 @@ class SyncCenterOperations {
           SyncModule.googleCalendar,
         ])
           module: () => provider.syncModuleForCenter(module),
-        SyncModule.diary: _syncDiary,
+        SyncModule.diary: diary.sync,
         SyncModule.travel: _syncTravel,
         SyncModule.checkIn: () => _syncCheckIn(checkIn),
       },
     );
   }
 
-  static Future<SyncOperationResult> _syncDiary() async {
-    final token = await DiaryLocalStore.loadToken();
-    if (token == null || token.trim().isEmpty) {
-      return const SyncOperationResult.offline('日记远端未连接，本地草稿会保留');
-    }
-
-    // 先确认远端目录可读，再复用已有的增量索引刷新入口；不在同步中心
-    // 复制日记编辑器的路径选择、冲突确认和写入逻辑。
-    final listing = await DiaryGiteeService.listDiaryPathsWithSha(
-      token: token,
-    );
-    if (!listing.success) {
-      return SyncOperationResult.failed(
-        '日记同步失败：${listing.error ?? '远端列表不可用'}',
-      );
-    }
-    await DiarySearchService.refreshCache(token);
-    return SyncOperationResult.success(
-      message: '日记索引已刷新（${listing.pathShaMap.length} 个文件）',
+  static Future<SyncOperationResult> _syncTravel() {
+    return SyncOperationLock.instance.run(
+      SyncModule.travel,
+      _syncTravelInternal,
     );
   }
 
-  static Future<SyncOperationResult> _syncTravel() async {
+  static Future<SyncOperationResult> _syncTravelInternal() async {
     final token = await DiaryLocalStore.loadToken();
     if (token == null || token.trim().isEmpty) {
       return const SyncOperationResult.offline('出行远端未连接，本地记录会保留');
@@ -153,6 +139,10 @@ class SyncCenterOperations {
     }
 
     final outgoing = local.preparePush(remote);
+    if (outgoing.toSyncPayload() == remote.toSyncPayload()) {
+      await TravelLocalStore.saveDraft(outgoing.toMarkdown());
+      return const SyncOperationResult.success(message: '出行记录已确认同步');
+    }
     final push = await TravelGiteeService.pushFile(
       token: token,
       path: TravelRecordsDocument.filePath,
@@ -196,10 +186,15 @@ class SyncCenterController extends ChangeNotifier {
     required SyncCenterOperations operations,
     SyncStatusCoordinator? coordinator,
     SyncStatusStore? store,
+    bool loadIdentityBeforeState = true,
     SyncCenterLiveStateReader? liveStateReader,
     Set<SyncModule>? authoritativeLiveStateModules,
   })  : _operations = operations,
-        _coordinator = coordinator ?? SyncStatusCoordinator(store: store),
+        _coordinator = coordinator ??
+            SyncStatusCoordinator(
+              store: store,
+              loadIdentityBeforeState: loadIdentityBeforeState,
+            ),
         _ownsCoordinator = coordinator == null,
         _liveStateReader = liveStateReader,
         _authoritativeLiveStateModules = authoritativeLiveStateModules == null
@@ -214,11 +209,13 @@ class SyncCenterController extends ChangeNotifier {
     TimeProvider provider, {
     SyncStatusCoordinator? coordinator,
     SyncStatusStore? store,
+    bool loadIdentityBeforeState = true,
   }) {
     return SyncCenterController(
       operations: SyncCenterOperations.production(provider),
       coordinator: coordinator,
       store: store,
+      loadIdentityBeforeState: loadIdentityBeforeState,
       liveStateReader: () => _liveStatesForProvider(provider),
       authoritativeLiveStateModules: const {
         SyncModule.schedule,
@@ -249,6 +246,13 @@ class SyncCenterController extends ChangeNotifier {
   bool isRetryingModule(SyncModule module) => _runningModules.contains(module);
   int get pendingCount => _coordinator.pendingCount;
   bool get hasIssue => _coordinator.hasIssue;
+  bool get hasUnresolved => states.any(
+        (state) =>
+            state.hasIssue ||
+            state.hasPending ||
+            state.status == SyncModuleStatus.syncing ||
+            state.status == SyncModuleStatus.busy,
+      );
 
   Future<void> initialize() {
     if (_initialized) return Future<void>.value();
@@ -311,10 +315,12 @@ class SyncCenterController extends ChangeNotifier {
   }) async {
     if (_disposed || (!fromAll && _allRetrying)) return;
     _runningModules.add(module);
+    final scope = _coordinator.scopeFor(module);
     _coordinator.begin(
       module,
       message: '正在同步${module.label}',
       source: _allRetrying ? '同步中心（全部重试）' : '同步中心',
+      scope: scope,
     );
     _notify();
 
@@ -331,6 +337,7 @@ class SyncCenterController extends ChangeNotifier {
         module,
         result,
         source: _allRetrying ? '同步中心（全部重试）' : '同步中心',
+        scope: scope,
       );
       _runningModules.remove(module);
       final live = _readLiveState();

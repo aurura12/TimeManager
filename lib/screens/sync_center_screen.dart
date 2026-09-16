@@ -69,8 +69,8 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
   Widget _buildContent(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final surfaces = AppSurfaces.of(context);
-    final issueMessage = _controller.hasIssue
-        ? '同步状态会保留在本地；离线或失败项恢复网络后可单独重试。'
+    final issueMessage = _controller.hasUnresolved
+        ? '同步状态会保留在本地；待同步或失败的模块可单独重试。'
         : '同步中心会按模块显示待上传、待下载和最近一次成功同步时间。';
 
     return SingleChildScrollView(
@@ -261,7 +261,7 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          _controller.hasIssue ? '部分模块仍需处理' : '全部同步任务已完成',
+          _controller.hasUnresolved ? '部分模块仍需处理' : '全部同步任务已完成',
         ),
       ),
     );
@@ -282,6 +282,7 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
     return switch (status) {
       SyncModuleStatus.success => AppSemanticColors.success,
       SyncModuleStatus.pending => AppSemanticColors.warning,
+      SyncModuleStatus.skipped => colorScheme.onSurfaceVariant,
       SyncModuleStatus.syncing => AppSemanticColors.info,
       SyncModuleStatus.offline => AppSemanticColors.warning,
       SyncModuleStatus.failed || SyncModuleStatus.conflict => colorScheme.error,

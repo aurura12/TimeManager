@@ -113,6 +113,45 @@ void main() {
     expect(parsed.deletedTargets['b'], 789);
   });
 
+  test('目标业务内容相同但 updated_at 不同，不需要再次上传', () {
+    final left = TargetDocument(
+      updatedAt: 100,
+      targets: [target('a', '阅读', 456)],
+      deletedTargets: {'b': 789},
+    );
+    final right = TargetDocument(
+      updatedAt: 999,
+      targets: [target('a', '阅读', 456)],
+      deletedTargets: {'b': 789},
+    );
+
+    expect(targetDocumentsEquivalent(left, right), isTrue);
+  });
+
+  test('目标列表顺序属于业务内容，纯重排不能判定为等价', () {
+    final left = TargetDocument(
+      targets: [target('a', '阅读', 456), target('b', '运动', 456)],
+    );
+    final right = TargetDocument(
+      targets: [target('b', '运动', 456), target('a', '阅读', 456)],
+    );
+
+    expect(targetDocumentsEquivalent(left, right), isFalse);
+  });
+
+  test('目标业务内容不同，必须继续上传', () {
+    final left = TargetDocument(
+      updatedAt: 100,
+      targets: [target('a', '本地', 456)],
+    );
+    final right = TargetDocument(
+      updatedAt: 999,
+      targets: [target('a', '远端', 456)],
+    );
+
+    expect(targetDocumentsEquivalent(left, right), isFalse);
+  });
+
   test('空内容或非法 JSON 返回空目标文档', () {
     expect(parseTargetDocument(null).updatedAt, 0);
     expect(parseTargetDocument('').targets, isEmpty);

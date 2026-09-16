@@ -104,6 +104,19 @@ void main() {
     expect(AppIdentityService.currentUser?.id, 'manual-j');
   });
 
+  test('adopting a null manual kind preserves a legacy identity already loaded',
+      () async {
+    SharedPreferences.setMockInitialValues({
+      AppIdentityService.modeKey: 'manual',
+      AppIdentityService.legacyScheduleUserKey: 'g',
+    });
+
+    await AppIdentityService.load();
+    AppIdentityService.adoptManualKind(null);
+
+    expect(AppIdentityService.personKind, DiaryKind.g);
+  });
+
   test('persisted Google mode stays unbound until a known account is present',
       () async {
     SharedPreferences.setMockInitialValues({

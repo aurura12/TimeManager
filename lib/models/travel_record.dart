@@ -299,6 +299,18 @@ class TravelRecordsDocument {
   }
 
   String toMarkdown() {
+    final body = toSyncPayload();
+    final now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+    return '---\n'
+        'title: 出行记录\n'
+        'updated_at: $now\n'
+        '---\n'
+        '$body\n';
+  }
+
+  /// 只包含业务数据的稳定序列化结果。Markdown 的 updated_at 是写入时间，
+  /// 不能用它判断内容是否变化，否则重复点击“同步”会不断创建空提交。
+  String toSyncPayload() {
     final payload = records.map((e) => e.toJson()).toList();
     final Object markdownPayload;
     if (deletedAtByDate.isEmpty) {
@@ -315,13 +327,7 @@ class TravelRecordsDocument {
         'deleted_dates': deleted,
       };
     }
-    final body = const JsonEncoder.withIndent('  ').convert(markdownPayload);
-    final now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
-    return '---\n'
-        'title: 出行记录\n'
-        'updated_at: $now\n'
-        '---\n'
-        '$body\n';
+    return const JsonEncoder.withIndent('  ').convert(markdownPayload);
   }
 
   static TravelRecordsDocument fromMarkdown(String markdown) {

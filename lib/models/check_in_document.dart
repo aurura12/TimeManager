@@ -174,20 +174,32 @@ class CheckInDocument {
   }
 
   String toMarkdown() {
-    final payload = {
-      'version': currentVersion,
-      'goals': goals.map((g) => g.withoutRecords().toJson()).toList(),
-      'records': records.map((r) => r.toJson()).toList(),
-      'deleted_goals': deletedGoalIds.toList()..sort(),
-      'deleted_records': deletedRecordIds.toList()..sort(),
-    };
-    final body = const JsonEncoder.withIndent('  ').convert(payload);
+    final body = toSyncPayload();
     final now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
     return '---\n'
         'title: 打卡数据\n'
         'updated_at: $now\n'
         '---\n'
         '$body\n';
+  }
+
+  /// 只包含业务数据的稳定序列化结果，不包含 Markdown 的写入时间。
+  ///
+  /// `updated_at` 每次生成 Markdown 都会变化，不能用完整文件内容判断
+  /// 是否真的有数据变化，否则同步中心重试会不断创建空提交。
+  String toSyncPayload() {
+    final sortedGoals = goals.map((goal) => goal.withoutRecords()).toList()
+      ..sort((left, right) => left.id.compareTo(right.id));
+    final sortedRecords = List<CheckInRecord>.from(records)
+      ..sort((left, right) => left.id.compareTo(right.id));
+    final payload = {
+      'version': currentVersion,
+      'goals': sortedGoals.map((goal) => goal.toJson()).toList(),
+      'records': sortedRecords.map((record) => record.toJson()).toList(),
+      'deleted_goals': deletedGoalIds.toList()..sort(),
+      'deleted_records': deletedRecordIds.toList()..sort(),
+    };
+    return const JsonEncoder.withIndent('  ').convert(payload);
   }
 
   static CheckInDocument fromMarkdown(String markdown) {

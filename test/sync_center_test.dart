@@ -28,6 +28,7 @@ void main() {
         },
       ),
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
     );
     addTearDown(controller.dispose);
 
@@ -59,6 +60,7 @@ void main() {
         },
       ),
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
     );
     addTearDown(controller.dispose);
 
@@ -70,6 +72,50 @@ void main() {
     expect(state.failureCount, 1);
     expect(state.message, '远端出行记录需要确认');
     expect(state.details, ['2026-09-15']);
+  });
+
+  test('未执行或仍有待同步项时，控制器仍标记为未完成', () async {
+    final controller = SyncCenterController(
+      operations: _operationsFor(
+        (module) => () async => module == SyncModule.travel
+            ? const SyncOperationResult.skipped('远程视图下不推送')
+            : module == SyncModule.checkIn
+                ? const SyncOperationResult.success(
+                    message: '照片待重试',
+                    pendingUploadCount: 1,
+                  )
+                : const SyncOperationResult.success(),
+      ),
+      store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.retryAll();
+
+    expect(controller.hasUnresolved, isTrue);
+    expect(controller.stateFor(SyncModule.travel).status,
+        SyncModuleStatus.skipped);
+    expect(controller.stateFor(SyncModule.checkIn).hasPending, isTrue);
+  });
+
+  test('只有未执行状态时不提示仍有模块待处理', () async {
+    final controller = SyncCenterController(
+      operations: _operationsFor(
+        (module) => () async => module == SyncModule.travel
+            ? const SyncOperationResult.skipped('远程视图下不推送')
+            : const SyncOperationResult.success(),
+      ),
+      store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.retryAll();
+
+    expect(controller.stateFor(SyncModule.travel).status,
+        SyncModuleStatus.skipped);
+    expect(controller.hasUnresolved, isFalse);
   });
 
   test('没有可靠打卡 live reader 时保留远端照片部分失败的待上传数', () async {
@@ -88,6 +134,7 @@ void main() {
         },
       ),
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
       liveStateReader: () {
         liveReads++;
         return {
@@ -124,6 +171,7 @@ void main() {
         },
       ),
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
       liveStateReader: () => {
         SyncModule.schedule: const SyncModuleState(
           module: SyncModule.schedule,
@@ -166,6 +214,7 @@ void main() {
         },
       ),
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
       liveStateReader: () => {
         SyncModule.travel: const SyncModuleState(
           module: SyncModule.travel,
@@ -203,6 +252,7 @@ void main() {
         },
       ),
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
     );
     addTearDown(controller.dispose);
 
@@ -227,6 +277,7 @@ void main() {
             : const SyncOperationResult.success(),
       ),
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
       // 生产 Provider 只对日程/Google 日历提供 live 状态；其它模块不应
       // 用默认的 0 覆盖本次操作返回的 pending 数量。
       liveStateReader: () => {
@@ -255,6 +306,7 @@ void main() {
             : const SyncOperationResult.success(),
       ),
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
     );
     addTearDown(controller.dispose);
 
@@ -275,6 +327,7 @@ void main() {
         },
       ),
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
     );
     addTearDown(controller.dispose);
 
@@ -307,6 +360,7 @@ void main() {
         (module) => () async => const SyncOperationResult.success(),
       ),
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
     );
     addTearDown(controller.dispose);
 
@@ -326,6 +380,7 @@ void main() {
   testWidgets('日程页等外部入口同步成功后，打开同步中心立即显示已同步', (tester) async {
     final coordinator = SyncStatusCoordinator(
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
       scopeResolver: (_) => 'g',
     );
     addTearDown(coordinator.dispose);
@@ -371,6 +426,7 @@ void main() {
   test('刷新页面状态不会把已同步重置为尚未检查', () async {
     final coordinator = SyncStatusCoordinator(
       store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
       scopeResolver: (_) => 'g',
     );
     addTearDown(coordinator.dispose);
