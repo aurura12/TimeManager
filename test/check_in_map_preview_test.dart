@@ -117,6 +117,7 @@ void main() {
 
     expect(find.textContaining('加载地图瓦片时'), findsOneWidget);
     expect(find.textContaining('高德地图'), findsWidgets);
+    expect(find.text("Made with 'flutter_map'"), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });

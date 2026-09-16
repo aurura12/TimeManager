@@ -350,6 +350,7 @@ class _CheckInMapPreviewState extends State<CheckInMapPreview> {
     return RichAttributionWidget(
       alignment: AttributionAlignment.bottomRight,
       permanentHeight: AppSizes.minTapTarget,
+      showFlutterMapAttribution: false,
       popupBackgroundColor: surfaces.card,
       popupBorderRadius: AppRadius.controlAll,
       attributions: [
@@ -396,33 +397,43 @@ class _CheckInMapPreviewState extends State<CheckInMapPreview> {
       label: semanticLabel,
       child: Material(
         key: const ValueKey<String>('map-attribution-button'),
-        color: surfaces.card.withValues(alpha: 0.94),
-        borderRadius: AppRadius.controlAll,
+        type: MaterialType.transparency,
         child: InkWell(
           onTap: onPressed,
-          borderRadius: AppRadius.controlAll,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              minHeight: AppSizes.minTapTarget,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    label,
-                    style: AppText.caption.copyWith(
-                      color: colorScheme.onSurface,
+          borderRadius: AppRadius.badgeAll,
+          child: SizedBox(
+            height: AppSizes.minTapTarget,
+            child: Center(
+              child: Ink(
+                decoration: BoxDecoration(
+                  color: surfaces.card.withValues(alpha: 0.94),
+                  borderRadius: AppRadius.badgeAll,
+                ),
+                child: SizedBox(
+                  height: AppSizes.chip,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.xs,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          label,
+                          style: AppText.caption.copyWith(
+                            color: colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.xs),
+                        Icon(
+                          icon,
+                          size: AppText.caption.fontSize,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: AppSpacing.xs),
-                  Icon(
-                    icon,
-                    size: AppText.body.fontSize,
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ],
+                ),
               ),
             ),
           ),
