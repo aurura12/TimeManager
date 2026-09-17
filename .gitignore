@@ -182,3 +182,5 @@ lib/config
 .codebuddy/
 .VSCodeCounter/
 .worktrees/
+.superpowers/
+.workbuddy/
