@@ -25,6 +25,14 @@ void main() {
     );
   });
 
+  test('地图缩放范围限制在瓦片服务提供的层级内', () {
+    expect(MapTileConfig.minZoom, lessThan(MapTileConfig.maxZoom));
+    // 预览组件的初始 zoom 只取 9 / 11 / 13 / 15，必须全部落在限制区间内，
+    // 否则一打开地图就会请求服务端不提供的层级。
+    expect(MapTileConfig.minZoom, lessThanOrEqualTo(9.0));
+    expect(MapTileConfig.maxZoom, greaterThanOrEqualTo(15.0));
+  });
+
   test('失败瓦片按坐标去重，自动重试有上限，手动重试可重新开始', () {
     final monitor = MapTileFailureMonitor();
 

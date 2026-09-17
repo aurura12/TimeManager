@@ -15,6 +15,13 @@ class MapTileConfig {
   /// 地图服务 attribution。瓦片源保持不变，服务标识统一从这里读取。
   static const attributionSource = '高德地图';
 
+  /// 瓦片服务实际提供的层级区间。
+  ///
+  /// 高德 appmaptile 只服务有限的层级范围，越界层级会返回 HTTP 400。这里显式
+  /// 限制地图缩放范围，把无效的瓦片请求挡在客户端，而不是让用户缩放后才失败。
+  static const minZoom = 3.0;
+  static const maxZoom = 18.0;
+
   /// 地图瓦片请求的隐私说明。
   ///
   /// 这里只说明本组件发起的瓦片请求，不把它扩大解释成应用整体的隐私政策。

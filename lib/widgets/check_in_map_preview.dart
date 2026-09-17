@@ -84,6 +84,8 @@ class _CheckInMapPreviewState extends State<CheckInMapPreview> {
                 options: MapOptions(
                   initialCenter: mapData.center,
                   initialZoom: mapData.zoom,
+                  minZoom: MapTileConfig.minZoom,
+                  maxZoom: MapTileConfig.maxZoom,
                   interactionOptions: InteractionOptions(
                     flags: widget.onTap != null
                         ? InteractiveFlag.none

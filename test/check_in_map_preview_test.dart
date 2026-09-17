@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:time_manager/models/check_in_record.dart';
+import 'package:time_manager/utils/map_tile_config.dart';
 import 'package:time_manager/widgets/check_in_map_preview.dart';
 
 class _FailingTileProvider extends TileProvider {
@@ -118,6 +119,34 @@ void main() {
     expect(find.textContaining('加载地图瓦片时'), findsOneWidget);
     expect(find.textContaining('高德地图'), findsWidgets);
     expect(find.text("Made with 'flutter_map'"), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('地图缩放被限制在瓦片服务提供的层级内，越界请求不会发出', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 360,
+            height: 240,
+            child: CheckInMapPreview(
+              records: [_record()],
+              showLegend: false,
+              tileProvider: _SuccessfulTileProvider(),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+
+    final options = tester.widget<FlutterMap>(find.byType(FlutterMap)).options;
+    expect(options.minZoom, MapTileConfig.minZoom);
+    expect(options.maxZoom, MapTileConfig.maxZoom);
+    expect(options.initialZoom, greaterThanOrEqualTo(MapTileConfig.minZoom));
+    expect(options.initialZoom, lessThanOrEqualTo(MapTileConfig.maxZoom));
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
