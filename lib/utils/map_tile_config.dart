@@ -17,7 +17,7 @@ class MapTileConfig {
 
   /// 瓦片服务实际提供的层级区间。
   ///
-  /// 高德 appmaptile 只服务有限的层级范围，越界层级会返回 HTTP 400。这里显式
+  /// 高德 appmaptile 只服务有限的层级范围，越界层级不会返回有效瓦片。这里显式
   /// 限制地图缩放范围，把无效的瓦片请求挡在客户端，而不是让用户缩放后才失败。
   static const minZoom = 3.0;
   static const maxZoom = 18.0;
