@@ -278,6 +278,27 @@ void main() {
       expect(prefs.getBool('identity_j_diary_reminder_enabled'), isNull);
     });
 
+    test('身份变成未绑定时，取消旧身份留下的排定', () async {
+      await DiaryReminderService.saveSettings(enabled);
+      expect(backend.scheduledCalls, hasLength(1));
+
+      // 例如 Google 账号被登出：作用域判断不出来了，但共用的通知 id 2001 上
+      // 还挂着上一个身份的排程，必须取消，否则会一直响。
+      AppIdentityService.resetForTesting();
+      backend.cancelledIds.clear();
+
+      final status = await DiaryReminderService.ensureScheduled(force: true);
+
+      expect(status.issue, DiaryReminderIssue.identityUnavailable);
+      expect(backend.cancelledIds, contains(DiaryReminderService.notificationId));
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        prefs.getBool('identity_unbound_diary_reminder_enabled'),
+        isNull,
+        reason: '取消不等于写设置：不能往未绑定作用域里落任何东西',
+      );
+    });
+
     test('设置按身份隔离，两个人各存一份', () async {
       await DiaryReminderService.saveSettings(enabled);
 

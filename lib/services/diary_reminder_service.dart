@@ -294,12 +294,16 @@ class DiaryReminderService {
     return status;
   }
 
-  static Future<DiaryReminderStatus> _cancel(DiaryReminderSettings s) async {
+  static Future<DiaryReminderStatus> _cancel(
+    DiaryReminderSettings s, {
+    DiaryReminderIssue issue = DiaryReminderIssue.none,
+    String? reason,
+  }) async {
     final backend = _backend;
     _scheduledFingerprint = null;
     await _safe(() => backend.cancel(id: notificationId));
-    final status = _status(settings: s);
-    _logSelfCheck('cancelled', s, status: status);
+    final status = _status(settings: s, issue: issue);
+    _logSelfCheck('cancelled', s, status: status, reason: reason);
     return status;
   }
 
@@ -320,9 +324,13 @@ class DiaryReminderService {
     _lastEnsureAt = now;
 
     if (!await _ensureIdentityLoaded()) {
-      return _status(
+      // 身份读不到（例如 Google 账号被登出）时判断不出"当前作用域"该不该提醒，
+      // 但通知 id 2001 是全设备共用的：上一个身份排下的程还挂在系统里，不取消
+      // 就会一直响。这里只取消、不写设置——往 identity_unbound_* 写才是要避免的事。
+      return _cancel(
+        const DiaryReminderSettings.defaults(),
         issue: DiaryReminderIssue.identityUnavailable,
-        message: '请先选择用户身份，再开启写日记提醒',
+        reason: 'identity_unavailable',
       );
     }
 
