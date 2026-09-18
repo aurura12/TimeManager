@@ -1,7 +1,7 @@
 name: time_manager
 description: "A new Flutter project."
 publish_to: "none"
-version: 1.99.0+17
+version: 1.100.0+18
 
 # 添加下面这段环境配置
 environment:
@@ -37,6 +37,16 @@ dependencies:
   flutter_secure_storage: ^10.3.1
   url_launcher: ^6.2.5
   path_provider: ^2.1.3
+  # 写日记提醒（仅 Android）：定时通知 + 时区
+  flutter_local_notifications: ^22.3.1
+  flutter_timezone: ^5.1.0
+  timezone: ^0.11.1
+
+# 本地 fork：给写日记提醒的原生触发/通知提交/下次登记/开机恢复埋点写诊断事件。
+# 上游 22.3.1 的完整包结构保留在 third_party/，改动见 third_party/flutter_local_notifications/FORK.md
+dependency_overrides:
+  flutter_local_notifications:
+    path: third_party/flutter_local_notifications
 
 dev_dependencies:
   flutter_test:
