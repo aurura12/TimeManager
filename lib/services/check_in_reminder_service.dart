@@ -127,7 +127,11 @@ class CheckInReminderService {
     CheckInReminderSettings settings,
   ) async {
     if (!ReminderPlatform.isAndroid) {
-      return const CheckInReminderResult.failed('当前平台不支持提醒');
+      // 关掉一个本就不存在的提醒等同于无操作，不该报「不支持」；
+      // 只有"要求这台设备提醒我"才是真的做不到。
+      return settings.enabled
+          ? const CheckInReminderResult.failed('当前平台不支持提醒')
+          : const CheckInReminderResult();
     }
     await initialize();
 

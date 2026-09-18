@@ -7,6 +7,7 @@ import '../models/check_in_goal.dart';
 import '../models/check_in_reminder.dart';
 import '../services/app_log_service.dart';
 import '../services/check_in_reminder_service.dart';
+import '../services/reminder_platform.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
@@ -154,8 +155,11 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
       if (ci >= 0) _selectedColorIndex = ci;
       final ii = _icons.indexOf(g.icon);
       if (ii >= 0) _selectedIconIndex = ii;
-      // 提醒设置存在本机，按目标 id 读回
-      unawaited(_loadReminderSettings(g.id));
+      // 提醒设置存在本机，按目标 id 读回。仅 Android 有提醒能力，
+      // 其它平台连读都没有意义（开关也不会渲染）。
+      if (ReminderPlatform.isAndroid) {
+        unawaited(_loadReminderSettings(g.id));
+      }
     }
   }
 
@@ -242,28 +246,32 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
 
     // 提醒设置存在本机、按目标 id 索引，不写进 CheckInGoal（目标模型是白名单序列化，
     // 加上去会被老版本的任意一次推送抹掉）。这里用刚确定的 goal.id 存下来。
-    CheckInReminderResult reminderResult;
-    try {
-      reminderResult = await CheckInReminderService.saveSettings(
-        CheckInReminderSettings(
-          goalId: goal.id,
-          enabled: _reminderEnabled,
-          hour: _reminderHour,
-          minute: _reminderMinute,
-          goalName: goal.name,
-          startDateMs: goal.startDate?.millisecondsSinceEpoch,
-          endDateMs: goal.endDate?.millisecondsSinceEpoch,
-          archived: goal.isArchived,
-        ),
-      );
-    } catch (error, stackTrace) {
-      AppLogService.instance.error(
-        '保存打卡提醒设置失败',
-        source: CheckInReminderService.logSource,
-        error: error,
-        stackTrace: stackTrace,
-      );
-      reminderResult = const CheckInReminderResult.failed('提醒设置保存失败，请查看运行日志');
+    // 非 Android 平台没有提醒能力，不调用也不提示——否则每次保存目标都会弹
+    // 一句「当前平台不支持提醒」。
+    var reminderResult = const CheckInReminderResult();
+    if (ReminderPlatform.isAndroid) {
+      try {
+        reminderResult = await CheckInReminderService.saveSettings(
+          CheckInReminderSettings(
+            goalId: goal.id,
+            enabled: _reminderEnabled,
+            hour: _reminderHour,
+            minute: _reminderMinute,
+            goalName: goal.name,
+            startDateMs: goal.startDate?.millisecondsSinceEpoch,
+            endDateMs: goal.endDate?.millisecondsSinceEpoch,
+            archived: goal.isArchived,
+          ),
+        );
+      } catch (error, stackTrace) {
+        AppLogService.instance.error(
+          '保存打卡提醒设置失败',
+          source: CheckInReminderService.logSource,
+          error: error,
+          stackTrace: stackTrace,
+        );
+        reminderResult = const CheckInReminderResult.failed('提醒设置保存失败，请查看运行日志');
+      }
     }
 
     if (!mounted) return;
@@ -448,24 +456,28 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
             contentPadding: EdgeInsets.zero,
           ),
           const SizedBox(height: 24),
-          _sectionTitle('提醒'),
-          const SizedBox(height: 4),
-          SwitchListTile(
-            title: const Text('打卡提醒'),
-            subtitle: const Text('每天到点提醒你完成这个目标（仅本机生效）'),
-            value: _reminderEnabled,
-            onChanged: (v) => setState(() => _reminderEnabled = v),
-            contentPadding: EdgeInsets.zero,
-          ),
-          ListTile(
-            title: const Text('提醒时间'),
-            subtitle: Text(_reminderLabel),
-            trailing: const Icon(Icons.chevron_right),
-            enabled: _reminderEnabled,
-            onTap: _pickReminderTime,
-            contentPadding: EdgeInsets.zero,
-          ),
-          const SizedBox(height: 24),
+          // 提醒只有 Android 具备本地通知能力，其它平台整块不渲染
+          // （与设置抽屉里写日记提醒的处理一致），免得显示一个点了没用的开关。
+          if (ReminderPlatform.isAndroid) ...[
+            _sectionTitle('提醒'),
+            const SizedBox(height: 4),
+            SwitchListTile(
+              title: const Text('打卡提醒'),
+              subtitle: const Text('每天到点提醒你完成这个目标（仅本机生效）'),
+              value: _reminderEnabled,
+              onChanged: (v) => setState(() => _reminderEnabled = v),
+              contentPadding: EdgeInsets.zero,
+            ),
+            ListTile(
+              title: const Text('提醒时间'),
+              subtitle: Text(_reminderLabel),
+              trailing: const Icon(Icons.chevron_right),
+              enabled: _reminderEnabled,
+              onTap: _pickReminderTime,
+              contentPadding: EdgeInsets.zero,
+            ),
+            const SizedBox(height: 24),
+          ],
           _sectionTitle('打卡时长（可选）'),
           const SizedBox(height: 8),
           GestureDetector(

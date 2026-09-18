@@ -126,4 +126,53 @@ void main() {
     );
     expect(switchTile.value, isFalse);
   });
+
+  testWidgets('非 Android 平台不渲染提醒分区', (tester) async {
+    ReminderPlatform.androidPlatformOverride = false;
+
+    await pumpScreen(tester);
+
+    expect(find.text('提醒'), findsNothing);
+    expect(find.text('打卡提醒'), findsNothing);
+    expect(find.text('提醒时间'), findsNothing);
+    expect(find.text('21:00'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('非 Android 平台保存目标不会提示「不支持提醒」', (tester) async {
+    ReminderPlatform.androidPlatformOverride = false;
+    CheckInGoal? saved;
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: ElevatedButton(
+              onPressed: () async {
+                saved = await Navigator.of(context).push<CheckInGoal>(
+                  MaterialPageRoute(
+                    builder: (_) => const AddCheckInGoalScreen(),
+                  ),
+                );
+              },
+              child: const Text('打开'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('打开'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, '晨跑');
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(saved, isNotNull);
+    expect(find.textContaining('不支持'), findsNothing);
+    expect(backend.calls, isEmpty, reason: '没有提醒能力的平台不该碰原生接口');
+  });
 }
