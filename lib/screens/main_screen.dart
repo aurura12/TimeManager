@@ -8,7 +8,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/screens/profile_screen.dart';
 import '../models/schedule_sync_progress.dart';
 import '../providers/time_provider.dart';
+import '../services/app_log_service.dart';
 import '../services/diary_local_store.dart';
+import '../services/diary_reminder_diagnostics.dart';
+import '../services/diary_reminder_service.dart';
 import '../services/diary_search_service.dart';
 import '../services/on_this_day_service.dart';
 import '../theme/app_theme.dart';
@@ -117,9 +120,36 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       // App 回到前台时检查日期变化：跨午夜时允许当天再次弹出
       _tryShowOnThisDay();
       unawaited(_timeProvider.onAppResumed());
+      unawaited(_refreshDiaryReminder());
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _timeProvider.onAppBackgrounded();
+    }
+  }
+
+  /// 先导入后台期间的原生触发结果，再做一次幂等的排程自检。
+  /// 这样「到点到底响没响」会立刻出现在运行日志里，不必等下次冷启动。
+  Future<void> _refreshDiaryReminder() async {
+    try {
+      await DiaryReminderDiagnostics.importPendingEvents();
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        '原生提醒日志导入失败',
+        source: DiaryReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+    try {
+      // 未初始化或非 Android 时会同步短路，不影响既有测试
+      await DiaryReminderService.ensureScheduled();
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        '写日记提醒恢复自检失败',
+        source: DiaryReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
   }
 

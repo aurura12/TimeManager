@@ -12,8 +12,11 @@ import 'package:time_manager/theme/app_semantic_colors.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'providers/time_provider.dart';
 import 'package:time_manager/screens/main_screen.dart';
+import 'screens/diary_screen.dart';
 import 'screens/global_search_screen.dart';
 import 'services/app_log_service.dart';
+import 'services/diary_reminder_diagnostics.dart';
+import 'services/diary_reminder_service.dart';
 import 'services/home_widget_action_router.dart';
 import 'services/home_widget_service.dart';
 import 'services/sync_center_service.dart';
@@ -388,6 +391,34 @@ Future<void> _initializeAndRunApplication({
   }
   HttpOverrides.global = _StableHttpOverrides();
 
+  // 写日记提醒（仅 Android）。原生事件导入必须在 AppLogService.initialize() 之后，
+  // 触发过程的日志才会出现在「运行日志」里。fire-and-forget：
+  // 提醒出任何问题都不得阻塞启动。
+  if (Platform.isAndroid) {
+    unawaited(() async {
+      try {
+        await DiaryReminderDiagnostics.importPendingEvents();
+      } catch (error, stackTrace) {
+        appLogService.error(
+          '原生提醒日志导入失败',
+          source: DiaryReminderService.logSource,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+      try {
+        await DiaryReminderService.initialize();
+      } catch (error, stackTrace) {
+        appLogService.error(
+          '写日记提醒初始化失败',
+          source: DiaryReminderService.logSource,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+    }());
+  }
+
   runApp(
     MultiProvider(
       providers: [
@@ -491,6 +522,7 @@ class TimeManagerApp extends StatefulWidget {
 class _TimeManagerAppState extends State<TimeManagerApp> {
   StreamSubscription<Uri?>? _homeWidgetClicks;
   HomeWidgetActionRequest? _pendingHomeWidgetAction;
+  bool _pendingDiaryReminderRoute = false;
   final _RootRouteTracker _rootRouteTracker = _RootRouteTracker();
 
   @override
@@ -507,6 +539,13 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
       );
       WidgetsBinding.instance.addPostFrameCallback((_) {
         unawaited(_readInitialHomeWidgetUri());
+      });
+
+      // 写日记提醒：绑定点击处理并读取冷启动来源。
+      // bindTapHandler 会补发「初始化早于本次绑定」时收到的点击。
+      DiaryReminderService.bindTapHandler(_openDiaryFromReminder);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_readInitialDiaryReminderLaunch());
       });
     }
   }
@@ -554,6 +593,48 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
         request: request,
       ),
     );
+  }
+
+  Future<void> _readInitialDiaryReminderLaunch() async {
+    try {
+      await DiaryReminderService.handleColdStartNavigation();
+    } catch (error, stackTrace) {
+      AppLogService.instance.warning(
+        '读取写日记提醒启动动作失败',
+        source: DiaryReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  void _openDiaryFromReminder() {
+    _pendingDiaryReminderRoute = true;
+    _dispatchPendingDiaryReminderRoute();
+  }
+
+  /// 点通知后 push 一个独立的日记页路由，而不是切换底部 Tab。
+  /// 与 HomeWidgetActionRouter 同一范式：返回时仍回到点通知前的页面，
+  /// 也不需要给 MainScreen 的内部状态开口子。
+  void _dispatchPendingDiaryReminderRoute() {
+    if (!_pendingDiaryReminderRoute || !mounted) return;
+
+    final navigator = rootNavigatorKey.currentState;
+    if (navigator == null) {
+      // 导航器还没就绪（冷启动时可能早于首帧），下一帧重试
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _dispatchPendingDiaryReminderRoute();
+      });
+      return;
+    }
+
+    _pendingDiaryReminderRoute = false;
+    unawaited(navigator.push<void>(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: '/diary-reminder'),
+        builder: (_) => const DiaryScreen(),
+      ),
+    ));
   }
 
   @override

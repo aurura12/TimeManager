@@ -1,14 +1,18 @@
+import 'dart:async';
 import 'dart:io';
 
 import '../utils/platform_features.dart';
 
 import 'package:flutter/material.dart';
+import '../models/diary_reminder.dart';
 import '../models/google_calendar_user.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../providers/theme_mode_provider.dart';
 import '../providers/time_provider.dart';
+import '../services/app_log_service.dart';
 import '../services/data_backup_service.dart';
+import '../services/diary_reminder_service.dart';
 import '../services/update_service.dart';
 import '../screens/app_log_screen.dart';
 import '../screens/sync_center_screen.dart';
@@ -19,6 +23,7 @@ import '../services/app_identity_service.dart';
 import '../models/diary_kind.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 
 class ProfileSettingsDrawer extends StatefulWidget {
   final VoidCallback onChanged;
@@ -40,6 +45,39 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
   /// Windows 用户身份选择是否展开（选中角色后自动收起）
   bool _identityExpanded = false;
   bool _identitySwitching = false;
+
+  /// 写日记提醒（仅 Android）。不放进 Provider：它不是业务数据，
+  /// 只在抽屉里读写，且失败必须降级而不是影响其它页面。
+  bool _diaryReminderLoaded = false;
+  bool _diaryReminderBusy = false;
+  DiaryReminderStatus? _diaryReminderStatus;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadDiaryReminderStatus());
+  }
+
+  Future<void> _loadDiaryReminderStatus() async {
+    DiaryReminderStatus status;
+    try {
+      status = await DiaryReminderService.loadStatus();
+    } catch (error, stackTrace) {
+      // 抽屉必须能打开：任何异常都降级成安全默认值，不允许抛进 build
+      AppLogService.instance.warning(
+        '读取写日记提醒设置失败',
+        source: DiaryReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      status = const DiaryReminderStatus.fallback();
+    }
+    if (!mounted) return;
+    setState(() {
+      _diaryReminderStatus = status;
+      _diaryReminderLoaded = true;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -226,6 +264,26 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                       OnThisDayScreen.open(context);
                     },
                   ),
+                  // 独立分区，插在最后的「检查更新」之前，避免后续条目被视觉归到「提醒」下
+                  if (isAndroid) ...[
+                    const Divider(height: AppSizes.hairline),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        AppSpacing.pageHorizontal,
+                        AppSpacing.lg,
+                        AppSpacing.pageHorizontal,
+                        AppSpacing.md,
+                      ),
+                      child: Text(
+                        '提醒',
+                        style: AppText.caption.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                    _buildDiaryReminderSection(context, colorScheme),
+                  ],
                   const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.system_update_outlined),
@@ -241,6 +299,244 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
         ),
       ),
     );
+  }
+
+  /// 写日记提醒分区。只读 [_diaryReminderStatus]，不自己探测平台能力。
+  Widget _buildDiaryReminderSection(
+    BuildContext context,
+    ColorScheme colorScheme,
+  ) {
+    final status = _diaryReminderStatus;
+    if (!_diaryReminderLoaded || status == null) {
+      return const ListTile(
+        leading: Icon(Icons.edit_calendar_outlined),
+        title: Text('写日记提醒'),
+        subtitle: Text('正在读取设置...'),
+      );
+    }
+
+    final settings = status.settings;
+    final blockEditing = status.issue == DiaryReminderIssue.unsupportedPlatform ||
+        status.issue == DiaryReminderIssue.statusUnavailable ||
+        status.issue == DiaryReminderIssue.identityUnavailable;
+    final canEdit = !blockEditing && !_diaryReminderBusy;
+    final message = status.message;
+
+    return Column(
+      children: [
+        SwitchListTile(
+          secondary: const Icon(Icons.edit_calendar_outlined),
+          title: const Text('写日记提醒'),
+          subtitle: Text(_diaryReminderSubtitle(status)),
+          value: settings.enabled,
+          onChanged:
+              canEdit ? (value) => _handleDiaryReminderToggle(value) : null,
+        ),
+        ListTile(
+          leading: const Icon(Icons.schedule_outlined),
+          title: const Text('提醒时间'),
+          subtitle: Text(settings.timeLabel),
+          trailing: const Icon(Icons.chevron_right),
+          enabled: canEdit && settings.enabled,
+          onTap: _pickDiaryReminderTime,
+        ),
+        if (message != null)
+          ListTile(
+            leading:
+                Icon(Icons.warning_amber_rounded, color: colorScheme.error),
+            title: Text(message),
+            subtitle: status.issue == DiaryReminderIssue.none
+                ? null
+                : const Text('点按前往系统设置'),
+            onTap: status.issue == DiaryReminderIssue.none
+                ? null
+                : _openDiaryReminderSettings,
+          ),
+        ListTile(
+          leading: const Icon(Icons.notifications_none_rounded),
+          title: const Text('发送测试通知'),
+          subtitle: const Text('立即验证通知权限、通道与图标是否正常'),
+          enabled: !_diaryReminderBusy,
+          onTap: _sendDiaryReminderTest,
+        ),
+      ],
+    );
+  }
+
+  String _diaryReminderSubtitle(DiaryReminderStatus status) {
+    switch (status.issue) {
+      case DiaryReminderIssue.unsupportedPlatform:
+        return '当前平台不支持';
+      case DiaryReminderIssue.statusUnavailable:
+        return '读取设置失败';
+      case DiaryReminderIssue.identityUnavailable:
+        return '请先选择上方用户身份';
+      case DiaryReminderIssue.timezoneUnavailable:
+        return '系统时区异常，已暂停提醒';
+      case DiaryReminderIssue.notificationsDenied:
+        return '通知权限未授予';
+      case DiaryReminderIssue.channelDisabled:
+        return '通知通道已被关闭';
+      case DiaryReminderIssue.exactAlarmDenied:
+        return status.scheduled ? '已开启（可能延迟几分钟）' : '尚未登记';
+      case DiaryReminderIssue.scheduleFailed:
+        return status.scheduled ? '已开启' : '排程失败';
+      case DiaryReminderIssue.none:
+        if (!status.settings.enabled) return '已关闭';
+        if (!status.scheduled) return '已开启（未登记，重开抽屉会重试）';
+        return '已开启 · 每天 ${status.settings.timeLabel}';
+    }
+  }
+
+  Future<void> _handleDiaryReminderToggle(bool enabled) async {
+    final current = _diaryReminderStatus?.settings;
+    if (current == null) return;
+
+    setState(() => _diaryReminderBusy = true);
+    try {
+      var status = await DiaryReminderService.saveSettings(
+        current.copyWith(enabled: enabled),
+      );
+
+      if (enabled && status.issue != DiaryReminderIssue.none) {
+        status = await DiaryReminderService.requestPermissions();
+        if (_shouldRollBackToOff(status)) {
+          // 不留下一个永远不会响的「已开启」：明确回滚并告知原因
+          status = await DiaryReminderService.saveSettings(
+            status.settings.copyWith(enabled: false),
+          );
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _diaryReminderStatus = status;
+        _diaryReminderBusy = false;
+      });
+      widget.onChanged();
+
+      final message = status.message;
+      if (message != null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
+      }
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        '切换写日记提醒失败',
+        source: DiaryReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) return;
+      setState(() => _diaryReminderBusy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('切换失败，请查看运行日志')),
+      );
+    }
+  }
+
+  /// 这些状态下的「已开启」名不副实，直接回滚成关闭。
+  /// 通道被关闭、缺精确闹钟权限属于「能用但降级」，保留开启并由告警行引导。
+  bool _shouldRollBackToOff(DiaryReminderStatus status) {
+    switch (status.issue) {
+      case DiaryReminderIssue.notificationsDenied:
+      case DiaryReminderIssue.timezoneUnavailable:
+      case DiaryReminderIssue.identityUnavailable:
+      case DiaryReminderIssue.scheduleFailed:
+      case DiaryReminderIssue.statusUnavailable:
+      case DiaryReminderIssue.unsupportedPlatform:
+        return true;
+      case DiaryReminderIssue.none:
+      case DiaryReminderIssue.channelDisabled:
+      case DiaryReminderIssue.exactAlarmDenied:
+        return false;
+    }
+  }
+
+  Future<void> _pickDiaryReminderTime() async {
+    final current = _diaryReminderStatus?.settings;
+    if (current == null) return;
+
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: current.hour, minute: current.minute),
+    );
+    if (picked == null || !mounted) return;
+
+    setState(() => _diaryReminderBusy = true);
+    try {
+      final status = await DiaryReminderService.saveSettings(
+        current.copyWith(hour: picked.hour, minute: picked.minute),
+      );
+      if (!mounted) return;
+      setState(() {
+        _diaryReminderStatus = status;
+        _diaryReminderBusy = false;
+      });
+      widget.onChanged();
+      final message = status.message;
+      if (message != null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
+      }
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        '保存写日记提醒时间失败',
+        source: DiaryReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) return;
+      setState(() => _diaryReminderBusy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('保存失败，请查看运行日志')),
+      );
+    }
+  }
+
+  Future<void> _sendDiaryReminderTest() async {
+    setState(() => _diaryReminderBusy = true);
+    try {
+      final status = await DiaryReminderService.sendTestNotification();
+      if (!mounted) return;
+      setState(() {
+        _diaryReminderStatus = status;
+        _diaryReminderBusy = false;
+      });
+      final message = status.message;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            message ?? '测试通知已发送；若没看到，请检查系统通知设置',
+          ),
+        ),
+      );
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        '发送写日记提醒测试通知失败',
+        source: DiaryReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) return;
+      setState(() => _diaryReminderBusy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('发送失败，请查看运行日志')),
+      );
+    }
+  }
+
+  Future<void> _openDiaryReminderSettings() async {
+    try {
+      await DiaryReminderService.openSystemSettings();
+    } catch (error, stackTrace) {
+      AppLogService.instance.warning(
+        '打开系统通知设置失败',
+        source: DiaryReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   Widget _buildRemoteSyncSection(BuildContext context, TimeProvider provider) {
