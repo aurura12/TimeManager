@@ -263,6 +263,62 @@ void main() {
     expect(backend.cancelledIds, contains(DiaryReminderService.notificationId));
   });
 
+  testWidgets('点「提醒时间」打开滚轮面板，确定后写入并重排', (tester) async {
+    await pumpDrawer(tester, android: true);
+
+    // 提醒关闭时时间项是禁用的，先打开开关
+    await tester.tap(find.text('写日记提醒'));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    backend.scheduledCalls.clear();
+
+    await tester.tap(find.text('提醒时间'));
+    await tester.pumpAndSettle();
+
+    // 是自研滚轮面板，而不是系统时钟表盘
+    expect(find.byKey(const ValueKey('time-wheel-hour')), findsOneWidget);
+    expect(find.byKey(const ValueKey('time-wheel-minute')), findsOneWidget);
+    expect(find.text('确定'), findsOneWidget);
+
+    await tester.drag(
+      find.byKey(const ValueKey('time-wheel-hour')),
+      const Offset(0, -44),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getInt('identity_g_diary_reminder_hour'), 22);
+    expect(find.text('已开启 · 每天 22:00'), findsOneWidget);
+    expect(backend.scheduledCalls, isNotEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('滚轮面板点取消不改时间', (tester) async {
+    await pumpDrawer(tester, android: true);
+
+    await tester.tap(find.text('写日记提醒'));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    await tester.tap(find.text('提醒时间'));
+    await tester.pumpAndSettle();
+    await tester.drag(
+      find.byKey(const ValueKey('time-wheel-hour')),
+      const Offset(0, -44),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getInt('identity_g_diary_reminder_hour'), 21);
+    expect(find.text('已开启 · 每天 21:00'), findsOneWidget);
+  });
+
   testWidgets('已开启时再次进入抽屉会显示已保存的时间', (tester) async {
     SharedPreferences.setMockInitialValues(mockPrefs(<String, Object>{
       'identity_g_diary_reminder_enabled': true,

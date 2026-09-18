@@ -36,7 +36,7 @@ lib/
   models/                数据模型（时间块、分类、打卡、目标、出行、日记、同步状态、提醒等）
   screens/               页面（22 个）
   services/              业务服务（59 个）：Google 日历、Git 同步、打卡、AI、语音、日志、提醒等
-  widgets/               可复用组件（17 个）
+  widgets/               可复用组件（18 个）
   utils/                 平台自适应、日期范围、槽位分段等工具
   theme/                 设计令牌与主题（app_tokens / app_theme / app_semantic_colors）
   config/                密钥配置（.gitignore，需本地创建）
@@ -79,7 +79,7 @@ flutter build apk --release         # 直接构建 release APK
 
 ## 测试
 
-`test/` 含 73 个 dart 测试文件，覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离、写日记提醒等核心逻辑。
+`test/` 含 74 个 dart 测试文件，覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离、写日记提醒等核心逻辑。
 
 - `test/widget_test.dart` — smoke test 与平台通道 mock 模板（`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道）
 - `test/visual_system_test.dart` — 视觉系统守护测试，改动 `lib/theme/` 或页面配色时必须运行

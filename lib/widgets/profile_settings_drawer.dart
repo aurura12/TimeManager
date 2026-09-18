@@ -24,6 +24,7 @@ import '../models/diary_kind.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import 'time_wheel_sheet.dart';
 
 class ProfileSettingsDrawer extends StatefulWidget {
   final VoidCallback onChanged;
@@ -457,9 +458,10 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     final current = _diaryReminderStatus?.settings;
     if (current == null) return;
 
-    final picked = await showTimePicker(
-      context: context,
+    final picked = await showTimeWheelSheet(
+      context,
       initialTime: TimeOfDay(hour: current.hour, minute: current.minute),
+      title: '提醒时间',
     );
     if (picked == null || !mounted) return;
 
