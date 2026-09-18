@@ -8,6 +8,7 @@ import '../models/check_in_record.dart';
 import '../models/check_in_view_filter.dart';
 import '../models/known_google_users.dart';
 import '../services/app_identity_service.dart';
+import '../services/check_in_reminder_service.dart';
 import '../services/check_in_sync_service.dart';
 import '../services/sync_status_coordinator.dart';
 import '../theme/app_semantic_colors.dart';
@@ -57,6 +58,9 @@ class _CheckInScreenState extends State<CheckInScreen> {
     setState(() {});
     await _sync.initialize(silent: false);
     if (mounted) setState(() {});
+    // 目标列表是提醒的权威来源：刷新冗余的目标名/日期/归档状态，
+    // 并清掉那些目标已不存在的提醒（另一端删了目标并同步过来时唯一的清理时机）。
+    unawaited(CheckInReminderService.reconcile(allGoals: _allGoals, force: true));
   }
 
   String? get _currentUserId => _sync.currentUser?.id;

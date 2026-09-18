@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../models/check_in_goal.dart';
 import '../models/check_in_record.dart';
+import '../services/check_in_reminder_service.dart';
 import '../services/check_in_sync_service.dart';
 import '../widgets/check_in_map_preview.dart';
 import '../widgets/check_in_photo_sheet.dart';
@@ -165,6 +166,9 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     if (!mounted) return;
     setState(() => _processing = false);
     if (result.success) {
+      // 目标没了，它的提醒也必须跟着消失，否则会一直提醒一个不存在的目标
+      await CheckInReminderService.removeSettings(_goal.id);
+      if (!mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -259,6 +263,10 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     if (!mounted) return;
     setState(() => _processing = false);
     if (result.success) {
+      // 归档后目标不再活跃，提醒也要跟着停掉（这条路径不经过编辑页，
+      // 所以必须显式同步一次状态）
+      await CheckInReminderService.syncGoal(updated);
+      if (!mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('已归档「${_goal.name}」')),

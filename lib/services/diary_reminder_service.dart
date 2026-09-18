@@ -1,169 +1,15 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../models/diary_reminder.dart';
 import 'app_identity_service.dart';
 import 'app_log_service.dart';
-
-/// 通知插件的薄封装。抽出接口是为了让服务层可以在不触碰原生通道的情况下被测试。
-abstract class DiaryReminderBackend {
-  Future<bool> initialize(
-    AndroidInitializationSettings settings, {
-    required void Function(NotificationResponse response) onResponse,
-  });
-
-  Future<void> createChannel(AndroidNotificationChannel channel);
-
-  Future<List<AndroidNotificationChannel>?> getChannels();
-
-  Future<void> zonedSchedule({
-    required int id,
-    String? title,
-    String? body,
-    required tz.TZDateTime scheduledDate,
-    String? payload,
-    DateTimeComponents? matchDateTimeComponents,
-    AndroidNotificationDetails? notificationDetails,
-    AndroidScheduleMode scheduleMode,
-  });
-
-  Future<void> show({
-    required int id,
-    String? title,
-    String? body,
-    AndroidNotificationDetails? notificationDetails,
-    String? payload,
-  });
-
-  Future<void> cancel({required int id});
-
-  Future<List<PendingNotificationRequest>> pendingNotificationRequests();
-
-  Future<bool?> canScheduleExactNotifications();
-
-  Future<bool?> areNotificationsEnabled();
-
-  Future<bool?> requestNotificationsPermission();
-
-  Future<bool?> requestExactAlarmsPermission();
-
-  Future<bool?> openAppNotificationSettings();
-
-  Future<NotificationAppLaunchDetails?> getNotificationAppLaunchDetails();
-}
-
-class _AndroidDiaryReminderBackend implements DiaryReminderBackend {
-  _AndroidDiaryReminderBackend() : _plugin = FlutterLocalNotificationsPlugin();
-
-  final FlutterLocalNotificationsPlugin _plugin;
-
-  AndroidFlutterLocalNotificationsPlugin? get _android =>
-      _plugin.resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>();
-
-  @override
-  Future<bool> initialize(
-    AndroidInitializationSettings settings, {
-    required void Function(NotificationResponse response) onResponse,
-  }) async {
-    final android = _android;
-    if (android == null) return false;
-    return android.initialize(
-      settings: settings,
-      onDidReceiveNotificationResponse: onResponse,
-    );
-  }
-
-  @override
-  Future<void> createChannel(AndroidNotificationChannel channel) async {
-    await _android?.createNotificationChannel(channel);
-  }
-
-  @override
-  Future<List<AndroidNotificationChannel>?> getChannels() =>
-      _android?.getNotificationChannels() ?? Future.value(null);
-
-  @override
-  Future<void> zonedSchedule({
-    required int id,
-    String? title,
-    String? body,
-    required tz.TZDateTime scheduledDate,
-    String? payload,
-    DateTimeComponents? matchDateTimeComponents,
-    AndroidNotificationDetails? notificationDetails,
-    AndroidScheduleMode scheduleMode =
-        AndroidScheduleMode.exactAllowWhileIdle,
-  }) async {
-    await _android?.zonedSchedule(
-      id: id,
-      title: title,
-      body: body,
-      scheduledDate: scheduledDate,
-      payload: payload,
-      matchDateTimeComponents: matchDateTimeComponents,
-      notificationDetails: notificationDetails,
-      scheduleMode: scheduleMode,
-    );
-  }
-
-  @override
-  Future<void> show({
-    required int id,
-    String? title,
-    String? body,
-    AndroidNotificationDetails? notificationDetails,
-    String? payload,
-  }) async {
-    await _android?.show(
-      id: id,
-      title: title,
-      body: body,
-      notificationDetails: notificationDetails,
-      payload: payload,
-    );
-  }
-
-  @override
-  Future<void> cancel({required int id}) async {
-    await _android?.cancel(id: id);
-  }
-
-  @override
-  Future<List<PendingNotificationRequest>> pendingNotificationRequests() =>
-      _plugin.pendingNotificationRequests();
-
-  @override
-  Future<bool?> canScheduleExactNotifications() =>
-      _android?.canScheduleExactNotifications() ?? Future.value(null);
-
-  @override
-  Future<bool?> areNotificationsEnabled() =>
-      _android?.areNotificationsEnabled() ?? Future.value(null);
-
-  @override
-  Future<bool?> requestNotificationsPermission() =>
-      _android?.requestNotificationsPermission() ?? Future.value(null);
-
-  @override
-  Future<bool?> requestExactAlarmsPermission() =>
-      _android?.requestExactAlarmsPermission() ?? Future.value(null);
-
-  @override
-  Future<bool?> openAppNotificationSettings() =>
-      _android?.openAppNotificationSettings() ?? Future.value(null);
-
-  @override
-  Future<NotificationAppLaunchDetails?> getNotificationAppLaunchDetails() =>
-      _android?.getNotificationAppLaunchDetails() ?? Future.value(null);
-}
+import 'reminder_backend.dart';
+import 'reminder_platform.dart';
 
 /// 写日记提醒：唯一的排程入口。
 ///
@@ -199,46 +45,41 @@ class DiaryReminderService {
 
   static bool _initialized = false;
   static Future<DiaryReminderStatus>? _initializationFuture;
-  static String? _timezoneName;
   static String? _scheduledFingerprint;
   static DateTime? _lastEnsureAt;
-  static bool _coldStartHandled = false;
-  static bool _pendingTap = false;
-  static void Function()? _onOpenDiary;
   static StreamSubscription<void>? _identitySubscription;
 
   @visibleForTesting
-  static DiaryReminderBackend? backendOverride;
-
-  @visibleForTesting
-  static bool? androidPlatformOverride;
-
-  @visibleForTesting
-  static Future<String> Function()? timezoneIdentifierOverride;
-
-  @visibleForTesting
   static void resetForTesting() {
-    backendOverride = null;
-    androidPlatformOverride = null;
-    timezoneIdentifierOverride = null;
     _initialized = false;
     _initializationFuture = null;
-    _timezoneName = null;
     _scheduledFingerprint = null;
     _lastEnsureAt = null;
-    _coldStartHandled = false;
-    _pendingTap = false;
-    _onOpenDiary = null;
     _identitySubscription?.cancel();
     _identitySubscription = null;
   }
 
-  static DiaryReminderBackend get _backend =>
-      backendOverride ?? _AndroidDiaryReminderBackend();
+  // 插件初始化、时区、点击路由都由 ReminderPlatform 统一持有：插件只能初始化一次，
+  // 两类提醒必须共用同一个 onDidReceiveNotificationResponse。
+  static ReminderBackend get _backend => ReminderPlatform.backend;
 
   /// 刻意不用 `defaultTargetPlatform`：flutter_test 默认把它当作 android，
   /// 会让既有测试意外走到平台调用路径。
-  static bool get _isAndroid => androidPlatformOverride ?? Platform.isAndroid;
+  static bool get _isAndroid => ReminderPlatform.isAndroid;
+
+  static String? get _timezoneName => ReminderPlatform.timezoneName;
+
+  static Future<T?> _safe<T>(Future<T?> Function() action) =>
+      ReminderPlatform.safe(action, source: logSource);
+
+  static Future<bool> _safeBool(
+    Future<bool?> Function() action, {
+    bool fallback = false,
+  }) =>
+      ReminderPlatform.safeBool(action, fallback: fallback);
+
+  static tz.TZDateTime _nextInstance(int hour, int minute) =>
+      ReminderPlatform.nextInstance(hour, minute);
 
   // ---------------------------------------------------------------- 初始化
 
@@ -253,15 +94,15 @@ class DiaryReminderService {
     }
 
     try {
-      await _configureTimezone();
-
-      await _backend.initialize(
-        // 裸资源名即可：插件内部用 getIdentifier(name, "drawable", pkg) 解析，
-        // 加 `@drawable/` 前缀反而会引入不必要的歧义。
-        // 注意 initialize() 会校验这个资源，解析不到会直接报错（不会静默降级）。
-        const AndroidInitializationSettings(smallIcon),
-        onResponse: _handleResponse,
-      );
+      // 插件初始化 + 时区由共用层负责（插件全局只能初始化一次）
+      final pluginReady = await ReminderPlatform.ensureInitialized();
+      if (!pluginReady) {
+        _initialized = true;
+        return _status(
+          issue: DiaryReminderIssue.scheduleFailed,
+          message: '提醒初始化失败，请查看运行日志',
+        );
+      }
 
       // 只创建，不删除：已有通道不重建，尊重用户在系统里的设置。
       await _backend.createChannel(
@@ -296,32 +137,6 @@ class DiaryReminderService {
     _initialized = true;
     // 启动即补一次排程：强制停止后重开、ROM 清掉 pending 或进程重启都靠这一步恢复。
     return ensureScheduled(force: true);
-  }
-
-  /// 时区。失败时把 `_timezoneName` 留空，由调用方拒绝排程——绝不回退 UTC。
-  static Future<void> _configureTimezone() async {
-    tz_data.initializeTimeZones();
-    String? identifier;
-    try {
-      identifier = timezoneIdentifierOverride != null
-          ? await timezoneIdentifierOverride!()
-          : (await FlutterTimezone.getLocalTimezone()).identifier;
-    } catch (_) {
-      identifier = null;
-    }
-    if (identifier == null || identifier.trim().isEmpty) {
-      _timezoneName = null;
-      return;
-    }
-    try {
-      final location = tz.getLocation(identifier);
-      tz.setLocalLocation(location);
-      _timezoneName = location.name;
-    } catch (_) {
-      // 拿到的不一定是 IANA 名称。没有可信时区就不排程，
-      // 用上一次的缓存假装成功会让提醒在错误的时间响。
-      _timezoneName = null;
-    }
   }
 
   // ------------------------------------------------------------ 设置读写
@@ -624,44 +439,15 @@ class DiaryReminderService {
   /// 绑定点击处理。绑定瞬间会补发尚未消费的点击，
   /// 避免「initialize 早于 App State 绑定」时把点击丢掉。
   static void bindTapHandler(void Function() handler) {
-    _onOpenDiary = handler;
-    if (_pendingTap) {
-      _pendingTap = false;
-      handler();
-    }
+    ReminderPlatform.registerTapHandler(
+      _tapRouteKey,
+      matches: (value) => value == payload,
+      handler: (_) => handler(),
+    );
   }
 
-  static void _handleResponse(NotificationResponse response) {
-    if (response.payload != payload) return;
-    final handler = _onOpenDiary;
-    if (handler != null) {
-      handler();
-    } else {
-      _pendingTap = true;
-    }
-  }
-
-  /// 读取冷启动来源。只会执行一次。
-  static Future<void> handleColdStartNavigation() async {
-    if (!_isAndroid || _coldStartHandled) return;
-    _coldStartHandled = true;
-    await initialize();
-    try {
-      final details = await _backend.getNotificationAppLaunchDetails();
-      if (details?.didNotificationLaunchApp ?? false) {
-        final response = details!.notificationResponse;
-        if (response != null) _handleResponse(response);
-      }
-    } catch (error, stackTrace) {
-      // 只记录，不抛出：冷启动导航失败不应该影响启动
-      AppLogService.instance.warning(
-        '读取写日记提醒启动动作失败',
-        source: logSource,
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-  }
+  /// 供 ReminderPlatform 分发的路由标识。两类提醒各用各的 key，互不覆盖。
+  static const String _tapRouteKey = 'diary_reminder';
 
   // ------------------------------------------------------------------ 内部
 
@@ -680,18 +466,6 @@ class DiaryReminderService {
       // 默认就是 createIfNotExists：只创建，不重建，不覆盖用户设置
       channelAction: AndroidNotificationChannelAction.createIfNotExists,
     );
-  }
-
-  /// 下一次触发时刻。留 5 秒余量，避免插件因为时间已过而抛参数错误。
-  static tz.TZDateTime _nextInstance(int hour, int minute) {
-    final now = tz.TZDateTime.now(tz.local);
-    var next =
-        tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
-    if (!next.isAfter(now.add(const Duration(seconds: 5)))) {
-      next =
-          tz.TZDateTime(tz.local, now.year, now.month, now.day + 1, hour, minute);
-    }
-    return next;
   }
 
   static Future<AndroidNotificationChannel?> _lookupChannel() async {
@@ -840,26 +614,4 @@ class DiaryReminderService {
 
   static String _key(String baseKey) =>
       AppIdentityService.dataKeyForCurrentIdentity(baseKey);
-
-  static Future<T?> _safe<T>(Future<T?> Function() action) async {
-    try {
-      return await action();
-    } catch (error, stackTrace) {
-      AppLogService.instance.warning(
-        '写日记提醒调用系统接口失败',
-        source: logSource,
-        error: error,
-        stackTrace: stackTrace,
-      );
-      return null;
-    }
-  }
-
-  static Future<bool> _safeBool(
-    Future<bool?> Function() action, {
-    bool fallback = false,
-  }) async {
-    final value = await _safe(action);
-    return value ?? fallback;
-  }
 }

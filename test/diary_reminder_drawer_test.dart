@@ -11,10 +11,11 @@ import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/services/app_identity_service.dart';
 import 'package:time_manager/services/diary_reminder_service.dart';
 import 'package:time_manager/services/on_this_day_service.dart';
+import 'package:time_manager/services/reminder_platform.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'package:time_manager/widgets/profile_settings_drawer.dart';
 
-import 'support/fake_diary_reminder_backend.dart';
+import 'support/fake_reminder_backend.dart';
 
 class _FakeGoogleSignInPlatform extends GoogleSignInPlatform {
   @override
@@ -64,7 +65,7 @@ class _FakeGoogleSignInPlatform extends GoogleSignInPlatform {
 }
 
 void main() {
-  late FakeDiaryReminderBackend backend;
+  late FakeReminderBackend backend;
 
   /// 抽屉里会创建 TimeProvider，而它的初始化会跑 `AppIdentityService.load()`。
   /// 这个方法**每次都会重新读偏好**，所以身份必须放在偏好里（而不是靠
@@ -140,17 +141,19 @@ void main() {
   setUp(() {
     installMocks();
     DiaryReminderService.resetForTesting();
+    ReminderPlatform.resetForTesting();
     AppIdentityService.resetForTesting();
 
-    backend = FakeDiaryReminderBackend();
-    DiaryReminderService.backendOverride = backend;
-    DiaryReminderService.androidPlatformOverride = true;
-    DiaryReminderService.timezoneIdentifierOverride = () async => 'Asia/Shanghai';
+    backend = FakeReminderBackend();
+    ReminderPlatform.backendOverride = backend;
+    ReminderPlatform.androidPlatformOverride = true;
+    ReminderPlatform.timezoneIdentifierOverride = () async => 'Asia/Shanghai';
     AppIdentityService.adoptManualKind(DiaryKind.g);
   });
 
   tearDown(() {
     DiaryReminderService.resetForTesting();
+    ReminderPlatform.resetForTesting();
     AppIdentityService.resetForTesting();
   });
 

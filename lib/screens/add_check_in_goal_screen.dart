@@ -1,11 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models/check_in_goal.dart';
-
+import '../models/check_in_reminder.dart';
+import '../services/app_log_service.dart';
+import '../services/check_in_reminder_service.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/time_wheel_sheet.dart';
 
 class AddCheckInGoalScreen extends StatefulWidget {
   const AddCheckInGoalScreen({super.key, this.goal});
@@ -29,6 +34,18 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
   DateTime? _startDate;
   DateTime? _endDate;
   int? _selectedDurationDays;
+
+  /// 打卡提醒是**设备本地**设置（不随目标同步），所以和表单其它字段分开管理。
+  bool _reminderEnabled = false;
+  int _reminderHour = CheckInReminderSettings.defaultHour;
+  int _reminderMinute = CheckInReminderSettings.defaultMinute;
+
+  /// 保存过程中禁止重复提交：保存要等提醒排程，不是瞬时操作。
+  bool _saving = false;
+
+  String get _reminderLabel =>
+      '${_reminderHour.toString().padLeft(2, '0')}:'
+      '${_reminderMinute.toString().padLeft(2, '0')}';
 
   static const _themeColors = AppSemanticColors.palette;
 
@@ -137,7 +154,42 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
       if (ci >= 0) _selectedColorIndex = ci;
       final ii = _icons.indexOf(g.icon);
       if (ii >= 0) _selectedIconIndex = ii;
+      // 提醒设置存在本机，按目标 id 读回
+      unawaited(_loadReminderSettings(g.id));
     }
+  }
+
+  Future<void> _loadReminderSettings(String goalId) async {
+    try {
+      final settings = await CheckInReminderService.loadSettings(goalId);
+      if (!mounted) return;
+      setState(() {
+        _reminderEnabled = settings.enabled;
+        _reminderHour = settings.hour;
+        _reminderMinute = settings.minute;
+      });
+    } catch (error, stackTrace) {
+      // 读不到就按未开启处理，不能因此让编辑页打不开
+      AppLogService.instance.warning(
+        '读取打卡提醒设置失败',
+        source: CheckInReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<void> _pickReminderTime() async {
+    final picked = await showTimeWheelSheet(
+      context,
+      initialTime: TimeOfDay(hour: _reminderHour, minute: _reminderMinute),
+      title: '提醒时间',
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _reminderHour = picked.hour;
+      _reminderMinute = picked.minute;
+    });
   }
 
   @override
@@ -148,7 +200,8 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
     super.dispose();
   }
 
-  void _save() {
+  Future<void> _save() async {
+    if (_saving) return;
     final name = _nameController.text.trim();
     if (name.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -184,7 +237,43 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
       isArchived: widget.goal?.isArchived ?? false,
       archivedAt: widget.goal?.archivedAt,
     );
+
+    setState(() => _saving = true);
+
+    // 提醒设置存在本机、按目标 id 索引，不写进 CheckInGoal（目标模型是白名单序列化，
+    // 加上去会被老版本的任意一次推送抹掉）。这里用刚确定的 goal.id 存下来。
+    CheckInReminderResult reminderResult;
+    try {
+      reminderResult = await CheckInReminderService.saveSettings(
+        CheckInReminderSettings(
+          goalId: goal.id,
+          enabled: _reminderEnabled,
+          hour: _reminderHour,
+          minute: _reminderMinute,
+          goalName: goal.name,
+          startDateMs: goal.startDate?.millisecondsSinceEpoch,
+          endDateMs: goal.endDate?.millisecondsSinceEpoch,
+          archived: goal.isArchived,
+        ),
+      );
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        '保存打卡提醒设置失败',
+        source: CheckInReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      reminderResult = const CheckInReminderResult.failed('提醒设置保存失败，请查看运行日志');
+    }
+
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
     Navigator.pop(context, goal);
+
+    final message = reminderResult.message;
+    if (message != null) {
+      messenger.showSnackBar(SnackBar(content: Text(message)));
+    }
   }
 
   @override
@@ -201,7 +290,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
         title: Text(isEdit ? '编辑打卡目标' : '新建打卡目标'),
         centerTitle: true,
         actions: [
-          TextButton(onPressed: _save, child: const Text('保存')),
+          TextButton(onPressed: () => _save(), child: const Text('保存')),
         ],
       ),
       body: ListView(
@@ -356,6 +445,24 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
             subtitle: const Text('自动获取 GPS 位置并在地图显示'),
             value: _requireLocation,
             onChanged: (v) => setState(() => _requireLocation = v),
+            contentPadding: EdgeInsets.zero,
+          ),
+          const SizedBox(height: 24),
+          _sectionTitle('提醒'),
+          const SizedBox(height: 4),
+          SwitchListTile(
+            title: const Text('打卡提醒'),
+            subtitle: const Text('每天到点提醒你完成这个目标（仅本机生效）'),
+            value: _reminderEnabled,
+            onChanged: (v) => setState(() => _reminderEnabled = v),
+            contentPadding: EdgeInsets.zero,
+          ),
+          ListTile(
+            title: const Text('提醒时间'),
+            subtitle: Text(_reminderLabel),
+            trailing: const Icon(Icons.chevron_right),
+            enabled: _reminderEnabled,
+            onTap: _pickReminderTime,
             contentPadding: EdgeInsets.zero,
           ),
           const SizedBox(height: 24),

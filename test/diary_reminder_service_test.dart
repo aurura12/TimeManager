@@ -6,8 +6,9 @@ import 'package:time_manager/models/diary_kind.dart';
 import 'package:time_manager/models/diary_reminder.dart';
 import 'package:time_manager/services/app_identity_service.dart';
 import 'package:time_manager/services/diary_reminder_service.dart';
+import 'package:time_manager/services/reminder_platform.dart';
 
-import 'support/fake_diary_reminder_backend.dart';
+import 'support/fake_reminder_backend.dart';
 
 const MethodChannel _secureStorage =
     MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
@@ -20,7 +21,7 @@ const MethodChannel _secureStorage =
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late FakeDiaryReminderBackend backend;
+  late FakeReminderBackend backend;
 
   const enabled = DiaryReminderSettings(enabled: true, hour: 21, minute: 0);
   const disabled = DiaryReminderSettings(enabled: false, hour: 21, minute: 0);
@@ -31,17 +32,19 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
 
     DiaryReminderService.resetForTesting();
+    ReminderPlatform.resetForTesting();
     AppIdentityService.resetForTesting();
 
-    backend = FakeDiaryReminderBackend();
-    DiaryReminderService.backendOverride = backend;
-    DiaryReminderService.androidPlatformOverride = true;
-    DiaryReminderService.timezoneIdentifierOverride = () async => 'Asia/Shanghai';
+    backend = FakeReminderBackend();
+    ReminderPlatform.backendOverride = backend;
+    ReminderPlatform.androidPlatformOverride = true;
+    ReminderPlatform.timezoneIdentifierOverride = () async => 'Asia/Shanghai';
     AppIdentityService.adoptManualKind(DiaryKind.g);
   });
 
   tearDown(() {
     DiaryReminderService.resetForTesting();
+    ReminderPlatform.resetForTesting();
     AppIdentityService.resetForTesting();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(_secureStorage, null);
@@ -170,7 +173,7 @@ void main() {
 
   group('时区', () {
     test('拿不到时区时拒绝排程，不静默回退 UTC', () async {
-      DiaryReminderService.timezoneIdentifierOverride =
+      ReminderPlatform.timezoneIdentifierOverride =
           () async => throw StateError('模拟读取时区失败');
 
       final status = await DiaryReminderService.saveSettings(enabled);
@@ -185,7 +188,7 @@ void main() {
     });
 
     test('时区标识不是 IANA 名称时同样拒绝排程', () async {
-      DiaryReminderService.timezoneIdentifierOverride = () async => 'GMT+08:00';
+      ReminderPlatform.timezoneIdentifierOverride = () async => 'GMT+08:00';
 
       final status = await DiaryReminderService.saveSettings(enabled);
 
@@ -322,8 +325,8 @@ void main() {
         ),
       );
 
-      await DiaryReminderService.handleColdStartNavigation();
-      await DiaryReminderService.handleColdStartNavigation();
+      await ReminderPlatform.handleColdStartNavigation();
+      await ReminderPlatform.handleColdStartNavigation();
 
       expect(taps, 1);
     });
@@ -333,7 +336,7 @@ void main() {
       DiaryReminderService.bindTapHandler(() => taps++);
       backend.launchDetails = const NotificationAppLaunchDetails(false);
 
-      await DiaryReminderService.handleColdStartNavigation();
+      await ReminderPlatform.handleColdStartNavigation();
 
       expect(taps, 0);
     });
@@ -356,7 +359,7 @@ void main() {
 
   group('非 Android 平台', () {
     test('桌面端整体短路，不触碰任何原生接口', () async {
-      DiaryReminderService.androidPlatformOverride = false;
+      ReminderPlatform.androidPlatformOverride = false;
       backend.calls.clear();
 
       final status = await DiaryReminderService.loadStatus();

@@ -1,5 +1,5 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:time_manager/services/diary_reminder_service.dart';
+import 'package:time_manager/services/reminder_backend.dart';
 import 'package:timezone/timezone.dart' as tz;
 
 /// 一次 `zonedSchedule` 调用的记录。
@@ -34,7 +34,7 @@ class FakeShownCall {
 ///
 /// 刻意**不实现**删除通道的方法：服务层一旦尝试删除通道就会编译不过，
 /// 这是「绝不 deleteNotificationChannel」的编译期保证。
-class FakeDiaryReminderBackend implements DiaryReminderBackend {
+class FakeReminderBackend implements ReminderBackend {
   int initializeCalls = 0;
   final List<AndroidNotificationChannel> createdChannels = [];
   final List<FakeScheduledCall> scheduledCalls = [];

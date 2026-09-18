@@ -33,8 +33,9 @@ void main() {
     );
     expect(find.text('每周 1 次'), findsOneWidget);
 
-    await tester.tap(find.byType(SwitchListTile).first);
-    await tester.tap(find.byType(SwitchListTile).last);
+    // 按标题定位而不是按位置：表单会继续加开关，位置索引一改就会点错控件
+    await tester.tap(find.widgetWithText(SwitchListTile, '需要照片'));
+    await tester.tap(find.widgetWithText(SwitchListTile, '记录位置'));
     await tester.pump();
 
     expect(find.text('照片可选'), findsOneWidget);

@@ -12,13 +12,16 @@ import 'package:time_manager/theme/app_semantic_colors.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'providers/time_provider.dart';
 import 'package:time_manager/screens/main_screen.dart';
+import 'screens/check_in_screen.dart';
 import 'screens/diary_screen.dart';
 import 'screens/global_search_screen.dart';
 import 'services/app_log_service.dart';
+import 'services/check_in_reminder_service.dart';
 import 'services/diary_reminder_diagnostics.dart';
 import 'services/diary_reminder_service.dart';
 import 'services/home_widget_action_router.dart';
 import 'services/home_widget_service.dart';
+import 'services/reminder_platform.dart';
 import 'services/sync_center_service.dart';
 import 'services/windows_legacy_preferences_migration.dart';
 import 'widgets/desktop_shortcut_host.dart';
@@ -391,7 +394,7 @@ Future<void> _initializeAndRunApplication({
   }
   HttpOverrides.global = _StableHttpOverrides();
 
-  // 写日记提醒（仅 Android）。原生事件导入必须在 AppLogService.initialize() 之后，
+  // 提醒（仅 Android）。原生事件导入必须在 AppLogService.initialize() 之后，
   // 触发过程的日志才会出现在「运行日志」里。fire-and-forget：
   // 提醒出任何问题都不得阻塞启动。
   if (Platform.isAndroid) {
@@ -412,6 +415,16 @@ Future<void> _initializeAndRunApplication({
         appLogService.error(
           '写日记提醒初始化失败',
           source: DiaryReminderService.logSource,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+      try {
+        await CheckInReminderService.initialize();
+      } catch (error, stackTrace) {
+        appLogService.error(
+          '打卡提醒初始化失败',
+          source: CheckInReminderService.logSource,
           error: error,
           stackTrace: stackTrace,
         );
@@ -523,6 +536,7 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
   StreamSubscription<Uri?>? _homeWidgetClicks;
   HomeWidgetActionRequest? _pendingHomeWidgetAction;
   bool _pendingDiaryReminderRoute = false;
+  bool _pendingCheckInReminderRoute = false;
   final _RootRouteTracker _rootRouteTracker = _RootRouteTracker();
 
   @override
@@ -541,11 +555,13 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
         unawaited(_readInitialHomeWidgetUri());
       });
 
-      // 写日记提醒：绑定点击处理并读取冷启动来源。
-      // bindTapHandler 会补发「初始化早于本次绑定」时收到的点击。
+      // 提醒：绑定各自的点击路由并读取冷启动来源。
+      // registerTapHandler 会补发「初始化早于本次绑定」时收到的点击；
+      // 插件只能初始化一次，所以冷启动读取由 ReminderPlatform 统一负责。
       DiaryReminderService.bindTapHandler(_openDiaryFromReminder);
+      CheckInReminderService.bindTapHandler(_openCheckInFromReminder);
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        unawaited(_readInitialDiaryReminderLaunch());
+        unawaited(_readInitialReminderLaunch());
       });
     }
   }
@@ -595,12 +611,13 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
     );
   }
 
-  Future<void> _readInitialDiaryReminderLaunch() async {
+  /// 通知冷启动跳转。两类提醒共用同一个入口，按 payload 分发到已注册的路由。
+  Future<void> _readInitialReminderLaunch() async {
     try {
-      await DiaryReminderService.handleColdStartNavigation();
+      await ReminderPlatform.handleColdStartNavigation();
     } catch (error, stackTrace) {
       AppLogService.instance.warning(
-        '读取写日记提醒启动动作失败',
+        '读取提醒启动动作失败',
         source: DiaryReminderService.logSource,
         error: error,
         stackTrace: stackTrace,
@@ -611,6 +628,37 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
   void _openDiaryFromReminder() {
     _pendingDiaryReminderRoute = true;
     _dispatchPendingDiaryReminderRoute();
+  }
+
+  /// 打卡提醒的点击落点。
+  ///
+  /// 刻意 push 打卡首页而不是某个目标的详情页：`CheckInScreen` 无参、自带
+  /// `CheckInSyncService`，冷启动时也能直接打开；而详情页需要先异步查出目标并
+  /// 自己构造 syncService，冷启动路径很容易失败。payload 里的 goalId 只用于
+  /// 日志定位，不参与路由。
+  void _openCheckInFromReminder(String? _) {
+    _pendingCheckInReminderRoute = true;
+    _dispatchPendingCheckInReminderRoute();
+  }
+
+  void _dispatchPendingCheckInReminderRoute() {
+    if (!_pendingCheckInReminderRoute || !mounted) return;
+
+    final navigator = rootNavigatorKey.currentState;
+    if (navigator == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _dispatchPendingCheckInReminderRoute();
+      });
+      return;
+    }
+
+    _pendingCheckInReminderRoute = false;
+    unawaited(navigator.push<void>(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: '/check-in-reminder'),
+        builder: (_) => const CheckInScreen(),
+      ),
+    ));
   }
 
   /// 点通知后 push 一个独立的日记页路由，而不是切换底部 Tab。

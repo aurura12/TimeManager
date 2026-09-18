@@ -4,4 +4,4 @@
   一旦被裁掉通知就会静默不显示。这里显式保留。
 -->
 <resources xmlns:tools="http://schemas.android.com/tools"
-    tools:keep="@drawable/ic_stat_diary_reminder" />
+    tools:keep="@drawable/ic_stat_diary_reminder,@drawable/ic_stat_check_in_reminder" />

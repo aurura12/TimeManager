@@ -10,6 +10,7 @@ import '../models/schedule_sync_progress.dart';
 import '../providers/time_provider.dart';
 import '../services/app_log_service.dart';
 import '../services/diary_local_store.dart';
+import '../services/check_in_reminder_service.dart';
 import '../services/diary_reminder_diagnostics.dart';
 import '../services/diary_reminder_service.dart';
 import '../services/diary_search_service.dart';
@@ -120,7 +121,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       // App 回到前台时检查日期变化：跨午夜时允许当天再次弹出
       _tryShowOnThisDay();
       unawaited(_timeProvider.onAppResumed());
-      unawaited(_refreshDiaryReminder());
+      unawaited(_refreshReminders());
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _timeProvider.onAppBackgrounded();
@@ -129,7 +130,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   /// 先导入后台期间的原生触发结果，再做一次幂等的排程自检。
   /// 这样「到点到底响没响」会立刻出现在运行日志里，不必等下次冷启动。
-  Future<void> _refreshDiaryReminder() async {
+  Future<void> _refreshReminders() async {
     try {
       await DiaryReminderDiagnostics.importPendingEvents();
     } catch (error, stackTrace) {
@@ -147,6 +148,18 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       AppLogService.instance.error(
         '写日记提醒恢复自检失败',
         source: DiaryReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+    try {
+      // 打卡提醒只用本地偏好自检（不加载整份打卡文档）；
+      // 权威的"目标是否还存在"由打卡页打开时用完整列表对齐
+      await CheckInReminderService.reconcile();
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        '打卡提醒恢复自检失败',
+        source: CheckInReminderService.logSource,
         error: error,
         stackTrace: stackTrace,
       );
