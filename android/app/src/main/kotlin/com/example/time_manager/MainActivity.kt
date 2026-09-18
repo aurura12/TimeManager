@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Build
 import android.util.Log
 import androidx.core.content.FileProvider
+import com.dexterous.flutterlocalnotifications.DiaryReminderNativeEventStore
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -12,6 +13,8 @@ import java.io.File
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.example.time_manager/install_apk"
+    private val REMINDER_EVENTS_CHANNEL =
+        "com.example.time_manager/diary_reminder_events"
     private val TAG = "MainActivity"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -38,6 +41,32 @@ class MainActivity : FlutterActivity() {
                     }
                 } else {
                     result.notImplemented()
+                }
+            }
+
+        // 写日记提醒：到点时 Dart 不运行，触发过程由原生 receiver 写进队列，这里只读不给。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, REMINDER_EVENTS_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "readPending" -> {
+                        try {
+                            result.success(DiaryReminderNativeEventStore.readPending(this))
+                        } catch (e: Exception) {
+                            Log.e(TAG, "读取提醒事件失败", e)
+                            result.error("READ_FAILED", e.message, null)
+                        }
+                    }
+                    "ack" -> {
+                        try {
+                            val ids = call.argument<List<String>>("ids") ?: emptyList()
+                            DiaryReminderNativeEventStore.ack(this, ids)
+                            result.success(null)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "确认提醒事件失败", e)
+                            result.error("ACK_FAILED", e.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
                 }
             }
     }

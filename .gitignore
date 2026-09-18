@@ -100,6 +100,8 @@ unlinked_spec.ds
 keystore/
 local.properties
 **/.cxx/
+# Kotlin 增量编译产生的会话文件
+**/.kotlin/
 
 # iOS/XCode related
 **/ios/**/*.mode1v3
