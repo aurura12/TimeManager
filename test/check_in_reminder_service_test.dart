@@ -235,6 +235,31 @@ void main() {
 
       expect(backend.scheduledCalls, hasLength(1));
     });
+
+    test('结束日当天照常排程，次日才失效', () async {
+      final now = DateTime.now();
+      final todayOnly = DateTime(now.year, now.month, now.day);
+      final yesterday = todayOnly.subtract(const Duration(days: 1));
+
+      // 回归：结束日是当天 00:00，按"具体时刻"比较会让结束日整天都被判过期
+      await CheckInReminderService.saveSettings(
+        settings('g1').copyWith(endDateMs: todayOnly.millisecondsSinceEpoch),
+      );
+      expect(backend.scheduledCalls, hasLength(1));
+      expect(
+        settings('g1')
+            .copyWith(endDateMs: todayOnly.millisecondsSinceEpoch)
+            .isEligibleAt(todayOnly.add(const Duration(hours: 23))),
+        isTrue,
+        reason: '结束日当天整天有效，与 CheckInGoal 的口径一致',
+      );
+
+      backend.pending = <PendingNotificationRequest>[];
+      await CheckInReminderService.saveSettings(
+        settings('g1').copyWith(endDateMs: yesterday.millisecondsSinceEpoch),
+      );
+      expect(backend.cancelledIds, isNotEmpty, reason: '结束日之后必须停掉');
+    });
   });
 
   group('与目标列表对齐', () {

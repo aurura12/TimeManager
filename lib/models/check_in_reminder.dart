@@ -61,8 +61,15 @@ class CheckInReminderSettings {
     if (!enabled) return false;
     if (archived) return false;
     final end = endDateMs;
-    if (end != null && now.isAfter(DateTime.fromMillisecondsSinceEpoch(end))) {
-      return false;
+    if (end != null) {
+      // `endDate` 是结束日当天 00:00，而结束日当天仍算有效（与
+      // `CheckInGoal.allowsCheckInAt` 同一套口径），所以必须按"日"比较：
+      // 按具体时刻比较会让结束日从零点起整天都不提醒。
+      final endDay = DateTime.fromMillisecondsSinceEpoch(end);
+      final today = DateTime(now.year, now.month, now.day);
+      if (today.isAfter(DateTime(endDay.year, endDay.month, endDay.day))) {
+        return false;
+      }
     }
     final start = startDateMs;
     if (start != null && now.isBefore(DateTime.fromMillisecondsSinceEpoch(start))) {
