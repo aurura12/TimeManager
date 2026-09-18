@@ -64,6 +64,13 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
     return sel.year != now.year || sel.month != now.month || sel.day != now.day;
   }
 
+  /// 是否允许在这个弹窗里改日期。
+  ///
+  /// 只有补打卡入口（[CheckInPhotoSheet.initialDate] 非空）才需要改日期；正常打卡
+  /// 记的就是「现在」，日期行只作展示，点了也不该能改——否则随手确定一下就会
+  /// 把打卡记成别的日期。
+  bool get _canPickDate => widget.initialDate != null;
+
   String get _dateLabel {
     if (_isBackfill) {
       return '${_selectedDate.month}月${_selectedDate.day}日 '
@@ -292,22 +299,20 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                   ],
                 ),
                 const SizedBox(height: 16),
-                // 日期选择行（补打卡时显示橙色标记）
+                // 日期行：仅补打卡可改，最晚只能选到昨天（今天走正常打卡入口）
                 InkWell(
                   borderRadius: AppRadius.controlAll,
-                  onTap: _uploading
+                  onTap: (!_canPickDate || _uploading)
                       ? null
                       : () async {
-                          // 这个日期行只用于把打卡时间改到更早的日期，也就是「补打卡」。
-                          // 因此最晚只能选到昨天：今天要走正常打卡入口，不能在这里
-                          // 造出一条「日期是今天、却标记为补打卡」的记录。
                           final now = DateTime.now();
                           final yesterday = DateTime(now.year, now.month, now.day)
                               .subtract(const Duration(days: 1));
-                          // 正常打卡进来时 _selectedDate 是今天，已经超出可选范围，
-                          // 直接拿它当 initialDate 会触发 showDatePicker 的断言。
-                          final initialDate =
-                              _selectedDate.isAfter(yesterday) ? yesterday : _selectedDate;
+                          // initialDate 必须在 [firstDate, lastDate] 内，否则
+                          // showDatePicker 会断言失败，这里兜一下未来日期。
+                          final initialDate = _selectedDate.isAfter(yesterday)
+                              ? yesterday
+                              : _selectedDate;
                           final picked = await showDatePicker(
                             context: context,
                             initialDate: initialDate,
