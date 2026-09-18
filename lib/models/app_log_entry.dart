@@ -33,6 +33,7 @@ class AppLogEntry {
     required this.message,
     this.error,
     this.stackTrace,
+    this.dedupeKey,
   });
 
   final DateTime timestamp;
@@ -41,6 +42,9 @@ class AppLogEntry {
   final String message;
   final String? error;
   final String? stackTrace;
+
+  /// 幂等键。用于导入原生事件时避免重复写入；为 null 表示普通日志。
+  final String? dedupeKey;
 
   DateTime get localTimestamp => timestamp.toLocal();
 
@@ -53,6 +57,8 @@ class AppLogEntry {
       'message': message,
       if (error != null) 'error': error,
       if (stackTrace != null) 'stackTrace': stackTrace,
+      // 空值不序列化，旧日志文件保持不变
+      if (dedupeKey != null) 'dedupeKey': dedupeKey,
     };
   }
 
@@ -82,6 +88,8 @@ class AppLogEntry {
       error: json['error'] is String ? json['error'] as String : null,
       stackTrace:
           json['stackTrace'] is String ? json['stackTrace'] as String : null,
+      // 旧日志没有这个字段，缺失即为 null
+      dedupeKey: json['dedupeKey'] is String ? json['dedupeKey'] as String : null,
     );
   }
 }

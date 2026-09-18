@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 写日记提醒：POST_NOTIFICATIONS / VIBRATE 由 flutter_local_notifications 插件自带，
+         这里只补插件不声明、但定时通知必需的权限 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- 侧载自用：安装即授予精确闹钟权限，无需运行时弹窗，因此不声明 SCHEDULE_EXACT_ALARM -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
     <application
         android:label="时间块"
         android:name="${applicationName}"
@@ -59,6 +64,25 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/time_manager_widget_info" />
+        </receiver>
+
+        <!-- 写日记提醒：到点由系统调用它展示通知 -->
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
+            android:exported="false" />
+        <!-- 重启 / 应用更新后由插件按原生记录自动补登记。
+             注意：这里绝不能写 android:enabled="false"。
+             旧实现把等价的 RebootBroadcastReceiver 显式禁用，与 rescheduleOnReboot 矛盾，
+             导致重启后提醒永久不再触发。 -->
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
         </receiver>
     </application>
     <!-- Required to query activities that can process text, see:

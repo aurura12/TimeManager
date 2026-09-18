@@ -119,21 +119,7 @@ class AppLogService extends ChangeNotifier {
       _entries.removeRange(maxEntries, _entries.length);
     }
     notifyListeners();
-
-    final consoleMessage = entry.error == null
-        ? entry.message
-        : '${entry.message}: ${entry.error}';
-    final safeStackTrace = entry.stackTrace == null
-        ? null
-        : StackTrace.fromString(entry.stackTrace!);
-    switch (level) {
-      case AppLogLevel.info:
-        _logger.i(consoleMessage);
-      case AppLogLevel.warning:
-        _logger.w(consoleMessage);
-      case AppLogLevel.error:
-        _logger.e(consoleMessage, stackTrace: safeStackTrace);
-    }
+    _logToConsole(entry);
 
     if (!_initialized) return;
     final line = jsonEncode(entry.toJson());
@@ -157,6 +143,95 @@ class AppLogService extends ChangeNotifier {
         rethrow;
       }
     });
+  }
+
+  /// 控制台输出，不参与持久化。
+  void _logToConsole(AppLogEntry entry) {
+    final consoleMessage = entry.error == null
+        ? entry.message
+        : '${entry.message}: ${entry.error}';
+    final safeStackTrace = entry.stackTrace == null
+        ? null
+        : StackTrace.fromString(entry.stackTrace!);
+    switch (entry.level) {
+      case AppLogLevel.info:
+        _logger.i(consoleMessage);
+      case AppLogLevel.warning:
+        _logger.w(consoleMessage);
+      case AppLogLevel.error:
+        _logger.e(consoleMessage, stackTrace: safeStackTrace);
+    }
+  }
+
+  /// 幂等写入一条带原始发生时间的日志，并返回它**是否已成功落到磁盘**。
+  ///
+  /// 供原生事件导入使用：只有明确返回 `true` 才可以删除原生队列里的对应事件。
+  /// 与 [log] 的区别有两点：
+  /// - [log] 走 [_enqueue]，持久化异常被吞掉、只在控制台打印，调用方无法知道结果；
+  /// - [log] 用当前时间，本方法保留事件在原生侧的真实发生时间。
+  ///
+  /// [dedupeKey] 已存在于内存时不会重复插入，而是改为整体重写日志文件：
+  /// 这样既能修复「上次追加其实没生效」，也能修复「上次追加已生效但调用报错」，
+  /// 两种情况最终都保证磁盘上恰好一条。
+  Future<bool> logEventOnceAt(
+    AppLogLevel level,
+    String message, {
+    required String dedupeKey,
+    DateTime? timestamp,
+    String source = 'app',
+    Object? error,
+    StackTrace? stackTrace,
+  }) {
+    final entry = _normalizeEntry(
+      AppLogEntry(
+        timestamp: (timestamp ?? _clock()).toUtc(),
+        level: level,
+        source: source,
+        message: message,
+        error: error?.toString(),
+        stackTrace: stackTrace?.toString(),
+        dedupeKey: dedupeKey,
+      ),
+    );
+
+    final alreadyPresent = _entries.any((e) => e.dedupeKey == dedupeKey);
+    if (!alreadyPresent) {
+      _entries.insert(0, entry);
+      if (_entries.length > maxEntries) {
+        _entries.removeRange(maxEntries, _entries.length);
+      }
+      notifyListeners();
+      _logToConsole(entry);
+    }
+
+    if (!_initialized) return Future<bool>.value(false);
+    return _persistReporting(entry, rewriteOnly: alreadyPresent);
+  }
+
+  /// 与 [log] 的持久化路径相同，但把成功与否回报给调用方。
+  Future<bool> _persistReporting(
+    AppLogEntry entry, {
+    required bool rewriteOnly,
+  }) {
+    final completer = Completer<bool>();
+    _writeQueue = _writeQueue.then<void>((_) async {
+      try {
+        if (rewriteOnly || _storedLineCount >= maxEntries) {
+          await _store.rewriteLines(_chronologicalJsonLines());
+          _storedLineCount = _entries.length;
+        } else {
+          await _store.appendLine(jsonEncode(entry.toJson()));
+          _storedLineCount++;
+        }
+        completer.complete(true);
+      } catch (error, stackTrace) {
+        // 与 _enqueue 保持一致：追加可能已经生效但报错，下次强制重写修复。
+        _storedLineCount = maxEntries;
+        debugPrint('[AppLog] 原生事件持久化失败: $error\n$stackTrace');
+        completer.complete(false);
+      }
+    });
+    return completer.future;
   }
 
   void info(
@@ -250,6 +325,7 @@ class AppLogService extends ChangeNotifier {
       message: _truncate(_sanitize(entry.message), _maxMessageLength),
       error: _normalizeOptional(entry.error, _maxMessageLength),
       stackTrace: _normalizeOptional(entry.stackTrace, _maxStackTraceLength),
+      dedupeKey: entry.dedupeKey,
     );
   }
 

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  通知小图标是用 Dart 字符串按名字引用的，资源压缩看不到这层引用，
+  一旦被裁掉通知就会静默不显示。这里显式保留。
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_stat_diary_reminder" />
