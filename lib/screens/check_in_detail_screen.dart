@@ -442,22 +442,16 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                         AppSemanticColors.onColor(AppSemanticColors.warning),
                     child: const Icon(Icons.history),
                   ),
-                  // 打卡 — 仅当天未打卡时显示
-                  if (_userId != null &&
-                      !_goal.isCompletedTodayBy(
-                        _userId!,
-                        email: widget.syncService.currentUser?.email,
-                      )) ...[
-                    const SizedBox(height: 8),
-                    FloatingActionButton.extended(
-                      heroTag: 'checkin',
-                      onPressed: _checkIn,
-                      backgroundColor: _goal.color,
-                      foregroundColor: onColor,
-                      icon: const Icon(Icons.add_a_photo),
-                      label: const Text('打卡'),
-                    ),
-                  ],
+                  // 打卡 — 不做次数限制，随时可打
+                  const SizedBox(height: 8),
+                  FloatingActionButton.extended(
+                    heroTag: 'checkin',
+                    onPressed: _checkIn,
+                    backgroundColor: _goal.color,
+                    foregroundColor: onColor,
+                    icon: const Icon(Icons.add_a_photo),
+                    label: const Text('打卡'),
+                  ),
                 ],
               ),
             )

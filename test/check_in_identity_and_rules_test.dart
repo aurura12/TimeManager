@@ -106,26 +106,36 @@ void main() {
       );
     });
 
-    test('同一邮箱的跨身份记录会被重复打卡校验识别', () {
-      final goal = _goal();
-      final error = CheckInSyncService.validateCheckInRequest(
-        goal: goal,
-        existingRecords: [
-          _record(
-            userId: 'google-sub-g',
-            timestamp: DateTime(2026, 9, 14, 8),
-          ),
-        ],
-        userId: 'manual-g',
-        userEmail: _guaiEmail,
-        now: DateTime(2026, 9, 14, 12),
-        backfillDate: DateTime(2026, 9, 14, 7),
+    test('同一邮箱的跨身份记录按同一用户统计，但不再拦截打卡', () {
+      final now = DateTime(2026, 9, 14, 12);
+      final goal = _goal().copyWith(records: [
+        _record(
+          userId: 'google-sub-g',
+          timestamp: DateTime(2026, 9, 14, 8),
+        ),
+      ]);
+
+      // 手动身份与 Google 身份按邮箱归一化，统计口径仍然互通
+      expect(
+        goal.countForPeriodAt(DateTime(2026, 9, 14), 'manual-g',
+            email: _guaiEmail),
+        1,
       );
 
-      expect(error, '这一天已经打卡，不能重复补打卡');
+      // 次数达到目标值后不再阻止继续打卡 / 补打卡
+      expect(
+        CheckInSyncService.validateCheckInRequest(
+          goal: goal,
+          userId: 'manual-g',
+          userEmail: _guaiEmail,
+          now: now,
+          backfillDate: DateTime(2026, 9, 14, 7),
+        ),
+        isNull,
+      );
     });
 
-    test('每天 3 次目标在达到上限前允许继续打卡，补打卡也按当天计数', () {
+    test('目标次数只影响统计，不再限制打卡', () {
       final current = DateTime.now();
       final today = DateTime(current.year, current.month, current.day);
       final now = today.add(const Duration(hours: 12));
@@ -142,21 +152,15 @@ void main() {
         id: 'r3',
         timestamp: today.add(const Duration(hours: 10)),
       );
-
-      expect(
-        CheckInSyncService.validateCheckInRequest(
-          goal: goal,
-          existingRecords: [first],
-          userId: 'manual-g',
-          userEmail: _guaiEmail,
-          now: now,
-        ),
-        isNull,
+      final fourth = _record(
+        id: 'r4',
+        timestamp: today.add(const Duration(hours: 11)),
       );
+
+      // 已经打满 3 次（含补打卡）仍然允许继续打卡
       expect(
         CheckInSyncService.validateCheckInRequest(
-          goal: goal,
-          existingRecords: [first, second],
+          goal: goal.copyWith(records: [first, second, third]),
           userId: 'manual-g',
           userEmail: _guaiEmail,
           now: now,
@@ -164,21 +168,13 @@ void main() {
         ),
         isNull,
       );
-      expect(
-        CheckInSyncService.validateCheckInRequest(
-          goal: goal,
-          existingRecords: [first, second, third],
-          userId: 'manual-g',
-          userEmail: _guaiEmail,
-          now: now,
-          backfillDate: now,
-        ),
-        '今天已达到 3 次，不能继续打卡',
-      );
 
-      final goalWithRecords = goal.copyWith(records: [first, second]);
+      // 统计语义不变：达到目标次数才算「今天已完成」
       expect(
-        goalWithRecords.isCompletedTodayBy('manual-g', email: _guaiEmail),
+        goal.copyWith(records: [first, second]).isCompletedTodayBy(
+          'manual-g',
+          email: _guaiEmail,
+        ),
         isFalse,
       );
       expect(
@@ -189,17 +185,17 @@ void main() {
         isTrue,
       );
 
-      // 其他日期仍是独立的计数窗口，不能被今天的上限误伤。
+      // 超出目标次数照常累加，别的日期仍是独立计数窗口
+      final overflowed = goal.copyWith(records: [first, second, third, fourth]);
       expect(
-        CheckInSyncService.validateCheckInRequest(
-          goal: goal,
-          existingRecords: [first, second, third],
-          userId: 'manual-g',
-          userEmail: _guaiEmail,
-          now: now,
-          backfillDate: now.subtract(const Duration(days: 1)),
-        ),
-        isNull,
+        overflowed.currentPeriodCountFor('manual-g', email: _guaiEmail),
+        4,
+      );
+      expect(
+        overflowed.countForPeriodAt(
+            now.subtract(const Duration(days: 1)), 'manual-g',
+            email: _guaiEmail),
+        0,
       );
     });
   });
@@ -229,7 +225,6 @@ void main() {
       expect(
         CheckInSyncService.validateCheckInRequest(
           goal: goal,
-          existingRecords: const [],
           userId: 'manual-g',
           userEmail: _guaiEmail,
           now: DateTime(2026, 9, 14, 23),
@@ -239,7 +234,6 @@ void main() {
       expect(
         CheckInSyncService.validateCheckInRequest(
           goal: goal,
-          existingRecords: const [],
           userId: 'manual-g',
           userEmail: _guaiEmail,
           now: DateTime(2026, 9, 15),
@@ -258,7 +252,6 @@ void main() {
       expect(
         CheckInSyncService.validateCheckInRequest(
           goal: goal,
-          existingRecords: const [],
           userId: userId,
           userEmail: _guaiEmail,
           now: DateTime(2026, 9, 16),
@@ -269,7 +262,6 @@ void main() {
       expect(
         CheckInSyncService.validateCheckInRequest(
           goal: goal,
-          existingRecords: const [],
           userId: userId,
           userEmail: _guaiEmail,
           now: DateTime(2026, 9, 14),
@@ -297,7 +289,6 @@ void main() {
       expect(
         CheckInSyncService.validateCheckInRequest(
           goal: otherGoal,
-          existingRecords: const [],
           userId: 'manual-g',
           userEmail: _guaiEmail,
           now: DateTime(2026, 9, 14),

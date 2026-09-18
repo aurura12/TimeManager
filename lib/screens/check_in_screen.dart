@@ -759,8 +759,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
                             const Text('补打卡', style: TextStyle(fontSize: 12)),
                       ),
                     ],
-                    // 打卡 — 仅目标周期未达到次数上限时显示
-                    if (canCheckIn && !checked) ...[
+                    // 打卡 — 不做次数限制，自己的目标随时可打
+                    if (canCheckIn) ...[
                       const SizedBox(width: 4),
                       TextButton.icon(
                         onPressed: () => _quickCheckIn(goal),

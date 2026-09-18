@@ -122,11 +122,10 @@ class CheckInSyncService {
 
   /// 提交打卡前的统一规则校验。
   ///
-  /// [existingRecords] 应来自服务当前文档，而不是仅来自页面传入的旧快照，
-  /// 这样同一账号在另一台设备上刚打过卡时也不会被本地页面绕过。
+  /// 只校验归属、目标有效期、照片/位置等硬性要求，**不做次数限制**：
+  /// `goal.targetCount` 与 `goal.period` 只用于统计展示，不参与拦截。
   static String? validateCheckInRequest({
     required CheckInGoal goal,
-    required Iterable<CheckInRecord> existingRecords,
     required String userId,
     required String userEmail,
     required DateTime now,
@@ -154,28 +153,10 @@ class CheckInSyncService {
     if (goal.requirePhoto && !hasPhoto) return '请先添加打卡照片';
     if (goal.requireLocation && !hasLocation) return '请先获取打卡位置';
 
-    final periodCount = existingRecords
-        .where(
-          (record) =>
-              record.goalId == goal.id &&
-              record.belongsTo(userId, userEmail) &&
-              goal.isInPeriodAt(record.timestamp, effectiveDate),
-        )
-        .length;
-    if (goal.targetCount > 0 && periodCount >= goal.targetCount) {
-      if (goal.period == CheckInPeriod.daily && goal.targetCount == 1) {
-        return '这一天已经打卡，不能重复补打卡';
-      }
-      return goal.period == CheckInPeriod.daily
-          ? '${_isSameLocalDay(effectiveDate, now) ? '今天' : '该日期'}已达到 '
-              '${goal.targetCount} 次，不能继续打卡'
-          : '本周期已达到 ${goal.targetCount} 次，不能继续打卡';
-    }
+    // 打卡不做次数限制：targetCount 只用于统计（进度、徽标、连续天数），
+    // 不管目标周期内已经打过几次，都允许继续打卡 / 补打卡。
     return null;
   }
-
-  static bool _isSameLocalDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
 
   /// Windows 手动身份派生的打卡用户（仅 Windows 使用）
   GoogleCalendarUser? _manualUser;
@@ -733,8 +714,9 @@ class CheckInSyncService {
         final now = DateTime.now();
         final token = await _requireToken();
 
-        // 有远端文档时先合并，校验必须基于最新记录；没有 Token 时保留原有
-        // 离线草稿行为，最终推送阶段会返回同步失败而不丢失本地记录。
+        // 有远端文档时先合并，打卡要落在最新文档上（目标可能已在别处被删/归档，
+        // 本地也不能覆盖其他设备刚产生的记录）；没有 Token 时保留原有离线草稿
+        // 行为，最终推送阶段会返回同步失败而不丢失本地记录。
         if (token != null) {
           final pull = await _pullAndMergeForWrite(token);
           if (pull.error != null) return CheckInSyncResult.fail(pull.error!);
@@ -747,7 +729,6 @@ class CheckInSyncService {
         if (liveGoal == null) return CheckInSyncResult.fail('目标不存在或已被删除');
         final validation = validateCheckInRequest(
           goal: liveGoal,
-          existingRecords: _document.records,
           userId: user.id,
           userEmail: user.email,
           now: now,
