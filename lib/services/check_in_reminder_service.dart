@@ -137,7 +137,14 @@ class CheckInReminderService {
       await _requestPermissionIfNeeded();
     }
 
-    await reconcile(force: true);
+    final failed = await reconcile(force: true);
+    if (settings.enabled && failed.contains(settings.goalId)) {
+      // 排程这一步抛了异常，设置虽然存下了但不会响。必须如实说，
+      // 否则开关停在一个"看起来开着"的状态里。
+      return const CheckInReminderResult.failed(
+        '提醒排程失败，设置已保存但暂时不会响。请查看运行日志',
+      );
+    }
     return _evaluate(settings);
   }
 
@@ -180,18 +187,23 @@ class CheckInReminderService {
   /// 传部分列表会把没列进来的目标的提醒全部误删。这是「另一端删了目标并同步过来」
   /// 的唯一清理时机——本地偏好里的孤儿项否则会一直提醒下去。
   /// 传 null 时只用本地偏好判断（回到前台的自检走这条，不需要加载整份文档）。
-  static Future<void> reconcile({
+  ///
+  /// 返回**排程调用抛错的目标 id**。[_schedule] 内部把异常降级成日志，所以调用方
+  /// 只能靠这个集合判断"到底登记上没有"，不能靠本方法是否正常返回。
+  /// 被节流、非 Android、未初始化时会提前返回空集——空集只表示"没有失败记录"，
+  /// 不表示全部成功；需要确切答案的调用方必须传 `force: true`。
+  static Future<Set<String>> reconcile({
     List<CheckInGoal>? allGoals,
     bool force = false,
   }) async {
-    if (!ReminderPlatform.isAndroid || !_initialized) return;
+    if (!ReminderPlatform.isAndroid || !_initialized) return const <String>{};
 
     final now = DateTime.now();
     final last = _lastReconcileAt;
     if (!force &&
         last != null &&
         now.difference(last) < _reconcileMinInterval) {
-      return;
+      return const <String>{};
     }
     _lastReconcileAt = now;
 
@@ -220,6 +232,7 @@ class CheckInReminderService {
       fallback: true,
     );
 
+    final failedGoalIds = <String>{};
     var desired = 0;
     var scheduled = 0;
     var cancelled = 0;
@@ -252,6 +265,8 @@ class CheckInReminderService {
       if (await _schedule(settings, notificationId, exactAllowed)) {
         scheduled++;
         _fingerprints[notificationId] = fingerprint;
+      } else {
+        failedGoalIds.add(goalId);
       }
     }
 
@@ -265,6 +280,8 @@ class CheckInReminderService {
       notifications: notificationsAllowed,
       timezone: timezoneName,
     );
+
+    return failedGoalIds;
   }
 
   /// 单个目标变化后更新它的提醒（不需要完整目标列表）。

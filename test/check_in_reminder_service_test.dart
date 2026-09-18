@@ -348,6 +348,16 @@ void main() {
       expect(result.ok, isTrue);
       expect(result.message, contains('通道'));
     });
+
+    test('排程抛异常时如实告知，不假装设置成功', () async {
+      backend.throwOnSchedule = true;
+
+      final result = await CheckInReminderService.saveSettings(settings('g1'));
+
+      expect(backend.scheduledCalls, isEmpty);
+      expect(result.ok, isFalse);
+      expect(result.message, contains('排程失败'));
+    });
   });
 
   group('点击', () {
