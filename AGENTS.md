@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Flutter time management app (v1.99.0+17, package name `time_manager`) with Google Calendar integration, daily diary, travel records, check-in tracking, target tracking, AI daily review, voice scheduling, app logging, global search, and a unified sync center. Chinese-language UI with English fallback. Supports Android, Windows desktop, and macOS.
+Flutter time management app (v1.99.0+17, package name `time_manager`) with Google Calendar integration, daily diary, travel records, check-in tracking, target tracking, AI daily review, voice scheduling, app logging, global search, a unified sync center, and a daily diary reminder (Android local notification). Chinese-language UI with English fallback. Supports Android, Windows desktop, and macOS.
 
 ## Architecture
 
@@ -11,19 +11,20 @@ Flutter time management app (v1.99.0+17, package name `time_manager`) with Googl
   - `time_provider.dart` → `TimeProvider` (~10000 行) — 核心业务状态：时间块、分类、目标、模板、撤销栈、统计缓存、增量保存、Google 日历同步、日程(schedule)同步、已删除事件关系
   - `theme_mode_provider.dart` → `ThemeModeProvider` (52 行) — 主题模式 (light/dark/system)
   - `target_stats_cache.dart` → `TargetStatsCache` (47 行) — 目标统计内存缓存，按日期失效
-- **Models**: `lib/models/` (27 个文件)
+- **Models**: `lib/models/` (28 个文件)
   - 时间记录：`TimeSlot`, `Category`, `CalendarBlock`, `ScheduleTemplate`, `VoiceScheduleDraft`, `ScheduleSyncProgress`
   - 打卡系统：`CheckInGoal`, `CheckInRecord`, `CheckInDocument`, `CheckInViewFilter`
   - 目标系统：`Target`
   - 出行：`TravelRecord`, `TravelRecordsDocument`（同一文件）
   - 日记：`DiaryKind`, `DiarySearchResult`
   - AI 复盘：`DailyReviewChatMessage`, `DailyReviewChatSession`
+  - 提醒：`DiaryReminderSettings` / `DiaryReminderIssue` / `DiaryReminderStatus`（同一文件 `diary_reminder.dart`）
   - 用户/身份：`GoogleCalendarUser`, `KnownGoogleUsers`（手动/Google 双身份模式，见 `AppIdentityService`）
   - 搜索/同步/日志：`SearchResult`, `GlobalSearchResult`（含 `GlobalSearchContentType` / `GlobalSearchIdentityFilter`）, `RemoteSyncPlatform`, `PendingSyncState`, `SyncCenterState`（含 `SyncModule` / `SyncModuleStatus`）, `AppLogEntry`, `OnThisDayEntry`
   - 分类生命周期：`DeletedEventRelation`（已删除事件的父子关系，仅本地持久化，见"数据流与关键模式"）
   - 工具：`CoordTransform`
 - **Screens**: `lib/screens/` (22 个) — `MainScreen`, `HomeScreen`, `DiaryScreen`, `TravelScreen`, `CheckInScreen`, `TargetScreen`, `ProfileScreen`, plus `DailyReviewScreen`, `WordCloudScreen`, `EventDetailScreen`, `TargetDetailScreen`, `AddTargetScreen`, `GlobalSearchScreen`, `GlobalSearchDetailScreen`, `DiarySearchScreen`, `AddCheckInGoalScreen`, `CheckInDetailScreen`, `CheckInArchiveScreen`, `CheckInMapScreen` (flutter_map 地图), `SyncCenterScreen`, `AppLogScreen`, `OnThisDayScreen`
-- **Services**: `lib/services/` (57 个文件)，主要板块：
+- **Services**: `lib/services/` (59 个文件)，主要板块：
   - **Google 身份 & 日历**：`GoogleCalendarService` (OAuth 2.0 + 事件同步)、`GoogleCalendarEventParser`、`HomeWidgetService` (Android 桌面小组件)、`HomeWidgetActionRouter` (小组件深链接路由)、`AppIdentityService` (手动/Google 双身份)、`GoogleSessionStore`
   - **Git 同步（Gitee/GitHub 双平台）**：`GitHubContentsApi`、`GiteeContentsApi`、`ContentsApiCommon`、`DiaryGitHubService`/`DiaryGiteeService`、`DiarySyncService` (列表/拉取/推送编排)、`TravelGitHubService`/`TravelGiteeService`、`CheckInGitHubService`/`CheckInGiteeService`、`PendingGoogleDaySyncService`（待同步状态）
   - **同步中心**：`SyncCenterOperations` + `SyncCenterController`（统一同步入口与重试）、`SyncStatusCoordinator` + `SharedPreferencesSyncStatusStore`/`InMemorySyncStatusStore`（跨页同步状态）、`SyncOperationLock`（互斥）、`RemoteSyncSettings`
@@ -34,6 +35,7 @@ Flutter time management app (v1.99.0+17, package name `time_manager`) with Googl
   - **AI 板块**：`SiliconFlowAiService` (API 调用带重试 90s 超时)、`DailyReviewSummary` (复盘生成 + 数据哈希缓存)、`DailyReviewChatService` + `DailyReviewChatStore` (多轮对话，最多 20 轮)
   - **语音建日程**：`VoiceScheduleParser` (自然语言解析)、`VoiceScheduleSlotPlanner` (10 分钟槽位规划)，UI 在 `lib/widgets/voice_schedule_sheet.dart`
   - **应用日志**：`AppLogService` (全局错误捕获)、`AppLogStore` (持久化)、`AppLogExportService` (导出)
+  - **写日记提醒（仅 Android）**：`DiaryReminderService`（唯一的排程入口，`zonedSchedule` + 每日重复）、`DiaryReminderDiagnostics`（把原生触发事件导入运行日志）。原生埋点在本地 fork 里，见 `third_party/flutter_local_notifications/FORK.md`
   - **工具**：`DataBackupService` (JSON 导入导出)、`OnThisDayService` (当年今日回顾)、`UpdateService`、`calendar_slot_refresh.dart`（`shouldClearCalendarSlotForRefresh`）、`WindowsLegacyPreferencesMigration`
   - 各数据域有对应的 `*_local_store.dart` 本地存储封装
 - **Widgets**: `lib/widgets/` (17 个) — `DatePickerPanel`, `TemplateBar`, `TimeGrid`, `BrushModeCard` (刷子模式)、`CalendarSyncStatusBadge`, `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, `DesktopShortcutHost` (桌面快捷键)、`DailyReviewChatSheet`, `TargetStatsSection`, OnThisDay 相关组件 (`OnThisDaySheet`, `OnThisDayYearCard`)、打卡照片与地图相关组件 (`CheckInPhotoSheet`, `CheckInPhotoThumb`, `CheckInPhotoViewer`, `CheckInMapPreview`)
@@ -58,6 +60,13 @@ Flutter time management app (v1.99.0+17, package name `time_manager`) with Googl
 - **同步状态**：`SyncStatusCoordinator` 统一收集各模块状态并在 `SyncCenterScreen` 呈现；`SyncOperationLock` 保证同一模块不并发操作。无可靠实时读取器的模块保留本次业务操作结果，不用默认 0 覆盖
 - **AI 对话**：`fromReview` 标记的复盘消息不参与 API 多轮上下文，每次附带完整当日记录作为 system prompt
 - **数据流**：`Screen → Provider (notifyListeners) → Service → API/Storage`。应用切后台时自动保存并取消等待中的同步
+- **写日记提醒的硬约束**（历史上实现过两次都因静默失效被删除，改动前务必先读 `写日记提醒实施方案.md`）：
+  - 重复交给系统的 `matchDateTimeComponents: DateTimeComponents.time`，**不要**自建「到点回调再排下一次」的续订链——丢一次就永久断链
+  - **不要**引入 `android_alarm_manager_plus` 或后台 Dart isolate（旧方案靠反射往后台引擎挂插件，第三方库一升级就静默失败）
+  - 通知通道用 `diary_reminder_v2` 并**只创建不删除**：原生 `createNotificationChannel` 无法把已存在通道的重要性改回高，复用旧 ID 会「能发但不弹横幅、不出声」
+  - 时区不可用时**拒绝排程**，不要回退 UTC；没有精确闹钟权限时降级目标是 `inexactAllowWhileIdle`（`exactAllowWhileIdle` 同样需要该权限，等于没降级）
+  - `ScheduledNotificationBootReceiver` **不能**写 `android:enabled="false"`（旧实现这样写导致重启后永久不响）
+  - 设置按身份隔离，未选身份时开关置灰：否则会写进 `identity_unbound_*`，选完身份后设置「凭空消失」
 
 ## Commands
 
@@ -105,15 +114,19 @@ Never commit them.
 - `file_picker` + `path_provider` — 备份导入导出
 - `image_picker` + `flutter_image_compress` — 打卡拍照和压缩
 - `logger` — 日志
+- `flutter_local_notifications` — 本地通知（**经 `dependency_overrides` 指向 `third_party/flutter_local_notifications` 的本地 fork**，用于给写日记提醒的原生触发埋点；改动见该目录下 `FORK.md`）+ `timezone` / `flutter_timezone` — 时区
 - `flutter_slidable` / `reorderables` — 列表滑动操作与拖拽排序
 - `url_launcher` / `package_info_plus` — 外链与版本信息
 
 ## Testing
 
-- `test/` 有 70 个 dart 测试文件（约 16000 行）+ `update_macos_script_test.sh`，覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
+- `test/` 有 73 个 dart 测试文件（约 16000 行）+ `update_macos_script_test.sh`，覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
 - `test/visual_system_test.dart` — 视觉系统守护测试：对比度计算、主题一致性、令牌使用约束（改 `lib/theme/` 或页面配色时必跑）
 - `test/widget_test.dart` — smoke test + platform channel mock 模板：`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道、`tester.runAsync` 真实 IO。新写 widget 测试可参照此文件搭建环境
 - `test/support/fake_app_log_store.dart` — 可注入失败的 Fake store
+- `test/support/fake_diary_reminder_backend.dart` — 提醒后端的 Fake（刻意不实现删除通道的方法，作为「绝不删通道」的编译期保证）
+- `test/diary_reminder_service_test.dart` / `diary_reminder_diagnostics_test.dart` / `diary_reminder_drawer_test.dart` — 提醒的排程、原生事件导入与抽屉 UI
+- 写提醒相关的 widget 测试要注意：抽屉是长 `ListView`，懒构建会让折叠线以下的条目根本不挂载，需要把测试视口调高；另外 `AppIdentityService.load()` 每次都会重读偏好，测试里的身份必须放在偏好键 `schedule_user_kind` 里，靠 `adoptManualKind` 设进去会被覆盖
 - 无 CI 流程配置
 
 ## Conventions
@@ -122,4 +135,5 @@ Never commit them.
 - Config files with secrets are always `.gitignore`d — never commit
 - 平台差异化功能通过 `lib/utils/platform_features.dart` 控制（如 Windows 隐藏目标 tab）
 - 视觉规范：页面不得硬编码颜色/圆角/间距/字号字面量，统一引用 `lib/theme/` 三文件（`AppSpacing`/`AppRadius`/`AppSizes`/`AppText`、`AppSurfaces.of(context)`、`AppSemanticColors`）；照片浮层等主题无关的黑色 scrim 属于允许的例外。守卫测试 `test/visual_system_test.dart`
-- 设计文档在 `docs/superpowers/{plans,specs}/`；已完结的问题记录归档在 `docs/archive/`。根目录只保留 `AGENTS.md`、`README.md` 和活跃的 `待修复问题.md`
+- 设计文档在 `docs/superpowers/{plans,specs}/`；已完结的问题记录归档在 `docs/archive/`。根目录只保留 `AGENTS.md`、`README.md` 和活跃的 `待修复问题.md` / `写日记提醒实施方案.md`
+- `third_party/` 下是 vendored 的第三方插件 fork，已在 `analysis_options.yaml` 里整体 exclude，不参与本项目的静态检查；升级上游时按该目录下 `FORK.md` 的步骤重做
