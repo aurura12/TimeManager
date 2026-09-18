@@ -76,6 +76,11 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
     时间戳，不能直接当通知 id）
   - `CheckInReminderService.reconcile(allGoals:)` 的 `allGoals` **必须是完整目标列表**，
     传部分列表会把没列进来的目标的提醒误删
+  - 提醒的**日期区间只在 Dart 侧、只在 `reconcile` 时生效**：fork 的原生
+    `zonedSchedule` 在 `matchDateTimeComponents != null` 时会丢弃传入的首触发日期，
+    系统的每日重复也是无条件自续期的。所以「开始日后必须打开过一次 App 才会开始提醒」
+    「结束日后会继续响到下次打开 App」是既定边界——**不要**试图把首触发时刻推到开始日
+    （会被原生压回今天/明天，反而变成提前响），也不要改成一次性闹钟逐日铺排
 
 ## Commands
 
@@ -133,7 +138,7 @@ Never commit them.
 - `test/visual_system_test.dart` — 视觉系统守护测试：对比度计算、主题一致性、令牌使用约束（改 `lib/theme/` 或页面配色时必跑）
 - `test/widget_test.dart` — smoke test + platform channel mock 模板：`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道、`tester.runAsync` 真实 IO。新写 widget 测试可参照此文件搭建环境
 - `test/support/fake_app_log_store.dart` — 可注入失败的 Fake store
-- `test/support/fake_diary_reminder_backend.dart` — 提醒后端的 Fake（刻意不实现删除通道的方法，作为「绝不删通道」的编译期保证）
+- `test/support/fake_reminder_backend.dart` — 两类提醒共用的后端 Fake（刻意不实现删除通道的方法，作为「绝不删通道」的编译期保证）
 - `test/diary_reminder_service_test.dart` / `diary_reminder_diagnostics_test.dart` / `diary_reminder_drawer_test.dart` / `time_wheel_sheet_test.dart` — 写日记提醒的排程、原生事件导入、抽屉 UI 与滚轮时间面板
 - `test/check_in_reminder_service_test.dart` / `check_in_reminder_ui_test.dart` — 打卡提醒的多实例排程与编辑页入口
 - 写提醒相关的 widget 测试要注意：抽屉是长 `ListView`，懒构建会让折叠线以下的条目根本不挂载，需要把测试视口调高；另外 `AppIdentityService.load()` 每次都会重读偏好，测试里的身份必须放在偏好键 `schedule_user_kind` 里，靠 `adoptManualKind` 设进去会被覆盖

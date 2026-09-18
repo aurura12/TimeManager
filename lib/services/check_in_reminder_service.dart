@@ -18,6 +18,18 @@ import 'reminder_platform.dart';
 /// - 没有精确闹钟权限时降级为 `inexactAllowWhileIdle`。
 ///
 /// 设置**存在本机**、按目标 id 索引，不参与 Git 同步（原因见 `CheckInReminderSettings`）。
+///
+/// **已知边界：日期区间只在 Dart 侧、且只在 [reconcile] 时生效。** 原因是双重的：
+/// fork 的原生 `FlutterLocalNotificationsPlugin.zonedSchedule` 在
+/// `matchDateTimeComponents != null` 时会用"今天/明天 + 时分秒"整个替换掉传入的
+/// `scheduledDateTime`（即首触发日期被丢弃），而系统侧的每日重复是无条件自续期的，
+/// 插件也没有"结束时间"参数。所以：
+/// - 开始日**之前**不会提醒，且开始日之后**必须打开过一次 App**（触发 reconcile）
+///   才会开始提醒——把首触发时刻推到开始日这条思路在 Dart 层做不到，别试；
+/// - 结束日**之后**会继续每天提醒，直到下一次打开 App 触发 reconcile 把它取消。
+///
+/// 不要为了收窄这个边界引入 `alarm_manager_plus` / 后台 isolate（历史静默失效的根因），
+/// 也不要改成一次性闹钟逐日铺排——App 长期不开就会静默不响。
 class CheckInReminderService {
   const CheckInReminderService._();
 
