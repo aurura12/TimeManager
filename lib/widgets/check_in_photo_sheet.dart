@@ -298,11 +298,21 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                   onTap: _uploading
                       ? null
                       : () async {
+                          // 这个日期行只用于把打卡时间改到更早的日期，也就是「补打卡」。
+                          // 因此最晚只能选到昨天：今天要走正常打卡入口，不能在这里
+                          // 造出一条「日期是今天、却标记为补打卡」的记录。
+                          final now = DateTime.now();
+                          final yesterday = DateTime(now.year, now.month, now.day)
+                              .subtract(const Duration(days: 1));
+                          // 正常打卡进来时 _selectedDate 是今天，已经超出可选范围，
+                          // 直接拿它当 initialDate 会触发 showDatePicker 的断言。
+                          final initialDate =
+                              _selectedDate.isAfter(yesterday) ? yesterday : _selectedDate;
                           final picked = await showDatePicker(
                             context: context,
-                            initialDate: _selectedDate,
+                            initialDate: initialDate,
                             firstDate: DateTime(2024),
-                            lastDate: DateTime.now(),
+                            lastDate: yesterday,
                             locale: const Locale('zh'),
                           );
                           if (picked != null && mounted) {
