@@ -133,6 +133,25 @@ void main() {
       expect(status.scheduled, isFalse);
     });
 
+    test('切换身份后取消上一个身份留下的排定', () async {
+      await DiaryReminderService.saveSettings(enabled);
+      expect(backend.scheduledCalls, hasLength(1));
+
+      // 设置按身份隔离，但通知 id 2001 是共用单例：换到没开提醒的身份后，
+      // 上一个身份排下的程还在系统里，必须被取消，否则会一直响。
+      AppIdentityService.adoptManualKind(DiaryKind.j);
+      backend.cancelledIds.clear();
+
+      await DiaryReminderService.ensureScheduled(force: true);
+
+      expect(backend.cancelledIds, contains(DiaryReminderService.notificationId));
+      expect(
+        backend.scheduledCalls,
+        hasLength(1),
+        reason: '当前身份没开提醒，不该登记新的排程',
+      );
+    });
+
     test('排程抛异常时上报 scheduleFailed，不假装成功', () async {
       backend.throwOnSchedule = true;
 

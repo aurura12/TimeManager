@@ -327,7 +327,14 @@ class DiaryReminderService {
     }
 
     final s = await loadSettings();
-    if (!s.enabled) return _status(settings: s);
+    if (!s.enabled) {
+      // 通知 id 2001 是两类提醒共用的单例，而设置按身份隔离：换身份后当前身份的
+      // 设置可能是关的，但上一个身份排下的程还挂在系统里，不取消就会一直响到
+      // 下一个身份把开关打开为止。插件的 cancel 对不存在的 id 是无操作，所以
+      // 无条件取消——"pending 里有才取消"在 pending 读不到时会漏掉，和打卡提醒
+      // reconcile 里的取舍一致。
+      return _cancel(s);
+    }
 
     final backend = _backend;
     final pending = await _safe(() => backend.pendingNotificationRequests()) ??
