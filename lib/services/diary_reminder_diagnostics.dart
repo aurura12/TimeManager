@@ -13,6 +13,7 @@ class DiaryReminderNativeEvent {
     required this.id,
     required this.at,
     required this.code,
+    this.kind,
     this.detail,
   });
 
@@ -25,6 +26,10 @@ class DiaryReminderNativeEvent {
   /// 事件码，取值见插件 fork 的 `DiaryReminderNativeEventStore`。
   final String code;
 
+  /// 事件归属的提醒类型（`diary_reminder` / `check_in_reminder`）。
+  /// 缺失时按写日记提醒处理（旧版本 fork 只埋了这一类）。
+  final String? kind;
+
   final String? detail;
 
   /// 解析失败返回 null，由调用方跳过该条。
@@ -35,10 +40,12 @@ class DiaryReminderNativeEvent {
     final code = raw['code'];
     if (id is! String || at is! int || code is! String) return null;
     final detail = raw['detail'];
+    final kind = raw['kind'];
     return DiaryReminderNativeEvent(
       id: id,
       at: DateTime.fromMillisecondsSinceEpoch(at, isUtc: true),
       code: code,
+      kind: kind is String && kind.isNotEmpty ? kind : null,
       detail: detail is String && detail.isNotEmpty ? detail : null,
     );
   }
@@ -200,58 +207,72 @@ class DiaryReminderDiagnostics {
   static ({AppLogLevel level, String message}) _describe(
     DiaryReminderNativeEvent event,
   ) {
+    // 原生侧不只埋写日记提醒，文案必须按 kind 区分，否则打卡的触发会被误标成写日记
+    final label = _labelFor(event.kind);
     switch (event.code) {
       case 'receiver_fired':
         return (
           level: AppLogLevel.info,
-          message: '写日记提醒：到点触发，原生接收器已运行',
+          message: '$label：到点触发，原生接收器已运行',
         );
       case 'notify_returned':
         return (
           level: AppLogLevel.info,
-          message: '写日记提醒：通知已提交给系统（不代表用户已看到）',
+          message: '$label：通知已提交给系统（不代表用户已看到）',
         );
       case 'notify_failed':
         return (
           level: AppLogLevel.error,
-          message: '写日记提醒：提交通知失败（${_reason(event.detail)}）',
+          message: '$label：提交通知失败（${_reason(event.detail)}）',
         );
       case 'next_schedule_attempt':
         return (
           level: AppLogLevel.info,
-          message: '写日记提醒：开始登记下一次',
+          message: '$label：开始登记下一次',
         );
       case 'next_schedule_returned':
         return (
           level: AppLogLevel.info,
-          message: '写日记提醒：下一次已登记',
+          message: '$label：下一次已登记',
         );
       case 'next_schedule_failed':
         return (
           level: AppLogLevel.error,
-          message: '写日记提醒：登记下一次失败（${_reason(event.detail)}），'
+          message: '$label：登记下一次失败（${_reason(event.detail)}），'
               '每天重复可能就此中断',
         );
       case 'boot_reschedule_attempt':
         return (
           level: AppLogLevel.info,
-          message: '写日记提醒：开机后开始恢复排程',
+          message: '$label：开机后开始恢复排程',
         );
       case 'boot_reschedule_returned':
         return (
           level: AppLogLevel.info,
-          message: '写日记提醒：开机后恢复排程成功',
+          message: '$label：开机后恢复排程成功',
         );
       case 'boot_reschedule_failed':
         return (
           level: AppLogLevel.error,
-          message: '写日记提醒：开机后恢复排程失败（${_reason(event.detail)}）',
+          message: '$label：开机后恢复排程失败（${_reason(event.detail)}）',
         );
       default:
         return (
           level: AppLogLevel.warning,
-          message: '写日记提醒：收到未知原生事件 ${event.code}',
+          message: '$label：收到未知原生事件 ${event.code}',
         );
+    }
+  }
+
+  static String _labelFor(String? kind) {
+    switch (kind) {
+      case 'check_in_reminder':
+        return '打卡提醒';
+      case null:
+      case 'diary_reminder':
+        return '写日记提醒';
+      default:
+        return '提醒';
     }
   }
 

@@ -58,25 +58,26 @@ public class ScheduledNotificationReceiver extends BroadcastReceiver {
       Type type = new TypeToken<NotificationDetails>() {}.getType();
       NotificationDetails notificationDetails = gson.fromJson(notificationDetailsJson, type);
 
-      // 本地 fork 埋点：只针对写日记提醒，只记录阶段结果，不影响原有行为
-      final boolean isDiaryReminder =
-          DiaryReminderNativeEventStore.isDiaryReminder(notificationDetails);
-      if (isDiaryReminder) {
+      // 本地 fork 埋点：只针对本 App 的提醒，只记录阶段结果，不影响原有行为
+      final String reminderKind =
+          DiaryReminderNativeEventStore.kindOf(notificationDetails);
+      if (reminderKind != null) {
         DiaryReminderNativeEventStore.record(
-            context, DiaryReminderNativeEventStore.RECEIVER_FIRED);
+            context, DiaryReminderNativeEventStore.RECEIVER_FIRED, reminderKind);
       }
 
       try {
         FlutterLocalNotificationsPlugin.showNotification(context, notificationDetails);
-        if (isDiaryReminder) {
+        if (reminderKind != null) {
           DiaryReminderNativeEventStore.record(
-              context, DiaryReminderNativeEventStore.NOTIFY_RETURNED);
+              context, DiaryReminderNativeEventStore.NOTIFY_RETURNED, reminderKind);
         }
       } catch (RuntimeException | Error error) {
-        if (isDiaryReminder) {
+        if (reminderKind != null) {
           DiaryReminderNativeEventStore.record(
               context,
               DiaryReminderNativeEventStore.NOTIFY_FAILED,
+              reminderKind,
               error.getClass().getSimpleName() + ": " + error.getMessage());
         }
         throw error;
@@ -85,17 +86,20 @@ public class ScheduledNotificationReceiver extends BroadcastReceiver {
       // 注意：成功事件由插件内部在实际登记完成后记录。
       // 这里不能直接记成功——scheduleNextNotification 会吞掉 ExactAlarmPermissionException，
       // 也会在拿不到下次触发时间时静默返回，那样会把失败误报成成功。
-      if (isDiaryReminder) {
+      if (reminderKind != null) {
         DiaryReminderNativeEventStore.record(
-            context, DiaryReminderNativeEventStore.NEXT_SCHEDULE_ATTEMPT);
+            context,
+            DiaryReminderNativeEventStore.NEXT_SCHEDULE_ATTEMPT,
+            reminderKind);
       }
       try {
         FlutterLocalNotificationsPlugin.scheduleNextNotification(context, notificationDetails);
       } catch (RuntimeException | Error error) {
-        if (isDiaryReminder) {
+        if (reminderKind != null) {
           DiaryReminderNativeEventStore.record(
               context,
               DiaryReminderNativeEventStore.NEXT_SCHEDULE_FAILED,
+              reminderKind,
               error.getClass().getSimpleName() + ": " + error.getMessage());
         }
         throw error;

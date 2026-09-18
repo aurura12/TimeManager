@@ -230,11 +230,11 @@ public class FlutterLocalNotificationsPlugin
     ArrayList<NotificationDetails> scheduledNotifications = loadScheduledNotifications(context);
     for (NotificationDetails notificationDetails : scheduledNotifications) {
       // 本地 fork 埋点：只针对写日记提醒的开机恢复
-      boolean isDiaryReminder =
-          DiaryReminderNativeEventStore.isDiaryReminder(notificationDetails);
-      if (isDiaryReminder) {
+      String reminderKind =
+          DiaryReminderNativeEventStore.kindOf(notificationDetails);
+      if (reminderKind != null) {
         DiaryReminderNativeEventStore.record(
-            context, DiaryReminderNativeEventStore.BOOT_RESCHEDULE_ATTEMPT);
+            context, DiaryReminderNativeEventStore.BOOT_RESCHEDULE_ATTEMPT, reminderKind);
       }
       try {
         if (notificationDetails.repeatInterval != null
@@ -245,16 +245,17 @@ public class FlutterLocalNotificationsPlugin
         } else {
           scheduleNotification(context, notificationDetails, false);
         }
-        if (isDiaryReminder) {
+        if (reminderKind != null) {
           DiaryReminderNativeEventStore.record(
-              context, DiaryReminderNativeEventStore.BOOT_RESCHEDULE_RETURNED);
+              context, DiaryReminderNativeEventStore.BOOT_RESCHEDULE_RETURNED, reminderKind);
         }
       } catch (ExactAlarmPermissionException e) {
         Log.e(TAG, e.getMessage());
-        if (isDiaryReminder) {
+        if (reminderKind != null) {
           DiaryReminderNativeEventStore.record(
               context,
               DiaryReminderNativeEventStore.BOOT_RESCHEDULE_FAILED,
+              reminderKind,
               "exact_alarm_permission");
         }
         removeNotificationFromCache(context, notificationDetails.id);
@@ -276,10 +277,13 @@ public class FlutterLocalNotificationsPlugin
       }
     } catch (ExactAlarmPermissionException e) {
       Log.e(TAG, e.getMessage());
-      if (DiaryReminderNativeEventStore.isDiaryReminder(notificationDetails)) {
+      final String reminderKind =
+          DiaryReminderNativeEventStore.kindOf(notificationDetails);
+      if (reminderKind != null) {
         DiaryReminderNativeEventStore.record(
             context,
             DiaryReminderNativeEventStore.NEXT_SCHEDULE_FAILED,
+            reminderKind,
             "exact_alarm_permission");
       }
       removeNotificationFromCache(context, notificationDetails.id);
@@ -1371,19 +1375,24 @@ public class FlutterLocalNotificationsPlugin
     if (nextFireDate == null) {
       // 这里静默 return 会让「每天重复」永久断链，必须显式上报，
       // 否则界面上只会看到「已开启」而实际再也不会响。
-      if (DiaryReminderNativeEventStore.isDiaryReminder(notificationDetails)) {
+      final String reminderKind =
+          DiaryReminderNativeEventStore.kindOf(notificationDetails);
+      if (reminderKind != null) {
         DiaryReminderNativeEventStore.record(
             context,
             DiaryReminderNativeEventStore.NEXT_SCHEDULE_FAILED,
+            reminderKind,
             "next_fire_date_null");
       }
       return;
     }
     notificationDetails.scheduledDateTime = nextFireDate;
     zonedScheduleNotification(context, notificationDetails, true);
-    if (DiaryReminderNativeEventStore.isDiaryReminder(notificationDetails)) {
+    final String reminderKind =
+        DiaryReminderNativeEventStore.kindOf(notificationDetails);
+    if (reminderKind != null) {
       DiaryReminderNativeEventStore.record(
-          context, DiaryReminderNativeEventStore.NEXT_SCHEDULE_RETURNED);
+          context, DiaryReminderNativeEventStore.NEXT_SCHEDULE_RETURNED, reminderKind);
     }
   }
 

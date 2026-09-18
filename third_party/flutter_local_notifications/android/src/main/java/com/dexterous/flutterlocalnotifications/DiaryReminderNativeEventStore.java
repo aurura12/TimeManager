@@ -31,6 +31,15 @@ public final class DiaryReminderNativeEventStore {
   public static final int DIARY_NOTIFICATION_ID = 2001;
   public static final String DIARY_PAYLOAD = "diary_reminder";
 
+  /** 打卡提醒：id 段 2200–2299，payload 形如 check_in_reminder:<goalId>。 */
+  public static final int CHECK_IN_ID_MIN = 2200;
+  public static final int CHECK_IN_ID_MAX = 2299;
+  public static final String CHECK_IN_PAYLOAD_PREFIX = "check_in_reminder:";
+
+  /** 事件归属的提醒类型，写进事件的 kind 字段，Dart 侧据此选文案。 */
+  public static final String KIND_DIARY = "diary_reminder";
+  public static final String KIND_CHECK_IN = "check_in_reminder";
+
   // 事件码，与 Dart 侧 DiaryReminderDiagnostics 的映射保持一致
   public static final String RECEIVER_FIRED = "receiver_fired";
   public static final String NOTIFY_RETURNED = "notify_returned";
@@ -53,24 +62,38 @@ public final class DiaryReminderNativeEventStore {
 
   private DiaryReminderNativeEventStore() {}
 
-  /** 事件是否属于写日记提醒。只有这一类才进队列。 */
-  public static boolean isDiaryReminder(NotificationDetails details) {
-    return details != null
-        && details.id != null
-        && details.id == DIARY_NOTIFICATION_ID
-        && DIARY_PAYLOAD.equals(details.payload);
+  /**
+   * 该通知属于哪一类提醒；不属于任何一类时返回 null（不记事件）。
+   *
+   * <p>这是唯一的归属判定入口，所有埋点都走它，新增提醒类型只需在这里加一段。
+   */
+  public static String kindOf(NotificationDetails details) {
+    if (details == null || details.id == null) {
+      return null;
+    }
+    if (details.id == DIARY_NOTIFICATION_ID && DIARY_PAYLOAD.equals(details.payload)) {
+      return KIND_DIARY;
+    }
+    if (details.id >= CHECK_IN_ID_MIN
+        && details.id <= CHECK_IN_ID_MAX
+        && details.payload != null
+        && details.payload.startsWith(CHECK_IN_PAYLOAD_PREFIX)) {
+      return KIND_CHECK_IN;
+    }
+    return null;
   }
 
-  public static void record(Context context, String code) {
-    record(context, code, null);
+  public static void record(Context context, String code, String kind) {
+    record(context, code, kind, null);
   }
 
   /**
    * 记录一条事件。使用同步提交并检查返回值：提交失败时写 Logcat 作为兜底，
    * 因为此时 Dart 侧还读不到数据。
    */
-  public static synchronized void record(Context context, String code, String detail) {
-    if (context == null || code == null) {
+  public static synchronized void record(
+      Context context, String code, String kind, String detail) {
+    if (context == null || code == null || kind == null) {
       return;
     }
     try {
@@ -87,6 +110,7 @@ public final class DiaryReminderNativeEventStore {
       event.put("id", "dr-" + sequence);
       event.put("at", System.currentTimeMillis());
       event.put("code", code);
+      event.put("kind", kind);
       if (detail != null && !detail.isEmpty()) {
         event.put("detail", detail);
       }

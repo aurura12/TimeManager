@@ -264,6 +264,47 @@ void main() {
     expect(warnings.any((m) => m.contains('溢出') && m.contains('4')), isTrue);
   });
 
+  test('按 kind 区分两类提醒的文案，不把打卡标成写日记', () async {
+    payload = payloadWith(<Map<String, Object?>>[
+      <String, Object?>{
+        'id': 'dr-diary',
+        'at': atFirst.millisecondsSinceEpoch,
+        'code': 'receiver_fired',
+        'kind': 'diary_reminder',
+      },
+      <String, Object?>{
+        'id': 'dr-checkin',
+        'at': atSecond.millisecondsSinceEpoch,
+        'code': 'receiver_fired',
+        'kind': 'check_in_reminder',
+      },
+    ]);
+
+    await DiaryReminderDiagnostics.importPendingEvents();
+
+    final messages = logService.entries.map((e) => e.message).toList();
+    expect(messages.any((m) => m.startsWith('写日记提醒：')), isTrue);
+    expect(messages.any((m) => m.startsWith('打卡提醒：')), isTrue);
+    expect(
+      messages.where((m) => m.contains('打卡提醒：到点触发')),
+      hasLength(1),
+    );
+  });
+
+  test('缺少 kind 字段时按写日记提醒处理（兼容旧埋点）', () async {
+    payload = payloadWith(<Map<String, Object?>>[
+      <String, Object?>{
+        'id': 'dr-legacy',
+        'at': atFirst.millisecondsSinceEpoch,
+        'code': 'receiver_fired',
+      },
+    ]);
+
+    await DiaryReminderDiagnostics.importPendingEvents();
+
+    expect(logService.entries.single.message, startsWith('写日记提醒：'));
+  });
+
   test('未知事件码记 warning，不会崩', () async {
     payload = payloadWith(<Map<String, Object?>>[
       <String, Object?>{
