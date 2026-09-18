@@ -81,6 +81,8 @@ dist/
 # 例外：docs/design-system.md 是 lib/theme/*.dart 注释里直接引用的视觉规范，需要入库
 docs/*
 !docs/design-system.md
+# 发布脚本默认读取的更新说明需要入库
+!docs/release-notes.md
 iOS_移植计划.md
 网格重构方案.md
 flutter_*.png

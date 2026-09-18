@@ -15,7 +15,7 @@ GITEE_API_BASE="https://gitee.com/api/v5/repos/$GITEE_OWNER/$GITEE_REPO"
 TARGET_PLATFORM="android-arm64"
 DIST_DIR="$REPO_ROOT/dist"
 ARTIFACT_PATH=""
-NOTES_FILE=""
+NOTES_FILE="$REPO_ROOT/docs/release-notes.md"
 SKIP_BUILD=0
 # 发布前通常已经完成验证；需要再次检查时使用 --run-tests。
 SKIP_TESTS=1
@@ -51,7 +51,7 @@ usage() {
   --no-git                 构建完成后不自动提交和推送版本号
   --target-platform PLAT   android-arm | android-arm64 | android-x64，默认 android-arm64
   --dist-dir DIR           构建产物目录，默认 <项目根>/dist
-  --notes-file FILE        Release 说明文件，不传则使用默认说明
+  --notes-file FILE        Release 说明文件，默认 docs/release-notes.md
   --owner OWNER            覆盖 Gitee 用户名/组织名
   --repo REPO              覆盖 Gitee 发布仓库名
   --dry-run                只显示版本、文件和 Release 信息，不构建、不上传
@@ -241,10 +241,7 @@ create_release_or_get_id() {
 
   local release_name="$APP_NAME"
   local release_body
-  release_body=$'本次更新：\n\n- 修复日程同步问题：当日程内容没有变化时，不再重复上传或产生无意义的同步提交。\n- 远端有本地缺少的新内容时，仍会正常同步到本地；只有内容实际变化或清空日程时才会上传。'
-  if [[ -n "$NOTES_FILE" ]]; then
-    release_body="$(<"$NOTES_FILE")"
-  fi
+  release_body="$(<"$NOTES_FILE")"
 
   log "创建 Gitee Release：$RELEASE_TAG"
   api_call POST "$GITEE_API_BASE/releases" \
