@@ -39,7 +39,7 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
   - **工具**：`DataBackupService` (JSON 导入导出)、`OnThisDayService` (当年今日回顾)、`UpdateService`、`calendar_slot_refresh.dart`（`shouldClearCalendarSlotForRefresh`）、`WindowsLegacyPreferencesMigration`
   - 各数据域有对应的 `*_local_store.dart` 本地存储封装
 - **Widgets**: `lib/widgets/` (18 个) — `DatePickerPanel`, `TemplateBar`, `TimeGrid`, `BrushModeCard` (刷子模式)、`CalendarSyncStatusBadge`, `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, `DesktopShortcutHost` (桌面快捷键)、`DailyReviewChatSheet`, `TargetStatsSection`, `TimeWheelSheet` (时/分滚轮面板，替代 `showTimePicker`)、OnThisDay 相关组件 (`OnThisDaySheet`, `OnThisDayYearCard`)、打卡照片与地图相关组件 (`CheckInPhotoSheet`, `CheckInPhotoThumb`, `CheckInPhotoViewer`, `CheckInMapPreview`)
-- **Utils**: `lib/utils/` — `adaptive` (平台自适应)、`calendar_time_range`、`desktop_selection`、`local_day_range`、`platform_features` (按平台开关功能)、`schedule_view_dates`、`time_slot_segment`
+- **Utils**: `lib/utils/` (9 个) — `adaptive` (平台自适应)、`calendar_time_range`、`desktop_selection`、`local_day_range`、`platform_features` (按平台开关功能)、`schedule_view_dates`、`time_slot_segment`、`diary_remote_path_utils` (远端日记文件名里的日期解析与排序)、`map_tile_config` (地图瓦片配置)
 - **Theme**: `lib/theme/` — `app_tokens.dart` (间距/圆角/控件高度/文字层级)、`app_theme.dart` (`ColorScheme` + `AppSurfaces` 表面层级扩展 + 全套组件主题)、`app_semantic_colors.dart` (身份色/分类色/图表色/奖牌色/状态色白名单)。规范见 `docs/design-system.md`
 - **Config**: `lib/config/` — API keys and service configs (`.gitignore`d，**无 .example.dart 模板**，结构需直接查看引用方代码)
 
@@ -52,6 +52,11 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
   - AI 复盘缓存 → `SharedPreferences`（带数据哈希键，数据变化导致缓存失效）
   - 打卡照片 → 本地文件缓存 + Git 仓库
   - 应用日志 → `AppLogStore` 本地持久化
+- **远端文档布局**：所有同步文档按**身份 code 分片**（`'g'` / `'j'`，即 `DiaryKind`），切换身份看到的是不同数据集，不存在跨身份合并
+  - `categories/{userCode}.json` — 分类文档（合并见 `CategoryDocumentMerge`）
+  - `targets/{userCode}.json` — 目标文档（合并 + 删除墓碑，见 `TargetDocument`）
+  - `schedule/{userCode}/{dateKey}.json` — 日程，按天一份（覆盖拉取校验见 `ScheduleOverwriteSnapshot`）
+  - 日记 / 出行 / 打卡 — `index.txt` 列表 + 逐条文件（日记文件名形如 `…YYYY年M月D日….md`，日期解析见 `lib/utils/diary_remote_path_utils.dart`）
 - **增量保存**：`TimeProvider` 追踪 `_categoriesDirty` / `_targetsDirty` / `_slotsDirty` 脏标记，只序列化变化部分
 - **撤销系统**：`_undoStacks` 深拷贝快照，最多 20 步
 - **Google 日历同步**：3 秒防抖 + `_isSyncing` 锁防并发。事件以 "乖乖爱心晶晶" 为识别签名，区分本 App 创建和外部事件
@@ -95,11 +100,38 @@ flutter run -d windows             # Windows 桌面版启动
 flutter build apk --release        # 构建 Android release APK
 
 # 平台构建脚本
-scripts/build_android.sh           # Android arm64 构建：bump 版本/跑测试/输出到 dist/
+scripts/build_android.sh           # Android arm64 构建：bump 版本/跑测试/输出到 dist/（成功后会自动 commit + push，见「构建与发布」）
 scripts/build_windows.bat          # Windows 构建（含自动下载 nuget.exe）
 scripts/update_macos.sh            # macOS 构建并安装到 /Applications
+scripts/run_android.sh             # 拉起 Android 模拟器/设备再 flutter run（默认 AVD Pixel_7，可用 ANDROID_EMULATOR_NAME 覆盖；多余参数透传给 flutter run）
+scripts/package_macos_release.sh   # macOS .app 打包为 dist/*.dmg + .dmg.sha256
+scripts/generate_update_metadata.sh <安装包…>  # 为 APK/EXE/DMG 生成同名 .sha256（Windows 用 generate_update_metadata.ps1）
+scripts/publish_android_release.sh # 构建 + 发布到 Gitee Release（见「构建与发布」）
 scripts/installer.iss              # Inno Setup 6 打 Windows 安装包（上传 Gitee release）
 ```
+
+## 构建与发布
+
+`scripts/build_android.sh` 的默认行为不只是构建，成功后还会 **git commit + push**：
+
+1. 获取依赖、跑 `flutter analyze` + `flutter test`
+2. 自动递增版本号：次版本 +1、patch 归零、构建号 +1（如 `1.95.3+13` → `1.96.0+14`）
+3. 构建 Android arm64-v8a release APK
+4. 把带版本号的 APK 和同名 `.sha256` 复制到 `dist/`
+5. 只提交 `pubspec.yaml` 的版本号变更并 push 到当前分支的上游（不会把其他未提交改动带进这次提交）
+
+构建失败或中断时只回滚 `pubspec.yaml` 的版本号改动。开关：`--skip-tests`、`--skip-bump`、`--no-git`、`--no-copy`、`--target-platform android-arm|android-arm64|android-x64`、`--dist-dir DIR`、`--dry-run`。
+
+`scripts/publish_android_release.sh` 在构建之上发布到 Gitee Release：
+
+- 发布仓库默认 `zhou-jiaqi10/time_manager_releases`（`GITEE_OWNER` / `GITEE_REPO` 可覆盖）。**必须与 `lib/services/update_service.dart` 保持一致**，改发布仓库要两边一起改
+- Release 说明文件固定为 `docs/release-notes.md`（`--notes-file` 覆盖）
+- 上传顺序是**先 `.sha256` 后 APK**，避免手机在发布过程中拿到缺校验摘要的安装包
+- 默认**跳过** `flutter analyze` + `flutter test`，发布前想再检查一次要显式加 `--run-tests`
+- Token 优先读 `GITEE_TOKEN` 环境变量，未设置时回落到 `lib/config/diary_gitee_config.dart`
+- 用 `--artifact <已有 APK>` + `--skip-build` 可以跳过构建、只发已有的包
+
+两个仓库不要混淆：**同步数据**在 `RemoteRepoConfig` 里的 `love_diary`，**应用发布**在 `time_manager_releases`。
 
 ## Config Files (Secrets — .gitignore'd)
 
@@ -134,7 +166,7 @@ Never commit them.
 
 ## Testing
 
-- `test/` 有 76 个 dart 测试文件（约 16000 行）+ `update_macos_script_test.sh`，覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
+- `test/` 有 76 个 dart 测试文件（约 18100 行）+ 2 个 shell 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
 - `test/visual_system_test.dart` — 视觉系统守护测试：对比度计算、主题一致性、令牌使用约束（改 `lib/theme/` 或页面配色时必跑）
 - `test/widget_test.dart` — smoke test + platform channel mock 模板：`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道、`tester.runAsync` 真实 IO。新写 widget 测试可参照此文件搭建环境
 - `test/support/fake_app_log_store.dart` — 可注入失败的 Fake store
