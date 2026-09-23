@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/google_calendar_user.dart';
 import '../models/diary_kind.dart';
@@ -13,6 +16,7 @@ class AppUserIdentityStore {
   static const _nameKey = 'app_user_identity_display_name';
   static const _photoKey = 'app_user_identity_photo_url';
   static const _manualKindKey = 'app_user_identity_manual_kind';
+  static const _legacyScheduleUserKey = 'schedule_user_kind';
 
   static Future<void> save(GoogleSignInAccount account) async {
     await saveUser(GoogleCalendarUser.fromAccount(account));
@@ -62,12 +66,28 @@ class AppUserIdentityStore {
   }
 
   static Future<DiaryKind?> loadManualKind() async {
+    if (Platform.isMacOS) {
+      // A manual g/j selection is not secret. Keep the macOS path in
+      // SharedPreferences so local builds do not require Keychain entitlements
+      // or a development provisioning profile.
+      final prefs = await SharedPreferences.getInstance();
+      final value = prefs.getString(_legacyScheduleUserKey);
+      if (value == null || value.isEmpty) return null;
+      return DiaryKindX.fromCode(value);
+    }
     final value = await _storage.read(key: _manualKindKey);
     if (value == null || value.isEmpty) return null;
     return DiaryKindX.fromCode(value);
   }
 
   static Future<void> saveManualKind(DiaryKind kind) async {
+    if (Platform.isMacOS) {
+      final prefs = await SharedPreferences.getInstance();
+      if (!await prefs.setString(_legacyScheduleUserKey, kind.code)) {
+        throw StateError('无法保存本地日程身份');
+      }
+      return;
+    }
     await _storage.write(key: _manualKindKey, value: kind.code);
   }
 
@@ -75,6 +95,11 @@ class AppUserIdentityStore {
   /// identity fields. Used when a first-time manual selection cannot be
   /// committed to the matching local preferences namespace.
   static Future<void> clearManualKind() async {
+    if (Platform.isMacOS) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_legacyScheduleUserKey);
+      return;
+    }
     await _storage.delete(key: _manualKindKey);
   }
 }

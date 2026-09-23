@@ -865,7 +865,7 @@ class TimeProvider with ChangeNotifier {
       previousStoredKind = prefs.getString(_scheduleUserKey);
 
       // Keep the in-memory identity and its SharedPreferences namespace
-      // unchanged until the secure identity store has accepted the new kind.
+      // unchanged until the identity store has accepted the new kind.
       persistenceNeedsRestore = true;
       await AppUserIdentityStore.saveManualKind(kind);
       if (!_canContinueScheduleIdentityMutation()) return;
@@ -911,8 +911,8 @@ class TimeProvider with ChangeNotifier {
           try {
             await AppUserIdentityStore.saveManualKind(previousKind);
           } catch (e, stackTrace) {
-            debugPrint('恢复安全存储中的日程身份失败: $e');
-            _recordAppError('恢复安全存储中的日程身份失败', e, stackTrace);
+            debugPrint('恢复本地持久化的日程身份失败: $e');
+            _recordAppError('恢复本地持久化的日程身份失败', e, stackTrace);
           }
         } else {
           try {

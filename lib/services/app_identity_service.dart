@@ -140,9 +140,8 @@ class AppIdentityService {
 
     _manualKind = await AppUserIdentityStore.loadManualKind();
     if (_manualKind == null) {
-      // Existing releases stored the manual selection only in preferences.
-      // Read it as a migration source; the next explicit selection writes the
-      // secure copy without making an implicit identity choice.
+      // Existing releases stored the manual selection in preferences. Read it
+      // as a migration source without making an implicit identity choice.
       final legacyKind = prefs.getString(legacyScheduleUserKey);
       if (legacyKind != null && legacyKind.trim().isNotEmpty) {
         _manualKind = DiaryKindX.fromCode(legacyKind);
