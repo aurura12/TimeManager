@@ -125,8 +125,8 @@ class CheckInLocationService {
     }
 
     // 该状态在部分 Android 设备上表示“定位源可供此应用使用”，不等同于
-    // 系统定位总开关。先尝试权限和定位；状态为 false 时走 Android 原生
-    // LocationManager 路径兜底，避免被 FusedLocationProvider 的误报拦住。
+    // 系统定位总开关。保留它用于诊断，但 Android 定位统一走 LocationManager，
+    // 避免 Google FusedLocationProvider 在设备上不回传首个位置。
     var locationServiceEnabled = true;
     try {
       locationServiceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -146,8 +146,7 @@ class CheckInLocationService {
       );
     }
     final useAndroidLocationManager =
-        defaultTargetPlatform == TargetPlatform.android &&
-            !locationServiceEnabled;
+        defaultTargetPlatform == TargetPlatform.android;
 
     // 优先用缓存位置（毫秒级），避免每次都等 GPS 冷启动
     Position? lastKnownPosition;
@@ -178,6 +177,9 @@ class CheckInLocationService {
             : '缓存位置已超过 30 秒，开始请求实时定位',
         source: logSource,
       );
+      final locationPath = useAndroidLocationManager
+          ? 'Android LocationManager'
+          : 'Geolocator 默认定位提供方';
       try {
         position = await Geolocator.getCurrentPosition(
           locationSettings: useAndroidLocationManager
@@ -193,7 +195,8 @@ class CheckInLocationService {
         );
       } catch (error, stackTrace) {
         AppLogService.instance.error(
-          '获取实时定位失败（accuracy=high，超时限制 ${_currentLocationTimeLimit.inSeconds} 秒）',
+          '获取实时定位失败（路径=$locationPath，定位源检查=$locationServiceEnabled，'
+          'accuracy=high，超时限制 ${_currentLocationTimeLimit.inSeconds} 秒）',
           source: logSource,
           error: error,
           stackTrace: stackTrace,
