@@ -47,7 +47,7 @@ typedef CheckInLocationLoader = Future<CheckInLocationAccessResult> Function();
 
 class CheckInLocationService {
   static const String logSource = 'check_in_location';
-  static const Duration _currentLocationTimeLimit = Duration(seconds: 15);
+  static const Duration _currentLocationTimeLimit = Duration(seconds: 10);
 
   /// 可由逻辑测试注入，避免测试真正打开系统设置或调用定位插件。
   static CheckInLocationSettingsLauncher? settingsLauncherForTesting;
