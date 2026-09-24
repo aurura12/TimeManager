@@ -47,6 +47,7 @@ typedef CheckInLocationLoader = Future<CheckInLocationAccessResult> Function();
 
 class CheckInLocationService {
   static const String logSource = 'check_in_location';
+  static const Duration _currentLocationTimeLimit = Duration(seconds: 15);
 
   /// 可由逻辑测试注入，避免测试真正打开系统设置或调用定位插件。
   static CheckInLocationSettingsLauncher? settingsLauncherForTesting;
@@ -171,23 +172,28 @@ class CheckInLocationService {
       position = lastKnownPosition;
       usedLastKnownPosition = true;
     } else {
-      // 缓存过期或不可用，重新获取
+      AppLogService.instance.info(
+        lastKnownPosition == null
+            ? '设备没有缓存位置，开始请求实时定位'
+            : '缓存位置已超过 30 秒，开始请求实时定位',
+        source: logSource,
+      );
       try {
         position = await Geolocator.getCurrentPosition(
           locationSettings: useAndroidLocationManager
               ? AndroidSettings(
-                  accuracy: LocationAccuracy.medium,
-                  timeLimit: Duration(seconds: 8),
+                  accuracy: LocationAccuracy.high,
+                  timeLimit: _currentLocationTimeLimit,
                   forceLocationManager: true,
                 )
               : const LocationSettings(
-                  accuracy: LocationAccuracy.medium,
-                  timeLimit: Duration(seconds: 8),
+                  accuracy: LocationAccuracy.high,
+                  timeLimit: _currentLocationTimeLimit,
                 ),
         );
       } catch (error, stackTrace) {
         AppLogService.instance.error(
-          '获取实时定位失败（accuracy=medium，超时限制 8 秒）',
+          '获取实时定位失败（accuracy=high，超时限制 ${_currentLocationTimeLimit.inSeconds} 秒）',
           source: logSource,
           error: error,
           stackTrace: stackTrace,
