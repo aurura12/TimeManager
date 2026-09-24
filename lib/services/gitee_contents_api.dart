@@ -10,19 +10,32 @@ class _GiteeFetchedTree {
   final bool truncated;
   final String? error;
 
+  /// 请求本身成功，但响应体超过 [ContentsApiLimits.maxTreeResponseBytes]。
+  ///
+  /// 只有这种情况值得改走"按子树 SHA 展开"的回退：递归 tree 是纯元数据请求，
+  /// 仓库文件变多时整棵树会先撞上字节上限，而逐个目录去取就都装得下。
+  /// 预算用尽、条目数超限这类失败即使回退也照样失败，不该浪费一轮请求。
+  final bool responseTooLarge;
+
   const _GiteeFetchedTree({
     required this.success,
     required this.entries,
     required this.truncated,
     this.error,
+    this.responseTooLarge = false,
   });
 
-  factory _GiteeFetchedTree.error(String message, {bool truncated = false}) {
+  factory _GiteeFetchedTree.error(
+    String message, {
+    bool truncated = false,
+    bool responseTooLarge = false,
+  }) {
     return _GiteeFetchedTree(
       success: false,
       entries: const [],
       truncated: truncated,
       error: message,
+      responseTooLarge: responseTooLarge,
     );
   }
 }
@@ -104,8 +117,17 @@ class GiteeContentsApi {
     );
   }
 
-  Future<http.Response> _get(Uri uri, String token) {
-    return _send(method: 'GET', uri: uri, token: token);
+  Future<http.Response> _get(
+    Uri uri,
+    String token, {
+    int? maxResponseBytes,
+  }) {
+    return _send(
+      method: 'GET',
+      uri: uri,
+      token: token,
+      maxResponseBytes: maxResponseBytes,
+    );
   }
 
   Future<http.Response> _post(Uri uri, String token, String body) {
@@ -121,6 +143,7 @@ class GiteeContentsApi {
     required Uri uri,
     required String token,
     String? body,
+    int? maxResponseBytes,
   }) {
     final request = http.Request(method, uri)..headers.addAll(headers(token));
     if (body != null) request.body = body;
@@ -129,6 +152,7 @@ class GiteeContentsApi {
       client: _client,
       request: request,
       limits: limits,
+      maxResponseBytes: maxResponseBytes,
     );
   }
 
@@ -387,6 +411,16 @@ class GiteeContentsApi {
         budget: budget,
       );
       if (!first.success) {
+        // 递归 tree 是纯元数据请求，只受 maxTreeResponseBytes 兜底。共享仓库文件
+        // 变多后整棵树可能先超过该上限，此时**必须**退到按子树 SHA 展开——
+        // 直接失败会让后台日程轮询从此永远拿不到列表、看不到远端变化。
+        if (first.responseTooLarge) {
+          return await _giteeWalkTree(
+            token: token,
+            rootRef: ref,
+            budget: budget,
+          );
+        }
         return ContentsTreeResult.error(
           first.error ?? '读取远端目录失败',
           truncated: first.truncated,
@@ -491,7 +525,11 @@ class GiteeContentsApi {
     }
     try {
       final res = await requestWithRetry(
-        () => _get(treeUri(ref, recursive: recursive), token),
+        () => _get(
+          treeUri(ref, recursive: recursive),
+          token,
+          maxResponseBytes: limits.maxTreeResponseBytes,
+        ),
       );
       if (res.statusCode != 200) {
         return _GiteeFetchedTree.error(extractErrorMessage(res));
@@ -518,13 +556,12 @@ class GiteeContentsApi {
         if (path == null || path.isEmpty || sha == null || sha.isEmpty) {
           return _GiteeFetchedTree.error('远端目录项缺少 path 或 sha');
         }
+        // 这里**不能**按单文件大小拒绝：目录列表只携带元数据（path/sha/size），
+        // 共享仓库里完全可能存在合法的大文件（打卡照片允许到 10MB），
+        // 用它去否决整份列表会让"只看某一个子树"的调用方整段失败。
+        // 单文件大小限制属于正文读取（pullText）与上传（pushText），那两处仍在生效；
+        // 列表本身由 maxTreeResponseBytes / maxTreeEntries 兜底。
         final size = _giteeReadInt(raw['size']);
-        if (type == 'blob' && size != null && size > limits.maxFileBytes) {
-          return _GiteeFetchedTree.error(
-            '远端文件超过 ${limits.maxFileBytes} 字节上限',
-            truncated: true,
-          );
-        }
         entries.add(
           ContentsTreeEntry(type: type, path: path, sha: sha, size: size),
         );
@@ -535,7 +572,11 @@ class GiteeContentsApi {
         truncated: body['truncated'] == true,
       );
     } on ContentsResponseTooLargeException catch (e) {
-      return _GiteeFetchedTree.error(e.toString(), truncated: true);
+      return _GiteeFetchedTree.error(
+        e.toString(),
+        truncated: true,
+        responseTooLarge: true,
+      );
     } catch (e) {
       return _GiteeFetchedTree.error('读取远端目录失败: $e');
     }

@@ -87,6 +87,7 @@ class _ParsedBackup {
     required this.ignoredCalendarImports,
     required this.pendingGiteeDates,
     required this.pendingGoogleDates,
+    required this.pendingGiteeOwners,
   });
 
   final String? exportedAt;
@@ -99,6 +100,9 @@ class _ParsedBackup {
   final Map<String, Set<String>> ignoredCalendarImports;
   final Set<String> pendingGiteeDates;
   final Set<String> pendingGoogleDates;
+
+  /// 待同步日期的身份归属（备份里可能没有，按"未知"处理）。
+  final Map<String, Set<String>> pendingGiteeOwners;
 }
 
 /// Import is a full replacement, so keep enough state to restore both memory
@@ -113,6 +117,7 @@ class _BackupImportSnapshot {
     required this.ignoredCalendarImports,
     required this.pendingGiteeDates,
     required this.pendingGoogleDates,
+    required this.pendingGiteeOwners,
     required this.categoriesDirty,
     required this.categoriesRevision,
     required this.targetsDirty,
@@ -145,6 +150,7 @@ class _BackupImportSnapshot {
   final Map<String, Set<String>> ignoredCalendarImports;
   final Set<String> pendingGiteeDates;
   final Set<String> pendingGoogleDates;
+  final Map<String, Set<String>> pendingGiteeOwners;
   final bool categoriesDirty;
   final int categoriesRevision;
   final bool targetsDirty;
@@ -234,6 +240,10 @@ class _BackupImportSnapshot {
       },
       pendingGiteeDates: Set<String>.from(provider.pendingGiteeSyncDates),
       pendingGoogleDates: Set<String>.from(provider.pendingGoogleSyncDates),
+      pendingGiteeOwners: {
+        for (final entry in provider._pendingGiteeOwnerByDate.entries)
+          entry.key: Set<String>.from(entry.value),
+      },
       categoriesDirty: provider._categoriesDirty,
       categoriesRevision: provider._categoriesRevision,
       targetsDirty: provider._targetsDirty,
@@ -289,6 +299,12 @@ class _BackupImportSnapshot {
       giteeDates: pendingGiteeDates,
       googleDates: pendingGoogleDates,
     );
+    provider._pendingGiteeOwnerByDate
+      ..clear()
+      ..addAll({
+        for (final entry in pendingGiteeOwners.entries)
+          entry.key: Set<String>.from(entry.value),
+      });
     provider._categoriesDirty = categoriesDirty;
     provider._categoriesRevision = categoriesRevision;
     provider._targetsDirty = targetsDirty;
@@ -545,6 +561,8 @@ class TimeProvider with ChangeNotifier {
   DateTime _currentDate = DateTime.now();
   bool _isSyncing = false; // 添加同步锁标志，防止并发同步导致重复
   final Duration _scheduleGiteeDebounce;
+  /// 前台日程自动刷新间隔。null 表示关闭（测试默认关闭，生产在 main.dart 显式开启）。
+  final Duration? _scheduleAutoRefreshInterval;
   final Duration _googleCalendarDebounce;
   final bool? _identityModePlatformOverride;
   final bool? _googleCalendarSyncPlatformOverride;
@@ -944,6 +962,7 @@ class TimeProvider with ChangeNotifier {
     'schedule_templates',
     'ignored_calendar_imports',
     'pending_gitee_sync_dates',
+    'pending_gitee_sync_owners',
     'pending_google_sync_dates',
     'pending_sync_dates',
     'category_expand_states',
@@ -1086,6 +1105,9 @@ class TimeProvider with ChangeNotifier {
     _targetsUserCode = '';
     _targetsGiteePending = false;
     _schedulePullRevision++;
+    // 身份切换期间不能让轮询继续跑：它可能在 _clearLoadedIdentityData() 之后
+    // 把旧身份的数据重新合并回来。切换成功后由 _pullIdentityScopedRemoteData 重启。
+    _stopScheduleAutoRefreshTimer();
     _pendingScheduleGiteeDateKeys.clear();
     _scheduleGiteeDateRevisions.clear();
     _undoStacks.clear();
@@ -1106,6 +1128,7 @@ class TimeProvider with ChangeNotifier {
     _deletedTargets.clear();
     _categoryExpandStates.clear();
     _pendingSyncState.replace();
+    _pendingGiteeOwnerByDate.clear();
     _categoriesDocUpdatedAt = 0;
     _categoriesUserCode = '';
     _targetsDocUpdatedAt = 0;
@@ -1174,6 +1197,8 @@ class TimeProvider with ChangeNotifier {
     if (_isDisposed || !_hasSelectedScheduleUser) return;
     unawaited(pullCategoriesFromGitee(force: true));
     unawaited(_pullTargetsFromGitee());
+    // 身份切换会停掉自动刷新定时器，切成功后在这里恢复。
+    _ensureScheduleAutoRefreshTimer();
   }
 
   Future<bool> setGoogleCalendarSyncEnabled(bool enabled) async {
@@ -1500,6 +1525,7 @@ class TimeProvider with ChangeNotifier {
     _googleSyncGeneration++;
     _debounceTimer?.cancel();
     _scheduleGiteeTimer?.cancel();
+    _scheduleAutoRefreshTimer?.cancel();
     _categoriesGiteeTimer?.cancel();
     _targetsGiteeTimer?.cancel();
     _scheduleSyncProgressClearTimer?.cancel();
@@ -1517,6 +1543,7 @@ class TimeProvider with ChangeNotifier {
 
   TimeProvider({
     Duration scheduleGiteeDebounce = const Duration(seconds: 3),
+    Duration? scheduleAutoRefreshInterval,
     Duration googleCalendarDebounce = const Duration(seconds: 3),
     bool? identityModePlatformOverride,
     bool? googleCalendarSyncPlatformOverride,
@@ -1532,6 +1559,7 @@ class TimeProvider with ChangeNotifier {
     void Function(String phase)? scheduleSnapshotJournalPhaseObserver,
     Future<bool> Function()? scheduleSnapshotJournalRemoveOverride,
   })  : _scheduleGiteeDebounce = scheduleGiteeDebounce,
+        _scheduleAutoRefreshInterval = scheduleAutoRefreshInterval,
         _googleCalendarDebounce = googleCalendarDebounce,
         _identityModePlatformOverride = identityModePlatformOverride,
         _googleCalendarSyncPlatformOverride =
@@ -1653,6 +1681,8 @@ class TimeProvider with ChangeNotifier {
     _googleSyncGeneration++;
     _debounceTimer?.cancel();
     _scheduleGiteeTimer?.cancel();
+    _scheduleAutoRefreshTimer?.cancel();
+    _scheduleAutoRefreshTimer = null;
     _categoriesGiteeTimer?.cancel();
     _targetsGiteeTimer?.cancel();
     _debounceTimer = null;
@@ -1713,6 +1743,8 @@ class TimeProvider with ChangeNotifier {
       unawaited(_pullTargetsFromGitee());
       // 各平台拉取当前日期自己的日程，补上另一平台推送的数据
       _pullOwnScheduleOnDateChange();
+      // 开启前台自动刷新，让另一台设备（手机/电脑）的修改能自己浮现
+      _ensureScheduleAutoRefreshTimer();
       // 仅在用户明确选择 Google 模式后恢复会话；手动模式绝不触发 Google。
       if (_usesMobileIdentityFlow &&
           _identityMode == AppIdentityMode.google &&
@@ -1911,6 +1943,280 @@ class TimeProvider with ChangeNotifier {
           requestRevision: requestRevision,
           showProgress: false,
         ));
+      }
+    }
+  }
+
+  /// 前台日程自动刷新定时器（桌面与手机共用；间隔为 null 时关闭）。
+  /// 定时器只在 App 前台运行，切后台由 [onAppBackgrounded] 取消。
+  void _ensureScheduleAutoRefreshTimer() {
+    final interval = _scheduleAutoRefreshInterval;
+    if (interval == null) return;
+    if (!_isAppForeground) return;
+    if (_isDisposed || _initializationFailed || !_isInitialLoadFinished) return;
+    _scheduleAutoRefreshTimer ??= Timer.periodic(interval, (_) {
+      unawaited(refreshSchedulesFromRemoteInBackground());
+    });
+  }
+
+  void _stopScheduleAutoRefreshTimer() {
+    _scheduleAutoRefreshTimer?.cancel();
+    _scheduleAutoRefreshTimer = null;
+  }
+
+  /// 前台轮询定时器是否还活着。仅供测试观察生命周期，不要用于业务判断。
+  @visibleForTesting
+  bool get hasScheduleAutoRefreshTimer => _scheduleAutoRefreshTimer != null;
+
+  /// 前台轮询 / 回到前台时的轻量日程刷新。
+  ///
+  /// 只检查当前视图可见日期（桌面 3 天 / 手机 1 天）：先做一次远端 SHA 列表
+  /// 请求，仅当某天的远端 SHA、本地指纹或已知状态变化时才下载正文并合并。
+  /// 远端与本地完全一致时不下载正文、不落盘、不通知 UI，因此每 60 秒轮询
+  /// 也不产生可感知开销。返回是否有本地内容被更新。
+  Future<bool> refreshSchedulesFromRemoteInBackground() {
+    final future = _runScheduleBackgroundRefresh();
+    _scheduleAutoRefreshInFlight = future;
+    future.whenComplete(() {
+      if (identical(_scheduleAutoRefreshInFlight, future)) {
+        _scheduleAutoRefreshInFlight = null;
+      }
+    });
+    return future;
+  }
+
+  Future<bool> _runScheduleBackgroundRefresh() async {
+    if (!_isAppForeground) return false;
+    if (!_isInitialLoadFinished || !_scheduleUserLoadFinished) return false;
+    if (_initializationFailed || _isDisposed) return false;
+    if (_remoteViewEnabled || _remoteViewTransitionInProgress) return false;
+    if (!_hasSelectedScheduleUser) return false;
+    if (_scheduleOverwriteInProgress ||
+        _scheduleOverwriteCleanupInProgress ||
+        _scheduleOverwriteJournalCleanupPending ||
+        _scheduleIdentityMutationInProgress) {
+      return false;
+    }
+    // 复用现有互斥标记避免并发；必须在设置标记之前判断，否则会把自己挡掉。
+    if (_hasScheduleSyncInFlight) return false;
+
+    final selectedUserCode = _scheduleUser.code;
+    final visibleDates = scheduleDatesForView(
+      _currentDate,
+      desktop: _usesDesktopScheduleView,
+    ).map(_getDateKey).toSet();
+    if (visibleDates.isEmpty) return false;
+
+    _scheduleSyncChecking = true;
+    var localChanged = false;
+    var remoteListReachable = false;
+    try {
+      final token = await _scheduleSyncDependencies.loadToken();
+      if (!_canContinueScheduleSync(selectedUserCode) ||
+          token == null ||
+          token.isEmpty) {
+        return false;
+      }
+      // 1) 一次廉价的远端文件列表（git tree），只取 SHA，不下载任何正文
+      final listResult = await _scheduleSyncDependencies.listPaths(
+        token: token,
+        userCode: selectedUserCode,
+      );
+      if (!_canContinueScheduleSync(selectedUserCode) || !listResult.success) {
+        return localChanged;
+      }
+      remoteListReachable = true;
+      final freshRemoteDates = <String>{};
+      final freshRemoteShaByDate = <String, String>{};
+      for (final entry in listResult.pathShaMap.entries) {
+        final dateKey = ScheduleOverwriteSnapshot.dateKeyFromCanonicalPath(
+          entry.key,
+          userCode: selectedUserCode,
+        );
+        if (dateKey == null || entry.value.trim().isEmpty) continue;
+        freshRemoteDates.add(dateKey);
+        freshRemoteShaByDate[dateKey] = entry.value;
+      }
+
+      // 只需要可见日期的本地指纹，不必序列化全部历史。
+      final localEntriesByDate =
+          _localScheduleEntriesByDate(onlyDates: visibleDates);
+      final previousManifest =
+          await ScheduleSyncManifestStore.load(selectedUserCode);
+      if (!_canContinueScheduleSync(selectedUserCode)) return localChanged;
+
+      // 2) 只挑出远端 SHA / 本地指纹 / 已知状态发生变化的可见日期。
+      //    完全一致时这里为空，后面一次正文请求都不会发出。
+      final datesToInspect = <String>[
+        for (final dateKey in visibleDates.toList()..sort())
+          if (_scheduleCheckNeedsInspection(
+            dateKey: dateKey,
+            previousManifest: previousManifest,
+            remoteDates: freshRemoteDates,
+            remoteShaByDate: freshRemoteShaByDate,
+            localEntriesByDate: localEntriesByDate,
+          ))
+            dateKey,
+      ];
+
+      // 3) 逐日下载正文并双向合并。基线只记录"这一轮真的对过账"的日期：
+      //    没检查过的日期保持原样，否则会把从未下载过的远端版本记成"已验证"，
+      //    之后 SHA 与指纹都不再变化，变成永久漏同步。
+      final remoteDates = <String>{...?previousManifest?.remoteDates};
+      final remoteShaByDate = <String, String>{
+        ...?previousManifest?.remoteShaByDate,
+      };
+      final localFingerprintByDate = <String, String>{
+        ...?previousManifest?.localFingerprintByDate,
+      };
+      final pendingKinds = <String, String>{
+        ...?previousManifest?.pendingKinds,
+      };
+      final reconciledDates = <String>[];
+      var pendingEnqueued = false;
+
+      for (final dateKey in datesToInspect) {
+        // 切后台后不再继续下载后续日期（那一次"有意补推"由 onAppBackgrounded 负责）。
+        if (!_isAppForeground || !_canContinueScheduleSync(selectedUserCode)) {
+          break;
+        }
+        final freshSha = freshRemoteShaByDate[dateKey];
+        if (freshSha == null) {
+          // 远端没有这一天：不需要下载正文。
+          // 区分两种情况：基线里原本存在过（说明是被别处删掉的）→ 入队待上传，
+          // 让轮询把文件建回去；从未存在过（例如刚切到另一个身份、该身份下还
+          // 没有这些文件）→ 什么都不做，避免把整份本地数据批量复制到对方命名空间。
+          final vanished =
+              previousManifest?.remoteDates.contains(dateKey) ?? false;
+          remoteDates.remove(dateKey);
+          remoteShaByDate.remove(dateKey);
+          if (vanished) {
+            pendingKinds[dateKey] = 'upload';
+            // 进入真正的待同步队列：同步中心的待同步数与"重试"都读它。
+            _markScheduleGiteePendingWithoutScheduling(dateKey);
+            pendingEnqueued = true;
+          } else {
+            pendingKinds.remove(dateKey);
+          }
+          reconciledDates.add(dateKey);
+          continue;
+        }
+        final outcome = await _pullScheduleDayFromGitee(
+          token,
+          dateKey,
+          userCode: selectedUserCode,
+        );
+        if (!outcome.success) {
+          // 正文没读到就绝不能记成"已对账"。留一个 error 标记让下一轮重试，
+          // 否则网络失败/格式异常会让这一天再也同步不上。
+          pendingKinds[dateKey] = 'error';
+          continue;
+        }
+        remoteDates.add(dateKey);
+        // 优先用正文实际对应的 SHA：列表里的 SHA 可能在下发期间已经被改过，
+        // 写旧值会让下一轮白下载一次。
+        remoteShaByDate[dateKey] = outcome.sha ?? freshSha;
+        pendingKinds.remove(dateKey);
+        reconciledDates.add(dateKey);
+        // 远端只是换了提交、内容等价时不落盘也不通知。
+        if (outcome.changed) localChanged = true;
+      }
+
+      // 只序列化本次真的对过账的日期（通常只有 1~3 天）
+      final reconciledEntries =
+          _localScheduleEntriesByDate(onlyDates: reconciledDates.toSet());
+      for (final dateKey in reconciledDates) {
+        localFingerprintByDate[dateKey] = scheduleEntriesFingerprint(
+          reconciledEntries[dateKey] ?? const [],
+        );
+      }
+      // 远端和本地都已不存在的日期不留在基线里（这里只比键，不序列化内容）
+      final knownDates = <String>{
+        ...remoteDates,
+        ..._dailySlots.keys.map(_normalizeDateKey),
+        ...datesToInspect,
+      };
+      pendingKinds.removeWhere((dateKey, _) => !knownDates.contains(dateKey));
+
+      // 4) 先落盘本地数据，再提交基线：本地保存失败时基线不能声称"已对账"。
+      //    待同步标记变了也要落盘 + 通知，否则同步中心的待同步数是旧的。
+      if (localChanged || pendingEnqueued) {
+        _syncDirty = true;
+        final saved = await _saveData();
+        if (!_canContinueScheduleSync(selectedUserCode) || !saved) {
+          return localChanged;
+        }
+        notifyListeners();
+        if (localChanged) {
+          _appLogService.info(
+            '后台刷新日程：已更新可见日期',
+            source: 'schedule_sync',
+          );
+        }
+      }
+
+      final nextManifest = ScheduleSyncManifest(
+        remoteDates: remoteDates,
+        remoteShaByDate: remoteShaByDate,
+        localFingerprintByDate: localFingerprintByDate,
+        pendingKinds: pendingKinds,
+      );
+      if (previousManifest == null || nextManifest != previousManifest) {
+        await ScheduleSyncManifestStore.save(selectedUserCode, nextManifest);
+      }
+      return localChanged;
+    } catch (error) {
+      // 轮询失败必须静默：走 _recordAppError 会让每 60 秒多一条错误日志。
+      debugPrint('后台刷新日程失败: $error');
+      return localChanged;
+    } finally {
+      _scheduleSyncChecking = false;
+      // 收尾的补推/补拉要求仍在前台；唯一的例外是 onAppBackgrounded 那次
+      // "有意补推"被本轮的同步锁挡掉了（_backgroundFlushOwed），此时允许在
+      // 收尾补做一次，否则慢网络下这次补推会被永久丢掉。
+      // 只有真的连上远端时才补推：断网时在这里重试会让每分钟都多一轮失败请求。
+      if ((_isAppForeground || _backgroundFlushOwed) &&
+          remoteListReachable &&
+          !_isDisposed &&
+          !_initializationFailed &&
+          !_isAnyScheduleSyncBlocked) {
+        // 待同步日期重启后只恢复到 _pendingSyncState（持久化），这里补回内存队列，
+        // 让"推送失败后每轮自愈"在重启之后依然成立。桌面端这个队列跨身份共享，
+        // 所以只补推"归属明确等于本次身份"的日期：归属未知（旧版本数据、备份
+        // 导入、迁移残留）或属于其它身份的一律不自动推，避免写错命名空间。
+        _pendingScheduleGiteeDateKeys.addAll(
+          pendingGiteeSyncDates.where(
+            (dateKey) =>
+                _pendingGiteeOwnerByDate[dateKey]?.contains(selectedUserCode) ??
+                false,
+          ),
+        );
+        if (_pendingScheduleGiteeDateKeys.isNotEmpty) {
+          // 这里必须 await：下面还要为新露出的日期启动拉取，
+          // 推送与拉取并发会交错修改槽位并落盘。
+          await _flushPendingScheduleGiteeSync();
+        } else {
+          _backgroundFlushOwed = false;
+        }
+      }
+      // 轮询期间可见窗口变了（切换日期，或桌面三列整体滚动一天）：只补拉新露
+      // 出来的日期——旧日期本轮刚处理过，重拉整个窗口会多出正文请求、落盘、
+      // 通知与日志。后台不发请求。
+      if (_isAppForeground && !_isDisposed && _hasSelectedScheduleUser) {
+        final newVisibleDates = scheduleDatesForView(
+          _currentDate,
+          desktop: _usesDesktopScheduleView,
+        ).where((date) => !visibleDates.contains(_getDateKey(date))).toList();
+        if (newVisibleDates.isNotEmpty) {
+          final requestRevision = ++_schedulePullRevision;
+          for (final date in newVisibleDates) {
+            unawaited(pullScheduleFromGitee(
+              date: date,
+              requestRevision: requestRevision,
+              showProgress: false,
+            ));
+          }
+        }
       }
     }
   }
@@ -2263,10 +2569,30 @@ class TimeProvider with ChangeNotifier {
   }
 
   Timer? _scheduleGiteeTimer;
+  Timer? _scheduleAutoRefreshTimer;
   Timer? _scheduleSyncProgressClearTimer;
   ScheduleSyncProgress? _scheduleSyncProgress;
   bool _scheduleGiteeSyncing = false;
   bool _scheduleSyncChecking = false;
+
+  /// App 是否处于前台。切后台后禁止再创建任何轮询/重试定时器——
+  /// 初始化或身份切换的异步流程可能在切后台之后才跑完，不能让它把定时器装回来。
+  bool _isAppForeground = true;
+
+  /// 正在执行的后台轮询。切后台时的"有意补推"要等它释放同步锁后再执行。
+  Future<bool>? _scheduleAutoRefreshInFlight;
+
+  /// 切后台时那次"有意补推"是否还没真正执行（被轮询的同步锁挡掉了）。
+  /// 置位后允许轮询收尾在后台补做一次，避免慢网络下这次补推被永久丢掉。
+  bool _backgroundFlushOwed = false;
+
+  /// 每个待同步日期欠着哪些身份的推送。桌面端待同步队列跨身份共享（本地时间块
+  /// 本身也不分身份），同一天可能在两个身份下都改了且都推送失败，所以归属必须
+  /// 是**日期 → 身份集合**：只记一个身份会让后来的身份覆盖掉先前的待推送状态，
+  /// 先前的身份就再也补不上了。
+  /// 没有记录的日期（旧版本数据、备份导入、迁移残留）视为"归属未知"，
+  /// 一律不自动补推（fail-closed）。
+  final Map<String, Set<String>> _pendingGiteeOwnerByDate = {};
   Future<SyncOperationResult>? _scheduleCheckFuture;
   bool _scheduleOverwriteInProgress = false;
   int _scheduleMergePullsInProgress = 0;
@@ -2345,26 +2671,35 @@ class TimeProvider with ChangeNotifier {
 
   void _retainScheduleGiteePending(String dateKey) {
     _pendingScheduleGiteeDateKeys.add(dateKey);
+    _recordPendingGiteeOwner(dateKey);
     _pendingSyncState.markGitee(dateKey);
     _syncDirty = true;
   }
 
-  Future<void> _flushPendingScheduleGiteeSync() async {
-    if (!_isScheduleReady) return;
-    if (_scheduleOverwriteJournalCleanupPending) return;
-    if (_pendingScheduleGiteeDateKeys.isEmpty) return;
+  /// 返回是否真的处理了队列：
+  /// true = 已推送或本就无可推；false = 被同步锁/未就绪挡下，仍需重试。
+  Future<bool> _flushPendingScheduleGiteeSync() async {
+    if (!_isScheduleReady) return false;
+    if (_scheduleOverwriteJournalCleanupPending) return false;
+    if (_pendingScheduleGiteeDateKeys.isEmpty) return true;
     if (_isAnyScheduleSyncBlocked) {
+      // 后台不重试：在后台反复排 100ms 定时器等于持续唤醒，
+      // 挂起的修改留给轮询收尾或回到前台后的第一轮刷新补推。
+      if (!_isAppForeground) return false;
       _scheduleGiteeTimer = Timer(const Duration(milliseconds: 100), () {
         _scheduleGiteeTimer = null;
         unawaited(_flushPendingScheduleGiteeSync());
       });
-      return;
+      return false;
     }
 
+    // 真的要推了：切后台那次"欠账"可以销掉。
+    _backgroundFlushOwed = false;
     final targets = List<String>.from(_pendingScheduleGiteeDateKeys);
     for (final target in targets) {
       await syncScheduleToGitee(dateKey: target);
     }
+    return true;
   }
 
   /// 只读检查当前身份的日程是否与远端一致。
@@ -2556,7 +2891,10 @@ class TimeProvider with ChangeNotifier {
           _targetStatsCache.invalidateDate(dateKey);
           localChanged = true;
         }
-        _clearScheduleGiteePendingWithoutScheduling(dateKey);
+        _clearScheduleGiteePendingWithoutScheduling(
+          dateKey,
+          userCode: selectedUserCode,
+        );
         if (result.remoteSha != null && remoteDates.contains(dateKey)) {
           remoteShaByDate[dateKey] = result.remoteSha!;
         }
@@ -2641,10 +2979,15 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
-  Map<String, List<Map<String, dynamic>>> _localScheduleEntriesByDate() {
+  /// 序列化本地日程。传 [onlyDates] 时只处理这些日期——后台轮询只关心可见
+  /// 日期与本次对账过的日期，没必要把全部历史日期都序列化一遍。
+  Map<String, List<Map<String, dynamic>>> _localScheduleEntriesByDate({
+    Set<String>? onlyDates,
+  }) {
     final result = <String, List<Map<String, dynamic>>>{};
     for (final entry in _dailySlots.entries) {
       final dateKey = _normalizeDateKey(entry.key);
+      if (onlyDates != null && !onlyDates.contains(dateKey)) continue;
       final serialized = _serializeRecordedSlots(entry.value);
       if (serialized.isNotEmpty) result[dateKey] = serialized;
     }
@@ -2737,14 +3080,56 @@ class TimeProvider with ChangeNotifier {
   }
 
   void _markScheduleGiteePendingWithoutScheduling(String dateKey) {
-    if (_pendingSyncState.giteeDates.add(dateKey)) {
-      _syncDirty = true;
-    }
+    // 归属必须先记：这一天可能已经在共享队列里（属于别的身份），
+    // 但当前身份同样欠着它——比如远端文件被删时也要能自动重建。
+    _recordPendingGiteeOwner(dateKey);
+    // 注意：PendingSyncState.giteeDates 是不可变视图，必须走 markGitee；
+    // 直接 .add 会抛 UnsupportedError，让同步中心的状态检查整段失败。
+    if (_pendingSyncState.giteeDates.contains(dateKey)) return;
+    _pendingSyncState.markGitee(dateKey);
+    _syncDirty = true;
   }
 
-  void _clearScheduleGiteePendingWithoutScheduling(String dateKey) {
-    var changed = _pendingScheduleGiteeDateKeys.remove(dateKey);
-    if (_pendingSyncState.giteeDates.contains(dateKey)) {
+  /// 记下这个待同步日期属于哪个身份。
+  ///
+  /// 桌面端待同步队列跨身份共享：没有归属就无法判断能不能自动补推，切到另一个
+  /// 身份后会把旧身份待推送的日期推进新身份的命名空间。
+  void _recordPendingGiteeOwner(String dateKey) {
+    if (!_hasSelectedScheduleUser) return;
+    final owners =
+        _pendingGiteeOwnerByDate.putIfAbsent(dateKey, () => <String>{});
+    if (!owners.add(_scheduleUser.code)) return;
+    _syncDirty = true;
+  }
+
+  /// 解除某个身份对某天的待推送归属。
+  ///
+  /// 返回 `removed`（是否真的解除过）与 `empty`（解除后是否已没有任何身份欠着
+  /// 这一天）。只有 `empty` 时才能把该天从共享待同步队列里摘掉。
+  ({bool removed, bool empty}) _releasePendingGiteeOwner(
+    String dateKey,
+    String userCode,
+  ) {
+    final owners = _pendingGiteeOwnerByDate[dateKey];
+    if (owners == null) return (removed: false, empty: true);
+    final removed = owners.remove(userCode);
+    if (owners.isEmpty) _pendingGiteeOwnerByDate.remove(dateKey);
+    return (removed: removed, empty: owners.isEmpty);
+  }
+
+  /// 清除某天在 [userCode] 身份下的待推送状态。
+  /// 只有这一天不再欠任何身份时，才把它从共享待同步队列里摘掉。
+  void _clearScheduleGiteePendingWithoutScheduling(
+    String dateKey, {
+    String? userCode,
+  }) {
+    final release = _releasePendingGiteeOwner(
+      dateKey,
+      userCode ?? _scheduleUser.code,
+    );
+    var changed =
+        _pendingScheduleGiteeDateKeys.remove(dateKey) || release.removed;
+    if (release.empty && _pendingSyncState.giteeDates.contains(dateKey)) {
       _pendingSyncState.clearGitee(dateKey);
       changed = true;
     }
@@ -2821,6 +3206,7 @@ class TimeProvider with ChangeNotifier {
         slots,
         userCode: selectedUserCode,
         token: token,
+        expectedRevision: syncRevision,
       );
       if (!_canContinueScheduleSync(selectedUserCode)) return;
       if (ok) {
@@ -2833,7 +3219,7 @@ class TimeProvider with ChangeNotifier {
         if ((_scheduleGiteeDateRevisions[effectiveDateKey] ?? 0) ==
             syncRevision) {
           _pendingScheduleGiteeDateKeys.remove(effectiveDateKey);
-          _clearPendingGiteeForDate(effectiveDateKey);
+          _clearPendingGiteeForDate(effectiveDateKey, selectedUserCode);
         }
         if (!_syncStatusController.isClosed) {
           _addSyncStatus("日程同步成功");
@@ -2908,12 +3294,14 @@ class TimeProvider with ChangeNotifier {
     List<TimeSlot> slots, {
     String? userCode,
     String? token,
+    int? expectedRevision,
   }) async {
     return _pushScheduleDayForUser(
       dateKey,
       slots,
       userCode: userCode ?? _scheduleUser.code,
       token: token,
+      expectedRevision: expectedRevision,
     );
   }
 
@@ -2922,6 +3310,9 @@ class TimeProvider with ChangeNotifier {
     List<TimeSlot> slots, {
     required String userCode,
     String? token,
+    /// 调用方在推送开始前记录的编辑版本号；用于判断推送期间用户是否又改了
+    /// 这一天（决定能不能把本地指纹写进同步基线）。
+    int? expectedRevision,
   }) async {
     if (!_canContinueScheduleSync(userCode)) return false;
     final resolvedToken = token ?? await _scheduleSyncDependencies.loadToken();
@@ -3013,6 +3404,15 @@ class TimeProvider with ChangeNotifier {
           source: 'schedule_sync',
         );
       }
+      // 这次没有上传，但已经把远端版本读全了：记进基线，
+      // 免得下一次后台轮询又把它当成"远端变了"重新下载。
+      await _recordScheduleBaselineForDate(
+        userCode: userCode,
+        dateKey: dateKey,
+        remoteSha: expectedSha,
+        slots: slots,
+        expectedRevision: expectedRevision,
+      );
       return true;
     }
 
@@ -3067,7 +3467,114 @@ class TimeProvider with ChangeNotifier {
     final saved = await _saveData();
     if (!_canContinueScheduleSync(userCode) || !saved) return false;
     notifyListeners();
+    // 回写新 SHA：否则下一次后台轮询会因为"远端 SHA 变了"把刚推上去的这一天
+    // 重新下载一遍。
+    await _recordScheduleBaselineForDate(
+      userCode: userCode,
+      dateKey: dateKey,
+      remoteSha: result.sha,
+      slots: slots,
+      expectedRevision: expectedRevision,
+    );
     return true;
+  }
+
+  /// 覆盖拉取成功后按"本地 == 远端"的事实重建同步基线。
+  ///
+  /// 不重建的话，旧基线的 SHA / 本地指纹必然对不上，下一轮轮询会把当前可见
+  /// 日期重新下载一遍（多一次正文请求 + 落盘 + UI 通知）。
+  Future<void> _rebuildScheduleBaselineAfterOverwrite({
+    required String userCode,
+    required Map<String, String> pathShaMap,
+  }) async {
+    try {
+      final remoteDates = <String>{};
+      final remoteShaByDate = <String, String>{};
+      pathShaMap.forEach((path, sha) {
+        final dateKey = ScheduleOverwriteSnapshot.dateKeyFromCanonicalPath(
+          path,
+          userCode: userCode,
+        );
+        if (dateKey == null || sha.trim().isEmpty) return;
+        remoteDates.add(dateKey);
+        remoteShaByDate[dateKey] = sha;
+      });
+      final localEntriesByDate = _localScheduleEntriesByDate();
+      await ScheduleSyncManifestStore.save(
+        userCode,
+        ScheduleSyncManifest(
+          remoteDates: remoteDates,
+          remoteShaByDate: remoteShaByDate,
+          localFingerprintByDate: <String, String>{
+            for (final dateKey in remoteDates)
+              dateKey: scheduleEntriesFingerprint(
+                localEntriesByDate[dateKey] ?? const [],
+              ),
+          },
+          pendingKinds: const <String, String>{},
+        ),
+      );
+    } catch (error) {
+      debugPrint('覆盖拉取后重建同步基线失败: $error');
+    }
+  }
+
+  /// 把一天的远端 SHA 与本地指纹写回 [ScheduleSyncManifest]，其余日期原样保留。
+  ///
+  /// 只在推送/合并成功后调用，用来让后台轮询立刻知道"这一天已经和远端对齐"。
+  /// [remoteSha] 为 null（服务端没回传，或远端文件不存在）时移除该天记录，
+  /// 下一次轮询会重新确认一次，行为与没有基线时一致。
+  ///
+  /// [expectedRevision] 是调用方在推送开始前记下的编辑版本号。若推送期间用户
+  /// 又改了这一天，就**不**更新本地指纹、也不清 `pendingKinds`——否则基线会把
+  /// "尚未推送的新编辑"当成已对齐。远端 SHA 本身仍是事实，照常记录。
+  Future<void> _recordScheduleBaselineForDate({
+    required String userCode,
+    required String dateKey,
+    required String? remoteSha,
+    required List<TimeSlot> slots,
+    int? expectedRevision,
+  }) async {
+    try {
+      final existing = await ScheduleSyncManifestStore.load(userCode);
+      // 版本判断与本地指纹取样必须放在读盘之后、且中间不能再有 await：
+      // 读盘期间用户可能刚好编辑了这一天，"版本未变"的旧结论就过期了。
+      final revisionUnchanged = expectedRevision == null ||
+          (_scheduleGiteeDateRevisions[dateKey] ?? 0) == expectedRevision;
+      final localFingerprint = revisionUnchanged
+          ? scheduleEntriesFingerprint(_serializeRecordedSlots(slots))
+          : null;
+      final hasRemote = remoteSha != null && remoteSha.isNotEmpty;
+      final remoteDates = <String>{...?existing?.remoteDates};
+      final remoteShaByDate = <String, String>{...?existing?.remoteShaByDate};
+      if (hasRemote) {
+        remoteDates.add(dateKey);
+        remoteShaByDate[dateKey] = remoteSha;
+      } else {
+        remoteDates.remove(dateKey);
+        remoteShaByDate.remove(dateKey);
+      }
+      final localFingerprintByDate = <String, String>{
+        ...?existing?.localFingerprintByDate,
+      };
+      final pendingKinds = <String, String>{...?existing?.pendingKinds};
+      if (localFingerprint != null) {
+        localFingerprintByDate[dateKey] = localFingerprint;
+        pendingKinds.remove(dateKey);
+      }
+      await ScheduleSyncManifestStore.save(
+        userCode,
+        ScheduleSyncManifest(
+          remoteDates: remoteDates,
+          remoteShaByDate: remoteShaByDate,
+          localFingerprintByDate: localFingerprintByDate,
+          pendingKinds: pendingKinds,
+        ),
+      );
+    } catch (error) {
+      // 基线只是加速用的缓存：写失败不影响同步正确性，下次轮询会补上。
+      debugPrint('日程同步基线回写失败: $error');
+    }
   }
 
   /// 将合并后的槽位 entries 应用到本地 slots（ts → modifiedAt）
@@ -3180,9 +3687,7 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('请先选择身份');
       return const SyncOperationResult.skipped('尚未选择日程身份');
     }
-    if (_scheduleOverwriteInProgress ||
-        _allScheduleSyncing ||
-        _allSchedulePulling) {
+    if (_scheduleOverwriteInProgress || hasScheduleModuleSyncInFlight) {
       return const SyncOperationResult.busy('已有日程同步任务正在进行，请稍后再试');
     }
     _allScheduleSyncing = true;
@@ -3282,6 +3787,7 @@ class TimeProvider with ChangeNotifier {
           slots,
           userCode: selectedUserCode,
           token: token,
+          expectedRevision: syncRevision,
         );
         if (!_canContinueScheduleSync(selectedUserCode)) {
           return cancellationResult();
@@ -3294,8 +3800,10 @@ class TimeProvider with ChangeNotifier {
             total: total,
           );
           if ((_scheduleGiteeDateRevisions[dateKey] ?? 0) == syncRevision) {
-            _pendingSyncState.clearGitee(dateKey);
-            _pendingScheduleGiteeDateKeys.remove(dateKey);
+            _clearScheduleGiteePendingWithoutScheduling(
+              dateKey,
+              userCode: selectedUserCode,
+            );
           }
         } else {
           failedDateKeys.add(dateKey);
@@ -3416,9 +3924,7 @@ class TimeProvider with ChangeNotifier {
       _addScheduleSyncStatus('请先选择身份');
       return;
     }
-    if (_scheduleOverwriteInProgress ||
-        _allSchedulePulling ||
-        _allScheduleSyncing) {
+    if (_scheduleOverwriteInProgress || hasScheduleModuleSyncInFlight) {
       return;
     }
     _allSchedulePulling = true;
@@ -3487,6 +3993,7 @@ class TimeProvider with ChangeNotifier {
       // 3) 逐日拉取并双向合并（单日失败不中断整体）
       final total = dateKeys.length;
       var done = 0;
+      var changedDays = 0;
       _setScheduleSyncProgress(
         message: '准备拉取日程 0/$total',
         completed: 0,
@@ -3501,14 +4008,15 @@ class TimeProvider with ChangeNotifier {
           completed: done,
           total: total,
         );
-        final ok = await _pullScheduleDayFromGitee(
+        final outcome = await _pullScheduleDayFromGitee(
           token,
           dateKey,
           userCode: selectedUserCode,
         );
         if (!_canContinueScheduleSync(selectedUserCode)) return;
-        if (ok) {
+        if (outcome.success) {
           done++;
+          if (outcome.changed) changedDays++;
           _setScheduleSyncProgress(
             message: '已拉取日程 $done/$total',
             completed: done,
@@ -3517,8 +4025,8 @@ class TimeProvider with ChangeNotifier {
         }
       }
 
-      // 4) 全部完成后统一落盘 + 通知（避免逐日保存）
-      if (done > 0) {
+      // 4) 全部完成后统一落盘 + 通知（避免逐日保存）；内容没变就完全不动磁盘
+      if (changedDays > 0) {
         final saved = await _saveData();
         if (!_canContinueScheduleSync(selectedUserCode) || !saved) return;
         notifyListeners();
@@ -3594,6 +4102,7 @@ class TimeProvider with ChangeNotifier {
     }
     if (_scheduleOverwriteInProgress ||
         _scheduleGiteeSyncing ||
+        _scheduleSyncChecking ||
         _allScheduleSyncing ||
         _allSchedulePulling ||
         _isSyncing ||
@@ -3809,6 +4318,7 @@ class TimeProvider with ChangeNotifier {
         ..addAll(nextDailySlots);
       _undoStacks.clear();
       _pendingSyncState.replace();
+      _pendingGiteeOwnerByDate.clear();
       _pendingScheduleGiteeDateKeys.clear();
       _scheduleGiteeDateRevisions.clear();
       _lastEditedDateKey = null;
@@ -3819,6 +4329,12 @@ class TimeProvider with ChangeNotifier {
       _syncDirty = false;
       _targetStatsCache.invalidate();
       notifyListeners();
+      // 覆盖后本地 == 远端，重建同步基线，免得下一轮轮询又把这些天重新下载一遍。
+      await _rebuildScheduleBaselineAfterOverwrite(
+        userCode: selectedUserCode,
+        pathShaMap: listResult.pathShaMap,
+      );
+      if (_isDisposed) return false;
       // Removal is cleanup only. If the platform reports a failed/ambiguous
       // remove, _finalize... deliberately retains the committed journal; the
       // next startup will verify the new snapshot and retry cleanup instead of
@@ -3902,18 +4418,28 @@ class TimeProvider with ChangeNotifier {
   }
 
   /// 拉取单日日程并与本地双向合并，返回是否成功。
-  Future<bool> _pullScheduleDayFromGitee(
+  /// 拉取单日正文并双向合并。
+  ///
+  /// 返回 `success`（这一轮是否成功对账，失败时调用方不能记基线）、
+  /// `changed`（本地内容是否真的被改动，未改动时调用方不需要落盘与通知）
+  /// 与 `sha`（**正文实际对应的**远端版本，调用方应优先用它写基线——
+  /// 列表里的 SHA 可能已经过期）。
+  Future<({bool success, bool changed, String? sha})> _pullScheduleDayFromGitee(
     String token,
     String dateKey, {
     required String userCode,
   }) async {
-    if (!_canContinueScheduleSync(userCode)) return false;
+    if (!_canContinueScheduleSync(userCode)) {
+      return (success: false, changed: false, sha: null);
+    }
     final result = await _scheduleSyncDependencies.pullDay(
       token: token,
       dateKey: dateKey,
       userCode: userCode,
     );
-    if (!_canContinueScheduleSync(userCode)) return false;
+    if (!_canContinueScheduleSync(userCode)) {
+      return (success: false, changed: false, sha: null);
+    }
     if (result.notFound || !result.success || result.content == null) {
       _appLogService.warning(
         result.notFound
@@ -3921,7 +4447,7 @@ class TimeProvider with ChangeNotifier {
             : '日程拉取失败：$dateKey${result.error == null ? '' : '，${result.error}'}',
         source: 'schedule_sync',
       );
-      return false; // notFound/error 不中断整体，计入失败数
+      return (success: false, changed: false, sha: null); // notFound/error 计入失败数
     }
 
     final remote = parseScheduleContent(result.content);
@@ -3931,7 +4457,7 @@ class TimeProvider with ChangeNotifier {
         '日程拉取拒绝：$dateKey 远端数据异常：${remote.error}',
         source: 'schedule_sync',
       );
-      return false;
+      return (success: false, changed: false, sha: null);
     }
     final daySlots = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
     final localEntries = _serializeRecordedSlots(daySlots);
@@ -3940,14 +4466,20 @@ class TimeProvider with ChangeNotifier {
       localEntries: localEntries,
       remoteEntries: remote.slots,
     );
+    // 远端只是重新提交了等价内容时合并结果与本地完全相同：不标脏、不落盘、
+    // 不通知，也不写日志，避免每轮轮询都产生一次无意义的写入与 UI 噪音。
+    final changed = !scheduleSlotsEquivalent(merged, localEntries);
     _applyScheduleEntriesToSlots(daySlots, merged);
+    if (!changed) {
+      return (success: true, changed: false, sha: result.sha);
+    }
     _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
     _appLogService.info(
       '日程拉取成功：$dateKey（远端 ${remote.slots.length} 条，合并后 ${merged.length} 条）',
       source: 'schedule_sync',
     );
-    return true;
+    return (success: true, changed: true, sha: result.sha);
   }
 
   // --- 目标跨端同步 ---
@@ -4756,6 +5288,9 @@ class TimeProvider with ChangeNotifier {
         _isDisposed ||
         _scheduleIdentityMutationInProgress ||
         _scheduleOverwriteJournalCleanupPending ||
+        // 后台轮询正在读写槽位/落盘时不能并发进入，否则会重复请求、
+        // 交错保存、重复通知。轮询结束后会补一次切日拉取。
+        _scheduleSyncChecking ||
         ((_remoteViewTransitionInProgress || _remoteViewEnabled) &&
             !allowRemoteViewTransition)) {
       return false;
@@ -5176,6 +5711,7 @@ class TimeProvider with ChangeNotifier {
       return;
     }
     final key = dateKey ?? _getDateKey(_currentDate);
+    _recordPendingGiteeOwner(key);
     _pendingSyncState.markGitee(key);
     if (_supportsGoogleCalendarSync) {
       _pendingSyncState.markGoogle(key);
@@ -5184,7 +5720,11 @@ class TimeProvider with ChangeNotifier {
     _markScheduleGiteePending(key);
   }
 
-  void _clearPendingGiteeForDate([String? dateKey]) {
+  /// 清除某天在 [userCode]（默认当前身份）下的待推送状态。
+  ///
+  /// 仍有其它身份欠着这一天时，它必须留在共享待同步队列里，否则那个身份的
+  /// 修改就再也补不上了。
+  void _clearPendingGiteeForDate([String? dateKey, String? userCode]) {
     if (!_isScheduleReady ||
         _scheduleOverwriteCleanupInProgress ||
         _remoteViewTransitionInProgress ||
@@ -5192,12 +5732,19 @@ class TimeProvider with ChangeNotifier {
       return;
     }
     final key = dateKey ?? _getDateKey(_currentDate);
-    if (_pendingSyncState.giteeDates.contains(key)) {
+    final release = _releasePendingGiteeOwner(
+      key,
+      userCode ?? _scheduleUser.code,
+    );
+    var changed = release.removed;
+    if (release.empty && _pendingSyncState.giteeDates.contains(key)) {
       _pendingSyncState.clearGitee(key);
-      _syncDirty = true;
-      notifyListeners();
-      _saveData();
+      changed = true;
     }
+    if (!changed) return;
+    _syncDirty = true;
+    notifyListeners();
+    _saveData();
   }
 
   bool _hasLocalScheduleStateForGoogleSync(String dateKey) {
@@ -5210,6 +5757,11 @@ class TimeProvider with ChangeNotifier {
 
   /// 应用切到后台：取消防抖计时、立即把本地数据与待同步标记写入磁盘
   Future<void> onAppBackgrounded() async {
+    // 停轮询必须放在守卫之前：切后台时若正处于远程视图或提交清理中，
+    // 下面的提前返回会让定时器继续唤醒，等于没有后台停止。
+    // 同时置前台标志，阻止切后台之后才跑完的初始化/身份切换把定时器装回来。
+    _isAppForeground = false;
+    _stopScheduleAutoRefreshTimer();
     if (!_isInitialLoadFinished ||
         !_scheduleUserLoadFinished ||
         _initializationFailed ||
@@ -5222,21 +5774,38 @@ class TimeProvider with ChangeNotifier {
     _debounceTimer = null;
     _scheduleGiteeTimer?.cancel();
     _scheduleGiteeTimer = null;
-    await _flushPendingScheduleGiteeSync();
+    // 这次补推是有意的，必须真的执行：先等正在跑的轮询释放同步锁（最多 5 秒）。
+    // 超时或仍被占用就记成"欠一次后台补推"，由轮询收尾补做，不会丢。
+    _backgroundFlushOwed = true;
+    final inFlight = _scheduleAutoRefreshInFlight;
+    if (inFlight != null) {
+      await inFlight
+          .timeout(const Duration(seconds: 5), onTimeout: () => false);
+    }
+    if (await _flushPendingScheduleGiteeSync()) {
+      _backgroundFlushOwed = false;
+    }
     if (_initializationFailed || _scheduleOverwriteJournalCleanupPending) {
       return;
     }
     await _saveData();
   }
 
-  /// 应用回到前台：在冷却时间外刷新当前身份的分类。
+  /// 应用回到前台：先起自动刷新定时器并立即检查一次日程，再在冷却时间外刷新分类。
+  /// 日程必须排在分类之前——[_hasScheduleSyncInFlight] 含分类同步标志，
+  /// 顺序反过来会让日程刷新被自己的守卫挡掉。
   Future<void> onAppResumed() async {
+    // 先把前台标志置回来，否则下面的刷新会被自己的前台守卫挡掉。
+    _isAppForeground = true;
     if (!_isInitialLoadFinished ||
         !_scheduleUserLoadFinished ||
         _initializationFailed ||
         _isDisposed) {
       return;
     }
+    _ensureScheduleAutoRefreshTimer();
+    await refreshSchedulesFromRemoteInBackground();
+    if (_isDisposed || _initializationFailed) return;
     await pullCategoriesFromGitee();
   }
 
@@ -7654,6 +8223,16 @@ class TimeProvider with ChangeNotifier {
           !canPersist()) {
         return false;
       }
+      // 每个待同步日期的身份归属（桌面端队列跨身份共享，重启后要靠它判断能否自动补推）
+      if (!canPersist() ||
+          !await prefs.setString(
+              _identityDataKey('pending_gitee_sync_owners'),
+              json.encode(_pendingGiteeOwnerByDate.map(
+                (dateKey, codes) => MapEntry(dateKey, codes.toList()..sort()),
+              ))) ||
+          !canPersist()) {
+        return false;
+      }
       if (_saveRequestRevision == requestRevision) {
         _syncDirty = false;
       }
@@ -8150,6 +8729,12 @@ class TimeProvider with ChangeNotifier {
       'pendingSyncDates': _pendingSyncState.allDates.toList(),
       'pendingGiteeSyncDates': pendingGiteeSyncDates.toList(),
       'pendingGoogleSyncDates': pendingGoogleSyncDates.toList(),
+      // 待同步日期的身份归属：不带出去的话，恢复备份后这些日期会变成
+      // "归属未知"，后台自动补推会永久跳过它们。
+      'pendingGiteeSyncOwners': {
+        for (final entry in _pendingGiteeOwnerByDate.entries)
+          entry.key: entry.value.toList()..sort(),
+      },
     };
   }
 
@@ -8412,6 +8997,7 @@ class TimeProvider with ChangeNotifier {
       dailySlots: parsedDailySlots,
       templates: parsedTemplates,
       ignoredCalendarImports: parsedIgnored,
+      pendingGiteeOwners: _parseBackupGiteeOwners(data),
       pendingGiteeDates: hasSplitPendingState
           ? parsedGiteePending
           : legacyPendingState.giteeDates,
@@ -8443,6 +9029,15 @@ class TimeProvider with ChangeNotifier {
       giteeDates: backup.pendingGiteeDates,
       googleDates: backup.pendingGoogleDates,
     );
+    // 恢复备份里的身份归属，只认仍在待同步队列里的日期。
+    // 旧备份没有这个字段时为空 → 按"未知"处理，不参与自动补推（fail-closed）。
+    _pendingGiteeOwnerByDate
+      ..clear()
+      ..addEntries(
+        backup.pendingGiteeOwners.entries.where(
+          (entry) => _pendingSyncState.giteeDates.contains(entry.key),
+        ),
+      );
   }
 
   List<dynamic> _backupList(
@@ -8704,6 +9299,32 @@ class TimeProvider with ChangeNotifier {
     for (var i = 0; i < raw.length; i++) {
       result.add(_validateBackupDateKey(raw[i], '$path[$i]'));
     }
+    return result;
+  }
+
+  /// 解析备份里的待同步身份归属。
+  ///
+  /// 旧备份没有这个字段 → 返回空，那些日期恢复后按"归属未知"处理（不参与
+  /// 后台自动补推，只能手动全量同步）——fail-closed 是有意的，不能猜身份。
+  Map<String, Set<String>> _parseBackupGiteeOwners(Map<String, dynamic> data) {
+    const path = '.pendingGiteeSyncOwners';
+    final raw = data['pendingGiteeSyncOwners'];
+    if (raw == null) return <String, Set<String>>{};
+    if (raw is! Map) _invalidBackup(path, '必须是对象');
+    _checkBackupCount(raw.length, maxBackupCollectionEntries, path);
+    final result = <String, Set<String>>{};
+    raw.forEach((key, value) {
+      final dateKey = _validateBackupDateKey(key, path);
+      final codes = value is List ? value : <Object?>[value];
+      final owners = <String>{};
+      for (final code in codes) {
+        if (code is! String || code.trim().isEmpty) {
+          _invalidBackup('$path.$dateKey', '身份标识必须是非空字符串');
+        }
+        owners.add(code);
+      }
+      if (owners.isNotEmpty) result[dateKey] = owners;
+    });
     return result;
   }
 
@@ -9091,6 +9712,31 @@ class TimeProvider with ChangeNotifier {
       googleDates: (storedGooglePending ?? legacyState.googleDates)
           .map(_normalizeDateKey),
     );
+    _pendingGiteeOwnerByDate.clear();
+    final storedGiteeOwners =
+        prefs.getString(_identityDataKey('pending_gitee_sync_owners'));
+    if (storedGiteeOwners != null && storedGiteeOwners.trim().isNotEmpty) {
+      try {
+        final decoded = json.decode(storedGiteeOwners);
+        if (decoded is Map) {
+          decoded.forEach((key, value) {
+            final dateKey = _normalizeDateKey(key.toString());
+            // 只认仍在待同步队列里的日期；解析不出来的按"归属未知"处理。
+            if (!_pendingSyncState.giteeDates.contains(dateKey)) return;
+            // 兼容两种编码：单个字符串，或身份集合。
+            final codes = value is List
+                ? value.map((item) => item?.toString() ?? '')
+                : <String>[if (value != null) value.toString()];
+            final owners =
+                codes.where((code) => code.isNotEmpty).toSet();
+            if (owners.isEmpty) return;
+            _pendingGiteeOwnerByDate[dateKey] = owners;
+          });
+        }
+      } catch (e) {
+        debugPrint('待同步队列身份归属解析失败（按未知处理）: $e');
+      }
+    }
     _googleCalendarSyncEnabled = !_supportsGoogleCalendarSync ||
             (_usesMobileIdentityFlow && _identityMode != AppIdentityMode.google)
         ? false

@@ -10,19 +10,32 @@ class _FetchedTree {
   final bool truncated;
   final String? error;
 
+  /// 请求本身成功，但响应体超过 [ContentsApiLimits.maxTreeResponseBytes]。
+  ///
+  /// 只有这种情况值得改走"按子树 SHA 展开"的回退（与 Gitee 侧对称）：递归 tree
+  /// 是纯元数据请求，仓库文件变多后会先撞上字节上限。预算用尽、条目数超限这类
+  /// 失败即使回退也照样失败，不该浪费一轮请求。
+  final bool responseTooLarge;
+
   const _FetchedTree({
     required this.success,
     required this.entries,
     required this.truncated,
     this.error,
+    this.responseTooLarge = false,
   });
 
-  factory _FetchedTree.error(String message, {bool truncated = false}) {
+  factory _FetchedTree.error(
+    String message, {
+    bool truncated = false,
+    bool responseTooLarge = false,
+  }) {
     return _FetchedTree(
       success: false,
       entries: const [],
       truncated: truncated,
       error: message,
+      responseTooLarge: responseTooLarge,
     );
   }
 }
@@ -104,8 +117,17 @@ class GitHubContentsApi {
     );
   }
 
-  Future<http.Response> _get(Uri uri, String token) {
-    return _send(method: 'GET', uri: uri, token: token);
+  Future<http.Response> _get(
+    Uri uri,
+    String token, {
+    int? maxResponseBytes,
+  }) {
+    return _send(
+      method: 'GET',
+      uri: uri,
+      token: token,
+      maxResponseBytes: maxResponseBytes,
+    );
   }
 
   Future<http.Response> _put(Uri uri, String token, String body) {
@@ -117,6 +139,7 @@ class GitHubContentsApi {
     required Uri uri,
     required String token,
     String? body,
+    int? maxResponseBytes,
   }) {
     final request = http.Request(method, uri)..headers.addAll(headers(token));
     if (body != null) request.body = body;
@@ -125,6 +148,7 @@ class GitHubContentsApi {
       client: _client,
       request: request,
       limits: limits,
+      maxResponseBytes: maxResponseBytes,
     );
   }
 
@@ -300,6 +324,11 @@ class GitHubContentsApi {
         budget: budget,
       );
       if (!first.success) {
+        // 递归 tree 是纯元数据请求，只受 maxTreeResponseBytes 兜底，仓库变大后
+        // 整棵树可能先超过上限。这时必须退到按子树 SHA 展开，不能直接失败。
+        if (first.responseTooLarge) {
+          return await _walkTree(token: token, rootRef: ref, budget: budget);
+        }
         return ContentsTreeResult.error(
           first.error ?? '读取远端目录失败',
           truncated: first.truncated,
@@ -406,7 +435,11 @@ class GitHubContentsApi {
     }
     try {
       final res = await requestWithRetry(
-        () => _get(treeUri(ref, recursive: recursive), token),
+        () => _get(
+          treeUri(ref, recursive: recursive),
+          token,
+          maxResponseBytes: limits.maxTreeResponseBytes,
+        ),
       );
       if (res.statusCode != 200) {
         return _FetchedTree.error(extractErrorMessage(res));
@@ -450,7 +483,11 @@ class GitHubContentsApi {
         truncated: body['truncated'] == true,
       );
     } on ContentsResponseTooLargeException catch (e) {
-      return _FetchedTree.error(e.toString(), truncated: true);
+      return _FetchedTree.error(
+        e.toString(),
+        truncated: true,
+        responseTooLarge: true,
+      );
     } catch (e) {
       return _FetchedTree.error('读取远端目录失败: $e');
     }

@@ -443,6 +443,9 @@ Future<void> _initializeAndRunApplication({
         ChangeNotifierProvider<TimeProvider>(
           create: (context) => TimeProvider(
             statusCoordinator: context.read<SyncStatusCoordinator>(),
+            // 前台每 60 秒做一次「只看远端 SHA」的日程增量拉取，
+            // 远端与本地一致时不下载正文；切后台自动停止。
+            scheduleAutoRefreshInterval: const Duration(seconds: 60),
           ),
         ),
         ChangeNotifierProvider<SyncCenterController>(

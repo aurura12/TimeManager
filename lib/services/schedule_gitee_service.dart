@@ -1,9 +1,4 @@
-import 'dart:convert';
-
-import 'package:http/http.dart' as http;
-
 import '../config/remote_repo_config.dart';
-import 'contents_api_common.dart';
 import 'gitee_contents_api.dart';
 
 class ScheduleGiteePullResult {
@@ -31,12 +26,21 @@ class ScheduleGiteePullResult {
 class ScheduleGiteePushResult {
   final bool success;
   final bool created;
+
+  /// 写入后远端产生的新 blob SHA，用于回写同步基线。
+  /// 服务端没回传（旧实现/空响应）时为 null。
+  final String? sha;
   final String? error;
 
-  const ScheduleGiteePushResult._({required this.success, required this.created, this.error});
+  const ScheduleGiteePushResult._({
+    required this.success,
+    required this.created,
+    this.sha,
+    this.error,
+  });
 
-  factory ScheduleGiteePushResult.success({required bool created}) {
-    return ScheduleGiteePushResult._(success: true, created: created);
+  factory ScheduleGiteePushResult.success({required bool created, String? sha}) {
+    return ScheduleGiteePushResult._(success: true, created: created, sha: sha);
   }
 
   factory ScheduleGiteePushResult.error(String message) {
@@ -114,46 +118,39 @@ class ScheduleGiteeService {
       expectNotFound: expectNotFound,
     );
     if (result.success) {
-      return ScheduleGiteePushResult.success(created: result.created);
+      return ScheduleGiteePushResult.success(
+        created: result.created,
+        sha: result.sha,
+      );
     }
     return ScheduleGiteePushResult.error(result.error ?? '推送失败');
   }
 
   /// 列出指定用户的所有日程文件路径（schedule/{userCode}/{dateKey}.json），返回 path→sha。
+  ///
+  /// 必须复用 [GiteeContentsApi.listTree]：它会处理 Gitee 返回的 `truncated`
+  /// 并按子树 SHA 展开。裸调 tree 接口拿到被截断的列表时，缺失的日程文件会被
+  /// 误判成"远端不存在"，之后长期看不到远端的修改。
   static Future<ScheduleGiteeListWithShaResult> listSchedulePathsWithSha({
     required String token,
     required String userCode,
   }) async {
-    try {
-      final res = await requestWithRetry(
-        () => http.get(_api.treeUri('HEAD', token: token), headers: _api.headers(token)),
+    final result = await _api.listTree(token: token);
+    if (!result.success) {
+      return ScheduleGiteeListWithShaResult.error(
+        result.error ?? '读取远端日程列表失败',
       );
-      if (res.statusCode != 200) {
-        return ScheduleGiteeListWithShaResult.error(extractErrorMessage(res));
-      }
-      final map = json.decode(res.body) as Map<String, dynamic>;
-      final tree = map['tree'];
-      if (tree is! List) {
-        return ScheduleGiteeListWithShaResult.error('远端目录结构无效');
-      }
-      final pathShaMap = <String, String>{};
-      for (final item in tree) {
-        if (item is! Map) continue;
-        final type = item['type']?.toString();
-        final path = item['path']?.toString();
-        final sha = item['sha']?.toString();
-        if (type == 'blob' &&
-            path != null &&
-            path.isNotEmpty &&
-            sha != null &&
-            path.startsWith('schedule/$userCode/') &&
-            path.endsWith('.json')) {
-          pathShaMap[path] = sha;
-        }
-      }
-      return ScheduleGiteeListWithShaResult.success(pathShaMap);
-    } catch (e) {
-      return ScheduleGiteeListWithShaResult.error('读取远端日程列表失败: $e');
     }
+    final prefix = 'schedule/$userCode/';
+    final pathShaMap = <String, String>{};
+    for (final entry in result.entries) {
+      if (entry.type != 'blob') continue;
+      if (!entry.path.startsWith(prefix) || !entry.path.endsWith('.json')) {
+        continue;
+      }
+      if (entry.sha.trim().isEmpty) continue;
+      pathShaMap[entry.path] = entry.sha;
+    }
+    return ScheduleGiteeListWithShaResult.success(pathShaMap);
   }
 }

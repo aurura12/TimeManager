@@ -11,6 +11,7 @@ import 'package:time_manager/services/github_contents_api.dart';
 
 ContentsApiLimits _limits({
   int maxResponseBytes = 4096,
+  int? maxTreeResponseBytes,
   int maxFileBytes = 1024,
   int maxTreeEntries = 100,
   int maxDirectoryEntries = 100,
@@ -22,6 +23,7 @@ ContentsApiLimits _limits({
 }) {
   return ContentsApiLimits(
     maxResponseBytes: maxResponseBytes,
+    maxTreeResponseBytes: maxTreeResponseBytes ?? maxResponseBytes,
     maxFileBytes: maxFileBytes,
     maxTreeEntries: maxTreeEntries,
     maxDirectoryEntries: maxDirectoryEntries,
@@ -157,6 +159,64 @@ void main() {
     expect(result.error, contains('分页标记重复'));
   });
 
+  test('目录列表不会被无关的大文件否决（共享仓库里的打卡照片）', () async {
+    // 共享仓库里打卡照片允许到 10MB，日程列表只看 schedule 子树，
+    // 不能因为仓库里存在大文件就整份列表失败——否则后台日程轮询全部失效。
+    final client = MockClient((request) async {
+      return _json({
+        'tree': [
+          _file('schedule/g/2026-09-06.json', 'schedule-sha'),
+          _file('checkin/photos/big.jpg', 'photo-sha', size: 10 * 1024 * 1024),
+        ],
+        'truncated': false,
+      });
+    });
+    final api = GiteeContentsApi(
+      owner: 'owner',
+      repo: 'repo',
+      client: client,
+      limits: _limits(),
+    );
+    addTearDown(client.close);
+
+    final result = await api.listTree(token: 'token');
+
+    expect(result.success, isTrue);
+    expect(
+      result.entries.map((entry) => entry.path),
+      contains('schedule/g/2026-09-06.json'),
+    );
+  });
+
+  test('tree 元数据使用独立于正文的响应上限', () async {
+    final requested = <Uri>[];
+    final client = MockClient((request) async {
+      requested.add(request.url);
+      return _json({
+        'tree': [
+          for (var i = 0; i < 40; i++) _file('schedule/g/day-$i.json', 'sha-$i'),
+        ],
+        'truncated': false,
+      });
+    });
+    addTearDown(client.close);
+
+    final api = GiteeContentsApi(
+      owner: 'owner',
+      repo: 'repo',
+      client: client,
+      limits: _limits(
+        maxResponseBytes: 128,
+        maxTreeResponseBytes: 4096,
+      ),
+    );
+    final result = await api.listTree(token: 'token');
+
+    expect(result.success, isTrue);
+    expect(result.entries, hasLength(40));
+    expect(requested, hasLength(1));
+  });
+
   test('响应体超过上限时 GitHub 文件读取失败', () async {
     final client = MockClient((_) async {
       return _json({
@@ -176,6 +236,117 @@ void main() {
 
     expect(result.success, isFalse);
     expect(result.error, contains('响应超过'));
+  });
+
+  test('递归 tree 超响应上限时 Gitee 改走按子树展开，日程列表照常可用', () async {
+    // 仓库文件变多后，整棵树的元数据 JSON 会先撞上 maxResponseBytes
+    // （默认 4MB）。这条路径必须在解析 truncated 之前就退到按子树 SHA 展开，
+    // 否则后台日程轮询会永远拿不到列表、看不到远端变化。
+    final requested = <Uri>[];
+    final client = MockClient((request) async {
+      requested.add(request.url);
+      final path = request.url.path;
+      final recursive = request.url.queryParameters['recursive'] == '1';
+      if (path.endsWith('/git/trees/HEAD') && recursive) {
+        return _json({
+          'tree': [
+            for (var i = 0; i < 40; i++) _file('diary/entry-$i.md', 'sha-$i'),
+          ],
+          'truncated': false,
+        });
+      }
+      if (path.endsWith('/git/trees/HEAD')) {
+        return _json({
+          'tree': [
+            {'type': 'tree', 'path': 'schedule', 'sha': 'schedule-sha'},
+          ],
+          'truncated': false,
+        });
+      }
+      if (path.endsWith('/git/trees/schedule-sha')) {
+        return _json({
+          // 子树列表返回的是相对该子树的路径
+          'tree': [_file('g/2026-09-06.json', 'schedule-sha-06')],
+          'truncated': false,
+        });
+      }
+      return _json({'message': 'unexpected'}, 500);
+    });
+    addTearDown(client.close);
+
+    final api = GiteeContentsApi(
+      owner: 'owner',
+      repo: 'repo',
+      client: client,
+      limits: _limits(
+        maxResponseBytes: 1024,
+        maxTreeResponseBytes: 1024,
+      ),
+    );
+    final result = await api.listTree(token: 'token');
+
+    expect(result.success, isTrue);
+    expect(result.truncated, isFalse);
+    expect(
+      result.entries.map((entry) => entry.path),
+      contains('schedule/g/2026-09-06.json'),
+    );
+    expect(
+      requested,
+      hasLength(3),
+      reason: '递归请求超限后要改走子树展开（HEAD + 一个子树），而不是直接失败',
+    );
+  });
+
+  test('递归 tree 超响应上限时 GitHub 同样改走按子树展开', () async {
+    final requested = <Uri>[];
+    final client = MockClient((request) async {
+      requested.add(request.url);
+      final path = request.url.path;
+      final recursive = request.url.queryParameters['recursive'] == '1';
+      if (path.endsWith('/git/trees/HEAD') && recursive) {
+        return _json({
+          'tree': [
+            for (var i = 0; i < 40; i++) _file('diary/entry-$i.md', 'sha-$i'),
+          ],
+          'truncated': false,
+        });
+      }
+      if (path.endsWith('/git/trees/HEAD')) {
+        return _json({
+          'tree': [
+            {'type': 'tree', 'path': 'diary', 'sha': 'diary-sha'},
+          ],
+          'truncated': false,
+        });
+      }
+      if (path.endsWith('/git/trees/diary-sha')) {
+        return _json({
+          'tree': [_file('G2026年9月15日.md', 'g-sha')],
+          'truncated': false,
+        });
+      }
+      return _json({'message': 'unexpected'}, 500);
+    });
+    addTearDown(client.close);
+
+    final api = GitHubContentsApi(
+      owner: 'owner',
+      repo: 'repo',
+      client: client,
+      limits: _limits(
+        maxResponseBytes: 1024,
+        maxTreeResponseBytes: 1024,
+      ),
+    );
+    final result = await api.listTree(token: 'token');
+
+    expect(result.success, isTrue);
+    expect(
+      result.entries.map((entry) => entry.path),
+      contains('diary/G2026年9月15日.md'),
+    );
+    expect(requested, hasLength(3));
   });
 
   test('单文件大小超过上限时 Gitee 文件读取失败', () async {

@@ -4,6 +4,7 @@ import 'package:fl_chart/fl_chart.dart';
 import '../widgets/profile_settings_drawer.dart';
 import '../widgets/calendar_sync_status_badge.dart';
 import '../providers/time_provider.dart';
+import '../utils/platform_features.dart';
 import 'event_detail_screen.dart';
 
 import '../theme/app_semantic_colors.dart';
@@ -70,9 +71,11 @@ class _ProfileScreenState extends State<ProfileScreen>
         elevation: 0,
         centerTitle: true,
         actions: [
-          CalendarSyncStatusBadge(
-            onNotLoggedIn: () => Scaffold.of(context).openDrawer(),
-          ),
+          // 该徽章只反映 Google 日历同步，桌面端本就关闭 Google 同步，不再展示。
+          if (!isDesktopPlatform)
+            CalendarSyncStatusBadge(
+              onNotLoggedIn: () => Scaffold.of(context).openDrawer(),
+            ),
         ],
       ),
       body: ListView(

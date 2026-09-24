@@ -8,12 +8,14 @@ import 'package:time_manager/services/sync_center_service.dart';
 import 'package:time_manager/theme/app_theme.dart';
 
 SyncCenterOperations _operationsFor(
-  SyncCenterOperation Function(SyncModule module) operation,
-) {
+  SyncCenterOperation Function(SyncModule module) operation, {
+  SyncCenterOperation? recoverScheduleOverwrite,
+}) {
   return SyncCenterOperations(
     operations: {
       for (final module in SyncModule.values) module: operation(module),
     },
+    recoverScheduleOverwrite: recoverScheduleOverwrite,
   );
 }
 
@@ -444,6 +446,90 @@ void main() {
       expect(find.text(module.label), findsOneWidget);
     }
     expect(find.text('全部重试'), findsOneWidget);
+  });
+
+  testWidgets('同步中心的覆盖拉取需要二次确认后才执行', (tester) async {
+    var recoveries = 0;
+    final controller = SyncCenterController(
+      operations: _operationsFor(
+        (module) => () async => const SyncOperationResult.success(),
+        recoverScheduleOverwrite: () async {
+          recoveries++;
+          return const SyncOperationResult.success(message: '覆盖拉取完成');
+        },
+      ),
+      store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: SyncCenterScreen(controller: controller),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final overwriteButton = find.byKey(
+      const ValueKey('sync-center-overwrite-schedule'),
+    );
+    expect(overwriteButton, findsOneWidget);
+    // 恢复入口在模块卡片之后，先滚动到可见位置再点击
+    await tester.ensureVisible(overwriteButton);
+    await tester.pumpAndSettle();
+    await tester.tap(overwriteButton);
+    await tester.pumpAndSettle();
+
+    // 破坏性操作必须先二次确认
+    expect(find.text('确认覆盖拉取'), findsOneWidget);
+    await tester.tap(find.text('覆盖拉取'));
+    await tester.pumpAndSettle();
+
+    expect(recoveries, 1);
+    expect(
+      find.descendant(
+        of: find.byType(SnackBar),
+        matching: find.text('覆盖拉取完成'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('同步中心取消覆盖拉取时不会执行', (tester) async {
+    var recoveries = 0;
+    final controller = SyncCenterController(
+      operations: _operationsFor(
+        (module) => () async => const SyncOperationResult.success(),
+        recoverScheduleOverwrite: () async {
+          recoveries++;
+          return const SyncOperationResult.success(message: '覆盖拉取完成');
+        },
+      ),
+      store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: SyncCenterScreen(controller: controller),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final overwriteButton = find.byKey(
+      const ValueKey('sync-center-overwrite-schedule'),
+    );
+    await tester.ensureVisible(overwriteButton);
+    await tester.pumpAndSettle();
+    await tester.tap(overwriteButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    expect(recoveries, 0);
   });
 
   testWidgets('首次安装时同步中心显示「尚未检查」而不是「未同步」', (tester) async {

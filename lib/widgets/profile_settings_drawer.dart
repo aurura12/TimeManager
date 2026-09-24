@@ -114,33 +114,6 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                       provider,
                       title: 'Windows 用户身份',
                     ),
-                    ListTile(
-                      leading: const Icon(Icons.cloud_download_outlined),
-                      title: const Text('拉取所有日程'),
-                      subtitle: const Text('从 Gitee 合并所有日期的日程到本地'),
-                      onTap: () {
-                        provider.pullAllSchedulesFromGitee();
-                        final messenger = ScaffoldMessenger.of(context);
-                        Navigator.pop(context);
-                        messenger.showSnackBar(
-                          const SnackBar(content: Text('正在后台拉取所有日程...')),
-                        );
-                      },
-                    ),
-                    _buildOverwriteScheduleTile(context, provider),
-                    ListTile(
-                      leading: const Icon(Icons.cloud_upload_outlined),
-                      title: const Text('推送所有日程'),
-                      subtitle: const Text('将所有日期的日程增量推送到远端'),
-                      onTap: () {
-                        provider.syncAllSchedulesToGitee();
-                        final messenger = ScaffoldMessenger.of(context);
-                        Navigator.pop(context);
-                        messenger.showSnackBar(
-                          const SnackBar(content: Text('正在后台推送所有日程...')),
-                        );
-                      },
-                    ),
                   ] else ...[
                     if (provider.isManualIdentityMode)
                       _buildManualIdentitySection(
@@ -158,8 +131,6 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                       ),
                     const Divider(height: 1),
                     _buildRemoteSyncSection(context, provider),
-                    if (!isAndroid)
-                      _buildOverwriteScheduleTile(context, provider),
                   ],
                   const Divider(height: 1),
                   ListTile(
@@ -586,53 +557,6 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     }
   }
 
-  Widget _buildOverwriteScheduleTile(
-    BuildContext context,
-    TimeProvider provider,
-  ) {
-    return ListTile(
-      leading: const Icon(Icons.cloud_download_outlined),
-      title: const Text('覆盖拉取日程'),
-      subtitle: const Text('以远端补零路径为准，清空本地旧日程，不合并'),
-      onTap: () async {
-        final messenger = ScaffoldMessenger.of(context);
-        final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('确认覆盖拉取'),
-            content: const Text(
-              '将以远端「补零路径」为准，清空并覆盖本地旧日程，不与本地合并。\n\n'
-              '此操作不可撤销。',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('覆盖拉取'),
-              ),
-            ],
-          ),
-        );
-        if (confirmed != true || !context.mounted) return;
-        Navigator.pop(context);
-        final succeeded = await provider.overwriteAllSchedulesFromGitee();
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(
-              succeeded
-                  ? '覆盖拉取完成'
-                  : (provider.lastScheduleOverwriteFailure ??
-                      '覆盖拉取未开始或失败，请稍后重试'),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   Widget _buildManualIdentitySection(
     BuildContext context,
     TimeProvider provider, {
@@ -648,40 +572,104 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           leading: const Icon(Icons.person_pin_outlined),
           title: Text(title),
           subtitle: Text(
-            selected == null
-                ? '请选择身份后再同步'
-                : '当前身份：${selected == DiaryKind.g ? '乖乖' : '晶晶'}',
+            _identitySwitching
+                ? '正在切换身份…'
+                : selected == null
+                    ? '请选择身份后再同步'
+                    : '当前身份：${selected == DiaryKind.g ? '乖乖' : '晶晶'}',
           ),
           trailing: Icon(expanded ? Icons.expand_less : Icons.expand_more),
           onTap: () {
+            if (_identitySwitching) return;
             setState(() => _identityExpanded = !_identityExpanded);
           },
         ),
         if (expanded)
-          RadioGroup<DiaryKind>(
-            groupValue: selected,
-            onChanged: (kind) {
-              if (kind != null) {
-                provider.setScheduleUser(kind);
-                widget.onChanged();
-                setState(() => _identityExpanded = false); // 选中后收起
-              }
-            },
-            child: const Column(
-              children: [
-                RadioListTile<DiaryKind>(
-                  title: Text('乖乖'),
-                  value: DiaryKind.g,
-                ),
-                RadioListTile<DiaryKind>(
-                  title: Text('晶晶'),
-                  value: DiaryKind.j,
-                ),
-              ],
+          // 切换进行中禁止再次选择（桌面端可能要等旧身份补推完）
+          AbsorbPointer(
+            absorbing: _identitySwitching,
+            child: RadioGroup<DiaryKind>(
+              groupValue: selected,
+              onChanged: (kind) {
+                if (kind != null) {
+                  _selectIdentity(provider, previous: selected, kind: kind);
+                }
+              },
+              child: const Column(
+                children: [
+                  RadioListTile<DiaryKind>(
+                    title: Text('乖乖'),
+                    value: DiaryKind.g,
+                  ),
+                  RadioListTile<DiaryKind>(
+                    title: Text('晶晶'),
+                    value: DiaryKind.j,
+                  ),
+                ],
+              ),
             ),
           ),
       ],
     );
+  }
+
+  /// 切换日程身份，两端都要二次确认，但文案不同。
+  ///
+  /// 桌面端本地时间块与待同步队列**不分身份**：切换会把对方身份的远端日程
+  /// 合并进本机共享的本地记录，之后本机的修改也会同步到对方身份的文件——
+  /// 两个人两台电脑时这就是数据串味。
+  /// 移动端本地数据是按身份分片的，切换只是换一整套自己的数据，不会串；
+  /// 文案不能说"与现有记录合并"，否则是错的。
+  Future<void> _selectIdentity(
+    TimeProvider provider, {
+    required DiaryKind? previous,
+    required DiaryKind kind,
+  }) async {
+    if (_identitySwitching) return;
+    // 首次选择身份（previous == null）是前置条件，没有可切的数据，不打扰。
+    if (previous != null && previous != kind) {
+      final isDesktop = widget.desktopPlatformOverride ?? isDesktopPlatform;
+      final targetLabel = kind == DiaryKind.g ? '乖乖' : '晶晶';
+      final content = isDesktop
+          ? '本机的时间块不分身份。切换到「$targetLabel」会从对方的远端文件拉取日程，'
+              '与本机现有记录合并；之后本机上的修改也会同步到对方身份的文件。\n\n'
+              '只想看看对方的日程，请改用首页的「查看对方日程」。'
+          : '切换后会显示「$targetLabel」自己的时间块、日记、出行、打卡、目标等数据，'
+              '与其它身份的数据互不影响。\n\n'
+              '只想看看对方的日程，请改用首页的「查看对方日程」。';
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('确认切换身份'),
+          content: Text(content),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('切换'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+    setState(() => _identitySwitching = true);
+    try {
+      // 桌面端切换前可能要先等旧身份的补推跑完，必须 await 并在期间禁用选择，
+      // 否则用户能在这段时间里再点另一个身份，两个切换流程会交错。
+      await provider.setScheduleUser(kind);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _identitySwitching = false;
+          _identityExpanded = false; // 选中后收起
+        });
+      }
+    }
+    if (mounted) widget.onChanged();
   }
 
   Widget _buildVersionFooter() {

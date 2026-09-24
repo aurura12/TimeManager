@@ -17,6 +17,10 @@ const int _maxRetries = 2;
 class ContentsApiLimits {
   static const defaults = ContentsApiLimits(
     maxResponseBytes: 4 * 1024 * 1024,
+    // Tree responses contain metadata only (path/sha/size), so they need a
+    // larger bound than file-content responses.  The entry/depth/request
+    // limits below still cap pathological repositories.
+    maxTreeResponseBytes: 16 * 1024 * 1024,
     maxFileBytes: 2 * 1024 * 1024,
     maxTreeEntries: 20000,
     maxDirectoryEntries: 10000,
@@ -28,6 +32,8 @@ class ContentsApiLimits {
   );
 
   final int maxResponseBytes;
+  /// Maximum response size for Git tree metadata requests.
+  final int maxTreeResponseBytes;
   final int maxFileBytes;
   final int maxTreeEntries;
   final int maxDirectoryEntries;
@@ -39,6 +45,7 @@ class ContentsApiLimits {
 
   const ContentsApiLimits({
     required this.maxResponseBytes,
+    int? maxTreeResponseBytes,
     required this.maxFileBytes,
     required this.maxTreeEntries,
     required this.maxDirectoryEntries,
@@ -47,7 +54,9 @@ class ContentsApiLimits {
     required this.maxTreeDepth,
     required this.pageSize,
     required this.maxPages,
-  })  : assert(maxResponseBytes > 0),
+  })  : maxTreeResponseBytes = maxTreeResponseBytes ?? maxResponseBytes,
+        assert(maxResponseBytes > 0),
+        assert((maxTreeResponseBytes ?? maxResponseBytes) > 0),
         assert(maxFileBytes > 0),
         assert(maxTreeEntries > 0),
         assert(maxDirectoryEntries > 0),
@@ -217,6 +226,7 @@ Future<http.Response> sendLimitedContentsRequest({
   required http.Client? client,
   required http.BaseRequest request,
   required ContentsApiLimits limits,
+  int? maxResponseBytes,
 }) {
   return runWithContentsRequestLimit(
     owner,
@@ -228,7 +238,7 @@ Future<http.Response> sendLimitedContentsRequest({
         final streamed = await requestClient.send(request);
         return await readLimitedContentsResponse(
           streamed,
-          maxBytes: limits.maxResponseBytes,
+          maxBytes: maxResponseBytes ?? limits.maxResponseBytes,
         );
       } finally {
         ownedClient?.close();

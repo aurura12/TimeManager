@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show mapEquals, setEquals;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 一次日程状态检查后保存的远端版本基线。
@@ -63,6 +64,24 @@ class ScheduleSyncManifest {
     });
     return result;
   }
+
+  /// 让后台轮询可以判断「基线没变」，避免每 60 秒重写一次 SharedPreferences。
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ScheduleSyncManifest &&
+          setEquals(remoteDates, other.remoteDates) &&
+          mapEquals(remoteShaByDate, other.remoteShaByDate) &&
+          mapEquals(localFingerprintByDate, other.localFingerprintByDate) &&
+          mapEquals(pendingKinds, other.pendingKinds);
+
+  @override
+  int get hashCode => Object.hash(
+        Object.hashAllUnordered(remoteDates),
+        Object.hashAllUnordered(remoteShaByDate.keys),
+        Object.hashAllUnordered(localFingerprintByDate.keys),
+        Object.hashAllUnordered(pendingKinds.keys),
+      );
 }
 
 /// 按日程身份保存状态检查基线，不包含 Token 等敏感信息。

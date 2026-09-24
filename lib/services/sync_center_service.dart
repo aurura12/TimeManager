@@ -34,12 +34,16 @@ typedef SyncCenterLiveStateReader = Map<SyncModule, SyncModuleState> Function();
 class SyncCenterOperations {
   SyncCenterOperations(
       {required Map<SyncModule, SyncCenterOperation> operations,
-      Map<SyncModule, SyncCenterOperation> checks = const {}})
+      Map<SyncModule, SyncCenterOperation> checks = const {},
+      this.recoverScheduleOverwrite})
       : _operations = Map.unmodifiable(operations),
         _checks = Map.unmodifiable(checks);
 
   final Map<SyncModule, SyncCenterOperation> _operations;
   final Map<SyncModule, SyncCenterOperation> _checks;
+
+  /// 破坏性的「覆盖拉取日程」恢复入口：以远端为准覆盖本地、不合并。
+  final SyncCenterOperation? recoverScheduleOverwrite;
 
   Set<SyncModule> get checkableModules => _checks.keys.toSet();
 
@@ -79,6 +83,14 @@ class SyncCenterOperations {
       },
       checks: {
         SyncModule.schedule: provider.checkScheduleSyncState,
+      },
+      recoverScheduleOverwrite: () async {
+        final ok = await provider.overwriteAllSchedulesFromGitee();
+        return ok
+            ? const SyncOperationResult.success(message: '覆盖拉取完成')
+            : SyncOperationResult.failed(
+                provider.lastScheduleOverwriteFailure ?? '覆盖拉取未开始或失败，请稍后重试',
+              );
       },
     );
   }
@@ -331,6 +343,37 @@ class SyncCenterController extends ChangeNotifier {
     await initialize();
     if (_disposed || _allRetrying || _runningModules.contains(module)) return;
     await _runOne(module);
+  }
+
+  /// 覆盖拉取日程（破坏性恢复入口）。
+  ///
+  /// 复用 [_runOne] 的并发锁与统一上报，结果落到「日程」模块卡片上；返回结果
+  /// 供页面提示。已有日程任务在执行时返回 null（不重复发起危险并发操作）。
+  Future<SyncOperationResult?> recoverScheduleOverwrite() async {
+    await initialize();
+    final operation = _operations.recoverScheduleOverwrite;
+    if (_disposed ||
+        operation == null ||
+        _allRetrying ||
+        _runningModules.contains(SyncModule.schedule)) {
+      return null;
+    }
+    SyncOperationResult? result;
+    await _runOne(
+      SyncModule.schedule,
+      operation: () async {
+        try {
+          final value = await operation();
+          result = value;
+          return value;
+        } catch (error) {
+          final failure = SyncOperationResult.failed('覆盖拉取失败：$error');
+          result = failure;
+          return failure;
+        }
+      },
+    );
+    return result;
   }
 
   /// 按固定顺序串行重试，确保不同模块不会同时读写远端或争抢 Provider 锁。

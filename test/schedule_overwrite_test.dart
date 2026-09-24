@@ -2253,8 +2253,7 @@ void main() {
     expect(googleUploads, 0);
   });
 
-  testWidgets(
-      'desktop drawer exposes overwrite pull separately and acknowledges it after closing',
+  testWidgets('desktop drawer no longer exposes manual schedule sync entries',
       (tester) async {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -2288,37 +2287,16 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.text('拉取所有日程'), findsOneWidget);
-    expect(find.text('覆盖拉取日程'), findsOneWidget);
-    expect(find.text('以远端补零路径为准，清空本地旧日程，不合并'), findsOneWidget);
-    final overwriteTile = find.ancestor(
-      of: find.text('覆盖拉取日程'),
-      matching: find.byType(ListTile),
-    );
-    expect(
-      find.descendant(
-        of: overwriteTile,
-        matching: find.byIcon(Icons.cloud_download_outlined),
-      ),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.text('覆盖拉取日程'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
-
-    // 破坏性操作必须先二次确认，确认后才真正执行
-    expect(find.text('确认覆盖拉取'), findsOneWidget);
-    await tester.tap(find.text('覆盖拉取'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
-
-    expect(find.textContaining('覆盖拉取未开始：'), findsOneWidget);
-    expect(scaffoldKey.currentState!.isDrawerOpen, isFalse);
-    await tester.pump(const Duration(seconds: 6));
+    // 日程改为后台无感同步，抽屉里不再有手动拉取/推送/覆盖入口；
+    // 「覆盖拉取日程」作为故障恢复入口移到了同步中心。
+    expect(find.text('拉取所有日程'), findsNothing);
+    expect(find.text('推送所有日程'), findsNothing);
+    expect(find.text('覆盖拉取日程'), findsNothing);
+    expect(find.text('同步中心'), findsOneWidget);
+    expect(find.text('Windows 用户身份'), findsOneWidget);
   });
 
-  testWidgets('mobile drawer exposes only overwrite pull action',
+  testWidgets('mobile drawer no longer exposes manual schedule sync entries',
       (tester) async {
     final provider = TimeProvider();
     addTearDown(provider.dispose);
@@ -2348,6 +2326,7 @@ void main() {
 
     expect(find.text('拉取所有日程'), findsNothing);
     expect(find.text('推送所有日程'), findsNothing);
-    expect(find.text('覆盖拉取日程'), findsOneWidget);
+    expect(find.text('覆盖拉取日程'), findsNothing);
+    expect(find.text('同步中心'), findsOneWidget);
   });
 }

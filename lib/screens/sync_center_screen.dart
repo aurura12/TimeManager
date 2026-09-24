@@ -131,7 +131,43 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
             _buildModuleCard(context, state),
             const SizedBox(height: AppSpacing.sm),
           ],
+          const SizedBox(height: AppSpacing.sm),
+          _buildRecoveryCard(context),
         ],
+      ),
+    );
+  }
+
+  /// 故障恢复入口：覆盖拉取是破坏性操作，平时不需要，只在本地日程明显错乱时用。
+  Widget _buildRecoveryCard(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final surfaces = AppSurfaces.of(context);
+    return Card(
+      color: surfaces.card,
+      child: Padding(
+        padding: AppSpacing.card,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('恢复', style: AppText.sectionTitle),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              '以远端为准覆盖本地日程（不合并，不可撤销），仅在本地数据明显错乱时使用。',
+              style: AppText.body.copyWith(color: colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton.icon(
+                key: const ValueKey('sync-center-overwrite-schedule'),
+                onPressed:
+                    _controller.isRetrying ? null : _confirmScheduleOverwrite,
+                icon: const Icon(Icons.cloud_download_outlined),
+                label: const Text('覆盖拉取日程'),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -255,6 +291,36 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
         SnackBar(content: Text(state.message ?? '${module.label}同步未完成')),
       );
     }
+  }
+
+  /// 覆盖拉取是破坏性操作，必须先二次确认再执行。
+  Future<void> _confirmScheduleOverwrite() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('确认覆盖拉取'),
+        content: const Text(
+          '将以远端「补零路径」为准，清空并覆盖本地旧日程，不与本地合并。\n\n'
+          '此操作不可撤销。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('覆盖拉取'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final result = await _controller.recoverScheduleOverwrite();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result?.message ?? '覆盖拉取未执行，请稍后重试')),
+    );
   }
 
   Future<void> _retryAll() async {

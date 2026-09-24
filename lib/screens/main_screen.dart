@@ -46,6 +46,16 @@ class _MainTab {
   final Widget Function() builder;
 }
 
+/// 哪些生命周期状态算"进入后台"，需要停掉前台轮询并立即落盘。
+///
+/// 桌面端最小化窗口走的是 [AppLifecycleState.hidden]（不是 `paused`），
+/// 漏掉它会让 Windows 最小化后定时器继续唤醒。
+bool isAppBackgroundedLifecycleState(AppLifecycleState state) {
+  return state == AppLifecycleState.paused ||
+      state == AppLifecycleState.hidden ||
+      state == AppLifecycleState.detached;
+}
+
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
 
@@ -122,8 +132,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       _tryShowOnThisDay();
       unawaited(_timeProvider.onAppResumed());
       unawaited(_refreshReminders());
-    } else if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
+    } else if (isAppBackgroundedLifecycleState(state)) {
       _timeProvider.onAppBackgrounded();
     }
   }
