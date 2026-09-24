@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -179,29 +178,6 @@ class _CheckInMapPreviewState extends State<CheckInMapPreview> {
       return CoordTransform.wgs84ToGcj02(r.latitude!, r.longitude!);
     }).toList();
 
-    final lats = gcjPoints.map((p) => p.$1).toList();
-    final lngs = gcjPoints.map((p) => p.$2).toList();
-    final minLat = lats.reduce(math.min);
-    final maxLat = lats.reduce(math.max);
-    final minLng = lngs.reduce(math.min);
-    final maxLng = lngs.reduce(math.max);
-
-    final center = LatLng(
-      (minLat + maxLat) / 2,
-      (minLng + maxLng) / 2,
-    );
-
-    final latSpan = (maxLat - minLat).abs();
-    final lngSpan = (maxLng - minLng).abs();
-    final span = math.max(latSpan, lngSpan);
-    final zoom = span < 0.002
-        ? 15.0
-        : span < 0.01
-            ? 13.0
-            : span < 0.05
-                ? 11.0
-                : 9.0;
-
     final counts = <String, int>{};
     for (int i = 0; i < located.length; i++) {
       final p = gcjPoints[i];
@@ -229,7 +205,12 @@ class _CheckInMapPreviewState extends State<CheckInMapPreview> {
       );
     }
 
-    return _MapData(center: center, zoom: zoom, markers: markers);
+    // 打卡记录主要集中在北京，少量外地记录不应把整张地图的视野带离北京。
+    return _MapData(
+      center: CheckInMapPreview._defaultCenter,
+      zoom: 11,
+      markers: markers,
+    );
   }
 
   static Color _colorForEmail(String email) {
