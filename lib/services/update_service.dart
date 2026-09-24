@@ -21,16 +21,21 @@ class UpdateInfo {
   final String downloadUrl;
   final String releaseNotes;
   final String? sha256;
+  final int? sizeBytes;
 
   const UpdateInfo({
     required this.version,
     required this.downloadUrl,
     required this.releaseNotes,
     this.sha256,
+    this.sizeBytes,
   });
 
   /// Whether the release metadata is sufficient for verified automatic install.
   bool get canAutoInstall => UpdateService._isValidSha256(sha256);
+
+  String? get formattedSize =>
+      sizeBytes == null ? null : UpdateService._formatFileSize(sizeBytes!);
 }
 
 class UpdateCheckResult {
@@ -188,6 +193,12 @@ class UpdateService {
   }
 
   static String? _readString(Object? value) => value is String ? value : null;
+
+  static int? _readAssetSizeBytes(Object? value) {
+    final size = value is int ? value : int.tryParse(value?.toString() ?? '');
+    if (size == null || size <= 0 || size > _maxDownloadBytes) return null;
+    return size;
+  }
 
   static String? _normalizeSha256Value(Object? value) {
     if (value is! String) return null;
@@ -444,6 +455,7 @@ class UpdateService {
         final String assetSuffix = updateAssetSuffix;
         String? installUrl;
         String? assetSha256;
+        int? installerSizeBytes;
         String? installerAssetName;
         final assets = data['assets'] is List<dynamic>
             ? data['assets'] as List<dynamic>
@@ -466,6 +478,7 @@ class UpdateService {
             installUrl = allowedUri.toString();
             installerAssetName = name;
             assetSha256 = _extractSha256(asset);
+            installerSizeBytes = _readAssetSizeBytes(asset['size']);
             break;
           }
         }
@@ -531,6 +544,7 @@ class UpdateService {
           downloadUrl: installUrl,
           releaseNotes: body,
           sha256: assetSha256,
+          sizeBytes: installerSizeBytes,
         );
         _lastCheckedUpdate = updateInfo;
         return UpdateCheckResult(info: updateInfo);
@@ -650,14 +664,13 @@ class UpdateService {
     return _ParsedVersion(core: core, preRelease: preRelease);
   }
 
-  static String _formatSpeed(int bytesPerSecond) {
-    if (bytesPerSecond < 1024) {
-      return '$bytesPerSecond B/s';
-    } else if (bytesPerSecond < 1024 * 1024) {
-      return '${(bytesPerSecond / 1024).toStringAsFixed(1)} KB/s';
-    } else {
-      return '${(bytesPerSecond / 1024 / 1024).toStringAsFixed(1)} MB/s';
+  static String _formatFileSize(int bytes) {
+    const kilobyte = 1024;
+    const megabyte = kilobyte * 1024;
+    if (bytes < megabyte) {
+      return '${(bytes / kilobyte).toStringAsFixed(1)} KB';
     }
+    return '${(bytes / megabyte).toStringAsFixed(1)} MB';
   }
 
   static String? _expectedSha256For(String downloadUrl, String version) {
@@ -668,6 +681,16 @@ class UpdateService {
       return null;
     }
     return update.sha256;
+  }
+
+  static int? _expectedSizeBytesFor(String downloadUrl, String version) {
+    final update = _lastCheckedUpdate;
+    if (update == null ||
+        update.version != version ||
+        update.downloadUrl != downloadUrl) {
+      return null;
+    }
+    return update.sizeBytes;
   }
 
   static Future<void> _deleteFileIfExists(File file) async {
@@ -824,9 +847,16 @@ class UpdateService {
     String version,
     BuildContext context, {
     String? expectedSha256,
+    int? expectedSizeBytes,
   }) async {
     final progressNotifier = ValueNotifier<double>(0);
-    final statusNotifier = ValueNotifier<String>('准备下载...');
+    final totalSizeBytes =
+        expectedSizeBytes ?? _expectedSizeBytesFor(downloadUrl, version);
+    final statusNotifier = ValueNotifier<String>(
+      totalSizeBytes == null
+          ? '准备下载...'
+          : '准备下载，安装包大小 ${_formatFileSize(totalSizeBytes)}',
+    );
     File? installerFile;
     var keepInstallerFile = false;
     var downloadingDialogShown = false;
@@ -869,9 +899,6 @@ class UpdateService {
 
       final client = http.Client();
       try {
-        final startTime = DateTime.now();
-        var lastReceived = 0;
-        var lastTime = startTime;
         await _downloadToFile(
           client,
           downloadUri,
@@ -879,20 +906,17 @@ class UpdateService {
           expectedSha256: digest!,
           maxBytes: _maxDownloadBytes,
           onProgress: (received, contentLength) {
-            final now = DateTime.now();
-            final elapsed = now.difference(lastTime).inMilliseconds;
-            if (elapsed < 500) return;
-
-            final speed = (received - lastReceived) * 1000 ~/ elapsed;
-            final speedStr = _formatSpeed(speed);
-            if (contentLength != null && contentLength > 0) {
-              progressNotifier.value = received / contentLength;
-              statusNotifier.value = '下载中 $speedStr';
+            final totalBytes = contentLength != null && contentLength > 0
+                ? contentLength
+                : totalSizeBytes;
+            if (totalBytes != null && totalBytes > 0) {
+              progressNotifier.value =
+                  (received / totalBytes).clamp(0.0, 1.0).toDouble();
+              statusNotifier.value =
+                  '下载中 ${_formatFileSize(received)} / ${_formatFileSize(totalBytes)}';
             } else {
-              statusNotifier.value = '下载中 ${received ~/ 1024}KB  $speedStr';
+              statusNotifier.value = '已下载 ${_formatFileSize(received)}';
             }
-            lastReceived = received;
-            lastTime = now;
           },
         );
 

@@ -737,6 +737,10 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               ),
             ] else
               const Text('暂无更新说明'),
+            if (updateInfo.formattedSize != null) ...[
+              const SizedBox(height: 12),
+              Text('安装包大小：${updateInfo.formattedSize}'),
+            ],
             if (!updateInfo.canAutoInstall) ...[
               const SizedBox(height: 12),
               Text(
@@ -767,6 +771,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           updateInfo.downloadUrl,
           updateInfo.version,
           context,
+          expectedSizeBytes: updateInfo.sizeBytes,
         );
       } else if (!await UpdateService.openReleasePage(updateInfo.version) &&
           context.mounted) {
