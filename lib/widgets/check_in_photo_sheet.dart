@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../models/check_in_goal.dart';
+import '../services/app_log_service.dart';
 import '../services/check_in_location_service.dart';
 import '../services/check_in_sync_service.dart';
 import '../utils/platform_features.dart';
@@ -112,7 +113,13 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
     CheckInLocationAccessResult access;
     try {
       access = await CheckInLocationService.getCurrentLocationWithStatus();
-    } catch (_) {
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        '打卡弹窗获取定位时发生未处理异常',
+        source: CheckInLocationService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
       access = const CheckInLocationAccessResult(
         permissionStatus: CheckInLocationPermissionStatus.unavailable,
       );

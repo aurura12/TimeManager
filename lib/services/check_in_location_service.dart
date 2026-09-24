@@ -2,6 +2,7 @@ import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../models/google_calendar_user.dart';
+import 'app_log_service.dart';
 
 class CheckInLocationResult {
   final double latitude;
@@ -44,6 +45,8 @@ typedef CheckInLocationSettingsLauncher = Future<bool> Function();
 typedef CheckInLocationLoader = Future<CheckInLocationAccessResult> Function();
 
 class CheckInLocationService {
+  static const String logSource = 'check_in_location';
+
   /// 可由逻辑测试注入，避免测试真正打开系统设置或调用定位插件。
   static CheckInLocationSettingsLauncher? settingsLauncherForTesting;
   static CheckInLocationLoader? locationLoaderForTesting;
@@ -52,6 +55,10 @@ class CheckInLocationService {
       requestPermissionStatus() async {
     try {
       if (!await Geolocator.isLocationServiceEnabled()) {
+        AppLogService.instance.warning(
+          '系统定位服务未开启',
+          source: logSource,
+        );
         return CheckInLocationPermissionStatus.serviceDisabled;
       }
 
@@ -65,13 +72,31 @@ class CheckInLocationService {
         case LocationPermission.whileInUse:
           return CheckInLocationPermissionStatus.granted;
         case LocationPermission.deniedForever:
+          AppLogService.instance.warning(
+            '定位权限被永久拒绝',
+            source: logSource,
+          );
           return CheckInLocationPermissionStatus.deniedForever;
         case LocationPermission.denied:
+          AppLogService.instance.warning(
+            '定位权限未授予',
+            source: logSource,
+          );
           return CheckInLocationPermissionStatus.denied;
         case LocationPermission.unableToDetermine:
+          AppLogService.instance.warning(
+            '无法确定定位权限状态',
+            source: logSource,
+          );
           return CheckInLocationPermissionStatus.unavailable;
       }
-    } catch (_) {
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        '检查或请求定位权限时发生异常',
+        source: logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
       return CheckInLocationPermissionStatus.unavailable;
     }
   }
@@ -87,7 +112,13 @@ class CheckInLocationService {
     if (injectedLoader != null) {
       try {
         return await injectedLoader();
-      } catch (_) {
+      } catch (error, stackTrace) {
+        AppLogService.instance.error(
+          '定位加载器发生异常',
+          source: logSource,
+          error: error,
+          stackTrace: stackTrace,
+        );
         return const CheckInLocationAccessResult(
           permissionStatus: CheckInLocationPermissionStatus.unavailable,
         );
@@ -100,14 +131,27 @@ class CheckInLocationService {
     }
 
     // 优先用缓存位置（毫秒级），避免每次都等 GPS 冷启动
-    Position? position;
+    Position? lastKnownPosition;
     try {
-      position = await Geolocator.getLastKnownPosition()
+      lastKnownPosition = await Geolocator.getLastKnownPosition()
           .timeout(const Duration(seconds: 3));
-    } catch (_) {}
+    } catch (error, stackTrace) {
+      AppLogService.instance.info(
+        '读取缓存定位失败，继续请求实时定位',
+        source: logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
 
-    if (position == null ||
-        DateTime.now().difference(position.timestamp).inSeconds > 30) {
+    late final Position position;
+    late final bool usedLastKnownPosition;
+    if (lastKnownPosition != null &&
+        DateTime.now().difference(lastKnownPosition.timestamp).inSeconds <=
+            30) {
+      position = lastKnownPosition;
+      usedLastKnownPosition = true;
+    } else {
       // 缓存过期或不可用，重新获取
       try {
         position = await Geolocator.getCurrentPosition(
@@ -116,11 +160,18 @@ class CheckInLocationService {
             timeLimit: Duration(seconds: 8),
           ),
         );
-      } catch (_) {
+      } catch (error, stackTrace) {
+        AppLogService.instance.error(
+          '获取实时定位失败（accuracy=medium，超时限制 8 秒）',
+          source: logSource,
+          error: error,
+          stackTrace: stackTrace,
+        );
         return const CheckInLocationAccessResult(
           permissionStatus: CheckInLocationPermissionStatus.unavailable,
         );
       }
+      usedLastKnownPosition = false;
     }
 
     String? locationName;
@@ -138,10 +189,24 @@ class CheckInLocationService {
           p.name,
         ].where((e) => e != null && e.trim().isNotEmpty).join('');
       }
-    } catch (_) {}
+    } catch (error, stackTrace) {
+      AppLogService.instance.warning(
+        '逆地理编码失败，位置名称将回退为经纬度',
+        source: logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
 
-    locationName ??=
-        '${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}';
+    if (locationName == null || locationName.isEmpty) {
+      locationName =
+          '${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}';
+    }
+
+    AppLogService.instance.info(
+      '定位获取成功（${usedLastKnownPosition ? '使用缓存位置' : '使用实时定位'}）',
+      source: logSource,
+    );
 
     return CheckInLocationAccessResult(
       permissionStatus: CheckInLocationPermissionStatus.granted,
