@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -54,14 +55,6 @@ class CheckInLocationService {
   static Future<CheckInLocationPermissionStatus>
       requestPermissionStatus() async {
     try {
-      if (!await Geolocator.isLocationServiceEnabled()) {
-        AppLogService.instance.warning(
-          '系统定位服务未开启',
-          source: logSource,
-        );
-        return CheckInLocationPermissionStatus.serviceDisabled;
-      }
-
       var permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
@@ -130,11 +123,37 @@ class CheckInLocationService {
       return CheckInLocationAccessResult(permissionStatus: permissionStatus);
     }
 
+    // 该状态在部分 Android 设备上表示“定位源可供此应用使用”，不等同于
+    // 系统定位总开关。先尝试权限和定位；状态为 false 时走 Android 原生
+    // LocationManager 路径兜底，避免被 FusedLocationProvider 的误报拦住。
+    var locationServiceEnabled = true;
+    try {
+      locationServiceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!locationServiceEnabled) {
+        AppLogService.instance.warning(
+          'Geolocator 未检测到可供应用使用的定位源，仍将尝试获取位置',
+          source: logSource,
+        );
+      }
+    } catch (error, stackTrace) {
+      locationServiceEnabled = false;
+      AppLogService.instance.warning(
+        '读取定位源状态失败，仍将尝试获取位置',
+        source: logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+    final useAndroidLocationManager =
+        defaultTargetPlatform == TargetPlatform.android &&
+            !locationServiceEnabled;
+
     // 优先用缓存位置（毫秒级），避免每次都等 GPS 冷启动
     Position? lastKnownPosition;
     try {
-      lastKnownPosition = await Geolocator.getLastKnownPosition()
-          .timeout(const Duration(seconds: 3));
+      lastKnownPosition = await Geolocator.getLastKnownPosition(
+        forceAndroidLocationManager: useAndroidLocationManager,
+      ).timeout(const Duration(seconds: 3));
     } catch (error, stackTrace) {
       AppLogService.instance.info(
         '读取缓存定位失败，继续请求实时定位',
@@ -155,10 +174,16 @@ class CheckInLocationService {
       // 缓存过期或不可用，重新获取
       try {
         position = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.medium,
-            timeLimit: Duration(seconds: 8),
-          ),
+          locationSettings: useAndroidLocationManager
+              ? AndroidSettings(
+                  accuracy: LocationAccuracy.medium,
+                  timeLimit: Duration(seconds: 8),
+                  forceLocationManager: true,
+                )
+              : const LocationSettings(
+                  accuracy: LocationAccuracy.medium,
+                  timeLimit: Duration(seconds: 8),
+                ),
         );
       } catch (error, stackTrace) {
         AppLogService.instance.error(
