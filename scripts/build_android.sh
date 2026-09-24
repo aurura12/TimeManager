@@ -6,7 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PUBSPEC="$REPO_ROOT/pubspec.yaml"
 
-SKIP_TESTS=0
+SKIP_TESTS=1
+RUN_ANALYZE=1
 SKIP_BUMP=0
 SKIP_GIT=0
 NO_COPY=0
@@ -29,13 +30,14 @@ usage() {
   scripts/build_android.sh [选项]
 
 默认行为：
-  1. 获取依赖、运行分析和测试；
+  1. 获取依赖并运行静态分析（默认不跑测试）；
   2. 自动把 pubspec.yaml 的次版本号 +1、patch 归零、构建号 +1（如 1.95.3+13 → 1.96.0+14）；
   3. 构建 Android arm64-v8a release APK；
   4. 把 APK 和同名 .sha256 摘要复制到 dist/ 目录（文件名带版本号）；
   5. 提交 pubspec.yaml 版本号变更并 push，让每次构建后工作区干净。
 
 选项：
+  --run-tests              运行 flutter analyze 和 flutter test
   --skip-tests             跳过 flutter analyze 和 flutter test
   --skip-bump              不自动递增版本号，用当前版本直接构建
   --no-git                 构建完成后不自动 git 提交和推送（默认会提交并 push）
@@ -101,6 +103,12 @@ while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --skip-tests)
       SKIP_TESTS=1
+      RUN_ANALYZE=0
+      shift
+      ;;
+    --run-tests)
+      SKIP_TESTS=0
+      RUN_ANALYZE=1
       shift
       ;;
     --skip-bump)
@@ -202,9 +210,12 @@ cd "$REPO_ROOT"
 log "获取 Flutter 依赖"
 flutter pub get
 
-if [[ "$SKIP_TESTS" -eq 0 ]]; then
+if [[ "$RUN_ANALYZE" -eq 1 ]]; then
   log "运行静态分析"
   flutter analyze
+fi
+
+if [[ "$SKIP_TESTS" -eq 0 ]]; then
   log "运行完整测试"
   flutter test --reporter compact
 fi

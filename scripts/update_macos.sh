@@ -8,7 +8,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 INSTALL_DIR="/Applications"
 SOURCE_APP_PATH="$REPO_ROOT/build/macos/Build/Products/Release/$APP_NAME"
-SKIP_TESTS=0
+SKIP_TESTS=1
+RUN_ANALYZE=1
 SKIP_BUILD=0
 LAUNCH_APP=1
 USE_SUDO=0
@@ -19,12 +20,13 @@ usage() {
   scripts/update_macos.sh [选项]
 
 默认行为：
-  1. 获取依赖、运行分析和测试；
+  1. 获取依赖并运行静态分析（默认不跑测试）；
   2. 构建 macOS release；
   3. 原子替换 /Applications/时间块.app；
   4. 启动更新后的时间块。
 
 选项：
+  --run-tests              运行 flutter analyze 和 flutter test
   --skip-tests             跳过 flutter analyze 和 flutter test
   --skip-build             使用已有的 macOS .app，不重新构建
   --no-launch              更新后不启动时间块
@@ -58,6 +60,12 @@ while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --skip-tests)
       SKIP_TESTS=1
+      RUN_ANALYZE=0
+      shift
+      ;;
+    --run-tests)
+      SKIP_TESTS=0
+      RUN_ANALYZE=1
       shift
       ;;
     --skip-build)
@@ -122,9 +130,12 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   log "获取 Flutter 依赖"
   flutter pub get
 
-  if [[ "$SKIP_TESTS" -eq 0 ]]; then
+  if [[ "$RUN_ANALYZE" -eq 1 ]]; then
     log "运行静态分析"
     flutter analyze
+  fi
+
+  if [[ "$SKIP_TESTS" -eq 0 ]]; then
     log "运行完整测试"
     flutter test --reporter compact
   fi

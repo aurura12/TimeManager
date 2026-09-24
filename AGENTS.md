@@ -111,7 +111,7 @@ flutter run -d windows             # Windows 桌面版启动
 flutter build apk --release        # 构建 Android release APK
 
 # 平台构建脚本
-scripts/build_android.sh           # Android arm64 构建：bump 版本/跑测试/输出到 dist/（成功后会自动 commit + push，见「构建与发布」）
+scripts/build_android.sh           # Android arm64 构建：默认静态分析、不跑测试；成功后自动 bump/commit/push（见「构建与发布」）
 scripts/build_windows.bat          # Windows 构建（含自动下载 nuget.exe）
 scripts/update_macos.sh            # macOS 构建并安装到 /Applications
 scripts/run_android.sh             # 拉起 Android 模拟器/设备再 flutter run（默认 AVD Pixel_7，可用 ANDROID_EMULATOR_NAME 覆盖；多余参数透传给 flutter run）
@@ -125,13 +125,15 @@ scripts/installer.iss              # Inno Setup 6 打 Windows 安装包（上传
 
 `scripts/build_android.sh` 的默认行为不只是构建，成功后还会 **git commit + push**：
 
-1. 获取依赖、跑 `flutter analyze` + `flutter test`
+1. 获取依赖并跑 `flutter analyze`；默认不跑 `flutter test`，需要时加 `--run-tests`
 2. 自动递增版本号：次版本 +1、patch 归零、构建号 +1（如 `1.95.3+13` → `1.96.0+14`）
 3. 构建 Android arm64-v8a release APK
 4. 把带版本号的 APK 和同名 `.sha256` 复制到 `dist/`
 5. 只提交 `pubspec.yaml` 的版本号变更并 push 到当前分支的上游（不会把其他未提交改动带进这次提交）
 
-构建失败或中断时只回滚 `pubspec.yaml` 的版本号改动。开关：`--skip-tests`、`--skip-bump`、`--no-git`、`--no-copy`、`--target-platform android-arm|android-arm64|android-x64`、`--dist-dir DIR`、`--dry-run`。
+构建失败或中断时只回滚 `pubspec.yaml` 的版本号改动。开关：`--run-tests`、`--skip-tests`（跳过静态分析和测试）、`--skip-bump`、`--no-git`、`--no-copy`、`--target-platform android-arm|android-arm64|android-x64`、`--dist-dir DIR`、`--dry-run`。
+
+`scripts/update_macos.sh` 同样默认只跑静态分析、不跑测试；需要时加 `--run-tests`，`--skip-tests` 会同时跳过分析和测试。
 
 `scripts/publish_android_release.sh` 在构建之上发布到 Gitee Release：
 

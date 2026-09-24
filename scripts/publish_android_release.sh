@@ -392,6 +392,7 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   else
     build_args=(--target-platform "$TARGET_PLATFORM" --dist-dir "$DIST_DIR")
     [[ "$SKIP_TESTS" -eq 1 ]] && build_args+=(--skip-tests)
+    [[ "$SKIP_TESTS" -eq 0 ]] && build_args+=(--run-tests)
     [[ "$SKIP_BUMP" -eq 1 ]] && build_args+=(--skip-bump)
     [[ "$SKIP_GIT" -eq 1 ]] && build_args+=(--no-git)
 

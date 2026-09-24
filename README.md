@@ -56,9 +56,9 @@ flutter analyze                     # 静态检查
 flutter test                        # 运行全部测试
 flutter test test/widget_test.dart  # 运行单个测试文件
 
-scripts/build_android.sh            # Android arm64 构建，输出到 dist/
+scripts/build_android.sh            # Android arm64 构建，默认不跑测试；输出到 dist/
 scripts/build_windows.bat           # Windows 构建
-scripts/update_macos.sh             # macOS 构建并安装到 /Applications
+scripts/update_macos.sh             # macOS 构建并安装到 /Applications，默认不跑测试
 flutter build apk --release         # 直接构建 release APK
 ```
 
