@@ -563,10 +563,12 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
     // 图标块的底是 onColor 淡涂 20%，所以图标色要按涂后的底重算 ——
     // 直接用 onColor 会在黑白切换点附近掉到 3.6:1。
     final iconChipBg = AppSemanticColors.tint(onColor, color, 0.2);
+    // 背景启用时预览卡填充变半透明；文字色仍按不透明的 color 算
+    final cardFill = context.wallpaperFill(color);
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: color,
+        color: cardFill,
         borderRadius: AppRadius.cardAll,
       ),
       child: Row(

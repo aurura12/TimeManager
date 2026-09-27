@@ -179,6 +179,20 @@ extension AppSemanticColorAdaptation on BuildContext {
     if (theme.brightness != Brightness.dark) return color;
     return Color.lerp(color, theme.colorScheme.surfaceContainerHigh, 0.45)!;
   }
+
+  /// 背景照片启用时，把**大面积填充**按「界面不透明度」变半透明，让照片透出来；
+  /// 未启用时原样返回。
+  ///
+  /// 不改色相、也不做深色压暗。文字色仍要用不透明的原色去算
+  /// （`AppSemanticColors.onColor`）——半透明色喂给它会被断言拦下。
+  Color wallpaperFill(Color color) {
+    final wallpaper = AppWallpaperTheme.of(this);
+    if (!wallpaper.enabled) return color;
+    return color.withValues(alpha: wallpaper.surfaceOpacity);
+  }
+
+  /// 语义实色**卡片填充**：深色压暗一档 + 背景照片启用时变半透明。
+  Color adaptSemanticFill(Color color) => wallpaperFill(adaptSemanticColor(color));
 }
 
 /// Wallpaper state consumed by page scaffolds and the settings preview.

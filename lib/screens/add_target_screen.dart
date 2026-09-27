@@ -344,6 +344,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
 
   Widget _buildPreviewCard(Color activeColor) {
     final cardColor = context.adaptSemanticColor(activeColor);
+    final cardFill = context.adaptSemanticFill(activeColor);
     final onCardColor = AppSemanticColors.onColor(cardColor);
 
     return Container(
@@ -351,7 +352,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
       padding: const EdgeInsets.all(20),
       width: double.infinity,
       decoration:
-          BoxDecoration(color: cardColor, borderRadius: AppRadius.controlAll),
+          BoxDecoration(color: cardFill, borderRadius: AppRadius.controlAll),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

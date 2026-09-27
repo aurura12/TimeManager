@@ -291,6 +291,43 @@ void main() {
       expect(surfacesOf(AppTheme.light()).card, const Color(0xFFFFFFFF));
       expect(surfacesOf(AppTheme.dark()).card, const Color(0xFF1B1F1C));
     });
+
+    testWidgets('语义实色卡片填充在背景启用时按界面不透明度变半透明', (tester) async {
+      const goalColor = Color(0xFF96B462);
+
+      late BuildContext wallpaperContext;
+      await tester.pumpWidget(MaterialApp(
+        theme: AppTheme.light(backgroundEnabled: true, surfaceOpacity: 0.5),
+        home: Builder(builder: (context) {
+          wallpaperContext = context;
+          return const SizedBox();
+        }),
+      ));
+      // 填充变半透明，照片才能透出
+      expect(wallpaperContext.wallpaperFill(goalColor).a, closeTo(0.5, 1e-6));
+      expect(
+        wallpaperContext.adaptSemanticFill(goalColor).a,
+        closeTo(0.5, 1e-6),
+      );
+      // 文字色必须仍按不透明原色算：半透明色喂给 onColor 会断言失败
+      final opaque = wallpaperContext.adaptSemanticColor(goalColor);
+      expect(opaque.a, 1);
+      expect(() => AppSemanticColors.onColor(opaque), returnsNormally);
+
+      // 未启用背景时原样返回，不改任何页面视觉
+      late BuildContext plainContext;
+      await tester.pumpWidget(MaterialApp(
+        theme: AppTheme.light(),
+        home: Builder(builder: (context) {
+          plainContext = context;
+          return const SizedBox();
+        }),
+      ));
+      // MaterialApp 用 AnimatedTheme 过渡，未 settle 时还是上一套主题
+      await tester.pumpAndSettle();
+      expect(plainContext.wallpaperFill(goalColor), goalColor);
+      expect(plainContext.adaptSemanticFill(goalColor).a, 1);
+    });
   });
 
   group('日期选择器面板', () {

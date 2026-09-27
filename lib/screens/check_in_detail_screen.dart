@@ -282,6 +282,8 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final onColor = AppSemanticColors.onColor(_goal.color);
+    // 背景启用时整个头部色块半透明；文字色仍按不透明的 _goal.color 算
+    final headerFill = context.wallpaperFill(_goal.color);
     final sortedRecords = [..._goal.records]
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     final statsUserId = _isMine ? _userId : _goal.ownerId;
@@ -294,12 +296,12 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
           SliverAppBar(
             expandedHeight: 180,
             pinned: true,
-            backgroundColor: _goal.color,
+            backgroundColor: headerFill,
             foregroundColor: onColor,
             flexibleSpace: FlexibleSpaceBar(
               title: Text(_goal.name),
               background: Container(
-                color: _goal.color,
+                color: headerFill,
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [

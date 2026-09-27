@@ -221,6 +221,8 @@ class TargetScreen extends StatelessWidget {
   }) {
     final colorScheme = Theme.of(context).colorScheme;
     final cardColor = context.adaptSemanticColor(color);
+    // 背景启用时卡片填充变半透明；文字色仍按不透明的 cardColor 算
+    final cardFill = context.adaptSemanticFill(color);
     final onCardColor = AppSemanticColors.onColor(cardColor);
 
     return GestureDetector(
@@ -230,7 +232,7 @@ class TargetScreen extends StatelessWidget {
         margin: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
         padding: const EdgeInsets.all(20.0),
         decoration: BoxDecoration(
-          color: cardColor,
+          color: cardFill,
           borderRadius: AppRadius.cardAll,
           // 卡片：弱边框、少阴影
           border: Border.all(

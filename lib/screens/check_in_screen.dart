@@ -512,12 +512,12 @@ class _CheckInScreenState extends State<CheckInScreen> {
         // 统计卡片统一用 primaryContainer，浅色/深色同一套，不再各写一套绿
         gradient: LinearGradient(
           colors: [
-            colorScheme.primaryContainer,
-            Color.lerp(
+            context.wallpaperFill(colorScheme.primaryContainer),
+            context.wallpaperFill(Color.lerp(
               colorScheme.primaryContainer,
               colorScheme.primary,
               0.35,
-            )!,
+            )!),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -628,6 +628,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
   ) {
     // 深色下的压暗规则收敛在 AppSemanticColorAdaptation 里
     final cardColor = context.adaptSemanticColor(goal.color);
+    // 背景启用时卡片填充变半透明；文字色仍按不透明的 cardColor 算
+    final cardFill = context.adaptSemanticFill(goal.color);
     final onCardColor = AppSemanticColors.onColor(cardColor);
     final mutedColor = onCardColor.withValues(alpha: 0.75);
     // 「打卡」按钮与「已打卡」徽标都是"把前景色淡涂一层当底"的做法。
@@ -650,7 +652,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Material(
-        color: cardColor,
+        color: cardFill,
         borderRadius: AppRadius.cardAll,
         clipBehavior: Clip.antiAlias,
         child: InkWell(
