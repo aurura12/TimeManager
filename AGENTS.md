@@ -106,6 +106,8 @@ flutter analyze                    # 静态检查 (flutter_lints，无自定义�
 flutter test                       # 运行所有测试
 flutter test test/widget_test.dart # 运行单个测试文件
 flutter test test/foo_test.dart --plain-name "测试用例名"  # 运行单个测试用例
+bash test/update_macos_script_test.sh      # shell 脚本测试（flutter test 不会收集）
+bash test/update_metadata_script_test.sh   # shell 脚本测试（flutter test 不会收集）
 flutter run                        # 启动开发模式（移动端）
 flutter run -d windows             # Windows 桌面版启动
 flutter build apk --release        # 构建 Android release APK
@@ -115,11 +117,18 @@ scripts/build_android.sh           # Android arm64 构建：默认静态分析�
 scripts/build_windows.bat          # Windows 构建（含自动下载 nuget.exe）
 scripts/update_macos.sh            # macOS 构建并安装到 /Applications
 scripts/run_android.sh             # 拉起 Android 模拟器/设备再 flutter run（默认 AVD Pixel_7，可用 ANDROID_EMULATOR_NAME 覆盖；多余参数透传给 flutter run）
+scripts/install_latest_android.sh  # 下载 Gitee 最新 Android APK，校验 SHA-256 后安装到 adb 连接的设备
 scripts/package_macos_release.sh   # macOS .app 打包为 dist/*.dmg + .dmg.sha256
 scripts/generate_update_metadata.sh <安装包…>  # 为 APK/EXE/DMG 生成同名 .sha256（Windows 用 generate_update_metadata.ps1）
 scripts/publish_android_release.sh # 构建 + 发布到 Gitee Release（见「构建与发布」）
 scripts/installer.iss              # Inno Setup 6 打 Windows 安装包（上传 Gitee release）
 ```
+
+### 环境要求
+
+- **Android 构建需要 JDK 17**（Temurin）。Gradle 版本在 `android/gradle/wrapper/gradle-wrapper.properties` 固定为 8.14，它无法在 JDK 25 下运行——用系统默认的 JDK 25 会构建失败
+- `flutter.sdk` / `sdk.dir` 写在 `android/local.properties`（本机绝对路径，勿提交改动）
+- 升级 Flutter 要在 SDK 目录里执行 `flutter upgrade`，在项目目录直接跑会刷新项目的 `pubspec.lock`
 
 ## 构建与发布
 
@@ -179,7 +188,7 @@ Never commit them.
 
 ## Testing
 
-- `test/` 有 76 个 dart 测试文件（约 18100 行）+ 2 个 shell 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
+- `test/` 有 80 个 dart 测试文件（约 20200 行）+ 2 个 shell 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
 - `test/visual_system_test.dart` — 视觉系统守护测试：对比度计算、主题一致性、令牌使用约束（改 `lib/theme/` 或页面配色时必跑）
 - `test/widget_test.dart` — smoke test + platform channel mock 模板：`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道、`tester.runAsync` 真实 IO。新写 widget 测试可参照此文件搭建环境
 - `test/support/fake_app_log_store.dart` — 可注入失败的 Fake store
