@@ -15,6 +15,7 @@ import '../services/travel_gitee_service.dart';
 import '../services/travel_local_store.dart';
 
 import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 
 enum _TravelViewMode { table, calendar, stats }
@@ -857,7 +858,8 @@ class _TravelScreenState extends State<TravelScreen> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
           decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHigh,
+            // 背景启用时跟随「界面不透明度」
+            color: context.wallpaperFill(colorScheme.surfaceContainerHigh),
             borderRadius: AppRadius.controlAll,
           ),
           child: const Row(
@@ -1581,7 +1583,7 @@ class _TravelScreenState extends State<TravelScreen> {
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  color: colorScheme.surfaceContainerHigh,
+                  color: context.wallpaperFill(colorScheme.surfaceContainerHigh),
                   child: const Row(
                     children: [
                       SizedBox(

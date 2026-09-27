@@ -185,7 +185,9 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
     final textColorSecondary = colorScheme.onSurfaceVariant;
 
     return Material(
-      color: surfaces.card,
+      // 这是叠在时间网格上的浮层面板，必须不透明：用会跟随界面不透明度的
+      // surfaces.card 会透出底下的网格，文字压着格子很难读。
+      color: surfaces.overlay,
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: AppRadius.panelBottom,

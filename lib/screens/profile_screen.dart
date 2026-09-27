@@ -549,7 +549,8 @@ class _ProfileScreenState extends State<ProfileScreen>
       // 如果 TabBar 放在过窄的容器里，可以尝试稍微调大外层宽度或减小 padding
       padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHigh,
+        // 背景启用时跟随「界面不透明度」；High 档主题里保持不透明（见 app_theme 注释）
+        color: context.wallpaperFill(colorScheme.surfaceContainerHigh),
         borderRadius: AppRadius.cardAll,
       ),
       child: TabBar(

@@ -1143,7 +1143,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHigh,
+        // 背景启用时跟随「界面不透明度」
+        color: context.wallpaperFill(colorScheme.surfaceContainerHigh),
         borderRadius: AppRadius.controlAll,
       ),
       child: Row(
@@ -1391,7 +1392,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
               return Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                color: colorScheme.surfaceContainerHigh,
+                color: context.wallpaperFill(colorScheme.surfaceContainerHigh),
                 child: Row(
                   children: [
                     Icon(Icons.search,

@@ -388,8 +388,32 @@ void main() {
                 matching: find.byType(Material))
             .first,
       );
-      expect(material.color, surfacesOf(AppTheme.light()).card);
+      // 面板是叠在网格上的浮层，用不透明的 overlay（非壁纸时与 card 同色）
+      expect(material.color, surfacesOf(AppTheme.light()).overlay);
       expect(material.elevation, 0);
+    });
+
+    testWidgets('背景启用时面板仍不透明，不会透出底下网格', (tester) async {
+      final now = DateTime.now();
+      final theme =
+          AppTheme.light(backgroundEnabled: true, surfaceOpacity: 0.5);
+      await pumpPanel(
+        tester,
+        initial: DateTime(now.year, now.month, 15),
+        theme: theme,
+      );
+      final surfaces = theme.extension<AppSurfaces>()!;
+      final material = tester.widget<Material>(
+        find
+            .descendant(
+                of: find.byType(DatePickerPanel),
+                matching: find.byType(Material))
+            .first,
+      );
+      expect(material.color, surfaces.overlay);
+      expect(material.color!.a, 1);
+      // 对照：卡片本身此时是半透明的，正是不能用它当面板底的原因
+      expect(surfaces.card.a, closeTo(0.5, 1e-6));
     });
 
     testWidgets('窄屏（360x640）渲染不溢出', (tester) async {
