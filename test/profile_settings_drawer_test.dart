@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/diary_kind.dart';
+import 'package:time_manager/providers/background_image_provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/services/app_identity_service.dart';
@@ -24,6 +25,7 @@ void main() {
         providers: [
           ChangeNotifierProvider.value(value: provider),
           ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
+          ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
         ],
         child: MaterialApp(
           home: Scaffold(
@@ -83,6 +85,7 @@ void main() {
         providers: [
           ChangeNotifierProvider.value(value: provider),
           ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
+          ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
         ],
         child: MaterialApp(
           home: Scaffold(
@@ -98,6 +101,29 @@ void main() {
     scaffoldState.openDrawer();
     await tester.pumpAndSettle();
   }
+
+  testWidgets('background image setting exposes the complete opaque sheet',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final provider = TimeProvider();
+    addTearDown(provider.dispose);
+
+    await openDrawerWith(tester, provider, desktop: true);
+    await tester.tap(find.text('背景图片'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('选择照片'), findsOneWidget);
+    expect(find.text('启用背景'), findsOneWidget);
+    expect(find.text('照片不透明度'), findsOneWidget);
+    expect(find.text('移除背景照片'), findsOneWidget);
+    final slider = tester.widget<Slider>(find.byType(Slider));
+    expect(slider.min, 0);
+    expect(slider.max, 1);
+    expect(
+      tester.widget<BottomSheet>(find.byType(BottomSheet)).backgroundColor!.a,
+      1,
+    );
+  });
 
   testWidgets('desktop identity switch requires confirmation', (tester) async {
     final provider = await createIdentityProvider(tester);
@@ -205,6 +231,7 @@ void main() {
         providers: [
           ChangeNotifierProvider.value(value: provider),
           ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
+          ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
         ],
         child: MaterialApp(
           home: Scaffold(
@@ -261,6 +288,7 @@ void main() {
           providers: [
             ChangeNotifierProvider.value(value: provider),
             ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
+            ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
           ],
           child: MaterialApp(
             home: Scaffold(

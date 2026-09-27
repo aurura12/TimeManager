@@ -45,7 +45,9 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
       builder: (context, _) {
         final colorScheme = Theme.of(context).colorScheme;
         return Scaffold(
-          backgroundColor: colorScheme.surface,
+          backgroundColor: AppWallpaperTheme.of(context).enabled
+              ? Colors.transparent
+              : colorScheme.surface,
           appBar: AppBar(
             title: const Text('同步中心'),
             actions: [

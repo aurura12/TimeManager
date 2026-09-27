@@ -12,6 +12,7 @@ import 'package:google_sign_in_platform_interface/google_sign_in_platform_interf
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/main.dart';
+import 'package:time_manager/providers/background_image_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/screens/home_screen.dart';
@@ -94,6 +95,7 @@ void main() {
           providers: [
             ChangeNotifierProvider(create: (_) => TimeProvider()),
             ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
+            ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
           ],
           child: const TimeManagerApp(),
         ),

@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
+import 'package:time_manager/providers/background_image_provider.dart';
 import 'package:time_manager/theme/app_semantic_colors.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'providers/time_provider.dart';
@@ -25,6 +26,7 @@ import 'services/reminder_platform.dart';
 import 'services/sync_center_service.dart';
 import 'services/windows_legacy_preferences_migration.dart';
 import 'widgets/desktop_shortcut_host.dart';
+import 'widgets/background_image_layer.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -455,6 +457,13 @@ Future<void> _initializeAndRunApplication({
           ),
         ),
         ChangeNotifierProvider(create: (context) => ThemeModeProvider()),
+        ChangeNotifierProvider<BackgroundImageProvider>(
+          create: (_) {
+            final provider = BackgroundImageProvider();
+            unawaited(provider.initialize());
+            return provider;
+          },
+        ),
       ],
       child: AppRecoveryBoundary(
         controller: recoveryController,
@@ -691,12 +700,13 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
   @override
   Widget build(BuildContext context) {
     final themeMode = context.watch<ThemeModeProvider>().themeMode;
+    final backgroundImage = context.watch<BackgroundImageProvider>();
     final timeProvider = context.read<TimeProvider>();
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
       navigatorObservers: <NavigatorObserver>[_rootRouteTracker],
-      theme: AppTheme.light(),
-      darkTheme: AppTheme.dark(),
+      theme: AppTheme.light(backgroundEnabled: backgroundImage.isActive),
+      darkTheme: AppTheme.dark(backgroundEnabled: backgroundImage.isActive),
       themeMode: themeMode,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
@@ -736,7 +746,9 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
           navigator.pop();
           return true;
         },
-        child: child ?? const SizedBox.shrink(),
+        child: BackgroundImageLayer(
+          child: child ?? const SizedBox.shrink(),
+        ),
       ),
       home: const MainScreen(),
     );

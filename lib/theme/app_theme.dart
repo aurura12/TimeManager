@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app_semantic_colors.dart';
 import 'app_tokens.dart';
+import 'background_image_contrast.dart';
 
 /// 表面层级扩展。
 ///
@@ -14,6 +15,7 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
     required this.card,
     required this.panel,
     required this.subtle,
+    required this.sidebar,
     required this.gridEmpty,
     required this.border,
     required this.navSelected,
@@ -31,6 +33,9 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
 
   /// 次级底色：输入框填充、未选中 chip、卡片内的分区
   final Color subtle;
+
+  /// 首页右侧模板 / 分类栏底色；壁纸启用时让照片透出。
+  final Color sidebar;
 
   /// 空白时间格
   final Color gridEmpty;
@@ -53,14 +58,25 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
     return theme.extension<AppSurfaces>() ?? forColorScheme(theme.colorScheme);
   }
 
-  static AppSurfaces forColorScheme(ColorScheme scheme) {
+  static AppSurfaces forColorScheme(
+    ColorScheme scheme, {
+    bool wallpaperEnabled = false,
+  }) {
     final isDark = scheme.brightness == Brightness.dark;
+    final emptyGridColor =
+        isDark ? const Color(0xFF2B312D) : const Color(0xFFE6E9E4);
+    final subtleColor = isDark ? const Color(0xFF232725) : const Color(0xFFF1F3F0);
     return AppSurfaces(
       page: isDark ? const Color(0xFF111315) : const Color(0xFFF8F9FA),
       card: isDark ? const Color(0xFF1B1F1C) : const Color(0xFFFFFFFF),
       panel: isDark ? const Color(0xFF161A18) : const Color(0xFFFFFFFF),
-      subtle: isDark ? const Color(0xFF232725) : const Color(0xFFF1F3F0),
-      gridEmpty: isDark ? const Color(0xFF2B312D) : const Color(0xFFE6E9E4),
+      subtle: subtleColor,
+      sidebar: wallpaperEnabled
+          ? subtleColor.withValues(alpha: 0.72)
+          : subtleColor,
+      gridEmpty: wallpaperEnabled
+          ? emptyGridColor.withValues(alpha: 0.45)
+          : emptyGridColor,
       border: scheme.outlineVariant,
       navSelected: scheme.primaryContainer,
       joinDivider: isDark ? const Color(0x1AFFFFFF) : const Color(0x1A000000),
@@ -73,6 +89,7 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
     Color? card,
     Color? panel,
     Color? subtle,
+    Color? sidebar,
     Color? gridEmpty,
     Color? border,
     Color? navSelected,
@@ -83,6 +100,7 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
       card: card ?? this.card,
       panel: panel ?? this.panel,
       subtle: subtle ?? this.subtle,
+      sidebar: sidebar ?? this.sidebar,
       gridEmpty: gridEmpty ?? this.gridEmpty,
       border: border ?? this.border,
       navSelected: navSelected ?? this.navSelected,
@@ -98,6 +116,7 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
       card: Color.lerp(card, other.card, t)!,
       panel: Color.lerp(panel, other.panel, t)!,
       subtle: Color.lerp(subtle, other.subtle, t)!,
+      sidebar: Color.lerp(sidebar, other.sidebar, t)!,
       gridEmpty: Color.lerp(gridEmpty, other.gridEmpty, t)!,
       border: Color.lerp(border, other.border, t)!,
       navSelected: Color.lerp(navSelected, other.navSelected, t)!,
@@ -113,6 +132,7 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
         other.card == card &&
         other.panel == panel &&
         other.subtle == subtle &&
+        other.sidebar == sidebar &&
         other.gridEmpty == gridEmpty &&
         other.border == border &&
         other.navSelected == navSelected &&
@@ -120,8 +140,9 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
   }
 
   @override
-  int get hashCode => Object.hash(page, card, panel, subtle, gridEmpty, border,
-      navSelected, joinDivider);
+  int get hashCode => Object.hash(
+      page, card, panel, subtle, sidebar, gridEmpty, border, navSelected,
+      joinDivider);
 }
 
 /// 语义实色（分类色 / 目标色 / 身份色 / 奖牌色）在深色模式下的适配。
@@ -136,6 +157,57 @@ extension AppSemanticColorAdaptation on BuildContext {
   }
 }
 
+/// Wallpaper state consumed by page scaffolds and the settings preview.
+@immutable
+class AppWallpaperTheme extends ThemeExtension<AppWallpaperTheme> {
+  const AppWallpaperTheme({
+    required this.enabled,
+    required this.safePhotoOpacity,
+  });
+
+  final bool enabled;
+  final double safePhotoOpacity;
+
+  static AppWallpaperTheme of(BuildContext context) {
+    final theme = Theme.of(context);
+    return theme.extension<AppWallpaperTheme>() ??
+        const AppWallpaperTheme(
+          enabled: false,
+          safePhotoOpacity: 0.18,
+        );
+  }
+
+  @override
+  AppWallpaperTheme copyWith({
+    bool? enabled,
+    double? safePhotoOpacity,
+  }) {
+    return AppWallpaperTheme(
+      enabled: enabled ?? this.enabled,
+      safePhotoOpacity: safePhotoOpacity ?? this.safePhotoOpacity,
+    );
+  }
+
+  @override
+  AppWallpaperTheme lerp(ThemeExtension<AppWallpaperTheme>? other, double t) {
+    if (other is! AppWallpaperTheme) return this;
+    return AppWallpaperTheme(
+      enabled: t < 0.5 ? enabled : other.enabled,
+      safePhotoOpacity:
+          safePhotoOpacity + (other.safePhotoOpacity - safePhotoOpacity) * t,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is AppWallpaperTheme &&
+      other.enabled == enabled &&
+      other.safePhotoOpacity == safePhotoOpacity;
+
+  @override
+  int get hashCode => Object.hash(enabled, safePhotoOpacity);
+}
+
 /// 应用主题。
 ///
 /// 职责只有两件事：
@@ -147,20 +219,73 @@ abstract final class AppTheme {
   /// 品牌种子色。**唯一**定义处。
   static const Color seedColor = AppSemanticColors.brand;
 
-  static ThemeData light() => _build(Brightness.light);
+  static ThemeData light({bool backgroundEnabled = false}) =>
+      _build(Brightness.light, backgroundEnabled: backgroundEnabled);
 
-  static ThemeData dark() => _build(Brightness.dark);
+  static ThemeData dark({bool backgroundEnabled = false}) =>
+      _build(Brightness.dark, backgroundEnabled: backgroundEnabled);
 
   /// 兼容旧调用点（旧 API 是 `AppTheme.light` / `AppTheme.dark` 方法）。
-  static ThemeData themeFor(Brightness brightness) => _build(brightness);
+  static ThemeData themeFor(
+    Brightness brightness, {
+    bool backgroundEnabled = false,
+  }) =>
+      _build(brightness, backgroundEnabled: backgroundEnabled);
 
-  static ThemeData _build(Brightness brightness) {
+  static ThemeData _build(
+    Brightness brightness, {
+    bool backgroundEnabled = false,
+  }) {
     final isDark = brightness == Brightness.dark;
-    final scheme = ColorScheme.fromSeed(
+    final originalScheme = ColorScheme.fromSeed(
       seedColor: seedColor,
       brightness: brightness,
     );
-    final surfaces = AppSurfaces.forColorScheme(scheme);
+    final originalSurfaces = AppSurfaces.forColorScheme(originalScheme);
+    final safePhotoOpacity = BackgroundImageContrast.safePhotoOpacity(
+      brightness: brightness,
+      pageColor: originalSurfaces.page,
+      onSurface: originalScheme.onSurface,
+      onSurfaceVariant: originalScheme.onSurfaceVariant,
+      outline: originalScheme.outline,
+    );
+    final wallpaperBackdrop = BackgroundImageContrast.worstPhotoBackdrop(
+      brightness: brightness,
+      pageColor: originalSurfaces.page,
+      photoOpacity: safePhotoOpacity,
+    );
+    final scheme = backgroundEnabled
+        ? originalScheme.copyWith(
+            onSurface: BackgroundImageContrast.readableForeground(
+              foreground: originalScheme.onSurface,
+              background: wallpaperBackdrop,
+              brightness: brightness,
+            ),
+            onSurfaceVariant: BackgroundImageContrast.readableForeground(
+              foreground: originalScheme.onSurfaceVariant,
+              background: wallpaperBackdrop,
+              brightness: brightness,
+            ),
+            outline: BackgroundImageContrast.readableForeground(
+              foreground: originalScheme.outline,
+              background: wallpaperBackdrop,
+              brightness: brightness,
+            ),
+            outlineVariant: BackgroundImageContrast.readableForeground(
+              foreground: originalScheme.outlineVariant,
+              background: wallpaperBackdrop,
+              brightness: brightness,
+            ),
+          )
+        : originalScheme;
+    final surfaces = AppSurfaces.forColorScheme(
+      scheme,
+      wallpaperEnabled: backgroundEnabled,
+    );
+    final wallpaperTheme = AppWallpaperTheme(
+      enabled: backgroundEnabled,
+      safePhotoOpacity: safePhotoOpacity,
+    );
 
     final base = isDark ? ThemeData.dark() : ThemeData.light();
     final textTheme = base.textTheme.apply(
@@ -178,13 +303,16 @@ abstract final class AppTheme {
       brightness: brightness,
       colorScheme: scheme,
       textTheme: textTheme,
-      scaffoldBackgroundColor: surfaces.page,
+      scaffoldBackgroundColor:
+          backgroundEnabled ? Colors.transparent : surfaces.page,
       canvasColor: surfaces.page,
-      extensions: <ThemeExtension<dynamic>>[surfaces],
+      extensions: <ThemeExtension<dynamic>>[surfaces, wallpaperTheme],
 
       // ---------- 顶部 ----------
       appBarTheme: AppBarThemeData(
-        backgroundColor: surfaces.panel,
+        backgroundColor: backgroundEnabled
+            ? surfaces.panel.withValues(alpha: 0.72)
+            : surfaces.panel,
         foregroundColor: scheme.onSurface,
         surfaceTintColor: Colors.transparent,
         shadowColor: Colors.transparent,
@@ -203,7 +331,9 @@ abstract final class AppTheme {
 
       // ---------- 导航 ----------
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: surfaces.panel,
+        backgroundColor: backgroundEnabled
+            ? surfaces.panel.withValues(alpha: 0.72)
+            : surfaces.panel,
         surfaceTintColor: Colors.transparent,
         shadowColor: Colors.transparent,
         elevation: 0,
@@ -230,7 +360,9 @@ abstract final class AppTheme {
         ),
       ),
       bottomNavigationBarTheme: BottomNavigationBarThemeData(
-        backgroundColor: surfaces.panel,
+        backgroundColor: backgroundEnabled
+            ? surfaces.panel.withValues(alpha: 0.72)
+            : surfaces.panel,
         elevation: 0,
         type: BottomNavigationBarType.fixed,
         selectedItemColor: scheme.onPrimaryContainer,
@@ -239,7 +371,9 @@ abstract final class AppTheme {
         unselectedLabelStyle: AppText.badge,
       ),
       navigationRailTheme: NavigationRailThemeData(
-        backgroundColor: surfaces.panel,
+        backgroundColor: backgroundEnabled
+            ? surfaces.panel.withValues(alpha: 0.72)
+            : surfaces.panel,
         elevation: 0,
         useIndicator: true,
         indicatorColor: surfaces.navSelected,
@@ -314,7 +448,9 @@ abstract final class AppTheme {
           backgroundColor: scheme.primary,
           foregroundColor: scheme.onPrimary,
           disabledBackgroundColor: scheme.onSurface.withValues(alpha: 0.12),
-          disabledForegroundColor: scheme.onSurface.withValues(alpha: 0.38),
+          disabledForegroundColor: backgroundEnabled
+              ? scheme.onSurface
+              : scheme.onSurface.withValues(alpha: 0.38),
           shape: const RoundedRectangleBorder(
             borderRadius: AppRadius.controlAll,
           ),

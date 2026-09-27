@@ -6,6 +6,7 @@ import 'package:google_sign_in_platform_interface/google_sign_in_platform_interf
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/diary_kind.dart';
+import 'package:time_manager/providers/background_image_provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/services/app_identity_service.dart';
@@ -73,8 +74,7 @@ void main() {
   /// `schedule_user_kind` 就是 load 认的迁移键。
   Map<String, Object> mockPrefs([Map<String, Object> extra = const {}]) {
     return <String, Object>{
-      'on_this_day_last_shown_date':
-          OnThisDayService.dateKeyOf(DateTime.now()),
+      'on_this_day_last_shown_date': OnThisDayService.dateKeyOf(DateTime.now()),
       'schedule_user_kind': 'g',
       ...extra,
     };
@@ -91,7 +91,8 @@ void main() {
       'plugins.it_nomads.com/flutter_secure_storage',
       'dev.fluttercommunity.plus/package_info',
     ]) {
-      messenger.setMockMethodCallHandler(MethodChannel(name), (call) async => null);
+      messenger.setMockMethodCallHandler(
+          MethodChannel(name), (call) async => null);
     }
     messenger.setMockMethodCallHandler(
       const MethodChannel('plugins.flutter.io/path_provider'),
@@ -116,6 +117,9 @@ void main() {
           ChangeNotifierProvider<TimeProvider>(create: (_) => TimeProvider()),
           ChangeNotifierProvider<ThemeModeProvider>(
             create: (_) => ThemeModeProvider(),
+          ),
+          ChangeNotifierProvider<BackgroundImageProvider>(
+            create: (_) => BackgroundImageProvider(),
           ),
         ],
         child: MaterialApp(
@@ -197,8 +201,7 @@ void main() {
   testWidgets('未选身份时开关置灰并提示先选身份', (tester) async {
     // 偏好里不带身份键：load() 解析不出身份
     SharedPreferences.setMockInitialValues(<String, Object>{
-      'on_this_day_last_shown_date':
-          OnThisDayService.dateKeyOf(DateTime.now()),
+      'on_this_day_last_shown_date': OnThisDayService.dateKeyOf(DateTime.now()),
     });
     AppIdentityService.resetForTesting();
 

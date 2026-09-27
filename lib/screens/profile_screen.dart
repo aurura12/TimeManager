@@ -55,9 +55,11 @@ class _ProfileScreenState extends State<ProfileScreen>
   Widget build(BuildContext context) {
     final provider = Provider.of<TimeProvider>(context);
     final colorScheme = Theme.of(context).colorScheme;
+    final wallpaperTheme = AppWallpaperTheme.of(context);
 
     return Scaffold(
-      backgroundColor: colorScheme.surface,
+      backgroundColor:
+          wallpaperTheme.enabled ? Colors.transparent : colorScheme.surface,
       drawer: ProfileSettingsDrawer(onChanged: () => setState(() {})),
       appBar: AppBar(
         title: Text(
@@ -67,7 +69,9 @@ class _ProfileScreenState extends State<ProfileScreen>
             fontWeight: FontWeight.bold,
           ),
         ),
-        backgroundColor: Colors.transparent,
+        backgroundColor: wallpaperTheme.enabled
+            ? AppSurfaces.of(context).panel.withValues(alpha: 0.72)
+            : Colors.transparent,
         elevation: 0,
         centerTitle: true,
         actions: [

@@ -323,6 +323,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final surfaces = AppSurfaces.of(context);
+    final wallpaperTheme = AppWallpaperTheme.of(context);
     final safeIndex = _selectedIndex.clamp(0, _tabs.length - 1);
     _ensureTabBuilt(safeIndex);
     final options = _buildTabPages();
@@ -333,6 +334,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     // iPad 宽屏使用左侧导航栏，手机/分屏窄栏保持底部导航
     if (isWideTablet(context)) {
       return Scaffold(
+        backgroundColor:
+            wallpaperTheme.enabled ? Colors.transparent : surfaces.page,
         body: Row(
           children: [
             NavigationRail(
@@ -366,6 +369,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       );
     }
     return Scaffold(
+      backgroundColor:
+          wallpaperTheme.enabled ? Colors.transparent : surfaces.page,
       body: _buildContentStack(
         options: options,
         safeIndex: safeIndex,
@@ -374,10 +379,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       // 顶部一条弱边框，和内容区拉开层级（颜色与圆角统一走主题）
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
-          color: surfaces.panel,
+          color: wallpaperTheme.enabled
+              ? surfaces.panel.withValues(alpha: 0.72)
+              : surfaces.panel,
           border: Border(top: BorderSide(color: surfaces.border)),
         ),
         child: NavigationBar(
+          backgroundColor: wallpaperTheme.enabled ? Colors.transparent : null,
           selectedIndex: safeIndex,
           onDestinationSelected: _onItemTapped,
           destinations: [

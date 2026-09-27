@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/daily_review_summary.dart';
 import '../widgets/daily_review_chat_sheet.dart';
 
+import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 
 class DailyReviewScreen extends StatefulWidget {
@@ -462,8 +463,10 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final wallpaperTheme = AppWallpaperTheme.of(context);
     return Scaffold(
-      backgroundColor: colorScheme.surface,
+      backgroundColor:
+          wallpaperTheme.enabled ? Colors.transparent : colorScheme.surface,
       appBar: AppBar(
         title: Text(
           '每日复盘',
@@ -472,7 +475,9 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
             fontWeight: FontWeight.bold,
           ),
         ),
-        backgroundColor: Colors.transparent,
+        backgroundColor: wallpaperTheme.enabled
+            ? AppSurfaces.of(context).panel.withValues(alpha: 0.72)
+            : Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: colorScheme.onSurface),
         actions: [

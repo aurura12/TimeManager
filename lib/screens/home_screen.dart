@@ -669,7 +669,7 @@ class HomeScreenState extends State<HomeScreen> {
 
     return Container(
       width: 100,
-      color: surfaces.subtle,
+      color: surfaces.sidebar,
       child: Column(
         children: [
           TemplateBar(

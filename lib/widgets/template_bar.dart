@@ -34,6 +34,7 @@ class TemplateBar extends StatelessWidget {
     final templates = provider.templates;
     final colorScheme = Theme.of(context).colorScheme;
     final surfaces = AppSurfaces.of(context);
+    final wallpaperEnabled = AppWallpaperTheme.of(context).enabled;
     final chipCount = templates.length + 1;
     final listHeight = (chipCount * _chipHeight + (chipCount - 1) * _chipGap)
         .clamp(_chipHeight, _maxListHeight)
@@ -43,7 +44,9 @@ class TemplateBar extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(6, 8, 2, 6),
       decoration: BoxDecoration(
-        color: surfaces.subtle,
+        // HomeScreen 的整条侧栏已铺 surfaces.sidebar；避免在模板栏区域
+        // 重复叠加半透明底色，造成照片透出程度与分类栏不一致。
+        color: wallpaperEnabled ? Colors.transparent : surfaces.subtle,
         border: Border(bottom: BorderSide(color: surfaces.border)),
       ),
       child: Column(

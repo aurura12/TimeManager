@@ -6,6 +6,7 @@ import '../models/on_this_day_entry.dart';
 import '../providers/time_provider.dart';
 import '../services/diary_search_service.dart';
 import '../services/on_this_day_service.dart';
+import '../theme/app_theme.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/on_this_day_year_card.dart';
 
@@ -42,8 +43,8 @@ class _OnThisDayScreenState extends State<OnThisDayScreen> {
       // 等待日记索引就绪（首次进入时提升日记命中率，最多 15 秒超时）
       await _waitForDiaryIndex();
       if (!mounted) return;
-      final entries =
-          await OnThisDayService.collectEntries(provider, referenceDate: _selectedDate);
+      final entries = await OnThisDayService.collectEntries(provider,
+          referenceDate: _selectedDate);
       if (!mounted) return;
       setState(() {
         _entries = entries;
@@ -81,9 +82,11 @@ class _OnThisDayScreenState extends State<OnThisDayScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final wallpaperTheme = AppWallpaperTheme.of(context);
 
     return Scaffold(
-      backgroundColor: colorScheme.surface,
+      backgroundColor:
+          wallpaperTheme.enabled ? Colors.transparent : colorScheme.surface,
       appBar: AppBar(
         title: Text(
           '那年今日',
@@ -92,7 +95,9 @@ class _OnThisDayScreenState extends State<OnThisDayScreen> {
             fontWeight: FontWeight.bold,
           ),
         ),
-        backgroundColor: Colors.transparent,
+        backgroundColor: wallpaperTheme.enabled
+            ? AppSurfaces.of(context).panel.withValues(alpha: 0.72)
+            : Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: colorScheme.onSurface),
       ),
@@ -127,8 +132,7 @@ class _OnThisDayScreenState extends State<OnThisDayScreen> {
                   child: DatePickerPanel(
                     initialDate: _selectedDate,
                     onDateSelected: _onDateSelected,
-                    onClose: () =>
-                        setState(() => _isDatePickerVisible = false),
+                    onClose: () => setState(() => _isDatePickerVisible = false),
                   ),
                 ),
               ),

@@ -5,7 +5,9 @@ import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 
 import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+
 class WordCloudScreen extends StatefulWidget {
   const WordCloudScreen({super.key});
 
@@ -58,13 +60,15 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
       _layoutCache.clear();
     }
     final key = '${size.width.round()}_${size.height.round()}_${shape.index}';
-    return _layoutCache.putIfAbsent(key, () => _layoutWords(words, size, shape));
+    return _layoutCache.putIfAbsent(
+        key, () => _layoutWords(words, size, shape));
   }
 
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<TimeProvider>();
     final colorScheme = Theme.of(context).colorScheme;
+    final wallpaperTheme = AppWallpaperTheme.of(context);
     final now = DateTime.now();
     final start = DateTime(2020, 1, 1);
     final durationStats = provider.getStatistics(start, now);
@@ -72,7 +76,8 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
     final words = _buildWordCloudItems(durationStats, occurrenceStats);
 
     return Scaffold(
-      backgroundColor: colorScheme.surface,
+      backgroundColor:
+          wallpaperTheme.enabled ? Colors.transparent : colorScheme.surface,
       appBar: AppBar(
         title: Text(
           '事件词云',
@@ -81,7 +86,9 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
             fontWeight: FontWeight.bold,
           ),
         ),
-        backgroundColor: Colors.transparent,
+        backgroundColor: wallpaperTheme.enabled
+            ? AppSurfaces.of(context).panel.withValues(alpha: 0.72)
+            : Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: colorScheme.onSurface),
       ),
@@ -168,7 +175,8 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
                       style: TextStyle(
                         fontSize: word.fontSize,
                         // 颜色在这里现算，不在布局缓存里（否则换主题不会更新）
-                        color: WordCloudScreen.wordColor(backdrop, word.colorIndex),
+                        color: WordCloudScreen.wordColor(
+                            backdrop, word.colorIndex),
                         fontWeight: word.fontSize > 24
                             ? FontWeight.w700
                             : FontWeight.w500,
@@ -349,12 +357,10 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
 
   bool _pointInTriangle(Offset p, Offset a, Offset b, Offset c) {
     final area = (b.dx - a.dx) * (c.dy - a.dy) - (c.dx - a.dx) * (b.dy - a.dy);
-    final s = ((a.dy - c.dy) * (p.dx - c.dx) +
-            (c.dx - a.dx) * (p.dy - c.dy)) /
-        area;
-    final t = ((c.dy - b.dy) * (p.dx - c.dx) +
-            (b.dx - c.dx) * (p.dy - c.dy)) /
-        area;
+    final s =
+        ((a.dy - c.dy) * (p.dx - c.dx) + (c.dx - a.dx) * (p.dy - c.dy)) / area;
+    final t =
+        ((c.dy - b.dy) * (p.dx - c.dx) + (b.dx - c.dx) * (p.dy - c.dy)) / area;
     final u = 1 - s - t;
     return s >= 0 && t >= 0 && u >= 0;
   }
@@ -472,4 +478,3 @@ class _PlacedWord {
     required this.colorIndex,
   });
 }
-

@@ -9,6 +9,7 @@ import '../models/google_calendar_user.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../providers/theme_mode_provider.dart';
+import '../providers/background_image_provider.dart';
 import '../providers/time_provider.dart';
 import '../services/app_log_service.dart';
 import '../services/data_backup_service.dart';
@@ -24,6 +25,7 @@ import '../models/diary_kind.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import 'background_image_layer.dart';
 import 'time_wheel_sheet.dart';
 
 class ProfileSettingsDrawer extends StatefulWidget {
@@ -83,192 +85,230 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<TimeProvider>();
+    final backgroundImage = context.watch<BackgroundImageProvider>();
     final googleUser = AppIdentityService.googleUser;
     final themeModeProvider = context.watch<ThemeModeProvider>();
     final colorScheme = Theme.of(context).colorScheme;
     final isAndroid = widget.androidPlatformOverride ?? Platform.isAndroid;
 
     return Drawer(
-      backgroundColor: colorScheme.surface,
-      child: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: ListView(
-                padding: EdgeInsets.zero,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-                    child: Text(
-                      '账户与数据',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                  if (widget.desktopPlatformOverride ?? isDesktopPlatform) ...[
-                    _buildManualIdentitySection(
-                      context,
-                      provider,
-                      title: 'Windows 用户身份',
-                    ),
-                  ] else ...[
-                    if (provider.isManualIdentityMode)
-                      _buildManualIdentitySection(
-                        context,
-                        provider,
-                        title: '手动用户身份',
-                      )
-                    else
-                      _buildLoginSection(
-                        context,
-                        provider.isGoogleIdentityMode
-                            ? AppIdentityService.googleUser
-                            : googleUser,
-                        provider,
-                      ),
-                    const Divider(height: 1),
-                    _buildRemoteSyncSection(context, provider),
-                  ],
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.sync_rounded),
-                    title: const Text('同步中心'),
-                    subtitle: Text(
-                      provider.hasPendingSync
-                          ? '有 ${provider.pendingSyncDates.length} 天待同步，查看全部状态'
-                          : '查看各模块同步状态并重试',
-                    ),
-                    onTap: () {
-                      final navigator = Navigator.of(context);
-                      navigator.pop();
-                      navigator.push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const SyncCenterScreen(),
-                        ),
-                      );
-                    },
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.palette_outlined),
-                    title: const Text('外观模式'),
-                    subtitle:
-                        Text(_themeModeLabel(themeModeProvider.themeMode)),
-                    trailing: DropdownButtonHideUnderline(
-                      child: DropdownButton<ThemeMode>(
-                        value: themeModeProvider.themeMode,
-                        onChanged: (mode) {
-                          if (mode != null) {
-                            themeModeProvider.setThemeMode(mode);
-                          }
-                        },
-                        items: const [
-                          DropdownMenuItem(
-                            value: ThemeMode.system,
-                            child: Text('跟随系统'),
-                          ),
-                          DropdownMenuItem(
-                            value: ThemeMode.light,
-                            child: Text('浅色'),
-                          ),
-                          DropdownMenuItem(
-                            value: ThemeMode.dark,
-                            child: Text('深色'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.upload_file_outlined),
-                    title: const Text('导出备份'),
-                    subtitle: const Text('保存 JSON 到本地'),
-                    onTap: () async {
-                      final rootContext =
-                          Navigator.of(context, rootNavigator: true).context;
-                      Navigator.pop(context);
-                      await _handleExport(rootContext, provider);
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.download_outlined),
-                    title: const Text('导入备份'),
-                    subtitle: const Text('从 JSON 恢复数据'),
-                    onTap: () async {
-                      final rootContext =
-                          Navigator.of(context, rootNavigator: true).context;
-                      Navigator.pop(context);
-                      await _handleImport(rootContext, provider);
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.receipt_long_outlined),
-                    title: const Text('运行日志'),
-                    subtitle: const Text('查看问题记录并导出日志'),
-                    onTap: () {
-                      final navigator = Navigator.of(context);
-                      navigator.pop();
-                      navigator.push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const AppLogScreen(),
-                        ),
-                      );
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.bubble_chart_outlined),
-                    title: const Text('事件词云'),
-                    subtitle: const Text('按时长与出现次数查看事件热度'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      WordCloudScreen.open(context);
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.history_rounded),
-                    title: const Text('那年今日'),
-                    subtitle: const Text('回顾往年今天的日记、出行和活动'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      OnThisDayScreen.open(context);
-                    },
-                  ),
-                  // 独立分区，插在最后的「检查更新」之前，避免后续条目被视觉归到「提醒」下
-                  if (isAndroid) ...[
-                    const Divider(height: AppSizes.hairline),
+      backgroundColor: Colors.transparent,
+      child: BackgroundImagePanelLayer(
+        panelColor: colorScheme.surface,
+        child: SafeArea(
+          child: Column(
+            children: [
+              Expanded(
+                child: ListView(
+                  padding: EdgeInsets.zero,
+                  children: [
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(
-                        AppSpacing.pageHorizontal,
-                        AppSpacing.lg,
-                        AppSpacing.pageHorizontal,
-                        AppSpacing.md,
-                      ),
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
                       child: Text(
-                        '提醒',
-                        style: AppText.caption.copyWith(
+                        '账户与数据',
+                        style: TextStyle(
+                          fontSize: 13,
                           fontWeight: FontWeight.w600,
                           color: colorScheme.onSurfaceVariant,
                         ),
                       ),
                     ),
-                    _buildDiaryReminderSection(context, colorScheme),
+                    if (widget.desktopPlatformOverride ??
+                        isDesktopPlatform) ...[
+                      _buildManualIdentitySection(
+                        context,
+                        provider,
+                        title: 'Windows 用户身份',
+                      ),
+                    ] else ...[
+                      if (provider.isManualIdentityMode)
+                        _buildManualIdentitySection(
+                          context,
+                          provider,
+                          title: '手动用户身份',
+                        )
+                      else
+                        _buildLoginSection(
+                          context,
+                          provider.isGoogleIdentityMode
+                              ? AppIdentityService.googleUser
+                              : googleUser,
+                          provider,
+                        ),
+                      const Divider(height: 1),
+                      _buildRemoteSyncSection(context, provider),
+                    ],
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.sync_rounded),
+                      title: const Text('同步中心'),
+                      subtitle: Text(
+                        provider.hasPendingSync
+                            ? '有 ${provider.pendingSyncDates.length} 天待同步，查看全部状态'
+                            : '查看各模块同步状态并重试',
+                      ),
+                      onTap: () {
+                        final navigator = Navigator.of(context);
+                        navigator.pop();
+                        navigator.push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const SyncCenterScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.palette_outlined),
+                      title: const Text('外观模式'),
+                      subtitle:
+                          Text(_themeModeLabel(themeModeProvider.themeMode)),
+                      trailing: DropdownButtonHideUnderline(
+                        child: DropdownButton<ThemeMode>(
+                          value: themeModeProvider.themeMode,
+                          onChanged: (mode) {
+                            if (mode != null) {
+                              themeModeProvider.setThemeMode(mode);
+                            }
+                          },
+                          items: const [
+                            DropdownMenuItem(
+                              value: ThemeMode.system,
+                              child: Text('跟随系统'),
+                            ),
+                            DropdownMenuItem(
+                              value: ThemeMode.light,
+                              child: Text('浅色'),
+                            ),
+                            DropdownMenuItem(
+                              value: ThemeMode.dark,
+                              child: Text('深色'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.wallpaper_outlined),
+                      title: const Text('背景图片'),
+                      subtitle: Text(
+                        !backgroundImage.hasPhoto
+                            ? '选择本机照片设置全屏背景'
+                            : backgroundImage.enabled
+                                ? '已启用 · 可调节照片不透明度'
+                                : '已设置 · 当前未启用',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () =>
+                          _openBackgroundImageSettings(backgroundImage),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.upload_file_outlined),
+                      title: const Text('导出备份'),
+                      subtitle: const Text('保存 JSON 到本地'),
+                      onTap: () async {
+                        final rootContext =
+                            Navigator.of(context, rootNavigator: true).context;
+                        Navigator.pop(context);
+                        await _handleExport(rootContext, provider);
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.download_outlined),
+                      title: const Text('导入备份'),
+                      subtitle: const Text('从 JSON 恢复数据'),
+                      onTap: () async {
+                        final rootContext =
+                            Navigator.of(context, rootNavigator: true).context;
+                        Navigator.pop(context);
+                        await _handleImport(rootContext, provider);
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.receipt_long_outlined),
+                      title: const Text('运行日志'),
+                      subtitle: const Text('查看问题记录并导出日志'),
+                      onTap: () {
+                        final navigator = Navigator.of(context);
+                        navigator.pop();
+                        navigator.push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const AppLogScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.bubble_chart_outlined),
+                      title: const Text('事件词云'),
+                      subtitle: const Text('按时长与出现次数查看事件热度'),
+                      onTap: () {
+                        Navigator.pop(context);
+                        WordCloudScreen.open(context);
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.history_rounded),
+                      title: const Text('那年今日'),
+                      subtitle: const Text('回顾往年今天的日记、出行和活动'),
+                      onTap: () {
+                        Navigator.pop(context);
+                        OnThisDayScreen.open(context);
+                      },
+                    ),
+                    // 独立分区，插在最后的「检查更新」之前，避免后续条目被视觉归到「提醒」下
+                    if (isAndroid) ...[
+                      const Divider(height: AppSizes.hairline),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          AppSpacing.pageHorizontal,
+                          AppSpacing.lg,
+                          AppSpacing.pageHorizontal,
+                          AppSpacing.md,
+                        ),
+                        child: Text(
+                          '提醒',
+                          style: AppText.caption.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      _buildDiaryReminderSection(context, colorScheme),
+                    ],
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.system_update_outlined),
+                      title: const Text('检查更新'),
+                      subtitle: const Text('检查是否有新版本'),
+                      onTap: () => _checkForUpdate(context),
+                    ),
                   ],
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.system_update_outlined),
-                    title: const Text('检查更新'),
-                    subtitle: const Text('检查是否有新版本'),
-                    onTap: () => _checkForUpdate(context),
-                  ),
-                ],
+                ),
               ),
-            ),
-            _buildVersionFooter(),
-          ],
+              _buildVersionFooter(),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+
+  Future<void> _openBackgroundImageSettings(
+    BackgroundImageProvider backgroundImage,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: AppRadius.sheetTop,
+      ),
+      clipBehavior: Clip.antiAlias,
+      builder: (_) => _BackgroundImageSettingsSheet(
+        backgroundImage: backgroundImage,
       ),
     );
   }
@@ -288,9 +328,10 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     }
 
     final settings = status.settings;
-    final blockEditing = status.issue == DiaryReminderIssue.unsupportedPlatform ||
-        status.issue == DiaryReminderIssue.statusUnavailable ||
-        status.issue == DiaryReminderIssue.identityUnavailable;
+    final blockEditing =
+        status.issue == DiaryReminderIssue.unsupportedPlatform ||
+            status.issue == DiaryReminderIssue.statusUnavailable ||
+            status.issue == DiaryReminderIssue.identityUnavailable;
     final canEdit = !blockEditing && !_diaryReminderBusy;
     final message = status.message;
 
@@ -1077,6 +1118,202 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       SnackBar(
         content: Text(result.success ? '数据已恢复' : (result.error ?? '导入失败')),
       ),
+    );
+  }
+}
+
+class _BackgroundImageSettingsSheet extends StatefulWidget {
+  const _BackgroundImageSettingsSheet({required this.backgroundImage});
+
+  final BackgroundImageProvider backgroundImage;
+
+  @override
+  State<_BackgroundImageSettingsSheet> createState() =>
+      _BackgroundImageSettingsSheetState();
+}
+
+class _BackgroundImageSettingsSheetState
+    extends State<_BackgroundImageSettingsSheet> {
+  bool _picking = false;
+  String? _message;
+
+  Future<void> _pickPhoto() async {
+    if (_picking) return;
+    setState(() {
+      _picking = true;
+      _message = null;
+    });
+
+    final result = await widget.backgroundImage.pickAndApply();
+    if (!mounted) return;
+    setState(() {
+      _picking = false;
+      _message = switch (result) {
+        BackgroundImagePickResult.applied ||
+        BackgroundImagePickResult.cancelled =>
+          null,
+        BackgroundImagePickResult.tooLarge => '照片不能超过 32 MB',
+        BackgroundImagePickResult.unavailable => '无法读取这张照片，请重新选择',
+        BackgroundImagePickResult.failed => '照片保存失败，请重试',
+      };
+    });
+  }
+
+  Future<void> _setEnabled(bool value) async {
+    try {
+      await widget.backgroundImage.setEnabled(value);
+      if (mounted) setState(() => _message = null);
+    } on Object {
+      if (mounted) setState(() => _message = '保存背景设置失败，请重试');
+    }
+  }
+
+  Future<void> _commitOpacity() async {
+    try {
+      await widget.backgroundImage.commitOpacity();
+      if (mounted) setState(() => _message = null);
+    } on Object {
+      if (mounted) setState(() => _message = '保存不透明度失败，请重试');
+    }
+  }
+
+  Future<void> _removePhoto() async {
+    try {
+      await widget.backgroundImage.clear();
+      if (mounted) setState(() => _message = null);
+    } on Object {
+      if (mounted) setState(() => _message = '移除照片失败，请重试');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final background = widget.backgroundImage;
+    final colorScheme = Theme.of(context).colorScheme;
+    final wallpaperTheme = AppWallpaperTheme.of(context);
+    final safePercent = (wallpaperTheme.safePhotoOpacity * 100).round();
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+
+    return AnimatedBuilder(
+      animation: background,
+      builder: (context, _) {
+        final opacityPercent = (background.opacity * 100).round();
+        final opacityExceedsSafeValue =
+            background.opacity > wallpaperTheme.safePhotoOpacity;
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.md,
+            AppSpacing.lg,
+            AppSpacing.lg + bottomInset,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: AppSizes.hairline * 4,
+                  decoration: BoxDecoration(
+                    color: colorScheme.outlineVariant,
+                    borderRadius: AppRadius.badgeAll,
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Text('背景图片', style: AppText.sectionTitle),
+              const SizedBox(height: AppSpacing.md),
+              BackgroundImagePreview(
+                path: background.hasPhoto ? background.path : null,
+                opacity: background.opacity,
+              ),
+              const SizedBox(height: AppSpacing.md),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _picking ? null : _pickPhoto,
+                  icon: _picking
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.photo_library_outlined),
+                  label: Text(background.hasPhoto ? '更换照片' : '选择照片'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, AppSizes.minTapTarget),
+                  ),
+                ),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('启用背景'),
+                value: background.enabled,
+                onChanged: _setEnabled,
+              ),
+              Row(
+                children: [
+                  const Expanded(child: Text('照片不透明度')),
+                  Text('$opacityPercent%'),
+                ],
+              ),
+              Slider(
+                value: background.opacity,
+                min: 0,
+                max: 1,
+                divisions: 100,
+                label: '$opacityPercent%',
+                onChanged: background.setOpacity,
+                onChangeEnd: (_) => _commitOpacity(),
+              ),
+              if (opacityExceedsSafeValue)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        color: colorScheme.error,
+                        size: 20,
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Text(
+                          '当前不透明度高于 $safePercent% 的安全建议值，'
+                          '照片可能降低文字和图标的对比度。',
+                          style: AppText.caption.copyWith(
+                            color: colorScheme.error,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              if (_message != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                  child: Text(
+                    _message!,
+                    style: AppText.caption.copyWith(color: colorScheme.error),
+                  ),
+                ),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton.icon(
+                  onPressed: background.hasPhoto ? _removePhoto : null,
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('移除背景照片'),
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(0, AppSizes.minTapTarget),
+                    foregroundColor: colorScheme.error,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

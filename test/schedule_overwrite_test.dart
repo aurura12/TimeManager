@@ -10,6 +10,7 @@ import 'package:time_manager/models/category.dart';
 import 'package:time_manager/models/diary_kind.dart';
 import 'package:time_manager/models/target.dart';
 import 'package:time_manager/models/sync_center_state.dart';
+import 'package:time_manager/providers/background_image_provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/services/google_calendar_service.dart';
@@ -2274,6 +2275,7 @@ void main() {
         providers: [
           ChangeNotifierProvider.value(value: provider),
           ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
+          ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
         ],
         child: MaterialApp(
           home: Scaffold(
@@ -2307,6 +2309,7 @@ void main() {
         providers: [
           ChangeNotifierProvider.value(value: provider),
           ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
+          ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
         ],
         child: MaterialApp(
           home: Scaffold(
