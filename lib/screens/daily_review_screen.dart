@@ -476,7 +476,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
           ),
         ),
         backgroundColor: wallpaperTheme.enabled
-            ? AppSurfaces.of(context).panel.withValues(alpha: 0.72)
+            ? AppSurfaces.of(context).panel
             : Colors.transparent,
         elevation: 0,
         iconTheme: IconThemeData(color: colorScheme.onSurface),

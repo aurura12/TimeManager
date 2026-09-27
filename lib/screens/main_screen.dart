@@ -379,9 +379,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       // 顶部一条弱边框，和内容区拉开层级（颜色与圆角统一走主题）
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
-          color: wallpaperTheme.enabled
-              ? surfaces.panel.withValues(alpha: 0.72)
-              : surfaces.panel,
+          color: surfaces.panel,
           border: Border(top: BorderSide(color: surfaces.border)),
         ),
         child: NavigationBar(

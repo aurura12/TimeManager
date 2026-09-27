@@ -506,6 +506,32 @@ void main() {
       }
     });
 
+    test('半透明 surface 下 tint / onTint / readableOn 仍返回不透明色', () {
+      // 背景照片启用后 surfaces.card / subtle 会带 alpha。这些 helper 的契约是
+      // 返回不透明色：一旦返回半透明，onColor 会直接断言失败（首页侧栏分类块踩过）。
+      final translucentSurface = AppSurfaces.forColorScheme(
+        AppTheme.light().colorScheme,
+        wallpaperEnabled: true,
+      ).card;
+      expect(translucentSurface.a, lessThan(1.0));
+
+      for (final c in AppSemanticColors.palette) {
+        expect(AppSemanticColors.tint(c, translucentSurface, 0.6).a, 1.0);
+        expect(AppSemanticColors.readableOn(c, translucentSurface).a, 1.0);
+        expect(AppSemanticColors.onTint(c, translucentSurface).a, 1.0);
+        // 合成结果必须能安全喂给 onColor
+        expect(
+          () => AppSemanticColors.onColor(
+              AppSemanticColors.tint(c, translucentSurface, 0.6)),
+          returnsNormally,
+        );
+        expect(
+          () => AppSemanticColors.onTint(c, translucentSurface),
+          returnsNormally,
+        );
+      }
+    });
+
     test('首页子分类条 / 编辑块：分类色半透明底上文字都 ≥ 4.5:1', () {
       for (final theme in [AppTheme.light(), AppTheme.dark()]) {
         final sidebar = AppSurfaces.forColorScheme(theme.colorScheme).subtle;
@@ -862,7 +888,10 @@ void main() {
 
   group('底部导航（真实 MainScreen）', () {
     /// 真实启动 MainScreen（含 TimeProvider 与启动期异步的插件 mock）。
-    Future<void> pumpMainScreen(WidgetTester tester) async {
+    Future<void> pumpMainScreen(
+      WidgetTester tester, {
+      ThemeData? theme,
+    }) async {
       // 预置「那年今日已弹过」标记：MainScreen 会跳过该检查，
       // 从而不会拉起日记索引轮询（否则假时间下会留下 pending timer）。
       SharedPreferences.setMockInitialValues({
@@ -896,7 +925,7 @@ void main() {
           ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
         ],
         child: MaterialApp(
-          theme: AppTheme.light(),
+          theme: theme ?? AppTheme.light(),
           darkTheme: AppTheme.dark(),
           home: const MainScreen(),
         ),

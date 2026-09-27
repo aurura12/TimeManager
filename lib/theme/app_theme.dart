@@ -20,12 +20,22 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
     required this.border,
     required this.navSelected,
     required this.joinDivider,
+    required this.overlay,
   });
+
+  /// 背景启用时界面表面的默认不透明度。
+  ///
+  /// 与 [BackgroundImageProvider.defaultSurfaceOpacity] 保持一致；主题层
+  /// 不依赖 provider，所以这里再定义一次作为无参默认值。
+  static const double defaultSurfaceOpacity = 0.72;
 
   /// 页面背景（最底层）
   final Color page;
 
   /// 内容面 / 卡片
+  ///
+  /// 背景启用时会带透明度（见 [forColorScheme]），文字可读性由
+  /// `_build` 里的最坏照片对比度保证兜底。
   final Color card;
 
   /// 顶部与底部导航、侧栏等"条状"表面
@@ -49,6 +59,12 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
   /// 网格列之间的分割线
   final Color joinDivider;
 
+  /// 浮层底色（对话框 / 底部弹层 / 弹出菜单）。
+  ///
+  /// **始终不透明**：浮层压在 scrim 上，半透明会发闷并让文字对比度失控，
+  /// 所以它不跟随界面不透明度。
+  final Color overlay;
+
   /// 取当前主题的表面色。
   ///
   /// 若主题未注册本扩展（例如测试里裸用 `MaterialApp`），按亮度回退到默认值，
@@ -61,25 +77,29 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
   static AppSurfaces forColorScheme(
     ColorScheme scheme, {
     bool wallpaperEnabled = false,
+    double surfaceOpacity = defaultSurfaceOpacity,
   }) {
     final isDark = scheme.brightness == Brightness.dark;
     final emptyGridColor =
         isDark ? const Color(0xFF2B312D) : const Color(0xFFE6E9E4);
     final subtleColor = isDark ? const Color(0xFF232725) : const Color(0xFFF1F3F0);
+    final cardColor = isDark ? const Color(0xFF1B1F1C) : const Color(0xFFFFFFFF);
+    final panelColor = isDark ? const Color(0xFF161A18) : const Color(0xFFFFFFFF);
+    // 背景启用时让界面表面透出照片；gridEmpty 自己是"空"区域，保持更透的独立常量。
+    final alpha = wallpaperEnabled ? surfaceOpacity.clamp(0.0, 1.0) : 1.0;
     return AppSurfaces(
       page: isDark ? const Color(0xFF111315) : const Color(0xFFF8F9FA),
-      card: isDark ? const Color(0xFF1B1F1C) : const Color(0xFFFFFFFF),
-      panel: isDark ? const Color(0xFF161A18) : const Color(0xFFFFFFFF),
-      subtle: subtleColor,
-      sidebar: wallpaperEnabled
-          ? subtleColor.withValues(alpha: 0.72)
-          : subtleColor,
+      card: cardColor.withValues(alpha: alpha),
+      panel: panelColor.withValues(alpha: alpha),
+      subtle: subtleColor.withValues(alpha: alpha),
+      sidebar: subtleColor.withValues(alpha: alpha),
       gridEmpty: wallpaperEnabled
           ? emptyGridColor.withValues(alpha: 0.45)
           : emptyGridColor,
       border: scheme.outlineVariant,
       navSelected: scheme.primaryContainer,
       joinDivider: isDark ? const Color(0x1AFFFFFF) : const Color(0x1A000000),
+      overlay: cardColor,
     );
   }
 
@@ -94,6 +114,7 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
     Color? border,
     Color? navSelected,
     Color? joinDivider,
+    Color? overlay,
   }) {
     return AppSurfaces(
       page: page ?? this.page,
@@ -105,6 +126,7 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
       border: border ?? this.border,
       navSelected: navSelected ?? this.navSelected,
       joinDivider: joinDivider ?? this.joinDivider,
+      overlay: overlay ?? this.overlay,
     );
   }
 
@@ -121,6 +143,7 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
       border: Color.lerp(border, other.border, t)!,
       navSelected: Color.lerp(navSelected, other.navSelected, t)!,
       joinDivider: Color.lerp(joinDivider, other.joinDivider, t)!,
+      overlay: Color.lerp(overlay, other.overlay, t)!,
     );
   }
 
@@ -136,13 +159,14 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
         other.gridEmpty == gridEmpty &&
         other.border == border &&
         other.navSelected == navSelected &&
-        other.joinDivider == joinDivider;
+        other.joinDivider == joinDivider &&
+        other.overlay == overlay;
   }
 
   @override
   int get hashCode => Object.hash(
       page, card, panel, subtle, sidebar, gridEmpty, border, navSelected,
-      joinDivider);
+      joinDivider, overlay);
 }
 
 /// 语义实色（分类色 / 目标色 / 身份色 / 奖牌色）在深色模式下的适配。
@@ -163,10 +187,14 @@ class AppWallpaperTheme extends ThemeExtension<AppWallpaperTheme> {
   const AppWallpaperTheme({
     required this.enabled,
     required this.safePhotoOpacity,
+    this.surfaceOpacity = AppSurfaces.defaultSurfaceOpacity,
   });
 
   final bool enabled;
   final double safePhotoOpacity;
+
+  /// 界面表面不透明度，供设置页预览 / 抽屉背板等非 `AppSurfaces` 消费者读取。
+  final double surfaceOpacity;
 
   static AppWallpaperTheme of(BuildContext context) {
     final theme = Theme.of(context);
@@ -181,10 +209,12 @@ class AppWallpaperTheme extends ThemeExtension<AppWallpaperTheme> {
   AppWallpaperTheme copyWith({
     bool? enabled,
     double? safePhotoOpacity,
+    double? surfaceOpacity,
   }) {
     return AppWallpaperTheme(
       enabled: enabled ?? this.enabled,
       safePhotoOpacity: safePhotoOpacity ?? this.safePhotoOpacity,
+      surfaceOpacity: surfaceOpacity ?? this.surfaceOpacity,
     );
   }
 
@@ -195,6 +225,8 @@ class AppWallpaperTheme extends ThemeExtension<AppWallpaperTheme> {
       enabled: t < 0.5 ? enabled : other.enabled,
       safePhotoOpacity:
           safePhotoOpacity + (other.safePhotoOpacity - safePhotoOpacity) * t,
+      surfaceOpacity:
+          surfaceOpacity + (other.surfaceOpacity - surfaceOpacity) * t,
     );
   }
 
@@ -202,10 +234,11 @@ class AppWallpaperTheme extends ThemeExtension<AppWallpaperTheme> {
   bool operator ==(Object other) =>
       other is AppWallpaperTheme &&
       other.enabled == enabled &&
-      other.safePhotoOpacity == safePhotoOpacity;
+      other.safePhotoOpacity == safePhotoOpacity &&
+      other.surfaceOpacity == surfaceOpacity;
 
   @override
-  int get hashCode => Object.hash(enabled, safePhotoOpacity);
+  int get hashCode => Object.hash(enabled, safePhotoOpacity, surfaceOpacity);
 }
 
 /// 应用主题。
@@ -219,22 +252,42 @@ abstract final class AppTheme {
   /// 品牌种子色。**唯一**定义处。
   static const Color seedColor = AppSemanticColors.brand;
 
-  static ThemeData light({bool backgroundEnabled = false}) =>
-      _build(Brightness.light, backgroundEnabled: backgroundEnabled);
+  static ThemeData light({
+    bool backgroundEnabled = false,
+    double surfaceOpacity = AppSurfaces.defaultSurfaceOpacity,
+  }) =>
+      _build(
+        Brightness.light,
+        backgroundEnabled: backgroundEnabled,
+        surfaceOpacity: surfaceOpacity,
+      );
 
-  static ThemeData dark({bool backgroundEnabled = false}) =>
-      _build(Brightness.dark, backgroundEnabled: backgroundEnabled);
+  static ThemeData dark({
+    bool backgroundEnabled = false,
+    double surfaceOpacity = AppSurfaces.defaultSurfaceOpacity,
+  }) =>
+      _build(
+        Brightness.dark,
+        backgroundEnabled: backgroundEnabled,
+        surfaceOpacity: surfaceOpacity,
+      );
 
   /// 兼容旧调用点（旧 API 是 `AppTheme.light` / `AppTheme.dark` 方法）。
   static ThemeData themeFor(
     Brightness brightness, {
     bool backgroundEnabled = false,
+    double surfaceOpacity = AppSurfaces.defaultSurfaceOpacity,
   }) =>
-      _build(brightness, backgroundEnabled: backgroundEnabled);
+      _build(
+        brightness,
+        backgroundEnabled: backgroundEnabled,
+        surfaceOpacity: surfaceOpacity,
+      );
 
   static ThemeData _build(
     Brightness brightness, {
     bool backgroundEnabled = false,
+    double surfaceOpacity = AppSurfaces.defaultSurfaceOpacity,
   }) {
     final isDark = brightness == Brightness.dark;
     final originalScheme = ColorScheme.fromSeed(
@@ -254,6 +307,7 @@ abstract final class AppTheme {
       pageColor: originalSurfaces.page,
       photoOpacity: safePhotoOpacity,
     );
+    final surfaceAlpha = surfaceOpacity.clamp(0.0, 1.0).toDouble();
     final scheme = backgroundEnabled
         ? originalScheme.copyWith(
             onSurface: BackgroundImageContrast.readableForeground(
@@ -276,15 +330,29 @@ abstract final class AppTheme {
               background: wallpaperBackdrop,
               brightness: brightness,
             ),
+            // 只覆盖"内容面"这几个 role：日记 / 打卡 / 我的页面直接读它们。
+            // **不要**动 surfaceContainerHigh/Highest ——
+            // 1) Material 的 DatePicker/TimePicker 默认读 High，会跟着变半透明压在 scrim 上；
+            // 2) AppSemanticColorAdaptation.adaptSemanticColor 在深色下用 High 做 lerp，
+            //    一旦拿到半透明色会让 AppSemanticColors.onColor 断言失败。
+            surface: originalScheme.surface.withValues(alpha: surfaceAlpha),
+            surfaceContainerLowest: originalScheme.surfaceContainerLowest
+                .withValues(alpha: surfaceAlpha),
+            surfaceContainerLow: originalScheme.surfaceContainerLow
+                .withValues(alpha: surfaceAlpha),
+            surfaceContainer: originalScheme.surfaceContainer
+                .withValues(alpha: surfaceAlpha),
           )
         : originalScheme;
     final surfaces = AppSurfaces.forColorScheme(
       scheme,
       wallpaperEnabled: backgroundEnabled,
+      surfaceOpacity: surfaceAlpha,
     );
     final wallpaperTheme = AppWallpaperTheme(
       enabled: backgroundEnabled,
       safePhotoOpacity: safePhotoOpacity,
+      surfaceOpacity: surfaceAlpha,
     );
 
     final base = isDark ? ThemeData.dark() : ThemeData.light();
@@ -310,9 +378,7 @@ abstract final class AppTheme {
 
       // ---------- 顶部 ----------
       appBarTheme: AppBarThemeData(
-        backgroundColor: backgroundEnabled
-            ? surfaces.panel.withValues(alpha: 0.72)
-            : surfaces.panel,
+        backgroundColor: surfaces.panel,
         foregroundColor: scheme.onSurface,
         surfaceTintColor: Colors.transparent,
         shadowColor: Colors.transparent,
@@ -331,9 +397,7 @@ abstract final class AppTheme {
 
       // ---------- 导航 ----------
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: backgroundEnabled
-            ? surfaces.panel.withValues(alpha: 0.72)
-            : surfaces.panel,
+        backgroundColor: surfaces.panel,
         surfaceTintColor: Colors.transparent,
         shadowColor: Colors.transparent,
         elevation: 0,
@@ -360,9 +424,7 @@ abstract final class AppTheme {
         ),
       ),
       bottomNavigationBarTheme: BottomNavigationBarThemeData(
-        backgroundColor: backgroundEnabled
-            ? surfaces.panel.withValues(alpha: 0.72)
-            : surfaces.panel,
+        backgroundColor: surfaces.panel,
         elevation: 0,
         type: BottomNavigationBarType.fixed,
         selectedItemColor: scheme.onPrimaryContainer,
@@ -371,9 +433,7 @@ abstract final class AppTheme {
         unselectedLabelStyle: AppText.badge,
       ),
       navigationRailTheme: NavigationRailThemeData(
-        backgroundColor: backgroundEnabled
-            ? surfaces.panel.withValues(alpha: 0.72)
-            : surfaces.panel,
+        backgroundColor: surfaces.panel,
         elevation: 0,
         useIndicator: true,
         indicatorColor: surfaces.navSelected,
@@ -561,8 +621,9 @@ abstract final class AppTheme {
       ),
 
       // ---------- 浮层 ----------
+      // 浮层压在 scrim 上，必须不透明：用 overlay 而不是会跟随界面透明度的 card。
       dialogTheme: DialogThemeData(
-        backgroundColor: surfaces.card,
+        backgroundColor: surfaces.overlay,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         insetPadding: const EdgeInsets.symmetric(
@@ -577,8 +638,8 @@ abstract final class AppTheme {
         ),
       ),
       bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: surfaces.card,
-        modalBackgroundColor: surfaces.card,
+        backgroundColor: surfaces.overlay,
+        modalBackgroundColor: surfaces.overlay,
         surfaceTintColor: Colors.transparent,
         shadowColor: Colors.transparent,
         elevation: 0,
@@ -589,7 +650,7 @@ abstract final class AppTheme {
         ),
       ),
       popupMenuTheme: PopupMenuThemeData(
-        color: surfaces.card,
+        color: surfaces.overlay,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         textStyle: AppText.body.copyWith(color: scheme.onSurface),

@@ -705,8 +705,14 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
       navigatorObservers: <NavigatorObserver>[_rootRouteTracker],
-      theme: AppTheme.light(backgroundEnabled: backgroundImage.isActive),
-      darkTheme: AppTheme.dark(backgroundEnabled: backgroundImage.isActive),
+      theme: AppTheme.light(
+        backgroundEnabled: backgroundImage.isActive,
+        surfaceOpacity: backgroundImage.surfaceOpacity,
+      ),
+      darkTheme: AppTheme.dark(
+        backgroundEnabled: backgroundImage.isActive,
+        surfaceOpacity: backgroundImage.surfaceOpacity,
+      ),
       themeMode: themeMode,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,

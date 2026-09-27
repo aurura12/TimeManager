@@ -19,6 +19,7 @@ import '../utils/diary_remote_path_utils.dart';
 import 'diary_search_screen.dart';
 
 import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 
 enum _DiarySyncAction { pull, push }
@@ -1492,7 +1493,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       decoration: BoxDecoration(
-        color: colorScheme.surface,
+        color: AppSurfaces.of(context).overlay,
         borderRadius: const BorderRadius.vertical(top: AppRadius.rSheet),
       ),
       child: Column(

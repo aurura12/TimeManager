@@ -113,6 +113,7 @@ Future<void> _drainPendingSync(WidgetTester tester) async {
 Future<TimeProvider> _pumpHome(
   WidgetTester tester, {
   Size size = const Size(1000, 800),
+  ThemeData? theme,
 }) async {
   _installPluginMocks();
   tester.view.physicalSize = size;
@@ -123,7 +124,10 @@ Future<TimeProvider> _pumpHome(
   await tester.pumpWidget(
     ChangeNotifierProvider<TimeProvider>.value(
       value: provider,
-      child: MaterialApp(theme: AppTheme.light(), home: const HomeScreen()),
+      child: MaterialApp(
+        theme: theme ?? AppTheme.light(),
+        home: const HomeScreen(),
+      ),
     ),
   );
   await _pumpUntilReady(tester, provider);
@@ -684,6 +688,22 @@ void main() {
       expect(brushCancels, 1);
       expect(brushEvents, hasLength(2), reason: '应该收到 1 次 down + 1 次 move');
       expect(selectionEvents, isEmpty);
+      expect(tester.takeException(), isNull);
+      await _drainPendingSync(tester);
+    });
+  });
+
+  group('背景启用（界面半透明）', () {
+    testWidgets('首页侧栏分类项在半透明表面下不抛断言', (tester) async {
+      // 背景照片启用后 surfaces.card / subtle 带 alpha；侧栏分类块会把
+      // 合成后的淡色调喂给 onColor，半透明底面会触发断言。跑一遍真实首页兜底。
+      await _pumpHome(
+        tester,
+        theme: AppTheme.light(backgroundEnabled: true, surfaceOpacity: 0.5),
+      );
+
+      expect(find.byType(HomeScreen), findsOneWidget);
+      expect(_categoryItem('学习'), findsWidgets);
       expect(tester.takeException(), isNull);
       await _drainPendingSync(tester);
     });

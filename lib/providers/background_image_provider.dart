@@ -34,7 +34,17 @@ class BackgroundImageProvider extends ChangeNotifier {
   static const preferencePathKey = 'background_image_path_v1';
   static const preferenceEnabledKey = 'background_image_enabled_v1';
   static const preferenceOpacityKey = 'background_image_opacity_v1';
+  static const preferenceSurfaceOpacityKey =
+      'background_image_surface_opacity_v1';
   static const defaultOpacity = 0.15;
+
+  /// 界面表面（卡片 / 面板 / 次级底）在背景启用时的不透明度。
+  ///
+  /// 与 [defaultOpacity] 是两件事：[defaultOpacity] 调的是照片本身，
+  /// 这里调的是叠在照片上面的界面元素。默认值与导航栏/侧栏既有的
+  /// 0.72 保持一致。
+  static const defaultSurfaceOpacity = 0.72;
+  static const minSurfaceOpacity = 0.2;
   static const maxPhotoBytes = 32 * 1024 * 1024;
   static const _directoryName = 'time_manager/backgrounds';
 
@@ -47,6 +57,7 @@ class BackgroundImageProvider extends ChangeNotifier {
   bool _enabled = false;
   bool _exists = false;
   double _opacity = defaultOpacity;
+  double _surfaceOpacity = defaultSurfaceOpacity;
   bool _loaded = false;
 
   String? get path => _path;
@@ -56,6 +67,9 @@ class BackgroundImageProvider extends ChangeNotifier {
   bool get exists => _exists;
 
   double get opacity => _opacity;
+
+  /// 背景启用时界面表面的不透明度（越低照片透出越多）。
+  double get surfaceOpacity => _surfaceOpacity;
   bool get isLoaded => _loaded;
   bool get isActive => _enabled && _path != null && _exists;
   bool get hasPhoto => _path != null && _exists;
@@ -68,6 +82,10 @@ class BackgroundImageProvider extends ChangeNotifier {
     _opacity = (prefs.getDouble(preferenceOpacityKey) ?? defaultOpacity)
         .clamp(0.0, 1.0)
         .toDouble();
+    _surfaceOpacity =
+        (prefs.getDouble(preferenceSurfaceOpacityKey) ?? defaultSurfaceOpacity)
+            .clamp(minSurfaceOpacity, 1.0)
+            .toDouble();
     _exists = false;
     _loaded = true;
     notifyListeners();
@@ -251,6 +269,23 @@ class BackgroundImageProvider extends ChangeNotifier {
       _opacity.clamp(0.0, 1.0).toDouble(),
     );
     if (!saved) throw StateError('Background opacity could not be saved');
+  }
+
+  /// Updates the slider immediately; callers persist only from onChangeEnd.
+  void setSurfaceOpacity(double value) {
+    final next = value.clamp(minSurfaceOpacity, 1.0).toDouble();
+    if (_surfaceOpacity == next) return;
+    _surfaceOpacity = next;
+    notifyListeners();
+  }
+
+  Future<void> commitSurfaceOpacity() async {
+    final prefs = await _preferencesLoader();
+    final saved = await prefs.setDouble(
+      preferenceSurfaceOpacityKey,
+      _surfaceOpacity.clamp(minSurfaceOpacity, 1.0).toDouble(),
+    );
+    if (!saved) throw StateError('Surface opacity could not be saved');
   }
 
   Future<void> clear() async {

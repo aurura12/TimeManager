@@ -188,8 +188,15 @@ abstract final class AppSemanticColors {
   ///
   /// 返回值可以直接拿去算对比度，也可以直接当 `BoxDecoration.color`（视觉与半透明等价，
   /// 因为底下就是 [surface]）。
+  ///
+  /// [surface] 自己带 alpha 时（背景照片启用后的 `surfaces.card` / `subtle`）先把它的
+  /// alpha 收到 1：否则 `alphaBlend` 会返回半透明结果，喂给 [onColor] 会断言失败，
+  /// 与"返回不透明结果"的契约冲突。
   static Color tint(Color color, Color surface, [double alpha = 0.15]) =>
-      Color.alphaBlend(color.withValues(alpha: alpha), surface);
+      Color.alphaBlend(
+        color.withValues(alpha: alpha),
+        surface.a >= 1.0 ? surface : surface.withValues(alpha: 1.0),
+      );
 
   /// 语义色**当文字/图标用**时的可读版本。
   ///
@@ -198,15 +205,22 @@ abstract final class AppSemanticColors {
   ///
   /// [color] 是半透明时会先与 [surface] 合成再比 —— 返回值也一定不透明，
   /// 否则把它当文字色用会再次踩到 alpha 的坑。
+  ///
+  /// 同 [tint]：`surface` 自己带 alpha 时（背景照片启用）先收到 1，
+  /// 保证返回值满足"一定不透明"。
   static Color readableOn(Color color, Color surface, {double minRatio = 4.5}) {
-    final base = compose(color, surface);
-    if (contrastRatio(base, surface) >= minRatio) return base;
-    final target = surface.computeLuminance() > 0.5
+    final opaqueSurface =
+        surface.a >= 1.0 ? surface : surface.withValues(alpha: 1.0);
+    final base = compose(color, opaqueSurface);
+    if (contrastRatio(base, opaqueSurface) >= minRatio) return base;
+    final target = opaqueSurface.computeLuminance() > 0.5
         ? const Color(0xFF000000)
         : const Color(0xFFFFFFFF);
     for (var step = 1; step <= 10; step++) {
       final candidate = Color.lerp(base, target, step / 10)!;
-      if (contrastRatio(candidate, surface) >= minRatio) return candidate;
+      if (contrastRatio(candidate, opaqueSurface) >= minRatio) {
+        return candidate;
+      }
     }
     return target;
   }

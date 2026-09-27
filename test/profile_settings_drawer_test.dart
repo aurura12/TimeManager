@@ -115,10 +115,18 @@ void main() {
     expect(find.text('选择照片'), findsOneWidget);
     expect(find.text('启用背景'), findsOneWidget);
     expect(find.text('照片不透明度'), findsOneWidget);
+    expect(find.text('界面不透明度'), findsOneWidget);
     expect(find.text('移除背景照片'), findsOneWidget);
-    final slider = tester.widget<Slider>(find.byType(Slider));
-    expect(slider.min, 0);
-    expect(slider.max, 1);
+    // 两个滑块：照片不透明度（0–1）与界面不透明度（minSurfaceOpacity–1）
+    final sliders = tester.widgetList<Slider>(find.byType(Slider)).toList();
+    expect(sliders, hasLength(2));
+    expect(sliders.first.min, 0);
+    expect(sliders.first.max, 1);
+    expect(
+      sliders.last.min,
+      BackgroundImageProvider.minSurfaceOpacity,
+    );
+    expect(sliders.last.max, 1);
     expect(
       tester.widget<BottomSheet>(find.byType(BottomSheet)).backgroundColor!.a,
       1,

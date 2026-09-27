@@ -95,6 +95,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       backgroundColor: Colors.transparent,
       child: BackgroundImagePanelLayer(
         panelColor: colorScheme.surface,
+        panelOpacity: AppWallpaperTheme.of(context).surfaceOpacity,
         child: SafeArea(
           child: Column(
             children: [
@@ -195,7 +196,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                         !backgroundImage.hasPhoto
                             ? '选择本机照片设置全屏背景'
                             : backgroundImage.enabled
-                                ? '已启用 · 可调节照片不透明度'
+                                ? '已启用 · 可调节照片与界面不透明度'
                                 : '已设置 · 当前未启用',
                       ),
                       trailing: const Icon(Icons.chevron_right),
@@ -297,12 +298,11 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
   Future<void> _openBackgroundImageSettings(
     BackgroundImageProvider backgroundImage,
   ) {
-    final colorScheme = Theme.of(context).colorScheme;
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      backgroundColor: colorScheme.surface,
+      backgroundColor: AppSurfaces.of(context).overlay,
       shape: const RoundedRectangleBorder(
         borderRadius: AppRadius.sheetTop,
       ),
@@ -1177,6 +1177,15 @@ class _BackgroundImageSettingsSheetState
     }
   }
 
+  Future<void> _commitSurfaceOpacity() async {
+    try {
+      await widget.backgroundImage.commitSurfaceOpacity();
+      if (mounted) setState(() => _message = null);
+    } on Object {
+      if (mounted) setState(() => _message = '保存界面不透明度失败，请重试');
+    }
+  }
+
   Future<void> _removePhoto() async {
     try {
       await widget.backgroundImage.clear();
@@ -1198,6 +1207,8 @@ class _BackgroundImageSettingsSheetState
       animation: background,
       builder: (context, _) {
         final opacityPercent = (background.opacity * 100).round();
+        final surfaceOpacityPercent =
+            (background.surfaceOpacity * 100).round();
         final opacityExceedsSafeValue =
             background.opacity > wallpaperTheme.safePhotoOpacity;
         return SingleChildScrollView(
@@ -1290,6 +1301,21 @@ class _BackgroundImageSettingsSheetState
                     ],
                   ),
                 ),
+              Row(
+                children: [
+                  const Expanded(child: Text('界面不透明度')),
+                  Text('$surfaceOpacityPercent%'),
+                ],
+              ),
+              Slider(
+                value: background.surfaceOpacity,
+                min: BackgroundImageProvider.minSurfaceOpacity,
+                max: 1,
+                divisions: 80,
+                label: '$surfaceOpacityPercent%',
+                onChanged: background.setSurfaceOpacity,
+                onChangeEnd: (_) => _commitSurfaceOpacity(),
+              ),
               if (_message != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: AppSpacing.sm),

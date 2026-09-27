@@ -70,7 +70,7 @@ class _ProfileScreenState extends State<ProfileScreen>
           ),
         ),
         backgroundColor: wallpaperTheme.enabled
-            ? AppSurfaces.of(context).panel.withValues(alpha: 0.72)
+            ? AppSurfaces.of(context).panel
             : Colors.transparent,
         elevation: 0,
         centerTitle: true,

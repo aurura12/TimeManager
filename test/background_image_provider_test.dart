@@ -14,6 +14,7 @@ void main() {
       BackgroundImageProvider.preferencePathKey: '/missing/local/photo.png',
       BackgroundImageProvider.preferenceEnabledKey: true,
       BackgroundImageProvider.preferenceOpacityKey: 1.5,
+      BackgroundImageProvider.preferenceSurfaceOpacityKey: 0.05,
     });
     var directoryLookups = 0;
     final provider = BackgroundImageProvider(
@@ -31,6 +32,10 @@ void main() {
     expect(provider.exists, isFalse);
     expect(provider.hasPhoto, isFalse);
     expect(provider.opacity, 1);
+    expect(
+      provider.surfaceOpacity,
+      BackgroundImageProvider.minSurfaceOpacity,
+    );
     expect(directoryLookups, 0);
   });
 
@@ -49,6 +54,48 @@ void main() {
 
     await provider.commitOpacity();
     expect(prefs.getDouble(BackgroundImageProvider.preferenceOpacityKey), 0.73);
+  });
+
+  test('surfaceOpacity defaults, clamps, and persists only on commit',
+      () async {
+    SharedPreferences.setMockInitialValues({});
+    final provider = BackgroundImageProvider();
+    addTearDown(provider.dispose);
+    final prefs = await SharedPreferences.getInstance();
+    await provider.load();
+
+    expect(
+      provider.surfaceOpacity,
+      BackgroundImageProvider.defaultSurfaceOpacity,
+    );
+
+    // 越界值收到允许区间
+    provider.setSurfaceOpacity(0.05);
+    expect(
+      provider.surfaceOpacity,
+      BackgroundImageProvider.minSurfaceOpacity,
+    );
+    provider.setSurfaceOpacity(1.5);
+    expect(provider.surfaceOpacity, 1.0);
+
+    // 只改内存，不落盘
+    provider.setSurfaceOpacity(0.5);
+    expect(provider.surfaceOpacity, 0.5);
+    expect(
+      prefs.getDouble(BackgroundImageProvider.preferenceSurfaceOpacityKey),
+      isNull,
+    );
+
+    await provider.commitSurfaceOpacity();
+    expect(
+      prefs.getDouble(BackgroundImageProvider.preferenceSurfaceOpacityKey),
+      0.5,
+    );
+
+    // 重新 load 时读回持久值
+    provider.setSurfaceOpacity(1.0);
+    await provider.load();
+    expect(provider.surfaceOpacity, 0.5);
   });
 
   test('startup validation clears a saved path whose file was removed',
@@ -147,6 +194,7 @@ void main() {
       BackgroundImageProvider.preferencePathKey: photo.path,
       BackgroundImageProvider.preferenceEnabledKey: true,
       BackgroundImageProvider.preferenceOpacityKey: 0.44,
+      BackgroundImageProvider.preferenceSurfaceOpacityKey: 0.5,
     });
     final provider = BackgroundImageProvider();
     addTearDown(provider.dispose);
@@ -160,6 +208,11 @@ void main() {
     expect(provider.enabled, isFalse);
     expect(provider.opacity, 0.44);
     expect(prefs.getDouble(BackgroundImageProvider.preferenceOpacityKey), 0.44);
+    expect(provider.surfaceOpacity, 0.5);
+    expect(
+      prefs.getDouble(BackgroundImageProvider.preferenceSurfaceOpacityKey),
+      0.5,
+    );
     expect(await photo.exists(), isFalse);
   });
 }
