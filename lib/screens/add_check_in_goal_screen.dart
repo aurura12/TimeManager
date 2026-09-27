@@ -371,7 +371,8 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
                     decoration: BoxDecoration(
                       color: selected
                           ? AppSemanticColors.tint(accent, pageSurface, 0.2)
-                          : colorScheme.surfaceContainerHighest,
+                          : context.wallpaperFill(
+                              colorScheme.surfaceContainerHighest),
                       borderRadius: AppRadius.controlAll,
                       border: selected
                           ? Border.all(

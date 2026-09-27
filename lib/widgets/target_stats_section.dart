@@ -372,7 +372,7 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                 Container(
                   height: 24,
                   decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest,
+                    color: context.wallpaperFill(colorScheme.surfaceContainerHighest),
                     borderRadius: AppRadius.gridAll,
                   ),
                 ),
@@ -886,7 +886,7 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                             Container(
                               height: 24,
                               decoration: BoxDecoration(
-                                color: colorScheme.surfaceContainerHighest,
+                                color: context.wallpaperFill(colorScheme.surfaceContainerHighest),
                                 borderRadius: AppRadius.gridAll,
                               ),
                             ),

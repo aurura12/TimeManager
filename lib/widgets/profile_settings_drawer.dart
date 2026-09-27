@@ -949,8 +949,8 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
             children: [
               CircleAvatar(
                 radius: 28,
-                backgroundColor:
-                    Theme.of(context).colorScheme.surfaceContainerHighest,
+                backgroundColor: context.wallpaperFill(
+                    Theme.of(context).colorScheme.surfaceContainerHighest),
                 child: Icon(
                   Icons.person_outline,
                   color: Theme.of(context).colorScheme.onSurfaceVariant,

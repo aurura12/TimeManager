@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../services/check_in_sync_service.dart';
+import '../theme/app_theme.dart';
 
 /// 从 GitHub 加载并显示打卡照片
 class CheckInPhotoThumb extends StatelessWidget {
@@ -57,7 +58,7 @@ class CheckInPhotoThumb extends StatelessWidget {
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
+        color: context.wallpaperFill(colorScheme.surfaceContainerHighest),
         borderRadius: BorderRadius.circular(borderRadius),
       ),
       child: loading

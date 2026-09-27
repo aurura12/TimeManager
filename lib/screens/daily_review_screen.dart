@@ -618,7 +618,8 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                         vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: colorScheme.primaryContainer,
+                        color:
+                            context.wallpaperFill(colorScheme.primaryContainer),
                         borderRadius: AppRadius.sheetAll,
                       ),
                       child: Text(

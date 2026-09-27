@@ -385,7 +385,7 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
             dense: true,
             leading: CircleAvatar(
               radius: 12,
-              backgroundColor: colorScheme.primaryContainer,
+              backgroundColor: context.wallpaperFill(colorScheme.primaryContainer),
               child: Text(
                 '${index + 1}',
                 style: TextStyle(
