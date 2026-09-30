@@ -11,6 +11,7 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
   - `time_provider.dart` → `TimeProvider` (~10000 行) — 核心业务状态：时间块、分类、目标、模板、撤销栈、统计缓存、增量保存、Google 日历同步、日程(schedule)同步、已删除事件关系
   - `theme_mode_provider.dart` → `ThemeModeProvider` (52 行) — 主题模式 (light/dark/system)
   - `target_stats_cache.dart` → `TargetStatsCache` (47 行) — 目标统计内存缓存，按日期失效
+  - `background_image_provider.dart` → `BackgroundImageProvider` — 背景图（壁纸）本机状态：图片路径 / 开关 / 照片不透明度 / 表面不透明度。**刻意独立于业务数据 Provider：本地图片路径绝不进同步或备份快照**（`lib/services/` 与 `lib/models/` 均不引用它）。契约见「数据流与关键模式」的背景图一节
 - **Models**: `lib/models/` (29 个文件)
   - 时间记录：`TimeSlot`, `Category`, `CalendarBlock`, `ScheduleTemplate`, `VoiceScheduleDraft`, `ScheduleSyncProgress`
   - 打卡系统：`CheckInGoal`, `CheckInRecord`, `CheckInDocument`, `CheckInViewFilter`
@@ -38,9 +39,9 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
   - **提醒（仅 Android）**：`ReminderPlatform`（插件全局只初始化一次 + 时区 + 按 payload 分发点击路由）、`ReminderBackend`（插件薄封装）、`DiaryReminderService`（每天固定时间提醒写日记，单一实例）、`CheckInReminderService`（每个打卡目标一份，多实例）、`DiaryReminderDiagnostics`（把原生触发事件导入运行日志）。原生埋点在本地 fork 里，见 `third_party/flutter_local_notifications/FORK.md`
   - **工具**：`DataBackupService` (JSON 导入导出)、`OnThisDayService` (当年今日回顾)、`UpdateService`、`calendar_slot_refresh.dart`（`shouldClearCalendarSlotForRefresh`）、`WindowsLegacyPreferencesMigration`
   - 各数据域有对应的 `*_local_store.dart` 本地存储封装
-- **Widgets**: `lib/widgets/` (18 个) — `DatePickerPanel`, `TemplateBar`, `TimeGrid`, `BrushModeCard` (刷子模式)、`CalendarSyncStatusBadge`, `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, `DesktopShortcutHost` (桌面快捷键)、`DailyReviewChatSheet`, `TargetStatsSection`, `TimeWheelSheet` (时/分滚轮面板，替代 `showTimePicker`)、OnThisDay 相关组件 (`OnThisDaySheet`, `OnThisDayYearCard`)、打卡照片与地图相关组件 (`CheckInPhotoSheet`, `CheckInPhotoThumb`, `CheckInPhotoViewer`, `CheckInMapPreview`)
+- **Widgets**: `lib/widgets/` (19 个) — `DatePickerPanel`, `TemplateBar`, `TimeGrid`, `BrushModeCard` (刷子模式)、`CalendarSyncStatusBadge`, `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, `DesktopShortcutHost` (桌面快捷键)、`DailyReviewChatSheet`, `TargetStatsSection`, `TimeWheelSheet` (时/分滚轮面板，替代 `showTimePicker`)、`BackgroundImageLayer` / `BackgroundImagePreview` (背景图：全窗口壁纸层 + 设置预览)、OnThisDay 相关组件 (`OnThisDaySheet`, `OnThisDayYearCard`)、打卡照片与地图相关组件 (`CheckInPhotoSheet`, `CheckInPhotoThumb`, `CheckInPhotoViewer`, `CheckInMapPreview`)
 - **Utils**: `lib/utils/` (9 个) — `adaptive` (平台自适应)、`calendar_time_range`、`desktop_selection`、`local_day_range`、`platform_features` (按平台开关功能)、`schedule_view_dates`、`time_slot_segment`、`diary_remote_path_utils` (远端日记文件名里的日期解析与排序)、`map_tile_config` (地图瓦片配置)
-- **Theme**: `lib/theme/` — `app_tokens.dart` (间距/圆角/控件高度/文字层级)、`app_theme.dart` (`ColorScheme` + `AppSurfaces` 表面层级扩展 + 全套组件主题)、`app_semantic_colors.dart` (身份色/分类色/图表色/奖牌色/状态色白名单)。规范见 `docs/design-system.md`
+- **Theme**: `lib/theme/` — `app_tokens.dart` (间距/圆角/控件高度/文字层级)、`app_theme.dart` (`ColorScheme` + `AppSurfaces` 表面层级扩展 + `AppWallpaperTheme` 壁纸扩展 + `context.wallpaperFill()`/`adaptSemanticFill()` + 全套组件主题)、`app_semantic_colors.dart` (身份色/分类色/图表色/奖牌色/状态色白名单)、`background_image_contrast.dart` (`BackgroundImageContrast` 背景图对比度与 sRGB 逐通道合成)。规范见 `docs/design-system.md`
 - **Config**: `lib/config/` — API keys and service configs (`.gitignore`d，**无 .example.dart 模板**，结构需直接查看引用方代码)
 
 ## 数据流与关键模式
@@ -76,6 +77,12 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
 - **同步状态**：`SyncStatusCoordinator` 统一收集各模块状态并在 `SyncCenterScreen` 呈现；`SyncOperationLock` 保证同一模块不并发操作。无可靠实时读取器的模块保留本次业务操作结果，不用默认 0 覆盖
 - **AI 对话**：`fromReview` 标记的复盘消息不参与 API 多轮上下文，每次附带完整当日记录作为 system prompt
 - **数据流**：`Screen → Provider (notifyListeners) → Service → API/Storage`。应用切后台时自动保存并取消等待中的同步
+- **背景图（壁纸，仅本机）**：`BackgroundImageProvider` 持有图片路径与两档不透明度，`BackgroundImageLayer` 经 `MaterialApp.builder` 挂在 Navigator 之下（`lib/main.dart:755`，Provider 在 `main.dart:460` 注册）；主题侧由 `AppTheme.light/dark(backgroundEnabled:, surfaceOpacity:)` 生成 `AppWallpaperTheme` 扩展。**改动前先读这些约束：**
+  - **绝不进同步与备份**：本地图片路径只存本机偏好，`lib/services/`（含 `DataBackupService`）与 `lib/models/` 均不引用它——路径一旦泄漏到远端/备份，在别的设备上指向不存在的文件。Provider 也因此刻意独立于业务数据 Provider
+  - **叠在照片上的填充必须走 `context.wallpaperFill(color)` / `adaptSemanticFill(color)`**，不能直接给原始色（半透明色要能透出壁纸）；`test/visual_system_test.dart` 断言填充 alpha 等于 `surfaceOpacity`
+  - **对比度契约**：正文对比度下限 4.5（`BackgroundImageContrast.bodyTextRatio`），按 sRGB 逐通道合成（`BackgroundImageContrast.composite`），不要依赖渲染器的 blend mode
+  - **默认值与上限**：照片不透明度 0.15、界面表面 0.72，单张图片上限 32MB；图片复制进应用支持目录 `time_manager/backgrounds`，偏好键 `background_image_{path,enabled,opacity,surface_opacity}_v1`；照片文件丢失时启动校验会清掉该路径
+  - 改动背景图相关代码要跑 `test/background_image_contrast_test.dart`、`test/background_image_provider_test.dart` 与 `test/visual_system_test.dart`
 - **提醒的硬约束**（写日记提醒历史上实现过两次都因静默失效被删除，改动前务必先读 `写日记提醒实施方案.md`）：
   - 重复交给系统的 `matchDateTimeComponents: DateTimeComponents.time`，**不要**自建「到点回调再排下一次」的续订链——丢一次就永久断链
   - **不要**引入 `android_alarm_manager_plus` 或后台 Dart isolate（旧方案靠反射往后台引擎挂插件，第三方库一升级就静默失败）
@@ -188,7 +195,8 @@ Never commit them.
 
 ## Testing
 
-- `test/` 有 80 个 dart 测试文件（约 20200 行）+ 2 个 shell 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
+- `test/` 有 80 个 dart 测试文件（约 20400 行；另有 `test/support/` 下 2 个共用 Fake）+ 2 个 shell 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
+- `test/background_image_contrast_test.dart` / `background_image_provider_test.dart` — 背景图对比度契约与 Provider 状态（不透明度只在 commit 时落盘、启动清失效路径、超限/取消属正常结果）
 - `test/visual_system_test.dart` — 视觉系统守护测试：对比度计算、主题一致性、令牌使用约束（改 `lib/theme/` 或页面配色时必跑）
 - `test/widget_test.dart` — smoke test + platform channel mock 模板：`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道、`tester.runAsync` 真实 IO。新写 widget 测试可参照此文件搭建环境
 - `test/support/fake_app_log_store.dart` — 可注入失败的 Fake store
@@ -204,6 +212,6 @@ Never commit them.
 - Code and UI text are in Chinese
 - Config files with secrets are always `.gitignore`d — never commit
 - 平台差异化功能通过 `lib/utils/platform_features.dart` 控制（如 Windows 隐藏目标 tab）
-- 视觉规范：页面不得硬编码颜色/圆角/间距/字号字面量，统一引用 `lib/theme/` 三文件（`AppSpacing`/`AppRadius`/`AppSizes`/`AppText`、`AppSurfaces.of(context)`、`AppSemanticColors`）；照片浮层等主题无关的黑色 scrim 属于允许的例外。守卫测试 `test/visual_system_test.dart`
+- 视觉规范：页面不得硬编码颜色/圆角/间距/字号字面量，统一引用 `lib/theme/` 三文件（`AppSpacing`/`AppRadius`/`AppSizes`/`AppText`、`AppSurfaces.of(context)`、`AppSemanticColors`）；照片浮层等主题无关的黑色 scrim 属于允许的例外。**启用背景图时，叠在壁纸上的填充必须走 `context.wallpaperFill()` / `adaptSemanticFill()`（见「背景图」一节）**。守卫测试 `test/visual_system_test.dart`
 - 设计文档在 `docs/superpowers/{plans,specs}/`；已完结的问题记录归档在 `docs/archive/`。根目录只保留 `AGENTS.md`、`README.md` 和活跃的 `待修复问题.md` / `写日记提醒实施方案.md`
 - `third_party/` 下是 vendored 的第三方插件 fork，已在 `analysis_options.yaml` 里整体 exclude，不参与本项目的静态检查；升级上游时按该目录下 `FORK.md` 的步骤重做
