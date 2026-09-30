@@ -28,14 +28,15 @@
 
 ---
 
-## 二、四个文件，职责不重叠
+## 二、五个文件，职责不重叠
 
 | 文件 | 职责 | 里面有什么 |
 |---|---|---|
 | `docs/design-system.md` | 设计规则与白名单 | 本文件 |
 | `lib/theme/app_tokens.dart` | **数值** | 间距、圆角、控件高度、文字层级 |
-| `lib/theme/app_theme.dart` | **主题色与组件主题** | `ColorScheme`、`AppSurfaces`、各 Material 组件主题 |
+| `lib/theme/app_theme.dart` | **主题色与组件主题** | `ColorScheme`、`AppSurfaces`、`AppWallpaperTheme`、各 Material 组件主题 |
 | `lib/theme/app_semantic_colors.dart` | **语义色** | 身份色、分类色、图表色、奖牌色、状态色 |
+| `lib/theme/background_image_contrast.dart` | **背景图对比度** | 合成、对比度与安全照片不透明度计算（见 3.5） |
 
 **同一个颜色只允许在一个文件里定义。** 品牌绿 `#9CB86A` 只在 `app_semantic_colors.dart` 的 `AppSemanticColors.brand` 出现，其他文件一律引用。
 
@@ -192,6 +193,53 @@ color = Colors.green;   // 用 AppSemanticColors.success
 color = Colors.orange;  // 用 AppSemanticColors.warning
 ```
 
+### 3.5 背景图（壁纸）
+
+「我的 → 外观」可选一张**本机照片**作为全窗口壁纸（只存本机，不进同步与备份）。
+壁纸是**第 4 个主题量**：它不改色相，只把大面积填充变半透明，让照片透出来。
+
+主题侧由 `AppTheme.light/dark(backgroundEnabled:, surfaceOpacity:)` 生成 `AppWallpaperTheme`
+扩展（默认 `surfaceOpacity = 0.72`，即 `AppSurfaces.defaultSurfaceOpacity`）。
+
+**规则：叠在壁纸上的大面积填充一律走 `context.wallpaperFill(color)`，语义实色卡片走
+`context.adaptSemanticFill(color)`。** 直接给原始实色会把照片盖死。
+
+```dart
+// 对：启用壁纸时按界面不透明度变半透明，未启用时原样返回
+Container(color: context.wallpaperFill(colorScheme.surfaceContainerHigh))
+// 语义实色卡片：深色压暗一档 + 壁纸半透明
+Container(color: context.adaptSemanticFill(goal.color))
+```
+
+两个细节：
+
+- `wallpaperFill` **只改 alpha、不改色相、也不做深色压暗**；深色适配仍归 `adaptSemanticColor`
+  （`adaptSemanticFill` = `adaptSemanticColor` 再叠 `wallpaperFill`）。
+- 算文字对比度时**必须用不透明的原色**：`wallpaperFill` 返回的是半透明填充色，
+  **不要**把它喂给 `AppSemanticColors.onColor`（带 alpha 会直接抛断言，见 3.3.1）。
+
+**主题只自动把 4 个 surface role 变半透明**：`surface`、`surfaceContainerLowest`、
+`surfaceContainerLow`、`surfaceContainer`（日记 / 打卡 / 我的页面直接读它们）。
+`surfaceContainerHigh` / `surfaceContainerHighest` **在主题里必须保持不透明**，原因有二，
+改动前先读 `app_theme.dart` 里那段注释：
+
+1. Material 的 `DatePicker` / `TimePicker` 默认读 `High`，role 变半透明后会压在 scrim 上；
+2. `adaptSemanticColor` 在深色下用 `High` 做 lerp，一旦拿到半透明色会让 `onColor` 断言失败。
+
+这只约束**主题 role 本身**：页面若要画一块 `High` 底色的填充，仍可以自己取
+`colorScheme.surfaceContainerHigh` 再经 `wallpaperFill` 变半透明（上面的例子就是这样，
+`diary_screen` / `travel_screen` / `profile_screen` 均如此）。
+
+照片不透明度是**独立的一档**（默认 0.15），由 `BackgroundImageContrast.safePhotoOpacity`
+计算：拿**未套壁纸的原始** scheme 的 `page` / `onSurface` / `onSurfaceVariant` / `outline`，
+对最坏情况照片（浅色主题取纯黑、深色取纯白）二分出仍满足正文 ≥ `bodyTextRatio`(4.5)、
+描边 ≥ 3 的最大不透明度；随后用 `readableForeground` 把 `onSurface` / `onSurfaceVariant` /
+`outline` / `outlineVariant` 朝黑白推到刚好达标。
+
+对比度契约与合成都在 `lib/theme/background_image_contrast.dart`（`composite` 按 sRGB
+逐通道合成，**不依赖渲染器的 blend mode**）。这个安全上限随主题与界面不透明度变化，
+**不要**在各页面自行推算照片不透明度。
+
 ---
 
 ## 四、圆角
@@ -257,6 +305,7 @@ color = Colors.orange;  // 用 AppSemanticColors.warning
 - [ ] 语义色当文字/图标色时是否经 `readableOn`
 - [ ] 选中状态
 - [ ] 卡片层级
+- [ ] 背景图：大面积填充是否走 `wallpaperFill` / `adaptSemanticFill`，且没有把半透明色喂给 `onColor`（见 3.5）
 - [ ] 时间块可读性
 - [ ] 删除 / 警告颜色（亮红 `danger` 在白底只有 3.34:1，当文字必须压深）
 - [ ] 输入框、弹窗、底部弹层、PopupMenu 背景（分别是 `surfaces.card`）
@@ -290,7 +339,8 @@ color = Colors.orange;  // 用 AppSemanticColors.warning
    **半透明底的合成结果（`compose` / `tint` / `onTint`：3 种底面 × 3 档透明度 × 整份调色板）**、
    `readableOn` 覆盖词云/图表/状态色、选中时间块的高亮底、
    被点名过的具体位置（「补」徽标、我的 TabBar 标签、删除按钮、`dangerDeep`）、
-   `opaque` 与模型 `fromJson` 的治愈行为、**词云文字色随浅/深底色改变且都达标**。
+   `opaque` 与模型 `fromJson` 的治愈行为、**词云文字色随浅/深底色改变且都达标**、
+   **背景图启用时 `wallpaperFill` / `adaptSemanticFill` 的 alpha 等于 `surfaceOpacity`**。
 2. **源码守卫（正则扫描 `lib/`，theme 之外）** —— 禁止：
    `Color(0x…)` 与 `0xFF…` 字面量、`isDark`、`estimateBrightnessForColor`、
    `Colors.primaries|green|orange|red|redAccent|…|grey`、`Colors.white`、
@@ -305,5 +355,9 @@ color = Colors.orange;  // 用 AppSemanticColors.warning
 - `Colors.white` 允许：`check_in_photo_viewer.dart`、`check_in_photo_sheet.dart`、
   `check_in_map_preview.dart`（白色叠在图片 / 地图上）
 - 颜色字面量允许：`services/home_widget_service.dart`（桌面小组件，本轮范围外）
+
+背景图另有专门的测试：`test/background_image_contrast_test.dart`（`composite` / 对比度 /
+`safePhotoOpacity` / `readableForeground`）与 `test/background_image_provider_test.dart`
+（不透明度只在 commit 时落盘、启动清失效路径、超限/取消属正常结果）。
 
 新增例外时请在 PR/提交信息里写清原因，不要直接放宽正则。

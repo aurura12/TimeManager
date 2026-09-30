@@ -4,7 +4,7 @@
 
 Flutter 实现，中文界面（英文为降级），支持 Android、Windows 桌面与 macOS。
 
-当前版本：`1.99.0+17`
+当前版本：`1.109.0+27`
 
 ## 功能模块
 
@@ -17,7 +17,7 @@ Flutter 实现，中文界面（英文为降级），支持 Android、Windows �
 - **目标** — 周期目标与进度统计（Windows 上隐藏该 Tab）
 - **我的** — 分类统计（饼图/趋势/词云）、同步中心、AI 每日复盘、当年今日、应用日志、数据备份、写日记提醒（仅 Android）
 
-其他能力：Google 日历事件双向同步、Android 桌面小组件、本地提醒（写日记提醒按身份隔离、打卡目标提醒按目标逐一份）、桌面端键盘快捷键、全局搜索、AI 每日复盘与多轮对话。
+其他能力：Google 日历事件双向同步、Android 桌面小组件、本地提醒（写日记提醒按身份隔离、打卡目标提醒按目标逐一份）、本机背景图（壁纸，可调界面不透明度）、桌面端键盘快捷键、全局搜索、AI 每日复盘与多轮对话。
 
 ## 技术栈
 
@@ -32,13 +32,13 @@ Flutter 实现，中文界面（英文为降级），支持 Android、Windows �
 ```
 lib/
   main.dart              入口，全局错误捕获与平台初始化
-  providers/             状态层：TimeProvider（核心业务）、ThemeModeProvider、TargetStatsCache
+  providers/             状态层：TimeProvider（核心业务）、ThemeModeProvider、TargetStatsCache、BackgroundImageProvider（背景图）
   models/                数据模型（时间块、分类、打卡、目标、出行、日记、同步状态、提醒等）
   screens/               页面（22 个）
   services/              业务服务（62 个）：Google 日历、Git 同步、打卡、AI、语音、日志、提醒等
-  widgets/               可复用组件（18 个）
+  widgets/               可复用组件（19 个）
   utils/                 平台自适应、日期范围、槽位分段等工具
-  theme/                 设计令牌与主题（app_tokens / app_theme / app_semantic_colors）
+  theme/                 设计令牌与主题（app_tokens / app_theme / app_semantic_colors / background_image_contrast）
   config/                密钥配置（.gitignore，需本地创建）
 third_party/             第三方插件的本地 fork（flutter_local_notifications，见其 FORK.md）
 docs/                    设计文档与历史方案
@@ -80,7 +80,7 @@ flutter build apk --release         # 直接构建 release APK
 
 ## 测试
 
-`test/` 含 76 个 dart 测试文件，覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离、写日记提醒与打卡提醒等核心逻辑。
+`test/` 含 80 个 dart 测试文件，覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离、写日记提醒与打卡提醒等核心逻辑。
 
 - `test/widget_test.dart` — smoke test 与平台通道 mock 模板（`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道）
 - `test/visual_system_test.dart` — 视觉系统守护测试，改动 `lib/theme/` 或页面配色时必须运行
