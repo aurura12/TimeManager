@@ -155,6 +155,7 @@ scripts/installer.iss              # Inno Setup 6 打 Windows 安装包（上传
 
 - 发布仓库默认 `zhou-jiaqi10/time_manager_releases`（`GITEE_OWNER` / `GITEE_REPO` 可覆盖）。**必须与 `lib/services/update_service.dart` 保持一致**，改发布仓库要两边一起改
 - Release 说明文件固定为 `docs/release-notes.md`（`--notes-file` 覆盖）
+- 发布前会用本地说明与**线上最新 Release 的说明查重**：完全相同就拒绝发布（提示先更新说明，`--allow-stale-notes` 可跳过）——查重在构建**之前**做，防止忘了更新说明还白跑一次构建；复用当前版本 tag 重传附件时不查重
 - 上传顺序是**先 `.sha256` 后 APK**，避免手机在发布过程中拿到缺校验摘要的安装包
 - 默认**跳过** `flutter analyze` + `flutter test`，发布前想再检查一次要显式加 `--run-tests`
 - Token 优先读 `GITEE_TOKEN` 环境变量，未设置时回落到 `lib/config/diary_gitee_config.dart`
@@ -195,7 +196,7 @@ Never commit them.
 
 ## Testing
 
-- `test/` 有 80 个 dart 测试文件（约 20400 行；另有 `test/support/` 下 2 个共用 Fake）+ 2 个 shell 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
+- `test/` 有 80 个 dart 测试文件（约 20400 行；另有 `test/support/` 下 2 个共用 Fake）+ 3 个 shell 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`、`publish_android_release_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
 - `test/background_image_contrast_test.dart` / `background_image_provider_test.dart` — 背景图对比度契约与 Provider 状态（不透明度只在 commit 时落盘、启动清失效路径、超限/取消属正常结果）
 - `test/visual_system_test.dart` — 视觉系统守护测试：对比度计算、主题一致性、令牌使用约束（改 `lib/theme/` 或页面配色时必跑）
 - `test/widget_test.dart` — smoke test + platform channel mock 模板：`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道、`tester.runAsync` 真实 IO。新写 widget 测试可参照此文件搭建环境

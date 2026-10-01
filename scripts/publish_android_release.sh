@@ -21,6 +21,7 @@ SKIP_BUILD=0
 SKIP_TESTS=1
 SKIP_BUMP=0
 SKIP_GIT=0
+ALLOW_STALE_NOTES=0
 DRY_RUN=0
 
 API_STATUS=""
@@ -52,6 +53,7 @@ usage() {
   --target-platform PLAT   android-arm | android-arm64 | android-x64，默认 android-arm64
   --dist-dir DIR           构建产物目录，默认 <项目根>/dist
   --notes-file FILE        Release 说明文件，默认 docs/release-notes.md
+  --allow-stale-notes      跳过「Release 说明与线上最新版本重复」检查
   --owner OWNER            覆盖 Gitee 用户名/组织名
   --repo REPO              覆盖 Gitee 发布仓库名
   --dry-run                只显示版本、文件和 Release 信息，不构建、不上传
@@ -207,6 +209,46 @@ release_response_shape() {
      end' 2>/dev/null || printf '无法解析为 JSON'
 }
 
+# 防呆：Release 说明与线上最新版本完全相同，多半是忘了更新说明就发版。
+# 在构建之前检查，避免白跑一次几分钟的构建。
+guard_stale_release_notes() {
+  [[ "$ALLOW_STALE_NOTES" -eq 1 ]] && return 0
+  [[ -n "$NOTES_FILE" ]] || return 0
+
+  local notes_body
+  notes_body="$(<"$NOTES_FILE")"
+
+  log "检查 Release 说明是否与线上最新版本重复"
+  api_call GET "$GITEE_API_BASE/releases?per_page=100"
+  require_api_success
+
+  # 取 created_at 最新的 Release；与当前要发的 tag 相同说明是复用重传，不查重。
+  local latest
+  latest="$(printf '%s' "$API_BODY" | jq -r \
+    'if type == "array" and length > 0 then
+       (map(select(.created_at != null)) | sort_by(.created_at) | last)
+     else
+       empty
+     end')"
+  if [[ -z "$latest" || "$latest" == "null" ]]; then
+    log "线上还没有任何 Release，跳过说明查重"
+    return 0
+  fi
+
+  local latest_tag latest_body
+  latest_tag="$(printf '%s' "$latest" | jq -r '.tag_name // empty')"
+  latest_body="$(printf '%s' "$latest" | jq -r '.body // empty')"
+  [[ -n "$latest_tag" ]] || { log "线上最新 Release 缺少 tag，跳过说明查重"; return 0; }
+  [[ "$latest_tag" != "$RELEASE_TAG" ]] || { log "复用当前版本 Release，跳过说明查重"; return 0; }
+  [[ -n "$latest_body" ]] || { log "线上最新版本（${latest_tag}）没有说明，跳过说明查重"; return 0; }
+
+  if [[ "$(printf '%s' "$latest_body" | tr -d '[:space:]')" \
+     == "$(printf '%s' "$notes_body" | tr -d '[:space:]')" ]]; then
+    die "Release 说明与线上最新版本（${latest_tag}）完全相同，多半是忘了更新 ${NOTES_FILE}。更新说明后重试，或加 --allow-stale-notes 强行发布"
+  fi
+  log "Release 说明查重通过（与线上最新版本 ${latest_tag} 不同）"
+}
+
 create_release_or_get_id() {
   local release_url="$GITEE_API_BASE/releases/tags/$RELEASE_TAG"
   local release_id
@@ -342,6 +384,10 @@ while [[ "$#" -gt 0 ]]; do
       NOTES_FILE="$2"
       shift 2
       ;;
+    --allow-stale-notes)
+      ALLOW_STALE_NOTES=1
+      shift
+      ;;
     --owner)
       [[ "$#" -ge 2 ]] || die "--owner 需要一个 Gitee 用户名或组织名"
       GITEE_OWNER="$2"
@@ -442,6 +488,8 @@ load_gitee_token
 [[ ! -L "$ARTIFACT_PATH" ]] || die "APK 不能是符号链接：$ARTIFACT_PATH"
 [[ "$(basename "$ARTIFACT_PATH")" =~ ^[A-Za-z0-9._-]+\.apk$ ]] || \
   die "APK 文件名不符合发布契约：$(basename "$ARTIFACT_PATH")"
+
+guard_stale_release_notes
 
 log "生成 APK SHA-256"
 bash "$SCRIPT_DIR/generate_update_metadata.sh" "$ARTIFACT_PATH"
