@@ -17,6 +17,7 @@ import '../services/diary_search_service.dart';
 import '../services/on_this_day_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/adaptive.dart';
+import '../widgets/main_tab_activity.dart';
 import '../widgets/on_this_day_sheet.dart';
 import '../widgets/schedule_sync_progress_banner.dart';
 import 'check_in_screen.dart';
@@ -302,7 +303,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   List<Widget> _buildTabPages() {
     return List<Widget>.generate(
       _tabs.length,
-      (index) => _tabPages[index] ?? const SizedBox.shrink(),
+      (index) => MainTabActivity(
+        isActive: index == _selectedIndex,
+        child: _tabPages[index] ?? const SizedBox.shrink(),
+      ),
       growable: false,
     );
   }

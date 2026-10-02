@@ -44,6 +44,8 @@ import '../theme/app_semantic_colors.dart';
 
 enum TimePointStatus { onTime, late, notDone }
 
+typedef DailyStatistics = ({double hours, int count});
+
 class BackupPreview {
   final String? exportedAt;
   final int dayCount;
@@ -134,6 +136,8 @@ class _BackupImportSnapshot {
     required this.categoryExpandDirty,
     required this.statsCache,
     required this.statsCacheKey,
+    required this.dailyStatsCache,
+    required this.dailyStatsCacheKey,
     required this.occurrenceCache,
     required this.occurrenceCacheKey,
     required this.categoriesUserCode,
@@ -167,6 +171,8 @@ class _BackupImportSnapshot {
   final bool categoryExpandDirty;
   final Map<String, double>? statsCache;
   final String? statsCacheKey;
+  final List<DailyStatistics>? dailyStatsCache;
+  final String? dailyStatsCacheKey;
   final Map<String, int>? occurrenceCache;
   final String? occurrenceCacheKey;
   final String categoriesUserCode;
@@ -262,6 +268,8 @@ class _BackupImportSnapshot {
           ? null
           : Map<String, double>.from(provider._statsCache!),
       statsCacheKey: provider._statsCacheKey,
+      dailyStatsCache: provider._dailyStatsCache,
+      dailyStatsCacheKey: provider._dailyStatsCacheKey,
       occurrenceCache: provider._occurrenceCache == null
           ? null
           : Map<String, int>.from(provider._occurrenceCache!),
@@ -324,6 +332,8 @@ class _BackupImportSnapshot {
     provider._statsCache =
         statsCache == null ? null : Map<String, double>.from(statsCache!);
     provider._statsCacheKey = statsCacheKey;
+    provider._dailyStatsCache = dailyStatsCache;
+    provider._dailyStatsCacheKey = dailyStatsCacheKey;
     provider._occurrenceCache = occurrenceCache == null
         ? null
         : Map<String, int>.from(occurrenceCache!);
@@ -1172,10 +1182,7 @@ class TimeProvider with ChangeNotifier {
     _calendarDirty = false;
     _syncDirty = false;
     _categoryExpandDirty = false;
-    _statsCache = null;
-    _statsCacheKey = null;
-    _occurrenceCache = null;
-    _occurrenceCacheKey = null;
+    _invalidateStatisticsCache();
     _labelCategoryIdCache = null;
     _categoryIdMapCache = null;
   }
@@ -1536,6 +1543,8 @@ class TimeProvider with ChangeNotifier {
   // --- 统计缓存 ---
   String? _statsCacheKey;
   Map<String, double>? _statsCache;
+  String? _dailyStatsCacheKey;
+  List<DailyStatistics>? _dailyStatsCache;
   String? _occurrenceCacheKey;
   Map<String, int>? _occurrenceCache;
 
@@ -8085,6 +8094,10 @@ class TimeProvider with ChangeNotifier {
       _statsCache = null;
       _statsCacheKey = null;
     }
+    if (intersects(_dailyStatsCacheKey)) {
+      _dailyStatsCache = null;
+      _dailyStatsCacheKey = null;
+    }
     if (intersects(_occurrenceCacheKey)) {
       _occurrenceCache = null;
       _occurrenceCacheKey = null;
@@ -10447,6 +10460,44 @@ class TimeProvider with ChangeNotifier {
     return getTargetMonthlyGoal(target) * 12;
   }
 
+  // 日期统计忽略时分秒，并按自然日推进，避免跨日不足 24 小时或夏令时漏天。
+  Iterable<String> _statisticsDateKeys(DateTime start, DateTime end) sync* {
+    var date = DateTime(start.year, start.month, start.day);
+    final lastDay = DateTime(end.year, end.month, end.day);
+    while (!date.isAfter(lastDay)) {
+      yield _getDateKey(date);
+      date = DateTime(date.year, date.month, date.day + 1);
+    }
+  }
+
+  void _addDayStatistics(String dateKey, Map<String, double> stats) {
+    for (final slot in _dailySlots[dateKey] ?? const <TimeSlot>[]) {
+      if (slot.recorded && slot.label != null) {
+        // 每个格子代表 1/6 小时 (10 分钟)。
+        stats[slot.label!] = (stats[slot.label!] ?? 0) + (1 / 6);
+      }
+    }
+  }
+
+  /// 按日期升序返回每日总时长与不同事件数，供趋势图复用独立缓存。
+  List<DailyStatistics> getDailyStatistics(DateTime start, DateTime end) {
+    final cacheKey = '${_getDateKey(start)}_${_getDateKey(end)}';
+    if (_dailyStatsCacheKey == cacheKey && _dailyStatsCache != null) {
+      return _dailyStatsCache!;
+    }
+    final daily = <DailyStatistics>[];
+    for (final key in _statisticsDateKeys(start, end)) {
+      final stats = <String, double>{};
+      _addDayStatistics(key, stats);
+      daily.add((
+        hours: stats.values.fold(0.0, (sum, hours) => sum + hours),
+        count: stats.length,
+      ));
+    }
+    _dailyStatsCacheKey = cacheKey;
+    return _dailyStatsCache = List<DailyStatistics>.unmodifiable(daily);
+  }
+
   Map<String, double> getStatistics(DateTime start, DateTime end) {
     final cacheKey = '${_getDateKey(start)}_${_getDateKey(end)}';
     if (_statsCacheKey == cacheKey && _statsCache != null) {
@@ -10456,19 +10507,8 @@ class TimeProvider with ChangeNotifier {
 
     Map<String, double> stats = {};
 
-    // 遍历日期范围内的每一天
-    for (int i = 0; i <= end.difference(start).inDays; i++) {
-      DateTime date = start.add(Duration(days: i));
-      String key = _getDateKey(date);
-
-      if (_dailySlots.containsKey(key)) {
-        for (var slot in _dailySlots[key]!) {
-          if (slot.recorded && slot.label != null) {
-            // 每个格子代表 1/6 小时 (10分钟)
-            stats[slot.label!] = (stats[slot.label!] ?? 0) + (1 / 6);
-          }
-        }
-      }
+    for (final key in _statisticsDateKeys(start, end)) {
+      _addDayStatistics(key, stats);
     }
 
     _statsCacheKey = cacheKey;
@@ -10552,8 +10592,7 @@ class TimeProvider with ChangeNotifier {
         }
       }
     } else {
-      for (int i = 0; i <= end.difference(start).inDays; i++) {
-        final dateKey = _getDateKey(start.add(Duration(days: i)));
+      for (final dateKey in _statisticsDateKeys(start, end)) {
         for (final slot in _dailySlots[dateKey] ?? const <TimeSlot>[]) {
           if (slot.recorded &&
               slot.label != null &&
@@ -10602,7 +10641,7 @@ class TimeProvider with ChangeNotifier {
 
   /// 统计每个事件在日期范围内出现的连续块次数（用于词云权重）
   Map<String, int> getEventOccurrenceCounts(DateTime start, DateTime end) {
-    final cacheKey = '_occ_${start.toIso8601String()}_${end.toIso8601String()}';
+    final cacheKey = '_occ_${_getDateKey(start)}_${_getDateKey(end)}';
     if (_occurrenceCacheKey == cacheKey && _occurrenceCache != null) {
       // 返回不可变包装，防止调用方修改污染缓存
       return Map.unmodifiable(_occurrenceCache!);
@@ -10610,9 +10649,7 @@ class TimeProvider with ChangeNotifier {
 
     final counts = <String, int>{};
 
-    for (int i = 0; i <= end.difference(start).inDays; i++) {
-      final date = start.add(Duration(days: i));
-      final key = _getDateKey(date);
+    for (final key in _statisticsDateKeys(start, end)) {
       final daySlots = _dailySlots[key];
       if (daySlots == null || daySlots.isEmpty) continue;
 

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../widgets/profile_settings_drawer.dart';
 import '../widgets/calendar_sync_status_badge.dart';
+import '../widgets/main_tab_activity.dart';
 import '../providers/time_provider.dart';
 import '../utils/platform_features.dart';
 import 'event_detail_screen.dart';
@@ -38,6 +39,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   bool _showParentOnly = false; // false: 全部事件, true: 只显示父事件
   bool _showDeletedEvents = true;
   bool _groupDeletedEvents = true; // 全部事件视图中是否合并已删除标签
+  Widget? _lastBuiltPage;
 
   @override
   void initState() {
@@ -53,11 +55,15 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   @override
   Widget build(BuildContext context) {
+    // IndexedStack 保留页面状态；隐藏时复用上次内容，回来再读取最新统计。
+    if (!MainTabActivity.isActiveOf(context)) {
+      return _lastBuiltPage ?? const SizedBox.shrink();
+    }
     final provider = Provider.of<TimeProvider>(context);
     final colorScheme = Theme.of(context).colorScheme;
     final wallpaperTheme = AppWallpaperTheme.of(context);
 
-    return Scaffold(
+    return _lastBuiltPage = Scaffold(
       backgroundColor:
           wallpaperTheme.enabled ? Colors.transparent : colorScheme.surface,
       drawer: ProfileSettingsDrawer(onChanged: () => setState(() {})),
@@ -885,25 +891,21 @@ class _ProfileScreenState extends State<ProfileScreen>
           );
   }
 
-  // 一次遍历最近 30 天，同时得到每日总时长与事件数，
-  // 避免时间/数量两个方法各重复遍历一次
-  List<({double hours, int count})> _computeDaily30(TimeProvider provider) {
+  // 趋势使用独立缓存，不替换分类统计当前日期区间的缓存。
+  List<DailyStatistics> _computeDaily30(TimeProvider provider) {
     final now = DateTime.now();
-    final daily = <({double hours, int count})>[];
-    for (int i = 0; i < 30; i++) {
-      final date = now.subtract(Duration(days: 29 - i));
-      final dayStats = provider.getStatistics(date, date);
-      final hours = double.parse(
-        dayStats.values.fold(0.0, (sum, item) => sum + item).toStringAsFixed(1),
-      );
-      daily.add((hours: hours, count: dayStats.length));
-    }
-    return daily;
+    return provider.getDailyStatistics(
+      DateTime(now.year, now.month, now.day - 29),
+      DateTime(now.year, now.month, now.day),
+    );
   }
 
   // 获取最近30天每天的 [时长] 数据点
   List<FlSpot> _generateTimeSpots(List<({double hours, int count})> daily) {
-    return List.generate(30, (i) => FlSpot(i + 1.0, daily[i].hours));
+    return List.generate(
+      30,
+      (i) => FlSpot(i + 1.0, double.parse(daily[i].hours.toStringAsFixed(1))),
+    );
   }
 
   // 获取最近30天每天的 [事件数量] 数据点
