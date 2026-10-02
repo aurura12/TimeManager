@@ -46,6 +46,10 @@ const int kRemoteSlotColorArgb = 0xFF9CB86A;
 const _remoteCanonicalContent =
     '{"updated_at":2000,"slots":[{"i":0,"l":"远端","c":$kRemoteSlotColorArgb,"cid":"g-category","ts":2000}]}';
 
+/// 第二次拉取时返回的内容，用于验证「先秒显旧缓存、刷新后换成最新」。
+const _remoteUpdatedContent =
+    '{"updated_at":3000,"slots":[{"i":0,"l":"远端新版","c":$kRemoteSlotColorArgb,"cid":"g-category","ts":3000}]}';
+
 ScheduleSyncDependencies _fakeDependencies({
   required bool failPull,
   Completer<void>? pullGate,
@@ -131,7 +135,6 @@ Future<TimeProvider> _createProvider({
   Future<bool> Function()? scheduleSnapshotJournalRemoveOverride,
   Duration scheduleGiteeDebounce = const Duration(seconds: 3),
   Duration googleCalendarDebounce = const Duration(seconds: 3),
-  Duration remoteViewCacheTtl = const Duration(minutes: 5),
   int remoteViewCacheMaxDays = 30,
   bool? googleCalendarSyncPlatformOverride,
   bool? googleCalendarSignedInOverride,
@@ -153,7 +156,6 @@ Future<TimeProvider> _createProvider({
   final provider = TimeProvider(
     scheduleGiteeDebounce: scheduleGiteeDebounce,
     googleCalendarDebounce: googleCalendarDebounce,
-    remoteViewCacheTtl: remoteViewCacheTtl,
     remoteViewCacheMaxDays: remoteViewCacheMaxDays,
     googleCalendarSyncPlatformOverride: googleCalendarSyncPlatformOverride,
     googleCalendarSignedInOverride: googleCalendarSignedInOverride,
@@ -2342,6 +2344,10 @@ void main() {
   ScheduleSyncDependencies remoteViewDeps({
     required void Function() onJPull,
     bool notFound = false,
+    String Function()? content,
+    Completer<void>? pullGate,
+    bool Function()? shouldGate,
+    Set<String>? pulledDateKeys,
   }) {
     return ScheduleSyncDependencies(
       loadToken: () async => 'fake-token',
@@ -2349,22 +2355,34 @@ void main() {
           ScheduleGiteeListWithShaResult.success(const {}),
       pullDay: ({required token, required dateKey, required userCode}) async {
         if (userCode != 'j') return ScheduleGiteePullResult.error('禁止读取');
+        pulledDateKeys?.add(dateKey);
         onJPull();
+        if (pullGate != null && (shouldGate?.call() ?? true)) {
+          await pullGate.future;
+        }
         if (notFound) return ScheduleGiteePullResult.notFound();
         return ScheduleGiteePullResult.success(
-          _remoteCanonicalContent,
+          content?.call() ?? _remoteCanonicalContent,
           'remote-sha',
         );
       },
     );
   }
 
-  test('远程视图二次打开命中缓存：不再重新拉取对方日程', () async {
+  test('远程视图二次打开：先用缓存秒显，再后台刷新最新', () async {
     var jPulls = 0;
+    var content = _remoteCanonicalContent;
+    var gateEnabled = false;
+    final pullGate = Completer<void>();
     final provider = await _createProvider(
       failPull: false,
       initialPreferences: _localPreferences,
-      dependencies: remoteViewDeps(onJPull: () => jPulls++),
+      dependencies: remoteViewDeps(
+        onJPull: () => jPulls++,
+        content: () => content,
+        pullGate: pullGate,
+        shouldGate: () => gateEnabled,
+      ),
     );
     addTearDown(provider.dispose);
     provider.goToDate(DateTime(2026, 9, 6));
@@ -2375,51 +2393,32 @@ void main() {
     final pullsAfterFirstOpen = jPulls;
     expect(pullsAfterFirstOpen, greaterThan(0));
     expect(provider.slots.any((slot) => slot.label == '远端'), isTrue);
-
     await provider.toggleRemoteScheduleView();
-    expect(provider.isRemoteViewEnabled, isFalse);
     expect(provider.slots[0].label, '本地重叠');
 
-    await provider.toggleRemoteScheduleView();
-    expect(provider.isRemoteViewEnabled, isTrue);
-    expect(jPulls, pullsAfterFirstOpen, reason: '命中缓存不应再拉取');
-    expect(provider.slots.any((slot) => slot.label == '远端'), isTrue);
+    // 远端内容变了，并把第二次打开的刷新卡住。
+    content = _remoteUpdatedContent;
+    gateEnabled = true;
+    final reopen = provider.toggleRemoteScheduleView();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    await provider.toggleRemoteScheduleView();
-    expect(provider.isRemoteViewEnabled, isFalse);
-    expect(provider.slots[0].label, '本地重叠');
+    // 刷新还卡着，但网格已经用旧缓存出内容 → 证明「先秒显」。
+    expect(provider.slots.any((slot) => slot.label == '远端'), isTrue,
+        reason: '刷新未完成时也应先用缓存出内容');
+
+    pullGate.complete();
+    await reopen;
+    expect(provider.slots.any((slot) => slot.label == '远端新版'), isTrue,
+        reason: '后台刷新完成后应换成最新内容');
+    expect(jPulls, greaterThan(pullsAfterFirstOpen), reason: '每次打开都应刷新');
   });
 
-  test('远程视图缓存过期后重新拉取', () async {
+  test('远程视图每次打开都会刷新对方日程', () async {
     var jPulls = 0;
     final provider = await _createProvider(
       failPull: false,
       initialPreferences: _localPreferences,
       dependencies: remoteViewDeps(onJPull: () => jPulls++),
-      remoteViewCacheTtl: const Duration(milliseconds: 50),
-    );
-    addTearDown(provider.dispose);
-    provider.goToDate(DateTime(2026, 9, 6));
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-
-    await provider.toggleRemoteScheduleView();
-    final pullsAfterFirstOpen = jPulls;
-    expect(pullsAfterFirstOpen, greaterThan(0));
-    await provider.toggleRemoteScheduleView();
-
-    await Future<void>.delayed(const Duration(milliseconds: 120));
-
-    await provider.toggleRemoteScheduleView();
-    expect(jPulls, greaterThan(pullsAfterFirstOpen), reason: '缓存过期应重新拉取');
-  });
-
-  test('远程视图缓存 TTL<=0 视为禁用', () async {
-    var jPulls = 0;
-    final provider = await _createProvider(
-      failPull: false,
-      initialPreferences: _localPreferences,
-      dependencies: remoteViewDeps(onJPull: () => jPulls++),
-      remoteViewCacheTtl: Duration.zero,
     );
     addTearDown(provider.dispose);
     provider.goToDate(DateTime(2026, 9, 6));
@@ -2431,10 +2430,10 @@ void main() {
     await provider.toggleRemoteScheduleView();
 
     await provider.toggleRemoteScheduleView();
-    expect(jPulls, greaterThan(pullsAfterFirstOpen), reason: '禁用缓存后每次都拉取');
+    expect(jPulls, greaterThan(pullsAfterFirstOpen), reason: '每次打开都应刷新');
   });
 
-  test('远程视图远端无数据也会缓存：二次打开不再拉空日期', () async {
+  test('远程视图远端无数据：每次打开都刷新，且不残留旧数据', () async {
     var jPulls = 0;
     final provider = await _createProvider(
       failPull: false,
@@ -2452,7 +2451,8 @@ void main() {
     await provider.toggleRemoteScheduleView();
 
     await provider.toggleRemoteScheduleView();
-    expect(jPulls, pullsAfterFirstOpen, reason: '空结果也应缓存');
+    expect(jPulls, greaterThan(pullsAfterFirstOpen));
+    expect(provider.slots[0].label, isNull, reason: '空结果不应残留旧数据');
     await provider.toggleRemoteScheduleView();
     expect(provider.slots[0].label, '本地重叠');
   });
@@ -2497,26 +2497,30 @@ void main() {
     expect(provider.remoteViewCacheEntryCount, lessThanOrEqualTo(1));
   });
 
-  test('远程视图切日只拉取新进入窗口的日期', () async {
-    var jPulls = 0;
+  test('远程视图切日刷新全部可见日期', () async {
+    final pulledDateKeys = <String>{};
     final provider = await _createProvider(
       failPull: false,
       initialPreferences: _localPreferences,
-      dependencies: remoteViewDeps(onJPull: () => jPulls++),
+      dependencies: remoteViewDeps(
+        onJPull: () {},
+        pulledDateKeys: pulledDateKeys,
+      ),
     );
     addTearDown(provider.dispose);
     provider.goToDate(DateTime(2026, 9, 6));
     await Future<void>.delayed(const Duration(milliseconds: 300));
 
     await provider.toggleRemoteScheduleView();
-    final pullsAfterOpen = jPulls;
-    expect(pullsAfterOpen, greaterThan(1), reason: '桌面三列应缓存多天');
+    expect(pulledDateKeys.containsAll({'2026-09-05', '2026-09-06', '2026-09-07'}),
+        isTrue, reason: '桌面三列进入时应全部拉取');
 
-    // 向前滚动一天：新窗口 09-04/05/06，其中 05/06 已缓存，只应新增 1 次拉取。
+    // 向前滚动一天：新窗口 09-04/05/06，三个日期都应重新刷新（不只新进入的一天）。
+    pulledDateKeys.clear();
     provider.goToDate(DateTime(2026, 9, 5));
     await Future<void>.delayed(const Duration(milliseconds: 300));
-    expect(jPulls, pullsAfterOpen + 1,
-        reason: '窗口内已缓存日期不重拉，只拉新进入窗口的一天');
+    expect(pulledDateKeys.containsAll({'2026-09-04', '2026-09-05', '2026-09-06'}),
+        isTrue, reason: '切日应刷新整个可见窗口');
   });
 
   test('切换身份清空远程视图缓存', () async {

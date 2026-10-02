@@ -850,11 +850,9 @@ class TimeProvider with ChangeNotifier {
   bool _remoteViewTransitionInProgress = false;
   int _remoteViewTransitionEpoch = 0;
   // 远程视图内存缓存：viewedCode（'g'/'j'，即「对方」）→ dateKey → 远端条目。
-  // 只存在内存，不落盘、不进同步与备份；进出远程视图时复用，避免每次切换都
-  // 重新网络拉取。过期/失效判定见 _isRemoteViewCacheFresh / _clearRemoteViewCache。
+  // 只存在内存，不落盘、不进同步与备份。缓存只用于「先秒显」——每次进入/切日
+  // 都会对所有可见日期后台刷新一次最新，因此不做过期判定。
   final Map<String, Map<String, _RemoteViewCacheEntry>> _remoteViewCache = {};
-  // 缓存新鲜度：<= Duration.zero 视为禁用缓存（读写均短路）。
-  final Duration _remoteViewCacheTtl;
   // 缓存最多保留的日期数，超出按 fetchedAt 淘汰最旧。
   final int _remoteViewCacheMaxDays;
 
@@ -1575,7 +1573,6 @@ class TimeProvider with ChangeNotifier {
     ScheduleSyncDependencies? scheduleSyncDependencies,
     CategorySyncDependencies? categorySyncDependencies,
     Duration categoryPullCooldown = _defaultCategoryPullCooldown,
-    Duration remoteViewCacheTtl = const Duration(minutes: 5),
     int remoteViewCacheMaxDays = 30,
     TargetSyncDependencies? targetSyncDependencies,
     AppLogService? appLogService,
@@ -1592,7 +1589,6 @@ class TimeProvider with ChangeNotifier {
             googleCalendarSyncPlatformOverride,
         _googleCalendarSignedInOverride = googleCalendarSignedInOverride,
         _categoryPullCooldown = categoryPullCooldown,
-        _remoteViewCacheTtl = remoteViewCacheTtl,
         _remoteViewCacheMaxDays = remoteViewCacheMaxDays,
         _scheduleSyncDependencies =
             scheduleSyncDependencies ?? ScheduleSyncDependencies.production(),
@@ -2256,20 +2252,17 @@ class TimeProvider with ChangeNotifier {
     bool showProgress = true,
   }) {
     final otherCode = _scheduleUser.code == 'g' ? 'j' : 'g';
-    final staleDates = <DateTime>[];
-    for (final d in _getRemoteViewDates()) {
+    final dates = _getRemoteViewDates();
+    for (final d in dates) {
       final dateKey = _getDateKey(d);
       // 备份必须对所有可见日期无条件执行，否则关闭时无法还原本地数据。
       _backupAndClearDay(dateKey);
-      if (_isRemoteViewCacheFresh(otherCode, dateKey)) {
-        _applyRemoteViewCacheEntry(otherCode, dateKey);
-      } else {
-        staleDates.add(d);
-      }
+      _applyRemoteViewCacheEntryIfPresent(otherCode, dateKey);
     }
     _markAllSlotsDirty();
     notifyListeners();
-    for (final d in staleDates) {
+    // 无论是否命中缓存，都对全部可见日期各刷新一次最新。
+    for (final d in dates) {
       unawaited(pullScheduleFromGitee(
         userCode: otherCode,
         date: d,
@@ -5642,23 +5635,18 @@ class TimeProvider with ChangeNotifier {
         _remoteViewEnabled = true;
 
         // 6) 拉取对方的文件（独立文件，无需过滤）；Windows 逐日拉取三天。
-        //    先在同步段内决定哪些日期能命中缓存（避免 await 期间缓存被改动），
-        //    命中即套用并立刻通知，使网格秒显；只有未命中/过期的日期才走网络。
+        //    先在同步段内套用缓存（若有）并立刻通知，使网格秒显；随后无论是否
+        //    命中缓存，都对全部可见日期各拉一次最新。
         final otherCode = _scheduleUser.code == 'g' ? 'j' : 'g';
-        final staleDates = <DateTime>[];
         var appliedFromCache = false;
         for (final d in dates) {
-          final dateKey = _getDateKey(d);
-          if (_isRemoteViewCacheFresh(otherCode, dateKey)) {
-            _applyRemoteViewCacheEntry(otherCode, dateKey);
+          if (_applyRemoteViewCacheEntryIfPresent(otherCode, _getDateKey(d))) {
             appliedFromCache = true;
-          } else {
-            staleDates.add(d);
           }
         }
         if (appliedFromCache) notifyListeners();
 
-        for (final d in staleDates) {
+        for (final d in dates) {
           if (!transitionIsStillValid() ||
               _initializationFailed ||
               _scheduleOverwriteJournalCleanupPending) {
@@ -5753,27 +5741,21 @@ class TimeProvider with ChangeNotifier {
 
   // --- 远程视图缓存（查看对方日程）---
   //
-  // 目的：同一天反复切换查看时不必每次都走网络。缓存按「对方身份码」分片，
-  // 只存校验过的远端 entries；命中即套用到 _dailySlots，未命中/过期才拉取。
+  // 缓存只负责「先秒显」：进入/切日时若有缓存就先套用出内容，随后对全部可见
+  // 日期各拉一次最新，因此不做新鲜度过期判定。按「对方身份码」分片，只存校验
+  // 过的远端 entries。
 
-  /// 缓存是否仍新鲜。TTL <= 0 视为禁用缓存。
-  bool _isRemoteViewCacheFresh(String code, String dateKey) {
-    if (_remoteViewCacheTtl <= Duration.zero) return false;
+  /// 命中缓存则套用并返回 true；无缓存返回 false。
+  bool _applyRemoteViewCacheEntryIfPresent(String code, String dateKey) {
     final entry = _remoteViewCache[code]?[dateKey];
     if (entry == null) return false;
-    return DateTime.now().difference(entry.fetchedAt) <= _remoteViewCacheTtl;
-  }
-
-  /// 把缓存中的远端条目套用到当天槽位（与 live 拉取路径同构：先合并再 apply）。
-  void _applyRemoteViewCacheEntry(String code, String dateKey) {
-    final entry = _remoteViewCache[code]?[dateKey];
-    if (entry == null) return;
     final daySlots = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
     final merged = mergeScheduleSlots(
       localEntries: _serializeRecordedSlots(daySlots),
       remoteEntries: entry.entries,
     );
     _applyScheduleEntriesToSlots(daySlots, merged);
+    return true;
   }
 
   /// 写入缓存。只缓存「对方」（code 不等于当前身份）；深拷贝条目；超上限淘汰最旧。
@@ -5782,7 +5764,6 @@ class TimeProvider with ChangeNotifier {
     String dateKey,
     List<Map<String, dynamic>> entries,
   ) {
-    if (_remoteViewCacheTtl <= Duration.zero) return;
     if (_hasSelectedScheduleUser && code == _scheduleUser.code) return;
     final byDate = _remoteViewCache.putIfAbsent(code, () => {});
     byDate[dateKey] = _RemoteViewCacheEntry(
