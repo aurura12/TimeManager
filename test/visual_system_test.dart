@@ -422,6 +422,42 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets(
+      '桌面端月份条收成整数个格子，两侧不露出半个 pill',
+      skip: !isDesktopPlatform, // 收窄月份条是桌面端（面板固定 360 宽）的行为
+      (tester) async {
+        await pumpPanel(tester, initial: DateTime(2026, 10, 3));
+        // 首帧后 post-frame 回调才把月份条滚到当前月，等它落位
+        await tester.pumpAndSettle();
+
+        final strip = tester.getRect(find.byWidgetPredicate(
+          (w) => w is ListView && w.scrollDirection == Axis.horizontal,
+        ));
+        // 面板 360 宽、左右各 16 内边距 → 内容区 328，放得下 5 个 60 宽的格子
+        expect(strip.width, 5 * 60.0);
+        // 奇数个格子 → 当前月份正好落在正中
+        expect(
+          tester.getRect(find.text('10月')).center.dx,
+          moreOrLessEquals(strip.center.dx, epsilon: 0.5),
+        );
+
+        Rect pillRect(String label) => tester.getRect(
+              find
+                  .ancestor(
+                      of: find.text(label), matching: find.byType(Container))
+                  .first,
+            );
+
+        for (final label in ['8月', '9月', '10月', '11月', '12月']) {
+          final pill = pillRect(label);
+          expect(pill.left, greaterThanOrEqualTo(strip.left - 0.01));
+          expect(pill.right, lessThanOrEqualTo(strip.right + 0.01));
+        }
+        // 再往左的 7月 应完全在可视区外，不能露出被切掉的一段弧线
+        expect(pillRect('7月').right, lessThanOrEqualTo(strip.left + 0.01));
+      },
+    );
+
     testWidgets('深色模式同样能渲染且不溢出', (tester) async {
       final now = DateTime.now();
       await pumpPanel(

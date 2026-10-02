@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/platform_features.dart';
 
 /// 顶部展开的日期选择器，支持月历网格与跨年月份滑动切换。
 class DatePickerPanel extends StatefulWidget {
@@ -45,6 +46,20 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
   static const _weekdays = ['一', '二', '三', '四', '五', '六', '日'];
   static const _monthItemWidth = 52.0;
   static const _yearItemWidth = 52.0;
+
+  /// 一个格子的占位宽（pill 宽 + 间隙）。
+  static const double _stripPitch = _monthItemWidth + AppSpacing.sm;
+
+  /// 月份条的可视宽度：向下取「奇数个」格子。
+  ///
+  /// 奇数保证当前月份正好落在正中（左右各 (n-1)/2 个月）；同时因为格子是
+  /// 等距的，可视区边缘才会落在格子之间的空隙里。取偶数（或直接用整宽）时
+  /// 最左边会露出上一个格子的一小段弧线，看起来像"没对齐"。
+  static double _stripWidthFor(double maxWidth) {
+    final fitting = (maxWidth / _stripPitch).floor();
+    final slots = fitting.isOdd ? fitting : fitting - 1;
+    return (slots < 1 ? 1 : slots) * _stripPitch;
+  }
 
   late final List<_StripItem> _stripItems;
   late DateTime _displayedMonth;
@@ -110,7 +125,7 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
       offset += _itemWidth(_stripItems[i]) + 8;
     }
     offset += _itemWidth(_stripItems[stripIndex]) / 2;
-  final viewport = _monthScrollController.position.viewportDimension;
+    final viewport = _monthScrollController.position.viewportDimension;
     offset -= viewport / 2;
     final maxExtent = _monthScrollController.position.maxScrollExtent;
     offset = offset.clamp(0.0, maxExtent);
@@ -164,7 +179,8 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
 
   bool get _isCurrentMonth {
     final now = DateTime.now();
-    return _displayedMonth.year == now.year && _displayedMonth.month == now.month;
+    return _displayedMonth.year == now.year &&
+        _displayedMonth.month == now.month;
   }
 
   @override
@@ -277,68 +293,82 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
               ),
             ),
             const SizedBox(height: AppSpacing.lg),
-            SizedBox(
-              height: AppSizes.iconButton,
-              child: ListView.builder(
-                controller: _monthScrollController,
-                scrollDirection: Axis.horizontal,
-                itemCount: _stripItems.length,
-                itemBuilder: (context, index) {
-                  final item = _stripItems[index];
+            LayoutBuilder(
+              builder: (context, constraints) => SizedBox(
+                height: AppSizes.iconButton,
+                child: Align(
+                  child: SizedBox(
+                    // 桌面端面板固定 360 宽，把可视区收成整数个格子避免露出
+                    // 半个 pill；安卓保持整宽，维持原来的滑动观感。
+                    width: isDesktopPlatform
+                        ? _stripWidthFor(constraints.maxWidth)
+                        : constraints.maxWidth,
+                    child: ListView.builder(
+                      controller: _monthScrollController,
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _stripItems.length,
+                      itemBuilder: (context, index) {
+                        final item = _stripItems[index];
 
-                  if (item.type == _StripItemType.year) {
-                    return Padding(
-                      padding: const EdgeInsets.only(right: AppSpacing.sm),
-                      child: SizedBox(
-                        width: _yearItemWidth,
-                        child: Center(
-                          child: Text(
-                            '${item.year}',
-                            style: AppText.body.copyWith(
-                              color: textColor,
-                              fontWeight: FontWeight.w600,
+                        if (item.type == _StripItemType.year) {
+                          return Padding(
+                            padding:
+                                const EdgeInsets.only(right: AppSpacing.sm),
+                            child: SizedBox(
+                              width: _yearItemWidth,
+                              child: Center(
+                                child: Text(
+                                  '${item.year}',
+                                  style: AppText.body.copyWith(
+                                    color: textColor,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        }
+
+                        final isActive =
+                            item.year == year && item.month == month;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: AppSpacing.sm),
+                          child: GestureDetector(
+                            onTap: () => _selectMonth(item.monthGlobalIndex!),
+                            child: Container(
+                              width: _monthItemWidth,
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: AppSpacing.sm),
+                              decoration: BoxDecoration(
+                                color: isActive
+                                    ? colorScheme.primaryContainer
+                                    : Colors.transparent,
+                                borderRadius: AppRadius.sheetAll,
+                                border: Border.all(
+                                  color: isActive
+                                      ? Colors.transparent
+                                      : surfaces.border,
+                                ),
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                '${item.month}月',
+                                style: AppText.body.copyWith(
+                                  color: isActive
+                                      ? colorScheme.onPrimaryContainer
+                                      : textColor,
+                                  fontWeight: isActive
+                                      ? FontWeight.w600
+                                      : FontWeight.normal,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                      ),
-                    );
-                  }
-
-                  final isActive = item.year == year && item.month == month;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: AppSpacing.sm),
-                    child: GestureDetector(
-                      onTap: () => _selectMonth(item.monthGlobalIndex!),
-                      child: Container(
-                        width: _monthItemWidth,
-                        padding: const EdgeInsets.symmetric(
-                            vertical: AppSpacing.sm),
-                        decoration: BoxDecoration(
-                          color: isActive
-                              ? colorScheme.primaryContainer
-                              : Colors.transparent,
-                          borderRadius: AppRadius.sheetAll,
-                          border: Border.all(
-                            color: isActive
-                                ? Colors.transparent
-                                : surfaces.border,
-                          ),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          '${item.month}月',
-                          style: AppText.body.copyWith(
-                            color: isActive
-                                ? colorScheme.onPrimaryContainer
-                                : textColor,
-                            fontWeight:
-                                isActive ? FontWeight.w600 : FontWeight.normal,
-                          ),
-                        ),
-                      ),
+                        );
+                      },
                     ),
-                  );
-                },
+                  ),
+                ),
               ),
             ),
             if (!_isCurrentMonth) ...[
