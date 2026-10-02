@@ -35,7 +35,7 @@ lib/
   providers/             状态层：TimeProvider（核心业务）、ThemeModeProvider、TargetStatsCache、BackgroundImageProvider（背景图）
   models/                数据模型（时间块、分类、打卡、目标、出行、日记、同步状态、提醒等）
   screens/               页面（22 个）
-  services/              业务服务（62 个）：Google 日历、Git 同步、打卡、AI、语音、日志、提醒等
+  services/              业务服务（61 个）：Google 日历、Git 同步、打卡、AI、语音、日志、提醒等
   widgets/               可复用组件（19 个）
   utils/                 平台自适应、日期范围、槽位分段等工具
   theme/                 设计令牌与主题（app_tokens / app_theme / app_semantic_colors / background_image_contrast）
