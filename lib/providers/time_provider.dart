@@ -22,6 +22,7 @@ import '../services/schedule_gitee_service.dart';
 import '../services/schedule_overwrite.dart';
 import '../services/schedule_sync_dependencies.dart';
 import '../services/schedule_sync_manifest_store.dart';
+import '../services/schedule_json_codec.dart';
 import '../services/category_document_merge.dart';
 import '../services/category_sync_dependencies.dart';
 import '../services/target_document_merge.dart';
@@ -565,6 +566,8 @@ class TimeProvider with ChangeNotifier {
   }
 
   Timer? _debounceTimer;
+  Timer? _localSaveTimer;
+  final Duration _localSaveDebounce;
   Future<bool>? _ongoingSave;
   int _saveRequestRevision = 0;
   bool _isDisposed = false;
@@ -572,6 +575,7 @@ class TimeProvider with ChangeNotifier {
   DateTime _currentDate = DateTime.now();
   bool _isSyncing = false; // 添加同步锁标志，防止并发同步导致重复
   final Duration _scheduleGiteeDebounce;
+
   /// 前台日程自动刷新间隔。null 表示关闭（测试默认关闭，生产在 main.dart 显式开启）。
   final Duration? _scheduleAutoRefreshInterval;
   final Duration _googleCalendarDebounce;
@@ -895,6 +899,10 @@ class TimeProvider with ChangeNotifier {
     }
     _scheduleIdentityMutationInProgress = true;
     try {
+      if ((_localSaveTimer != null || _ongoingSave != null) &&
+          !await _saveData()) {
+        return;
+      }
       prefs = await SharedPreferences.getInstance();
       if (!_canContinueScheduleIdentityMutation()) return;
       previousStoredKind = prefs.getString(_scheduleUserKey);
@@ -1112,6 +1120,8 @@ class TimeProvider with ChangeNotifier {
   void _invalidateIdentityScopedOperations() {
     _googleSyncGeneration++;
     _debounceTimer?.cancel();
+    _localSaveTimer?.cancel();
+    _localSaveTimer = null;
     _debounceTimer = null;
     _scheduleGiteeTimer?.cancel();
     _scheduleGiteeTimer = null;
@@ -1545,6 +1555,7 @@ class TimeProvider with ChangeNotifier {
     _isDisposed = true;
     _googleSyncGeneration++;
     _debounceTimer?.cancel();
+    _localSaveTimer?.cancel();
     _scheduleGiteeTimer?.cancel();
     _scheduleAutoRefreshTimer?.cancel();
     _categoriesGiteeTimer?.cancel();
@@ -1564,6 +1575,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   TimeProvider({
+    Duration localSaveDebounce = const Duration(milliseconds: 250),
     Duration scheduleGiteeDebounce = const Duration(seconds: 3),
     Duration? scheduleAutoRefreshInterval,
     Duration googleCalendarDebounce = const Duration(seconds: 3),
@@ -1581,7 +1593,8 @@ class TimeProvider with ChangeNotifier {
     void Function(String key)? scheduleSnapshotWriteObserver,
     void Function(String phase)? scheduleSnapshotJournalPhaseObserver,
     Future<bool> Function()? scheduleSnapshotJournalRemoveOverride,
-  })  : _scheduleGiteeDebounce = scheduleGiteeDebounce,
+  })  : _localSaveDebounce = localSaveDebounce,
+        _scheduleGiteeDebounce = scheduleGiteeDebounce,
         _scheduleAutoRefreshInterval = scheduleAutoRefreshInterval,
         _googleCalendarDebounce = googleCalendarDebounce,
         _identityModePlatformOverride = identityModePlatformOverride,
@@ -2308,7 +2321,7 @@ class TimeProvider with ChangeNotifier {
     _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
     _markPendingSync(dateKey);
-    _saveData();
+    _scheduleDataSave();
     notifyListeners();
   }
 
@@ -2327,7 +2340,7 @@ class TimeProvider with ChangeNotifier {
     _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
     _markPendingSync();
-    _saveData();
+    _scheduleDataSave();
     notifyListeners();
     _scheduleCalendarSync();
   }
@@ -2393,7 +2406,7 @@ class TimeProvider with ChangeNotifier {
       _targetStatsCache.invalidateDate(dateKey);
       _markSlotsDirty(dateKey);
       _markPendingSync(dateKey);
-      _saveData();
+      _scheduleDataSave();
       notifyListeners();
       if (dateKey == _getDateKey(_currentDate)) {
         _scheduleCalendarSync();
@@ -2435,7 +2448,7 @@ class TimeProvider with ChangeNotifier {
     } else {
       _markPendingSync(dateKey);
     }
-    _saveData();
+    _scheduleDataSave();
     notifyListeners();
   }
 
@@ -3341,6 +3354,7 @@ class TimeProvider with ChangeNotifier {
     List<TimeSlot> slots, {
     required String userCode,
     String? token,
+
     /// 调用方在推送开始前记录的编辑版本号；用于判断推送期间用户是否又改了
     /// 这一天（决定能不能把本地指纹写进同步基线）。
     int? expectedRevision,
@@ -4144,6 +4158,12 @@ class TimeProvider with ChangeNotifier {
 
     final selectedUserCode = _scheduleUser.code;
     _scheduleOverwriteInProgress = true;
+    if (_localSaveTimer != null) {
+      _localSaveTimer!.cancel();
+      _localSaveTimer = null;
+      // 覆盖成功后时间块已落盘；失败时仍须保存覆盖前尚未落盘的编辑。
+      _deferredScheduleSaveRequested = true;
+    }
     _appLogService.info(
       '覆盖拉取开始（身份 $selectedUserCode）',
       source: 'schedule_sync',
@@ -4359,6 +4379,7 @@ class TimeProvider with ChangeNotifier {
       _slotsRevision++;
       _syncDirty = false;
       _targetStatsCache.invalidate();
+      _invalidateStatisticsCache();
       notifyListeners();
       // 覆盖后本地 == 远端，重建同步基线，免得下一轮轮询又把这些天重新下载一遍。
       await _rebuildScheduleBaselineAfterOverwrite(
@@ -4478,7 +4499,11 @@ class TimeProvider with ChangeNotifier {
             : '日程拉取失败：$dateKey${result.error == null ? '' : '，${result.error}'}',
         source: 'schedule_sync',
       );
-      return (success: false, changed: false, sha: null); // notFound/error 计入失败数
+      return (
+        success: false,
+        changed: false,
+        sha: null
+      ); // notFound/error 计入失败数
     }
 
     final remote = parseScheduleContent(result.content);
@@ -5729,6 +5754,7 @@ class TimeProvider with ChangeNotifier {
     // The local restore has not been persisted. Keep the next close attempt
     // responsible for writing it, while the remote view remains read-only.
     _allSlotsDirty = true;
+    _invalidateStatisticsCache();
   }
 
   /// 远程视图覆盖的日期：Windows 三列（选中日 ±1 天），安卓仅选中日。
@@ -5770,7 +5796,8 @@ class TimeProvider with ChangeNotifier {
       entries: entries.map((e) => Map<String, dynamic>.from(e)).toList(),
       fetchedAt: DateTime.now(),
     );
-    if (_remoteViewCacheMaxDays > 0 && byDate.length > _remoteViewCacheMaxDays) {
+    if (_remoteViewCacheMaxDays > 0 &&
+        byDate.length > _remoteViewCacheMaxDays) {
       String? oldestKey;
       DateTime? oldestAt;
       byDate.forEach((key, value) {
@@ -5876,13 +5903,15 @@ class TimeProvider with ChangeNotifier {
     _debounceTimer = null;
     _scheduleGiteeTimer?.cancel();
     _scheduleGiteeTimer = null;
+    // 本地保存先完成，不能让网络等待延长普通编辑的防抖窗口。
+    await _saveData();
     // 这次补推是有意的，必须真的执行：先等正在跑的轮询释放同步锁（最多 5 秒）。
     // 超时或仍被占用就记成"欠一次后台补推"，由轮询收尾补做，不会丢。
     _backgroundFlushOwed = true;
     final inFlight = _scheduleAutoRefreshInFlight;
     if (inFlight != null) {
-      await inFlight
-          .timeout(const Duration(seconds: 5), onTimeout: () => false);
+      await inFlight.timeout(const Duration(seconds: 5),
+          onTimeout: () => false);
     }
     if (await _flushPendingScheduleGiteeSync()) {
       _backgroundFlushOwed = false;
@@ -6576,7 +6605,7 @@ class TimeProvider with ChangeNotifier {
           } else {
             _markPendingSync(dateKey);
           }
-          _saveData();
+          _scheduleDataSave();
           notifyListeners();
         }
       }
@@ -7257,7 +7286,7 @@ class TimeProvider with ChangeNotifier {
     _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
     _markPendingSync();
-    _saveData();
+    _scheduleDataSave();
     notifyListeners();
     _scheduleCalendarSync();
   }
@@ -7679,6 +7708,7 @@ class TimeProvider with ChangeNotifier {
   void _markCategoriesChanged() {
     _categoriesDirty = true;
     _categoriesRevision++;
+    _invalidateStatisticsCache();
   }
 
   void _upsertDeletedRelation({
@@ -8025,14 +8055,61 @@ class TimeProvider with ChangeNotifier {
   void _markSlotsDirty(String dateKey) {
     _slotsDirty.add(dateKey);
     _slotsRevision++;
+    _invalidateStatisticsCache(dateKey: dateKey);
   }
 
   void _markAllSlotsDirty() {
     _allSlotsDirty = true;
     _slotsRevision++;
+    _invalidateStatisticsCache();
   }
 
   // --- 数据持久化逻辑 ---
+
+  void _invalidateStatisticsCache({String? dateKey}) {
+    bool intersects(String? cacheKey) {
+      if (dateKey == null || cacheKey == null) return true;
+      final rangeKey = cacheKey.startsWith('_occ_')
+          ? cacheKey.substring('_occ_'.length)
+          : cacheKey;
+      final bounds = rangeKey.split('_');
+      if (bounds.length != 2) return true;
+      final start = bounds.first.split('T').first;
+      final end = bounds.last.split('T').first;
+      final day = _normalizeDateKey(dateKey);
+      return day.compareTo(start) >= 0 && day.compareTo(end) <= 0;
+    }
+
+    // 缓存跟随内存编辑立即失效，不等待防抖保存；范围外的编辑保留缓存。
+    if (intersects(_statsCacheKey)) {
+      _statsCache = null;
+      _statsCacheKey = null;
+    }
+    if (intersects(_occurrenceCacheKey)) {
+      _occurrenceCache = null;
+      _occurrenceCacheKey = null;
+    }
+  }
+
+  void _scheduleDataSave() {
+    if (!_isScheduleReady || _isSchedulePersistenceBlocked) return;
+    if (_scheduleOverwriteInProgress) {
+      _deferredScheduleSaveRequested = true;
+      return;
+    }
+    // 防抖期间也产生了新保存意图：旧保存不能清掉新增日期的同步队列等脏标记。
+    _saveRequestRevision++;
+    _localSaveTimer?.cancel();
+    if (!_isAppForeground || _localSaveDebounce == Duration.zero) {
+      _localSaveTimer = null;
+      unawaited(_saveData());
+      return;
+    }
+    _localSaveTimer = Timer(_localSaveDebounce, () {
+      _localSaveTimer = null;
+      unawaited(_saveData());
+    });
+  }
 
   Future<bool> _saveDataForRemoteViewTransition(int epoch) {
     return _saveData(
@@ -8046,6 +8123,10 @@ class TimeProvider with ChangeNotifier {
     _ScheduleSaveMode mode = _ScheduleSaveMode.normal,
     int? remoteViewTransitionEpoch,
   }) async {
+    // 所有需要等待落盘的调用都绕过防抖，并一并保存尚在等待的普通编辑。
+    _localSaveTimer?.cancel();
+    _localSaveTimer = null;
+    if (_categoriesDirty || _targetsDirty) _invalidateStatisticsCache();
     bool canPersist() {
       if (mode == _ScheduleSaveMode.remoteViewTransition) {
         return remoteViewTransitionEpoch != null &&
@@ -8119,17 +8200,6 @@ class TimeProvider with ChangeNotifier {
       return false;
     }
     if (snapshot != null) return _saveScheduleSnapshot(snapshot);
-
-    // Invalidate stats cache on any data change (包括分类/目标结构变化)
-    if (_slotsDirty.isNotEmpty ||
-        _allSlotsDirty ||
-        _categoriesDirty ||
-        _targetsDirty) {
-      _statsCache = null;
-      _statsCacheKey = null;
-      _occurrenceCache = null;
-      _occurrenceCacheKey = null;
-    }
 
     final prefs = await SharedPreferences.getInstance();
     if (!_isScheduleReady || !canPersist()) return false;
@@ -8206,6 +8276,7 @@ class TimeProvider with ChangeNotifier {
     bool slotsChanged = false;
     final allSlotsDirtyAtStart = _allSlotsDirty;
     final dirtyDatesAtStart = Set<String>.from(_slotsDirty);
+    final slotsRevisionAtStart = _slotsRevision;
     if (allSlotsDirtyAtStart) {
       // 全量保存所有时间块
       Map<String, dynamic> slotsJson = {};
@@ -8224,43 +8295,35 @@ class TimeProvider with ChangeNotifier {
         return false;
       }
       slotsChanged = true;
-      if (_saveRequestRevision == requestRevision) {
+      if (_saveRequestRevision == requestRevision &&
+          _slotsRevision == slotsRevisionAtStart) {
         _allSlotsDirty = false;
         _slotsDirty.clear();
       }
     } else if (dirtyDatesAtStart.isNotEmpty) {
       // 增量保存：先对本次请求的脏日期做快照，成功后再清理，
       // 保存期间产生的新修改会保留给下一次保存。
-      // 加载现有数据并合并
-      String? slotsStr = prefs.getString(_identityDataKey('daily_slots'));
-      Map<String, dynamic> slotsJson = {};
-      if (slotsStr != null) {
-        try {
-          slotsJson = json.decode(slotsStr) as Map<String, dynamic>;
-        } catch (_) {}
-      }
-      // 更新变化的日期
-      for (final dateKey in dirtyDatesAtStart) {
-        final daySlots = _dailySlots[dateKey];
-        if (daySlots != null) {
-          final recordedSlots = _serializeRecordedSlots(daySlots);
-          if (recordedSlots.isNotEmpty) {
-            slotsJson[dateKey] = recordedSlots;
-          } else {
-            slotsJson.remove(dateKey);
-          }
-        } else {
-          slotsJson.remove(dateKey);
-        }
-      }
+      final changedDays = <String, List<Map<String, dynamic>>>{
+        for (final dateKey in dirtyDatesAtStart)
+          dateKey: _dailySlots[dateKey] == null
+              ? <Map<String, dynamic>>[]
+              : _serializeRecordedSlots(_dailySlots[dateKey]!),
+      };
+      final encoded = await compute(
+        encodeScheduleJsonPatch,
+        ScheduleJsonPatch(
+          existingJson: prefs.getString(_identityDataKey('daily_slots')),
+          changedDays: changedDays,
+        ),
+      );
       if (!canPersist() ||
-          !await prefs.setString(
-              _identityDataKey('daily_slots'), json.encode(slotsJson)) ||
+          !await prefs.setString(_identityDataKey('daily_slots'), encoded) ||
           !canPersist()) {
         return false;
       }
       slotsChanged = true;
-      if (_saveRequestRevision == requestRevision) {
+      if (_saveRequestRevision == requestRevision &&
+          _slotsRevision == slotsRevisionAtStart) {
         _slotsDirty.removeAll(dirtyDatesAtStart);
       }
     }
@@ -8871,6 +8934,10 @@ class TimeProvider with ChangeNotifier {
       throw StateError(
         _scheduleMutationBlockedMessage() ?? '当前状态不允许导入备份',
       );
+    }
+    if ((_localSaveTimer != null || _ongoingSave != null) &&
+        !await _saveData()) {
+      throw StateError('导入前保存本地编辑失败，已保留原有数据');
     }
     final snapshot = await _BackupImportSnapshot.capture(this);
     try {
@@ -9829,8 +9896,7 @@ class TimeProvider with ChangeNotifier {
             final codes = value is List
                 ? value.map((item) => item?.toString() ?? '')
                 : <String>[if (value != null) value.toString()];
-            final owners =
-                codes.where((code) => code.isNotEmpty).toSet();
+            final owners = codes.where((code) => code.isNotEmpty).toSet();
             if (owners.isEmpty) return;
             _pendingGiteeOwnerByDate[dateKey] = owners;
           });

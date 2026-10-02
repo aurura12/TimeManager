@@ -18,6 +18,7 @@ import 'check_in_local_store.dart';
 import 'daily_review_chat_store.dart';
 import 'daily_review_summary.dart';
 import 'diary_search_service.dart';
+import 'schedule_json_codec.dart';
 import 'travel_local_store.dart';
 
 /// 仅从当前设备已有的本地数据建立统一搜索索引。
@@ -162,7 +163,7 @@ class UnifiedSearchService {
     _addAiReviewEntries(entries, await _loadAiReviewEntries());
     final provider = _timeProvider;
     if (provider != null) {
-      _addScheduleEntries(entries, prefs, provider);
+      await _addScheduleEntries(entries, prefs, provider);
     }
 
     final travel = await _travelLoader();
@@ -247,11 +248,11 @@ class UnifiedSearchService {
     }
   }
 
-  void _addScheduleEntries(
+  Future<void> _addScheduleEntries(
     List<GlobalSearchResult> entries,
     SharedPreferences prefs,
     TimeProvider provider,
-  ) {
+  ) async {
     final currentKind = AppIdentityService.personKind ?? provider.scheduleUser;
     final namespaced = !provider.isWindows;
     final kinds = namespaced
@@ -267,7 +268,8 @@ class UnifiedSearchService {
       final targets = isLiveCurrent
           ? provider.targets
           : _readTargets(prefs, kind, namespaced: namespaced);
-      final slots = _readSlots(prefs, kind, provider, namespaced: namespaced);
+      final slots =
+          await _readSlots(prefs, kind, provider, namespaced: namespaced);
       _addCategoryEntries(entries, categories, kind);
       _addTargetEntries(entries, targets, categories, kind);
       _addTimeRecordEntries(entries, slots, categories, kind);
@@ -316,19 +318,20 @@ class UnifiedSearchService {
     return result;
   }
 
-  Map<String, List<TimeSlot>> _readSlots(
+  Future<Map<String, List<TimeSlot>>> _readSlots(
     SharedPreferences prefs,
     DiaryKind kind,
     TimeProvider provider, {
     required bool namespaced,
-  }) {
+  }) async {
     final key = _dataKey('daily_slots', kind, namespaced: namespaced);
     final raw = prefs.getString(key);
     final result = <String, List<TimeSlot>>{};
     if (raw != null && raw.isNotEmpty) {
       try {
-        final decoded = json.decode(raw);
-        if (decoded is Map) {
+        final decoded =
+            await readScheduleJsonDays(raw, maxDays: maxSourceResults);
+        if (decoded != null) {
           for (final entry in decoded.entries.take(maxSourceResults)) {
             final dateKey = _canonicalDateKey(entry.key.toString());
             final items = entry.value;

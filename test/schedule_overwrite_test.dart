@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -189,6 +190,21 @@ class _RejectScheduleUserPreferenceStore
   Future<bool> setValue(String valueType, String key, Object value) {
     if (key == 'flutter.schedule_user_kind') {
       return Future<bool>.value(false);
+    }
+    return super.setValue(valueType, key, value);
+  }
+}
+
+class _IdentityWriteGateStore extends InMemorySharedPreferencesStore {
+  // ignore: use_super_parameters
+  _IdentityWriteGateStore(Map<String, Object> data) : super.withData(data);
+
+  Future<void> Function()? beforeIdentityWrite;
+
+  @override
+  Future<bool> setValue(String valueType, String key, Object value) async {
+    if (key == 'flutter.schedule_user_kind') {
+      await beforeIdentityWrite?.call();
     }
     return super.setValue(valueType, key, value);
   }
@@ -1529,6 +1545,23 @@ void main() {
 
     final prefs = await SharedPreferences.getInstance();
     final beforeSlots = prefs.getString('daily_slots');
+    // macOS 手动身份走偏好存储，拦截真实落盘路径；其它平台仍拦截安全存储。
+    _IdentityWriteGateStore? identityStore;
+    final originalStore = SharedPreferencesStorePlatform.instance;
+    if (Platform.isMacOS) {
+      identityStore = _IdentityWriteGateStore({
+        for (final key in prefs.getKeys()) 'flutter.$key': prefs.get(key)!,
+      });
+      identityStore.beforeIdentityWrite = () async {
+        if (!manualWriteStarted.isCompleted) manualWriteStarted.complete();
+        await releaseManualWrite.future;
+      };
+      SharedPreferencesStorePlatform.instance = identityStore;
+    }
+    addTearDown(() {
+      if (!releaseManualWrite.isCompleted) releaseManualWrite.complete();
+      SharedPreferencesStorePlatform.instance = originalStore;
+    });
     blockManualWrite = true;
     final setter = provider.setScheduleUser(DiaryKind.j);
     await manualWriteStarted.future;
@@ -1536,7 +1569,13 @@ void main() {
     final overwrite = provider.overwriteAllSchedulesFromGitee();
     expect(await overwrite, isFalse);
     expect(provider.scheduleUser, DiaryKind.g);
-    expect(prefs.getString('schedule_user_kind'), 'g');
+    // SharedPreferences 的内存值可能已先更新，持久存储仍须保持旧身份。
+    expect(
+      identityStore == null
+          ? prefs.getString('schedule_user_kind')
+          : (await identityStore.getAll())['flutter.schedule_user_kind'],
+      'g',
+    );
     expect(prefs.getString('daily_slots'), beforeSlots);
     expect(prefs.getString('schedule_overwrite_transaction_journal'), isNull);
     expect(listPathsCalls, 0);
@@ -1647,13 +1686,19 @@ void main() {
       const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
       (call) async {
         final arguments = call.arguments;
-        final isManualKind = arguments is Map &&
-            arguments['key'] == 'app_user_identity_manual_kind';
-        if (call.method == 'read' && isManualKind) {
+        // 身份加载在所有平台都会读 Google 身份；macOS 的手动身份已不读钥匙串。
+        final isGoogleEmail =
+            arguments is Map && arguments['key'] == 'app_user_identity_email';
+        if (call.method == 'read' && isGoogleEmail) {
           if (!identityLoadStarted.isCompleted) {
             identityLoadStarted.complete();
           }
           await releaseIdentityLoad.future;
+          return null;
+        }
+        if (call.method == 'read' &&
+            arguments is Map &&
+            arguments['key'] == 'app_user_identity_manual_kind') {
           return 'g';
         }
         return null;
@@ -2512,15 +2557,19 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 300));
 
     await provider.toggleRemoteScheduleView();
-    expect(pulledDateKeys.containsAll({'2026-09-05', '2026-09-06', '2026-09-07'}),
-        isTrue, reason: '桌面三列进入时应全部拉取');
+    expect(
+        pulledDateKeys.containsAll({'2026-09-05', '2026-09-06', '2026-09-07'}),
+        isTrue,
+        reason: '桌面三列进入时应全部拉取');
 
     // 向前滚动一天：新窗口 09-04/05/06，三个日期都应重新刷新（不只新进入的一天）。
     pulledDateKeys.clear();
     provider.goToDate(DateTime(2026, 9, 5));
     await Future<void>.delayed(const Duration(milliseconds: 300));
-    expect(pulledDateKeys.containsAll({'2026-09-04', '2026-09-05', '2026-09-06'}),
-        isTrue, reason: '切日应刷新整个可见窗口');
+    expect(
+        pulledDateKeys.containsAll({'2026-09-04', '2026-09-05', '2026-09-06'}),
+        isTrue,
+        reason: '切日应刷新整个可见窗口');
   });
 
   test('切换身份清空远程视图缓存', () async {

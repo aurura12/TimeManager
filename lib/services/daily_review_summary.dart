@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app_identity_service.dart';
+import 'schedule_json_codec.dart';
 import 'siliconflow_ai_service.dart';
 
 enum DailyReviewAiError {
@@ -118,13 +119,15 @@ class DailyReviewSummaryBuilder {
     final prefs = await SharedPreferences.getInstance();
     final slotsKey =
         AppIdentityService.dataKeyForCurrentIdentity('daily_slots');
-    final dataHash = _hashDayData(prefs, date, slotsKey: slotsKey);
+    final cacheKey = AppIdentityService.dataKeyForCurrentIdentity(
+      '$_cachePrefix${dateKey(date)}',
+    );
+    final days = await _loadScheduleDays(prefs, slotsKey, [date]);
+    final dataHash = _hashDayData(days, date);
     final body = await _loadCachedAiBody(
       prefs: prefs,
       dataHash: dataHash,
-      cacheKey: AppIdentityService.dataKeyForCurrentIdentity(
-        '$_cachePrefix${dateKey(date)}',
-      ),
+      cacheKey: cacheKey,
       cacheDate: date,
     );
     if (body == null) return null;
@@ -155,6 +158,12 @@ class DailyReviewSummaryBuilder {
         AppIdentityService.dataKeyForCurrentIdentity('daily_slots');
     final cutoff = (now ?? DateTime.now()).toUtc().subtract(cacheRetention);
     final candidates = <DailyReviewSummarySearchEntry>[];
+    final cacheDates = {
+      for (final key in prefs.getKeys())
+        if (key.startsWith(prefix))
+          if (_dateFromCacheKey(key, prefix) case final DateTime date) date,
+    };
+    final days = await _loadScheduleDays(prefs, slotsKey, cacheDates);
 
     // Only inspect keys under the exact current-identity cache prefix. No
     // filesystem paths or arbitrary SharedPreferences values are scanned.
@@ -173,7 +182,7 @@ class DailyReviewSummaryBuilder {
           continue;
         }
 
-        final dataHash = _hashDayData(prefs, date, slotsKey: slotsKey);
+        final dataHash = _hashDayData(days, date);
         if (cached.hash != dataHash) continue;
         final body = cached.body;
         if (body == null ||
@@ -230,11 +239,11 @@ class DailyReviewSummaryBuilder {
       );
     }
 
-    final todayStats = await _loadDayStats(prefs, date, slotsKey: slotsKey);
     final yesterday = date.subtract(const Duration(days: 1));
-    final yesterdayStats =
-        await _loadDayStats(prefs, yesterday, slotsKey: slotsKey);
-    final dataHash = _hashDayData(prefs, date, slotsKey: slotsKey);
+    final days = await _loadScheduleDays(prefs, slotsKey, [date, yesterday]);
+    final todayStats = _loadDayStats(days, date);
+    final yesterdayStats = _loadDayStats(days, yesterday);
+    final dataHash = _hashDayData(days, date);
 
     if (!SiliconFlowAiService.hasApiKeyConfigured) {
       return DailyReviewAiResult(
@@ -259,7 +268,7 @@ class DailyReviewSummaryBuilder {
       );
     }
 
-    final timeline = await _loadDayTimeline(prefs, date, slotsKey: slotsKey);
+    final timeline = _loadDayTimeline(days, date);
     final labelToCategory =
         await _loadLabelCategoryMap(prefs, categoriesKey: categoriesKey);
     final highlights = _buildHighlights(timeline, todayStats);
@@ -271,8 +280,7 @@ class DailyReviewSummaryBuilder {
       timeline: timeline,
       highlights: highlights,
       labelToCategory: labelToCategory,
-      unrecordedGaps:
-          await _loadUnrecordedGaps(prefs, date, slotsKey: slotsKey),
+      unrecordedGaps: _loadUnrecordedGaps(days, date),
     );
 
     final result = await SiliconFlowAiService.generateDailyReview(
@@ -317,11 +325,11 @@ class DailyReviewSummaryBuilder {
         AppIdentityService.dataKeyForCurrentIdentity('daily_slots');
     final categoriesKey =
         AppIdentityService.dataKeyForCurrentIdentity('categories');
-    final todayStats = await _loadDayStats(prefs, date, slotsKey: slotsKey);
     final yesterday = date.subtract(const Duration(days: 1));
-    final yesterdayStats =
-        await _loadDayStats(prefs, yesterday, slotsKey: slotsKey);
-    final timeline = await _loadDayTimeline(prefs, date, slotsKey: slotsKey);
+    final days = await _loadScheduleDays(prefs, slotsKey, [date, yesterday]);
+    final todayStats = _loadDayStats(days, date);
+    final yesterdayStats = _loadDayStats(days, yesterday);
+    final timeline = _loadDayTimeline(days, date);
     final labelToCategory =
         await _loadLabelCategoryMap(prefs, categoriesKey: categoriesKey);
     return _buildDayContextString(
@@ -330,8 +338,7 @@ class DailyReviewSummaryBuilder {
       yesterdayStats: yesterdayStats,
       timeline: timeline,
       labelToCategory: labelToCategory,
-      unrecordedGaps:
-          await _loadUnrecordedGaps(prefs, date, slotsKey: slotsKey),
+      unrecordedGaps: _loadUnrecordedGaps(days, date),
       fullDetail: true,
     );
   }
@@ -340,11 +347,12 @@ class DailyReviewSummaryBuilder {
   static Future<String> computeDayDataHash(DateTime date) async {
     await AppIdentityService.load();
     final prefs = await SharedPreferences.getInstance();
-    return _hashDayData(
+    final days = await _loadScheduleDays(
       prefs,
-      date,
-      slotsKey: AppIdentityService.dataKeyForCurrentIdentity('daily_slots'),
+      AppIdentityService.dataKeyForCurrentIdentity('daily_slots'),
+      [date],
     );
+    return _hashDayData(days, date);
   }
 
   static String _buildDayContextString({
@@ -596,34 +604,33 @@ class DailyReviewSummaryBuilder {
     return '$sign${_formatDuration(delta.abs())}';
   }
 
-  static String _hashDayData(
+  static Future<Map<String, dynamic>?> _loadScheduleDays(
     SharedPreferences prefs,
-    DateTime date, {
-    required String slotsKey,
-  }) {
+    String slotsKey,
+    Iterable<DateTime> dates,
+  ) {
+    final dateKeys = dates.map(dateKey).toSet();
+    if (dateKeys.isEmpty) return Future.value(null);
+    return readScheduleJsonDays(prefs.getString(slotsKey), dateKeys: dateKeys);
+  }
+
+  static String _hashDayData(Map<String, dynamic>? days, DateTime date) {
     final key = dateKey(date);
-    final slotsStr = prefs.getString(slotsKey) ?? '';
+    if (days == null) return '${key}_empty'.hashCode.toString();
     try {
-      final root = json.decode(slotsStr) as Map<String, dynamic>?;
-      final day = root?[key];
-      return json.encode(day ?? []).hashCode.toString();
+      return json.encode(days[key] ?? []).hashCode.toString();
     } catch (_) {
       return '${key}_empty'.hashCode.toString();
     }
   }
 
-  static Future<List<_TimeBlock>> _loadDayTimeline(
-    SharedPreferences prefs,
-    DateTime date, {
-    required String slotsKey,
-  }) async {
+  static List<_TimeBlock> _loadDayTimeline(
+    Map<String, dynamic>? days,
+    DateTime date,
+  ) {
     final key = dateKey(date);
-    final slotsStr = prefs.getString(slotsKey);
-    if (slotsStr == null) return [];
-
     try {
-      final root = json.decode(slotsStr) as Map<String, dynamic>;
-      final day = root[key];
+      final day = days?[key];
       if (day is! List) return [];
 
       final entries = <_SlotEntry>[];
@@ -683,20 +690,15 @@ class DailyReviewSummaryBuilder {
     }
   }
 
-  static Future<List<String>> _loadUnrecordedGaps(
-    SharedPreferences prefs,
+  static List<String> _loadUnrecordedGaps(
+    Map<String, dynamic>? days,
     DateTime date, {
     int minSlots = 3,
     int maxGaps = 3,
-    required String slotsKey,
-  }) async {
+  }) {
     final key = dateKey(date);
-    final slotsStr = prefs.getString(slotsKey);
-    if (slotsStr == null) return const [];
-
     try {
-      final root = json.decode(slotsStr) as Map<String, dynamic>;
-      final day = root[key];
+      final day = days?[key];
       if (day is! List) return const [];
 
       final recorded = <int>{};
@@ -753,18 +755,13 @@ class DailyReviewSummaryBuilder {
     return '${fmt(start)}-${fmt(end)}';
   }
 
-  static Future<_DayStats> _loadDayStats(
-    SharedPreferences prefs,
-    DateTime date, {
-    required String slotsKey,
-  }) async {
+  static _DayStats _loadDayStats(
+    Map<String, dynamic>? days,
+    DateTime date,
+  ) {
     final key = dateKey(date);
-    final slotsStr = prefs.getString(slotsKey);
-    if (slotsStr == null) return const _DayStats.empty();
-
     try {
-      final root = json.decode(slotsStr) as Map<String, dynamic>;
-      final day = root[key];
+      final day = days?[key];
       if (day is! List) return const _DayStats.empty();
 
       final labelMinutes = <String, int>{};

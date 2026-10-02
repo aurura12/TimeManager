@@ -58,7 +58,7 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
   - `targets/{userCode}.json` — 目标文档（合并 + 删除墓碑，见 `TargetDocument`）
   - `schedule/{userCode}/{dateKey}.json` — 日程，按天一份（覆盖拉取校验见 `ScheduleOverwriteSnapshot`）
   - 日记 / 出行 / 打卡 — `index.txt` 列表 + 逐条文件（日记文件名形如 `…YYYY年M月D日….md`，日期解析见 `lib/utils/diary_remote_path_utils.dart`）
-- **增量保存**：`TimeProvider` 追踪 `_categoriesDirty` / `_targetsDirty` / `_slotsDirty` 脏标记，只序列化变化部分
+- **增量保存**：`TimeProvider` 追踪 `_categoriesDirty` / `_targetsDirty` / `_slotsDirty` 脏标记，只序列化变化部分。普通时间块编辑经 `_scheduleDataSave` 做 250ms 防抖；`_saveData` 直接取消防抖并等待落盘，供同步、切后台、切身份、导入等流程使用。`daily_slots` 格式保持单个 JSON blob，增量分支通过 `ScheduleJsonPatch` 在同一后台 isolate 中解码、合并和编码。保存成功清脏时同时核对保存请求版本与槽位编辑版本，避免后台编码期间的新编辑被清掉。统计缓存在内存修改时按日期区间立即失效，不能等防抖落盘再失效
 - **撤销系统**：`_undoStacks` 深拷贝快照，最多 20 步
 - **Google 日历同步**：3 秒防抖 + `_isSyncing` 锁防并发。事件以 "乖乖爱心晶晶" 为识别签名，区分本 App 创建和外部事件
 - **打卡合并策略**：`CheckInDocument.merge(local, remote)` 按 ID 去重，同 ID 保留较新记录
@@ -202,6 +202,7 @@ Never commit them.
 - `test/widget_test.dart` — smoke test + platform channel mock 模板：`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道、`tester.runAsync` 真实 IO。新写 widget 测试可参照此文件搭建环境
 - `test/support/fake_app_log_store.dart` — 可注入失败的 Fake store
 - `test/support/fake_reminder_backend.dart` — 两类提醒共用的后端 Fake（刻意不实现删除通道的方法，作为「绝不删通道」的编译期保证）
+- `test/time_provider_save_test.dart` / `test/schedule_json_codec_test.dart` — 普通编辑保存合并、切后台/身份即时落盘、保存期间新编辑与待同步归属不丢、统计缓存按日期失效、后台 JSON 合并及旧哈希兼容
 - `test/diary_reminder_service_test.dart` / `diary_reminder_diagnostics_test.dart` / `diary_reminder_drawer_test.dart` / `time_wheel_sheet_test.dart` — 写日记提醒的排程、原生事件导入、抽屉 UI 与滚轮时间面板
 - `test/check_in_reminder_service_test.dart` / `check_in_reminder_ui_test.dart` — 打卡提醒的多实例排程与编辑页入口
 - 写提醒相关的 widget 测试要注意：抽屉是长 `ListView`，懒构建会让折叠线以下的条目根本不挂载，需要把测试视口调高；另外 `AppIdentityService.load()` 每次都会重读偏好，测试里的身份必须放在偏好键 `schedule_user_kind` 里，靠 `adoptManualKind` 设进去会被覆盖

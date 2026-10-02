@@ -32,6 +32,97 @@ void main() {
         .setMockMethodCallHandler(secureStorageChannel, null);
   });
 
+  test('后台读取保持旧日数据哈希兼容，多日缓存各自校验且修改后失效', () async {
+    final first = DateTime(2026, 9, 14);
+    final second = DateTime(2026, 9, 13);
+    final firstDay = [
+      {'i': 48, 'l': '工作', 'c': 4288452714, 'ts': 100, 'cid': 'focus'},
+    ];
+    final secondDay = [
+      {'i': 60, 'l': '阅读', 'fc': true, 'eid': 'event-id', 'ts': 200},
+      {'i': 61, 'del': true, 'ts': 300},
+    ];
+    final root = {
+      DailyReviewSummaryBuilder.dateKey(first): firstDay,
+      DailyReviewSummaryBuilder.dateKey(second): secondDay,
+      '2020-01-01': [
+        {'i': 0, 'l': '其它历史'},
+      ],
+    };
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('identity_j_daily_slots', jsonEncode(root));
+    expect(
+      await DailyReviewSummaryBuilder.computeDayDataHash(first),
+      jsonEncode(firstDay).hashCode.toString(),
+    );
+    expect(
+      await DailyReviewSummaryBuilder.computeDayDataHash(second),
+      jsonEncode(secondDay).hashCode.toString(),
+    );
+    for (final date in [first, second]) {
+      await prefs.setString(
+        _summaryKey(date),
+        jsonEncode({
+          'hash': jsonEncode(root[DailyReviewSummaryBuilder.dateKey(date)])
+              .hashCode
+              .toString(),
+          'body': '${date.day}日复盘',
+          'createdAt': date.toUtc().toIso8601String(),
+        }),
+      );
+    }
+    final entries = await DailyReviewSummaryBuilder.loadCachedForSearch(
+      now: DateTime(2026, 9, 15),
+    );
+    expect(entries.map((entry) => entry.date), [first, second]);
+    root[DailyReviewSummaryBuilder.dateKey(second)] = [
+      {'i': 60, 'l': '修改后的阅读', 'ts': 400},
+    ];
+    await prefs.setString('identity_j_daily_slots', jsonEncode(root));
+    final refreshed = await DailyReviewSummaryBuilder.loadCachedForSearch(
+      now: DateTime(2026, 9, 15),
+    );
+    expect(refreshed.map((entry) => entry.date), [first]);
+  });
+
+  test('复盘上下文复用当日和昨日数据，保留统计、时间轴与身份隔离', () async {
+    final date = DateTime(2026, 9, 14);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'identity_j_daily_slots',
+      jsonEncode({
+        '2026-09-14': [
+          {'i': 48, 'l': '工作'},
+          {'i': 49, 'l': '工作'},
+          {'i': 72, 'l': '会议', 'fc': true},
+          {'i': 70, 'del': true, 'ts': 100},
+        ],
+        '2026-09-13': [
+          {'i': 48, 'l': '阅读'},
+        ],
+        '2020-01-01': [
+          {'i': 0, 'l': '其它历史'},
+        ],
+      }),
+    );
+    await prefs.setString(
+      'identity_g_daily_slots',
+      jsonEncode({
+        '2026-09-14': [
+          {'i': 48, 'l': '另一身份'},
+        ],
+      }),
+    );
+    final context = await DailyReviewSummaryBuilder.buildDayContext(date);
+    expect(context, contains('记录总时长 30 分钟'));
+    expect(context, contains('自主 20 分钟，日历/会议 10 分钟'));
+    expect(context, contains('08:00-08:20'));
+    expect(context, contains('12:00-12:10'));
+    expect(context, contains('昨日侧重：阅读10分钟'));
+    expect(context, isNot(contains('其它历史')));
+    expect(context, isNot(contains('另一身份')));
+  });
+
   test('摘要枚举只返回当前身份、未过期且哈希匹配的缓存', () async {
     final now = DateTime(2026, 9, 15, 12);
     final validDate = DateTime(2026, 9, 14);
