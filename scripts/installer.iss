@@ -10,7 +10,7 @@
 ; 版本号需与 pubspec.yaml 的 version 保持一致（只取前三段，如 1.84.0+1 → 1.84.0）
 
 #define MyAppName "时间块"
-#define MyAppVersion "1.95.0"
+#define MyAppVersion "1.110.0"
 #define MyAppPublisher "时间块"
 #define MyAppExeName "time_manager.exe"
 ; Flutter Windows release 产物目录
@@ -64,4 +64,4 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 
 ; 卸载前确保应用未运行，避免删除被占用文件
 [UninstallRun]
-Filename: "{cmd}"; Parameters: "/c taskkill /f /im ""{#MyAppExeName}"" >nul 2>&1"; Flags: runhidden
+Filename: "{cmd}"; Parameters: "/c taskkill /f /im ""{#MyAppExeName}"" >nul 2>&1"; Flags: runhidden; RunOnceId: "KillTimeManager"
