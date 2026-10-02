@@ -16,7 +16,21 @@ foreach ($artifactPath in $Artifact) {
         throw "安装包必须是普通文件，不能是目录或符号链接：$artifactPath"
     }
 
-    $digest = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    # 用 .NET 直接算摘要，不依赖 Get-FileHash（它来自 Microsoft.PowerShell.Utility 模块，
+    # 在 PSModulePath 被改写的终端里可能加载不到）
+    $stream = [IO.File]::OpenRead($file.FullName)
+    try {
+        $algorithm = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hashBytes = $algorithm.ComputeHash($stream)
+        } finally {
+            $algorithm.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+
+    $digest = ([BitConverter]::ToString($hashBytes) -replace '-', '').ToLowerInvariant()
     if ($digest -notmatch '^[a-f0-9]{64}$') {
         throw "无法生成有效的 SHA-256：$($file.FullName)"
     }
@@ -24,5 +38,5 @@ foreach ($artifactPath in $Artifact) {
     $metadataPath = "$($file.FullName).sha256"
     $content = "$digest  $($file.Name)" + [Environment]::NewLine
     [IO.File]::WriteAllText($metadataPath, $content, [Text.Encoding]::ASCII)
-    Write-Host "已生成 SHA-256：$metadataPath"
+    [Console]::WriteLine("已生成 SHA-256：$metadataPath")
 }
