@@ -26,6 +26,7 @@ import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import 'background_image_layer.dart';
+import 'theme_color_sheet.dart';
 import 'time_wheel_sheet.dart';
 
 class ProfileSettingsDrawer extends StatefulWidget {
@@ -187,6 +188,20 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                             ),
                           ],
                         ),
+                      ),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.color_lens_outlined),
+                      title: const Text('主题色'),
+                      subtitle: Text(
+                        AppThemeColorPreset.labelFor(
+                          themeModeProvider.themeColor,
+                        ),
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => showThemeColorSheet(
+                        context,
+                        provider: themeModeProvider,
                       ),
                     ),
                     ListTile(

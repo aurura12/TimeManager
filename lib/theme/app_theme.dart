@@ -82,9 +82,12 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
     final isDark = scheme.brightness == Brightness.dark;
     final emptyGridColor =
         isDark ? const Color(0xFF2B312D) : const Color(0xFFE6E9E4);
-    final subtleColor = isDark ? const Color(0xFF232725) : const Color(0xFFF1F3F0);
-    final cardColor = isDark ? const Color(0xFF1B1F1C) : const Color(0xFFFFFFFF);
-    final panelColor = isDark ? const Color(0xFF161A18) : const Color(0xFFFFFFFF);
+    final subtleColor =
+        isDark ? const Color(0xFF232725) : const Color(0xFFF1F3F0);
+    final cardColor =
+        isDark ? const Color(0xFF1B1F1C) : const Color(0xFFFFFFFF);
+    final panelColor =
+        isDark ? const Color(0xFF161A18) : const Color(0xFFFFFFFF);
     // 背景启用时让界面表面透出照片；gridEmpty 自己是"空"区域，保持更透的独立常量。
     final alpha = wallpaperEnabled ? surfaceOpacity.clamp(0.0, 1.0) : 1.0;
     return AppSurfaces(
@@ -164,9 +167,8 @@ class AppSurfaces extends ThemeExtension<AppSurfaces> {
   }
 
   @override
-  int get hashCode => Object.hash(
-      page, card, panel, subtle, sidebar, gridEmpty, border, navSelected,
-      joinDivider, overlay);
+  int get hashCode => Object.hash(page, card, panel, subtle, sidebar, gridEmpty,
+      border, navSelected, joinDivider, overlay);
 }
 
 /// 语义实色（分类色 / 目标色 / 身份色 / 奖牌色）在深色模式下的适配。
@@ -192,7 +194,8 @@ extension AppSemanticColorAdaptation on BuildContext {
   }
 
   /// 语义实色**卡片填充**：深色压暗一档 + 背景照片启用时变半透明。
-  Color adaptSemanticFill(Color color) => wallpaperFill(adaptSemanticColor(color));
+  Color adaptSemanticFill(Color color) =>
+      wallpaperFill(adaptSemanticColor(color));
 }
 
 /// Wallpaper state consumed by page scaffolds and the settings preview.
@@ -255,33 +258,64 @@ class AppWallpaperTheme extends ThemeExtension<AppWallpaperTheme> {
   int get hashCode => Object.hash(enabled, safePhotoOpacity, surfaceOpacity);
 }
 
+/// 外观设置中的预设主题色。业务语义色仍由 [AppSemanticColors] 管理。
+enum AppThemeColorPreset {
+  olive('橄榄绿', AppSemanticColors.brand),
+  blue('天空蓝', AppSemanticColors.identityGuaiGuai),
+  purple('薰衣紫', AppSemanticColors.lavender),
+  pink('樱花粉', AppSemanticColors.identityJingJing),
+  orange('暖橙色', AppSemanticColors.warning),
+  yellow('芥末黄', AppSemanticColors.mustard),
+  rose('玫瑰红', AppSemanticColors.rose),
+  teal('湖水青', Color(0xFF008577));
+
+  const AppThemeColorPreset(this.label, this.color);
+
+  final String label;
+  final Color color;
+
+  static String hexOf(Color color) =>
+      '#${(color.toARGB32() & 0x00FFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}';
+
+  static String labelFor(Color color) {
+    for (final preset in values) {
+      if (preset.color == color) return preset.label;
+    }
+    return '自定义 · ${hexOf(color)}';
+  }
+}
+
 /// 应用主题。
 ///
 /// 职责只有两件事：
-/// 1. 由品牌种子色生成 `ColorScheme`，并给出浅色/深色的表面层级；
+/// 1. 由用户选择的种子色生成 `ColorScheme`，并给出浅色/深色的表面层级；
 /// 2. 为所有 Material 组件注册统一的圆角、高度、间距。
 ///
 /// 页面里不要再写 `const Color(0xFF9CB86A)` 之类的品牌色字面量。
 abstract final class AppTheme {
-  /// 品牌种子色。**唯一**定义处。
+  /// 默认主题色，沿用品牌绿。
   static const Color seedColor = AppSemanticColors.brand;
 
   static ThemeData light({
+    Color seedColor = AppTheme.seedColor,
     bool backgroundEnabled = false,
     double surfaceOpacity = AppSurfaces.defaultSurfaceOpacity,
   }) =>
       _build(
         Brightness.light,
+        seedColor: seedColor,
         backgroundEnabled: backgroundEnabled,
         surfaceOpacity: surfaceOpacity,
       );
 
   static ThemeData dark({
+    Color seedColor = AppTheme.seedColor,
     bool backgroundEnabled = false,
     double surfaceOpacity = AppSurfaces.defaultSurfaceOpacity,
   }) =>
       _build(
         Brightness.dark,
+        seedColor: seedColor,
         backgroundEnabled: backgroundEnabled,
         surfaceOpacity: surfaceOpacity,
       );
@@ -289,23 +323,26 @@ abstract final class AppTheme {
   /// 兼容旧调用点（旧 API 是 `AppTheme.light` / `AppTheme.dark` 方法）。
   static ThemeData themeFor(
     Brightness brightness, {
+    Color seedColor = AppTheme.seedColor,
     bool backgroundEnabled = false,
     double surfaceOpacity = AppSurfaces.defaultSurfaceOpacity,
   }) =>
       _build(
         brightness,
+        seedColor: seedColor,
         backgroundEnabled: backgroundEnabled,
         surfaceOpacity: surfaceOpacity,
       );
 
   static ThemeData _build(
     Brightness brightness, {
+    Color seedColor = AppTheme.seedColor,
     bool backgroundEnabled = false,
     double surfaceOpacity = AppSurfaces.defaultSurfaceOpacity,
   }) {
     final isDark = brightness == Brightness.dark;
     final originalScheme = ColorScheme.fromSeed(
-      seedColor: seedColor,
+      seedColor: AppSemanticColors.opaque(seedColor),
       brightness: brightness,
     );
     final originalSurfaces = AppSurfaces.forColorScheme(originalScheme);
@@ -354,8 +391,8 @@ abstract final class AppTheme {
                 .withValues(alpha: surfaceAlpha),
             surfaceContainerLow: originalScheme.surfaceContainerLow
                 .withValues(alpha: surfaceAlpha),
-            surfaceContainer: originalScheme.surfaceContainer
-                .withValues(alpha: surfaceAlpha),
+            surfaceContainer:
+                originalScheme.surfaceContainer.withValues(alpha: surfaceAlpha),
           )
         : originalScheme;
     final surfaces = AppSurfaces.forColorScheme(

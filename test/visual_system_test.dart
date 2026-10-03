@@ -218,6 +218,9 @@ void main() {
           const Color(0xFF00FF00));
       expect(AppSemanticColors.parseOpaqueHex('FFF'), isNull);
       expect(AppSemanticColors.parseOpaqueHex('GGGGGG'), isNull);
+      expect(AppSemanticColors.parseOpaqueHex('ZZFF0000'), isNull);
+      expect(AppSemanticColors.parseOpaqueHex('-FFFFF'), isNull);
+      expect(AppSemanticColors.parseOpaqueHex('FF#0000'), isNull);
     });
 
     test('身份色、奖牌色、日历导入色保持原值', () {

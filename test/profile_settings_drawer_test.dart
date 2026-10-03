@@ -133,6 +133,23 @@ void main() {
     );
   });
 
+  testWidgets('theme color setting opens the preset and custom color sheet',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final provider = TimeProvider();
+    addTearDown(provider.dispose);
+
+    await openDrawerWith(tester, provider, desktop: true);
+    await tester.tap(find.text('主题色'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('橄榄绿'), findsWidgets);
+    expect(find.text('天空蓝'), findsOneWidget);
+    expect(find.text('自定义色值'), findsOneWidget);
+    expect(find.text('配色预览'), findsOneWidget);
+    expect(find.text('应用主题色'), findsOneWidget);
+  });
+
   testWidgets('desktop identity switch requires confirmation', (tester) async {
     final provider = await createIdentityProvider(tester);
     addTearDown(provider.dispose);

@@ -1,9 +1,68 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:time_manager/theme/app_semantic_colors.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'package:time_manager/theme/background_image_contrast.dart';
 
 void main() {
+  test('所有主题色及极端自定义色保留浅深色和背景图的对比度契约', () {
+    for (final color in [
+      ...AppThemeColorPreset.values.map((preset) => preset.color),
+      Colors.black,
+      Colors.white,
+      const Color(0x80FFFFFF),
+    ]) {
+      for (final brightness in Brightness.values) {
+        for (final backgroundEnabled in [false, true]) {
+          final theme = AppTheme.themeFor(
+            brightness,
+            seedColor: color,
+            backgroundEnabled: backgroundEnabled,
+            surfaceOpacity: 0.4,
+          );
+          final scheme = theme.colorScheme;
+          final expectedScheme = ColorScheme.fromSeed(
+            seedColor: AppSemanticColors.opaque(color),
+            brightness: brightness,
+          );
+          expect(scheme.primary, expectedScheme.primary);
+          expect(scheme.primaryContainer, expectedScheme.primaryContainer);
+          for (final pair in [
+            (scheme.primary, scheme.onPrimary),
+            (scheme.primaryContainer, scheme.onPrimaryContainer),
+          ]) {
+            expect(
+              BackgroundImageContrast.contrastRatio(pair.$1, pair.$2),
+              greaterThanOrEqualTo(BackgroundImageContrast.bodyTextRatio),
+            );
+          }
+          final surfaces = theme.extension<AppSurfaces>()!;
+          final wallpaper = theme.extension<AppWallpaperTheme>()!;
+          final backdrop = backgroundEnabled
+              ? BackgroundImageContrast.worstPhotoBackdrop(
+                  brightness: brightness,
+                  pageColor: surfaces.page,
+                  photoOpacity: wallpaper.safePhotoOpacity,
+                )
+              : surfaces.page;
+          for (final foreground in [
+            scheme.onSurface,
+            scheme.onSurfaceVariant,
+          ]) {
+            expect(
+              BackgroundImageContrast.contrastRatio(foreground, backdrop),
+              greaterThanOrEqualTo(BackgroundImageContrast.bodyTextRatio),
+              reason: '$color / $brightness / wallpaper=$backgroundEnabled',
+            );
+          }
+          expect(surfaces.overlay.a, 1);
+          expect(scheme.surfaceContainerHigh.a, 1);
+          expect(surfaces.card.a, closeTo(backgroundEnabled ? 0.4 : 1, 1e-6));
+        }
+      }
+    }
+  });
+
   test('safe wallpaper opacity preserves AA text and icon contrast', () {
     for (final brightness in Brightness.values) {
       final theme = brightness == Brightness.light

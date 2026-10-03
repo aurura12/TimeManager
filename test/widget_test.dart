@@ -16,6 +16,7 @@ import 'package:time_manager/providers/background_image_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/screens/home_screen.dart';
+import 'package:time_manager/theme/app_semantic_colors.dart';
 
 /// 测试用的 GoogleSignInPlatform fake：所有方法返回安全默认值，
 /// 避免 TimeProvider 初始化时 GoogleCalendarService.restoreSignIn 抛 UnimplementedError
@@ -68,7 +69,11 @@ class _FakeGoogleSignInPlatform extends GoogleSignInPlatform {
 
 void main() {
   testWidgets('App smoke test', (WidgetTester tester) async {
-    SharedPreferences.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({
+      'app_theme_mode': 'dark',
+      ThemeModeProvider.themeColorStorageKey:
+          AppSemanticColors.lavender.toARGB32(),
+    });
     GoogleSignInPlatform.instance = _FakeGoogleSignInPlatform();
 
     // mock 插件方法通道，避免启动期触发原生调用失败
@@ -107,6 +112,34 @@ void main() {
     await tester.pump();
 
     expect(find.byType(TimeManagerApp), findsOneWidget);
+    final initialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(initialApp.themeMode, ThemeMode.dark);
+    for (final theme in [initialApp.theme!, initialApp.darkTheme!]) {
+      expect(
+        theme.colorScheme.primary,
+        ColorScheme.fromSeed(
+          seedColor: AppSemanticColors.lavender,
+          brightness: theme.brightness,
+        ).primary,
+      );
+    }
+
+    final appearance = tester
+        .element(find.byType(TimeManagerApp))
+        .read<ThemeModeProvider>();
+    // 偏好 Future 在启动时的真实事件循环中创建，更新也在同一环境中等待。
+    await tester.runAsync(() async {
+      await appearance.setThemeColor(AppSemanticColors.info);
+      await appearance.setThemeMode(ThemeMode.light);
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    final updatedApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(updatedApp.themeMode, ThemeMode.light);
+    expect(
+      Theme.of(tester.element(find.byType(HomeScreen))).colorScheme.primary,
+      ColorScheme.fromSeed(seedColor: AppSemanticColors.info).primary,
+    );
   });
 
   testWidgets('首页不显示每日复盘入口', (WidgetTester tester) async {

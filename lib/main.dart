@@ -699,21 +699,23 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
 
   @override
   Widget build(BuildContext context) {
-    final themeMode = context.watch<ThemeModeProvider>().themeMode;
+    final themeSettings = context.watch<ThemeModeProvider>();
     final backgroundImage = context.watch<BackgroundImageProvider>();
     final timeProvider = context.read<TimeProvider>();
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
       navigatorObservers: <NavigatorObserver>[_rootRouteTracker],
       theme: AppTheme.light(
+        seedColor: themeSettings.themeColor,
         backgroundEnabled: backgroundImage.isActive,
         surfaceOpacity: backgroundImage.surfaceOpacity,
       ),
       darkTheme: AppTheme.dark(
+        seedColor: themeSettings.themeColor,
         backgroundEnabled: backgroundImage.isActive,
         surfaceOpacity: backgroundImage.surfaceOpacity,
       ),
-      themeMode: themeMode,
+      themeMode: themeSettings.themeMode,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,

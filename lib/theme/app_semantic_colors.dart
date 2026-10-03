@@ -170,14 +170,20 @@ abstract final class AppSemanticColors {
   static Color opaque(Color color) =>
       color.a >= 1.0 ? color : color.withValues(alpha: 1.0);
 
-  /// 解析分类取色器中的十六进制输入，并强制丢弃 alpha。
+  /// 解析取色器中的十六进制输入，并强制丢弃 alpha。
   ///
   /// 接受 `RRGGBB`、`AARRGGBB` 以及带 `#` / `0x` 前缀的写法。8 位输入按
-  /// ARGB 处理，但分类色最终始终返回不透明的 `Color`。
+  /// ARGB 处理，最终始终返回不透明的 `Color`。
   static Color? parseOpaqueHex(String value) {
-    var clean = value.trim().replaceAll('#', '').toUpperCase();
-    if (clean.startsWith('0X')) clean = clean.substring(2);
-    if (clean.length != 6 && clean.length != 8) return null;
+    var clean = value.trim().toUpperCase();
+    if (clean.startsWith('#')) {
+      clean = clean.substring(1);
+    } else if (clean.startsWith('0X')) {
+      clean = clean.substring(2);
+    }
+    if (!RegExp(r'^(?:[0-9A-F]{6}|[0-9A-F]{8})$').hasMatch(clean)) {
+      return null;
+    }
 
     final rgb = clean.length == 8 ? clean.substring(2) : clean;
     final parsed = int.tryParse(rgb, radix: 16);

@@ -20,7 +20,7 @@
 语义状态        error / warning / success
 ```
 
-- 浅色：浅米白背景 `#F8F9FA` + 白色内容面 + 橄榄绿强调
+- 浅色：浅米白背景 `#F8F9FA` + 白色内容面 + 用户选择的强调色（默认橄榄绿）
 - 深色：深灰绿背景 `#111315` + 深色内容面 + 低饱和强调色
 - 时间块：继续使用清晰实色（分类色）
 - 卡片：弱边框（`outlineVariant`）、无阴影
@@ -68,7 +68,11 @@ Container(color: surfaces.card, ...)
 | 选中区域 | `colorScheme.primaryContainer` |
 | 删除 / 错误 | `colorScheme.error` |
 
-品牌种子色继续用 `#9CB86A`，**不换品牌色**。
+默认主题种子色为品牌绿 `#9CB86A`。「我的 → 设置 → 主题色」提供 8 种预设及自定义十六进制色值，先预览、再应用，也可恢复默认绿。
+
+`ThemeModeProvider` 将外观模式与主题色保存为本机偏好（`app_theme_mode` / `app_theme_color_v1`），不按身份切换、不参与业务同步与备份。`AppTheme.light/dark/themeFor(seedColor:)` 从选定颜色生成浅色 / 深色 `ColorScheme`；未传参数时保持既有默认配色。所有入口将色值收成不透明色，旧设置缺失或无效时回退默认绿。背景图的透明度与对比度继续由原有主题计算负责。
+
+品牌色以及分类、身份、状态等语义色保持原值，主题色设置只影响使用 `ColorScheme` 的界面强调色。
 
 ### 3.2 语义色白名单
 
