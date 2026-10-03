@@ -1584,6 +1584,7 @@ class HomeScreenState extends State<HomeScreen> {
 
   Widget _buildAppBarDateNav(TimeProvider provider, DateTime date) {
     final colorScheme = Theme.of(context).colorScheme;
+    final dateLabel = '${date.month}月${date.day}日';
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1598,15 +1599,20 @@ class HomeScreenState extends State<HomeScreen> {
         Flexible(
           child: GestureDetector(
             onTap: () => _showDatePicker(),
-            child: Text(
-              "${date.month}月${date.day}日",
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                decoration: TextDecoration.underline,
-                decorationColor: colorScheme.onSurfaceVariant,
-              ),
-            ),
+            child: Platform.isWindows
+                ? _WindowsDateNavLabel(
+                    text: dateLabel,
+                    underlineColor: colorScheme.onSurfaceVariant,
+                  )
+                : Text(
+                    dateLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      decoration: TextDecoration.underline,
+                      decorationColor: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
           ),
         ),
         _appBarIconButton(
@@ -2222,6 +2228,95 @@ class HomeScreenState extends State<HomeScreen> {
         _showDeleteConfirmDialog(context, index, cat, provider);
     }
   }
+}
+
+/// Windows 的中文与数字会命中不同字体回退，TextDecoration.underline
+/// 可能按字体段落画出高低不齐的线。按整行基线统一绘制可保持下划线水平。
+class _WindowsDateNavLabel extends StatelessWidget {
+  final String text;
+  final Color underlineColor;
+
+  const _WindowsDateNavLabel({
+    required this.text,
+    required this.underlineColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final defaultStyle = DefaultTextStyle.of(context);
+    final textStyle = defaultStyle.style.copyWith(
+      decoration: TextDecoration.none,
+    );
+    final textDirection = Directionality.of(context);
+    final textScaler = MediaQuery.textScalerOf(context);
+
+    return CustomPaint(
+      foregroundPainter: _DateNavUnderlinePainter(
+        text: text,
+        textStyle: textStyle,
+        textDirection: textDirection,
+        textScaler: textScaler,
+        color: underlineColor,
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: textStyle,
+      ),
+    );
+  }
+}
+
+class _DateNavUnderlinePainter extends CustomPainter {
+  final String text;
+  final TextStyle textStyle;
+  final TextDirection textDirection;
+  final TextScaler textScaler;
+  final Color color;
+
+  const _DateNavUnderlinePainter({
+    required this.text,
+    required this.textStyle,
+    required this.textDirection,
+    required this.textScaler,
+    required this.color,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final textPainter = TextPainter(
+      text: TextSpan(text: text, style: textStyle),
+      textDirection: textDirection,
+      textScaler: textScaler,
+      maxLines: 1,
+      ellipsis: '\u2026',
+    )..layout(maxWidth: size.width);
+
+    final lineMetrics = textPainter.computeLineMetrics();
+    if (lineMetrics.isNotEmpty) {
+      final line = lineMetrics.first;
+      final underlineY = (line.baseline + 1.5).clamp(0.0, size.height);
+      final underlineWidth = line.width.clamp(0.0, size.width);
+      canvas.drawLine(
+        Offset(0, underlineY),
+        Offset(underlineWidth, underlineY),
+        Paint()
+          ..color = color
+          ..strokeWidth = 1
+          ..strokeCap = StrokeCap.butt,
+      );
+    }
+    textPainter.dispose();
+  }
+
+  @override
+  bool shouldRepaint(_DateNavUnderlinePainter oldDelegate) =>
+      text != oldDelegate.text ||
+      textStyle != oldDelegate.textStyle ||
+      textDirection != oldDelegate.textDirection ||
+      textScaler != oldDelegate.textScaler ||
+      color != oldDelegate.color;
 }
 
 /// Windows 三列布局中单个日期列：接收父页面统一的拖选/高亮状态，并与共享时间轴联动滚动。
