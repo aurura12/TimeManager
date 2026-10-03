@@ -335,14 +335,15 @@ class HomeScreenState extends State<HomeScreen> {
         // 仅 Windows：切换日期的按钮居中；安卓保持默认左对齐
         centerTitle: isDesktopPlatform,
         actionsPadding: const EdgeInsets.only(right: AppSpacing.lg),
-        title: isDesktopPlatform
-            ? Transform.translate(
-                // 日期列位于时间轴和模板栏之间，中心相对整窗偏移二者宽差的一半。
-                offset: const Offset(
-                  (AppSizes.gridTimeAxis - _kCategorySidebarWidth) / 2,
-                  0,
-                ),
-                child: _buildAppBarDateNav(timeProvider, currentDate),
+        title: Platform.isWindows
+            ? Row(
+                // 左右留白与主体时间轴、模板栏同宽，使日期控件落在三列中心。
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(width: AppSizes.gridTimeAxis),
+                  _buildAppBarDateNav(timeProvider, currentDate),
+                  const SizedBox(width: _kCategorySidebarWidth),
+                ],
               )
             : _buildAppBarDateNav(timeProvider, currentDate),
         actions: _buildAppBarActions(
