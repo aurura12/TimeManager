@@ -23,6 +23,7 @@ import '../utils/desktop_selection.dart';
 
 /// Windows 三列视图下列头高度，与左侧时间标签占位共用，保证对齐。
 const double _kDayHeaderHeight = 40;
+const double _kCategorySidebarWidth = 100;
 const List<String> _kWeekdayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 class HomeScreen extends StatefulWidget {
@@ -334,7 +335,16 @@ class HomeScreenState extends State<HomeScreen> {
         // 仅 Windows：切换日期的按钮居中；安卓保持默认左对齐
         centerTitle: isDesktopPlatform,
         actionsPadding: const EdgeInsets.only(right: AppSpacing.lg),
-        title: _buildAppBarDateNav(timeProvider, currentDate),
+        title: isDesktopPlatform
+            ? Transform.translate(
+                // 日期列位于时间轴和模板栏之间，中心相对整窗偏移二者宽差的一半。
+                offset: const Offset(
+                  (AppSizes.gridTimeAxis - _kCategorySidebarWidth) / 2,
+                  0,
+                ),
+                child: _buildAppBarDateNav(timeProvider, currentDate),
+              )
+            : _buildAppBarDateNav(timeProvider, currentDate),
         actions: _buildAppBarActions(
           timeProvider,
           googleSyncEnabled,
@@ -354,7 +364,7 @@ class HomeScreenState extends State<HomeScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           SizedBox(
-                            width: 55,
+                            width: AppSizes.gridTimeAxis,
                             child: Column(
                               children: [
                                 // Windows 下与右侧列头对齐的占位
@@ -668,7 +678,7 @@ class HomeScreenState extends State<HomeScreen> {
     final surfaces = AppSurfaces.of(context);
 
     return Container(
-      width: 100,
+      width: _kCategorySidebarWidth,
       color: surfaces.sidebar,
       child: Column(
         children: [
