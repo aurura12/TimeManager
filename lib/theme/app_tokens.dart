@@ -133,6 +133,19 @@ abstract final class AppSizes {
   static const double desktopTargetRowBreakpoint = 720;
   static const double desktopTargetProgressWidth = 240;
 
+  /// 出行页表格与月历的桌面布局。
+  static const double travelDateColumnWidth = 86;
+  static const double travelMonthColumnWidth = 80;
+  static const double travelCountColumnWidth = 50;
+  static const double desktopTravelLayoutBreakpoint = 720;
+  static const double desktopTravelDateColumnWidth = 144;
+  static const double desktopTravelCountColumnWidth = 104;
+  static const double desktopTravelRowHeight = 64;
+  static const double desktopTravelCalendarBreakpoint = 1000;
+  static const double desktopTravelDetailsWidth = 320;
+  static const double desktopTravelCalendarHeight = 720;
+  static const double desktopTravelCalendarCellHeight = 96;
+
   /// 桌面宽屏导航与可拖宽事件栏的布局边界。
   static const double desktopNavigationBreakpoint = 1000;
   static const double desktopNavigationWidth = 176;
