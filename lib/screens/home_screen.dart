@@ -4,11 +4,14 @@ import '../utils/platform_features.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:provider/provider.dart';
+import 'package:reorderables/reorderables.dart';
 import '../models/category.dart';
 import '../models/schedule_template.dart';
 import '../providers/time_provider.dart';
+import '../providers/desktop_layout_provider.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
@@ -25,7 +28,6 @@ import '../utils/desktop_selection.dart';
 
 /// Windows 三列视图下列头高度，与左侧时间标签占位共用，保证对齐。
 const double _kDayHeaderHeight = 40;
-const double _kCategorySidebarWidth = 100;
 const List<String> _kWeekdayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 enum _HomeToolbarAction { keyboardHelp, undo, redo, remoteView, sync }
@@ -42,6 +44,9 @@ class HomeScreenState extends State<HomeScreen> {
   // 左侧时间轴滚动；右侧网格跟随同步，自身不可滚动
   final ScrollController _scrollController = ScrollController();
   final ScrollController _gridScrollController = ScrollController();
+  final ScrollController _categoryScrollController = ScrollController();
+  double? _categoryDragWidth;
+  int _categoryResizeVersion = 0;
   StreamSubscription? _syncSubscription;
 
   // 当前选中待分配的范围（跨平台统一）。
@@ -126,6 +131,7 @@ class HomeScreenState extends State<HomeScreen> {
     _scrollController.removeListener(_syncGridScroll);
     _scrollController.dispose();
     _gridScrollController.dispose();
+    _categoryScrollController.dispose();
     super.dispose();
   }
 
@@ -331,6 +337,7 @@ class HomeScreenState extends State<HomeScreen> {
         .select<TimeProvider, bool>((p) => p.scheduleSyncProgress != null);
     final colorScheme = Theme.of(context).colorScheme;
     final surfaces = AppSurfaces.of(context);
+    final desktopLayout = context.watch<DesktopLayoutProvider?>();
 
     final page = Scaffold(
       appBar: AppBar(
@@ -339,17 +346,7 @@ class HomeScreenState extends State<HomeScreen> {
         // 仅 Windows：切换日期的按钮居中；安卓保持默认左对齐
         centerTitle: isDesktopPlatform,
         actionsPadding: const EdgeInsets.only(right: AppSpacing.lg),
-        title: Platform.isWindows
-            ? Row(
-                // 左右留白与主体时间轴、模板栏同宽，使日期控件落在三列中心。
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const SizedBox(width: AppSizes.gridTimeAxis),
-                  _buildAppBarDateNav(timeProvider, currentDate),
-                  const SizedBox(width: _kCategorySidebarWidth),
-                ],
-              )
-            : _buildAppBarDateNav(timeProvider, currentDate),
+        title: _buildAppBarDateNav(timeProvider, currentDate),
         actions: _buildAppBarActions(
           timeProvider,
           googleSyncEnabled,
@@ -362,229 +359,258 @@ class HomeScreenState extends State<HomeScreen> {
           Column(
             children: [
               Expanded(
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SizedBox(
-                            width: AppSizes.gridTimeAxis,
-                            child: Column(
-                              children: [
-                                // Windows 下与右侧列头对齐的占位
-                                if (isDesktopPlatform)
-                                  const SizedBox(height: _kDayHeaderHeight),
-                                Expanded(
-                                  child: ListView.builder(
-                                    controller: _scrollController,
-                                    padding:
-                                        const EdgeInsets.symmetric(vertical: 8),
-                                    itemCount: 24,
-                                    itemExtent: 45,
-                                    itemBuilder: (context, h) =>
-                                        _buildTimeLabelRow(h),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          if (isDesktopPlatform)
-                            Expanded(
+                child: LayoutBuilder(builder: (context, constraints) {
+                  final resizable = isDesktopPlatform && desktopLayout != null;
+                  final maxSidebarWidth = (constraints.maxWidth -
+                          AppSizes.desktopCalendarMinWidth -
+                          AppSpacing.sm)
+                      .clamp(AppSizes.categoryPanelMinWidth,
+                          AppSizes.categoryPanelMaxWidth)
+                      .toDouble();
+                  final sidebarWidth = resizable
+                      ? (_categoryDragWidth ?? desktopLayout.categoryPanelWidth)
+                          .clamp(
+                              AppSizes.categoryPanelMinWidth, maxSidebarWidth)
+                          .toDouble()
+                      : AppSizes.categoryPanelMinWidth;
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SizedBox(
+                              width: AppSizes.gridTimeAxis,
                               child: Column(
                                 children: [
-                                  // 三列日期头（插入与网格行相同的分割线占位以保持列宽一致）
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                          child: _DayHeader(date: prevDate)),
-                                      VerticalDivider(
-                                        width: 1,
-                                        thickness: 1,
-                                        color: surfaces.joinDivider,
-                                      ),
-                                      Expanded(
-                                          child: _DayHeader(date: currentDate)),
-                                      VerticalDivider(
-                                        width: 1,
-                                        thickness: 1,
-                                        color: surfaces.joinDivider,
-                                      ),
-                                      Expanded(
-                                          child: _DayHeader(date: nextDate)),
-                                    ],
-                                  ),
-                                  // 三列网格：昨天 / 今天 / 明天
+                                  // Windows 下与右侧列头对齐的占位
+                                  if (isDesktopPlatform)
+                                    const SizedBox(height: _kDayHeaderHeight),
                                   Expanded(
-                                    child: Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Expanded(
-                                          child: _DayGrid(
-                                            date: prevDate,
-                                            brushMode: _isBrushMode,
-                                            brushPreviewIndices:
-                                                _brushPreviewFor(prevDate),
-                                            onBrushIndexDown: _brushStart,
-                                            onBrushIndexMove: _brushExtend,
-                                            onBrushEnd: (_) =>
-                                                _finishBrushStroke(),
-                                            onBrushCancel: (_) =>
-                                                _cancelBrushStroke(),
-                                            timeAxisController:
-                                                _scrollController,
-                                            dragStartIndex: _selectionStart,
-                                            dragEndIndex: _selectionEnd,
-                                            selectionDate: _selectionDate,
-                                            onSelectionChanged:
-                                                (date, start, end) {
-                                              setState(() {
-                                                _selectionDate = date;
-                                                _selectionStart = start;
-                                                _selectionEnd = end;
-                                              });
-                                            },
-                                            onSelectionCleared: _clearSelection,
-                                            onRemoveSlot: (date, index) =>
-                                                timeProvider
-                                                    .removeEventFromSlot(index,
-                                                        date: date),
-                                          ),
-                                        ),
-                                        VerticalDivider(
-                                          width: 1,
-                                          thickness: 1,
-                                          color: surfaces.joinDivider,
-                                        ),
-                                        Expanded(
-                                          child: _DayGrid(
-                                            date: currentDate,
-                                            brushMode: _isBrushMode,
-                                            brushPreviewIndices:
-                                                _brushPreviewFor(currentDate),
-                                            onBrushIndexDown: _brushStart,
-                                            onBrushIndexMove: _brushExtend,
-                                            onBrushEnd: (_) =>
-                                                _finishBrushStroke(),
-                                            onBrushCancel: (_) =>
-                                                _cancelBrushStroke(),
-                                            timeAxisController:
-                                                _scrollController,
-                                            dragStartIndex: _selectionStart,
-                                            dragEndIndex: _selectionEnd,
-                                            selectionDate: _selectionDate,
-                                            onSelectionChanged:
-                                                (date, start, end) {
-                                              setState(() {
-                                                _selectionDate = date;
-                                                _selectionStart = start;
-                                                _selectionEnd = end;
-                                              });
-                                            },
-                                            onSelectionCleared: _clearSelection,
-                                            onRemoveSlot: (date, index) =>
-                                                timeProvider
-                                                    .removeEventFromSlot(index,
-                                                        date: date),
-                                          ),
-                                        ),
-                                        VerticalDivider(
-                                          width: 1,
-                                          thickness: 1,
-                                          color: surfaces.joinDivider,
-                                        ),
-                                        Expanded(
-                                          child: _DayGrid(
-                                            date: nextDate,
-                                            brushMode: _isBrushMode,
-                                            brushPreviewIndices:
-                                                _brushPreviewFor(nextDate),
-                                            onBrushIndexDown: _brushStart,
-                                            onBrushIndexMove: _brushExtend,
-                                            onBrushEnd: (_) =>
-                                                _finishBrushStroke(),
-                                            onBrushCancel: (_) =>
-                                                _cancelBrushStroke(),
-                                            timeAxisController:
-                                                _scrollController,
-                                            dragStartIndex: _selectionStart,
-                                            dragEndIndex: _selectionEnd,
-                                            selectionDate: _selectionDate,
-                                            onSelectionChanged:
-                                                (date, start, end) {
-                                              setState(() {
-                                                _selectionDate = date;
-                                                _selectionStart = start;
-                                                _selectionEnd = end;
-                                              });
-                                            },
-                                            onSelectionCleared: _clearSelection,
-                                            onRemoveSlot: (date, index) =>
-                                                timeProvider
-                                                    .removeEventFromSlot(index,
-                                                        date: date),
-                                          ),
-                                        ),
-                                      ],
+                                    child: ListView.builder(
+                                      controller: _scrollController,
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 8),
+                                      itemCount: 24,
+                                      itemExtent: 45,
+                                      itemBuilder: (context, h) =>
+                                          _buildTimeLabelRow(h),
                                     ),
                                   ),
                                 ],
                               ),
-                            )
-                          else
-                            Expanded(
-                              child: TimeGrid(
-                                gridKey: _gridKey,
-                                controller: _gridScrollController,
-                                dragStartIndex: _selectionStart,
-                                dragEndIndex: _selectionEnd,
-                                brushMode: _isBrushMode,
-                                brushPreviewIndices: _brushStrokeIndices,
-                                onBrushPointerDown: _isBrushMode
-                                    ? (position) => _brushStart(
-                                        currentDate, _calculateIndex(position))
-                                    : null,
-                                onBrushPointerMove: _isBrushMode
-                                    ? (position) => _brushExtend(
-                                        currentDate, _calculateIndex(position))
-                                    : null,
-                                onBrushPointerUp:
-                                    _isBrushMode ? _finishBrushStroke : null,
-                                onBrushPointerCancel:
-                                    _isBrushMode ? _cancelBrushStroke : null,
-                                onTapDown: (position) => _handleSelect(
-                                    position, currentDate,
-                                    isClick: true),
-                                onPanStart: (position) => _handleSelect(
-                                    position, currentDate,
-                                    isStart: true),
-                                onPanUpdate: (position) =>
-                                    _handleSelect(position, currentDate),
-                                onRemoveSlot: (index) =>
-                                    timeProvider.removeEventFromSlot(index),
-                              ),
                             ),
-                        ],
+                            if (isDesktopPlatform)
+                              Expanded(
+                                child: Column(
+                                  children: [
+                                    // 三列日期头（插入与网格行相同的分割线占位以保持列宽一致）
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                            child: _DayHeader(date: prevDate)),
+                                        VerticalDivider(
+                                          width: 1,
+                                          thickness: 1,
+                                          color: surfaces.joinDivider,
+                                        ),
+                                        Expanded(
+                                            child:
+                                                _DayHeader(date: currentDate)),
+                                        VerticalDivider(
+                                          width: 1,
+                                          thickness: 1,
+                                          color: surfaces.joinDivider,
+                                        ),
+                                        Expanded(
+                                            child: _DayHeader(date: nextDate)),
+                                      ],
+                                    ),
+                                    // 三列网格：昨天 / 今天 / 明天
+                                    Expanded(
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Expanded(
+                                            child: _DayGrid(
+                                              date: prevDate,
+                                              brushMode: _isBrushMode,
+                                              brushPreviewIndices:
+                                                  _brushPreviewFor(prevDate),
+                                              onBrushIndexDown: _brushStart,
+                                              onBrushIndexMove: _brushExtend,
+                                              onBrushEnd: (_) =>
+                                                  _finishBrushStroke(),
+                                              onBrushCancel: (_) =>
+                                                  _cancelBrushStroke(),
+                                              timeAxisController:
+                                                  _scrollController,
+                                              dragStartIndex: _selectionStart,
+                                              dragEndIndex: _selectionEnd,
+                                              selectionDate: _selectionDate,
+                                              onSelectionChanged:
+                                                  (date, start, end) {
+                                                setState(() {
+                                                  _selectionDate = date;
+                                                  _selectionStart = start;
+                                                  _selectionEnd = end;
+                                                });
+                                              },
+                                              onSelectionCleared:
+                                                  _clearSelection,
+                                              onRemoveSlot: (date, index) =>
+                                                  timeProvider
+                                                      .removeEventFromSlot(
+                                                          index,
+                                                          date: date),
+                                            ),
+                                          ),
+                                          VerticalDivider(
+                                            width: 1,
+                                            thickness: 1,
+                                            color: surfaces.joinDivider,
+                                          ),
+                                          Expanded(
+                                            child: _DayGrid(
+                                              date: currentDate,
+                                              brushMode: _isBrushMode,
+                                              brushPreviewIndices:
+                                                  _brushPreviewFor(currentDate),
+                                              onBrushIndexDown: _brushStart,
+                                              onBrushIndexMove: _brushExtend,
+                                              onBrushEnd: (_) =>
+                                                  _finishBrushStroke(),
+                                              onBrushCancel: (_) =>
+                                                  _cancelBrushStroke(),
+                                              timeAxisController:
+                                                  _scrollController,
+                                              dragStartIndex: _selectionStart,
+                                              dragEndIndex: _selectionEnd,
+                                              selectionDate: _selectionDate,
+                                              onSelectionChanged:
+                                                  (date, start, end) {
+                                                setState(() {
+                                                  _selectionDate = date;
+                                                  _selectionStart = start;
+                                                  _selectionEnd = end;
+                                                });
+                                              },
+                                              onSelectionCleared:
+                                                  _clearSelection,
+                                              onRemoveSlot: (date, index) =>
+                                                  timeProvider
+                                                      .removeEventFromSlot(
+                                                          index,
+                                                          date: date),
+                                            ),
+                                          ),
+                                          VerticalDivider(
+                                            width: 1,
+                                            thickness: 1,
+                                            color: surfaces.joinDivider,
+                                          ),
+                                          Expanded(
+                                            child: _DayGrid(
+                                              date: nextDate,
+                                              brushMode: _isBrushMode,
+                                              brushPreviewIndices:
+                                                  _brushPreviewFor(nextDate),
+                                              onBrushIndexDown: _brushStart,
+                                              onBrushIndexMove: _brushExtend,
+                                              onBrushEnd: (_) =>
+                                                  _finishBrushStroke(),
+                                              onBrushCancel: (_) =>
+                                                  _cancelBrushStroke(),
+                                              timeAxisController:
+                                                  _scrollController,
+                                              dragStartIndex: _selectionStart,
+                                              dragEndIndex: _selectionEnd,
+                                              selectionDate: _selectionDate,
+                                              onSelectionChanged:
+                                                  (date, start, end) {
+                                                setState(() {
+                                                  _selectionDate = date;
+                                                  _selectionStart = start;
+                                                  _selectionEnd = end;
+                                                });
+                                              },
+                                              onSelectionCleared:
+                                                  _clearSelection,
+                                              onRemoveSlot: (date, index) =>
+                                                  timeProvider
+                                                      .removeEventFromSlot(
+                                                          index,
+                                                          date: date),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            else
+                              Expanded(
+                                child: TimeGrid(
+                                  gridKey: _gridKey,
+                                  controller: _gridScrollController,
+                                  dragStartIndex: _selectionStart,
+                                  dragEndIndex: _selectionEnd,
+                                  brushMode: _isBrushMode,
+                                  brushPreviewIndices: _brushStrokeIndices,
+                                  onBrushPointerDown: _isBrushMode
+                                      ? (position) => _brushStart(currentDate,
+                                          _calculateIndex(position))
+                                      : null,
+                                  onBrushPointerMove: _isBrushMode
+                                      ? (position) => _brushExtend(currentDate,
+                                          _calculateIndex(position))
+                                      : null,
+                                  onBrushPointerUp:
+                                      _isBrushMode ? _finishBrushStroke : null,
+                                  onBrushPointerCancel:
+                                      _isBrushMode ? _cancelBrushStroke : null,
+                                  onTapDown: (position) => _handleSelect(
+                                      position, currentDate,
+                                      isClick: true),
+                                  onPanStart: (position) => _handleSelect(
+                                      position, currentDate,
+                                      isStart: true),
+                                  onPanUpdate: (position) =>
+                                      _handleSelect(position, currentDate),
+                                  onRemoveSlot: (index) =>
+                                      timeProvider.removeEventFromSlot(index),
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
-                    ),
-                    Selector<
-                        TimeProvider,
-                        ({
-                          int categoriesRevision,
-                          int templatesRevision,
-                          DateTime currentDate
-                        })>(
-                      selector: (_, p) => (
-                        categoriesRevision: p.categoriesRevision,
-                        templatesRevision: p.templatesRevision,
-                        currentDate: p.currentDate,
+                      if (resizable)
+                        _buildCategoryResizeHandle(
+                            desktopLayout, sidebarWidth, maxSidebarWidth),
+                      SizedBox(
+                        key: const ValueKey('category-panel'),
+                        width: sidebarWidth,
+                        child: Selector<
+                            TimeProvider,
+                            ({
+                              int categoriesRevision,
+                              int templatesRevision,
+                              DateTime currentDate
+                            })>(
+                          selector: (_, p) => (
+                            categoriesRevision: p.categoriesRevision,
+                            templatesRevision: p.templatesRevision,
+                            currentDate: p.currentDate,
+                          ),
+                          builder: (context, data, _) =>
+                              _buildCategorySidebar(timeProvider),
+                        ),
                       ),
-                      builder: (context, data, _) =>
-                          _buildCategorySidebar(timeProvider),
-                    ),
-                  ],
-                ),
+                    ],
+                  );
+                }),
               ),
               StreamBuilder<String>(
                 stream: timeProvider.syncStatusStream,
@@ -688,11 +714,112 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _saveCategoryPanelWidth(
+      DesktopLayoutProvider layout, double? width) async {
+    final version = ++_categoryResizeVersion;
+    try {
+      if (width == null) {
+        await layout.resetCategoryPanelWidth();
+      } else {
+        await layout.setCategoryPanelWidth(width);
+      }
+    } on Object {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('保存事件栏宽度失败，请重试')));
+      }
+    } finally {
+      if (mounted && version == _categoryResizeVersion) {
+        setState(() => _categoryDragWidth = null);
+      }
+    }
+  }
+
+  Widget _buildCategoryResizeHandle(
+      DesktopLayoutProvider layout, double width, double maxWidth) {
+    final surfaces = AppSurfaces.of(context);
+    void adjust(double delta) {
+      final next = (width + delta)
+          .clamp(AppSizes.categoryPanelMinWidth, maxWidth)
+          .toDouble();
+      setState(() => _categoryDragWidth = next);
+      unawaited(_saveCategoryPanelWidth(layout, next));
+    }
+
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
+            adjust(AppSpacing.lg),
+        const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
+            adjust(-AppSpacing.lg),
+        const SingleActivator(LogicalKeyboardKey.home): () =>
+            unawaited(_saveCategoryPanelWidth(layout, null)),
+      },
+      child: Focus(
+        child: Builder(builder: (context) {
+          final focused = Focus.of(context).hasFocus;
+          return Semantics(
+            label: '事件栏宽度',
+            value: '${width.round()}',
+            increasedValue:
+                '${(width + AppSpacing.lg).clamp(AppSizes.categoryPanelMinWidth, maxWidth).round()}',
+            decreasedValue:
+                '${(width - AppSpacing.lg).clamp(AppSizes.categoryPanelMinWidth, maxWidth).round()}',
+            onIncrease: () => adjust(AppSpacing.lg),
+            onDecrease: () => adjust(-AppSpacing.lg),
+            child: Tooltip(
+              message: '拖动调节事件栏宽度；双击恢复默认。方向键可微调',
+              child: MouseRegion(
+                cursor: SystemMouseCursors.resizeLeftRight,
+                child: GestureDetector(
+                  key: const ValueKey('category-panel-resize'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => Focus.of(context).requestFocus(),
+                  onDoubleTap: () =>
+                      unawaited(_saveCategoryPanelWidth(layout, null)),
+                  onHorizontalDragStart: (_) {
+                    Focus.of(context).requestFocus();
+                    ++_categoryResizeVersion;
+                    setState(() => _categoryDragWidth = width);
+                  },
+                  onHorizontalDragUpdate: (details) => setState(() {
+                    _categoryDragWidth =
+                        ((_categoryDragWidth ?? width) - details.delta.dx)
+                            .clamp(AppSizes.categoryPanelMinWidth, maxWidth)
+                            .toDouble();
+                  }),
+                  onHorizontalDragEnd: (_) => unawaited(
+                      _saveCategoryPanelWidth(layout, _categoryDragWidth)),
+                  onHorizontalDragCancel: () =>
+                      setState(() => _categoryDragWidth = null),
+                  child: Container(
+                    width: AppSpacing.sm,
+                    color: focused
+                        ? context.wallpaperFill(
+                            Theme.of(context).colorScheme.primaryContainer)
+                        : surfaces.sidebar,
+                    alignment: Alignment.center,
+                    child: Container(
+                      width: AppSizes.border,
+                      height: AppSizes.minTapTarget,
+                      color: focused
+                          ? Theme.of(context).colorScheme.primary
+                          : surfaces.border,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
   Widget _buildCategorySidebar(TimeProvider provider) {
     final surfaces = AppSurfaces.of(context);
 
     return Container(
-      width: _kCategorySidebarWidth,
       color: surfaces.sidebar,
       child: Column(
         children: [
@@ -717,68 +844,129 @@ class HomeScreenState extends State<HomeScreen> {
                 : null,
           ),
           Expanded(
-            child: ReorderableListView.builder(
-              // 1. 核心排序逻辑
-              itemCount: provider.categories.length,
-              onReorderItem: (oldIndex, newIndex) {
-                provider.reorderCategories(oldIndex, newIndex);
-              },
+            child: isDesktopPlatform
+                ? _buildDesktopCategoryGrid(provider)
+                : ReorderableListView.builder(
+                    scrollController: _categoryScrollController,
+                    // 1. 核心排序逻辑
+                    itemCount: provider.categories.length,
+                    onReorderItem: (oldIndex, newIndex) {
+                      provider.reorderCategories(oldIndex, newIndex);
+                    },
 
-              // 2. 补齐底部添加按钮
-              footer: Padding(
-                padding: const EdgeInsets.all(AppSpacing.sm),
-                child: OutlinedButton(
-                  onPressed: () =>
-                      _showCategoryDialog(context, provider), // 调用通用对话框（添加模式）
-                  style: OutlinedButton.styleFrom(
-                    padding:
-                        const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-                    backgroundColor: surfaces.card,
-                    side: BorderSide(color: surfaces.border),
-                    shape: const RoundedRectangleBorder(
-                        borderRadius: AppRadius.controlAll),
+                    // 2. 补齐底部添加按钮
+                    footer: _buildAddCategoryButton(provider),
+
+                    // 3. 列表项构建
+                    itemBuilder: (context, index) {
+                      return _buildSlidableCategory(index, provider);
+                    },
                   ),
-                  child: const Icon(Icons.add, size: 24),
-                ),
-              ),
-
-              // 3. 列表项构建
-              itemBuilder: (context, index) {
-                final category = provider.categories[index];
-
-                return Slidable(
-                  // Slidable 必须有唯一的 Key 才能在排序时保持状态
-                  key: ValueKey('slidable_${category.name}_$index'),
-
-                  // 配置左滑删除按钮
-                  endActionPane: category.name ==
-                          TimeProvider.temporaryCategoryName
-                      ? null
-                      : ActionPane(
-                          motion: const DrawerMotion(),
-                          extentRatio: 0.6, // 侧滑展开的宽度比例
-                          children: [
-                            SlidableAction(
-                              onPressed: (context) => _showDeleteConfirmDialog(
-                                  context, index, category, provider),
-                              backgroundColor: AppSemanticColors.danger,
-                              foregroundColor: AppSemanticColors.onColor(
-                                  AppSemanticColors.danger),
-                              icon: Icons.delete,
-                              label: '删除',
-                              borderRadius: AppRadius.badgeAll,
-                            ),
-                          ],
-                        ),
-
-                  // 包装原有的分类 UI
-                  child: _buildCategoryItem(index, category, provider),
-                );
-              },
-            ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildAddCategoryButton(TimeProvider provider,
+      {bool showLabel = false}) {
+    final surfaces = AppSurfaces.of(context);
+    return Padding(
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      child: Tooltip(
+        message: '添加事件',
+        child: OutlinedButton(
+          onPressed: () => _showCategoryDialog(context, provider),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+            backgroundColor: surfaces.card,
+            side: BorderSide(color: surfaces.border),
+            shape: const RoundedRectangleBorder(
+                borderRadius: AppRadius.controlAll),
+          ),
+          child: showLabel
+              ? const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.add, size: AppSpacing.xl),
+                    SizedBox(width: AppSpacing.sm),
+                    Text('添加事件'),
+                  ],
+                )
+              : const Icon(Icons.add, size: AppSpacing.xl),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDesktopCategoryGrid(TimeProvider provider) {
+    return LayoutBuilder(builder: (context, constraints) {
+      final available = constraints.maxWidth - AppSpacing.sm;
+      final minTileWidth = AppSizes.desktopCategoryTileMinWidth *
+          MediaQuery.textScalerOf(context).scale(AppText.caption.fontSize!) /
+          AppText.caption.fontSize!;
+      final columns = ((available + AppSpacing.sm) /
+              (minTileWidth + AppSpacing.sm))
+          .floor()
+          .clamp(
+              1, provider.categories.isEmpty ? 1 : provider.categories.length);
+      final tileWidth = (available - (columns - 1) * AppSpacing.sm) / columns;
+      return ReorderableWrap(
+        controller: _categoryScrollController,
+        ignorePrimaryScrollController: true,
+        padding: const EdgeInsets.all(AppSpacing.xs),
+        spacing: AppSpacing.sm,
+        runSpacing: AppSpacing.xs,
+        needsLongPressDraggable: false,
+        onReorder: provider.reorderCategories,
+        footer: SizedBox(
+          width: available,
+          child: _buildAddCategoryButton(provider,
+              showLabel:
+                  available >= AppSizes.desktopCategoryPanelDefaultWidth),
+        ),
+        children: [
+          for (var index = 0; index < provider.categories.length; index++)
+            SizedBox(
+              key: ValueKey('category-tile-${provider.categories[index].id}'),
+              width: tileWidth,
+              child: _buildSlidableCategory(index, provider),
+            ),
+        ],
+      );
+    });
+  }
+
+  Widget _buildSlidableCategory(int index, TimeProvider provider) {
+    final category = provider.categories[index];
+    return Slidable(
+      // Slidable 必须有唯一的 Key 才能在排序时保持状态
+      key: ValueKey('slidable_${category.id}'),
+      // 桌面横向拖动用于跨列排序，删除由右键菜单提供。
+      enabled: !isDesktopPlatform,
+
+      // 配置左滑删除按钮
+      endActionPane: category.name == TimeProvider.temporaryCategoryName
+          ? null
+          : ActionPane(
+              motion: const DrawerMotion(),
+              extentRatio: 0.6, // 侧滑展开的宽度比例
+              children: [
+                SlidableAction(
+                  onPressed: (context) => _showDeleteConfirmDialog(
+                      context, index, category, provider),
+                  backgroundColor: AppSemanticColors.danger,
+                  foregroundColor:
+                      AppSemanticColors.onColor(AppSemanticColors.danger),
+                  icon: Icons.delete,
+                  label: '删除',
+                  borderRadius: AppRadius.badgeAll,
+                ),
+              ],
+            ),
+
+      // 包装原有的分类 UI
+      child: _buildCategoryItem(index, category, provider),
     );
   }
 

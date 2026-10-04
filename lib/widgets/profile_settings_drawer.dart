@@ -14,6 +14,8 @@ import '../providers/time_provider.dart';
 import '../providers/main_tab_provider.dart';
 import '../screens/desktop_shortcut_settings_screen.dart';
 import '../providers/desktop_shortcut_provider.dart';
+import '../providers/desktop_layout_provider.dart';
+import '../screens/desktop_layout_settings_screen.dart';
 import '../services/app_log_service.dart';
 import '../services/data_backup_service.dart';
 import '../services/diary_reminder_service.dart';
@@ -509,6 +511,16 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           ),
         ],
       _ProfileDrawerSection.appearance => [
+          if (isDesktop && context.read<DesktopLayoutProvider?>() != null)
+            ListTile(
+              leading: const Icon(Icons.view_sidebar_outlined),
+              title: const Text('桌面布局'),
+              subtitle: const Text('底部或左侧导航 · 事件栏宽度'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _openScreen(DesktopLayoutSettingsScreen(
+                provider: context.read<DesktopLayoutProvider>(),
+              )),
+            ),
           if (isDesktop && context.read<DesktopShortcutProvider?>() != null)
             ListTile(
               leading: const Icon(Icons.keyboard_outlined),

@@ -133,6 +133,15 @@ abstract final class AppSizes {
   static const double desktopTargetRowBreakpoint = 720;
   static const double desktopTargetProgressWidth = 240;
 
+  /// 桌面宽屏导航与可拖宽事件栏的布局边界。
+  static const double desktopNavigationBreakpoint = 1000;
+  static const double desktopNavigationRailWidth = 88;
+  static const double desktopCalendarMinWidth = 600;
+  static const double categoryPanelMinWidth = 100;
+  static const double categoryPanelMaxWidth = 600;
+  static const double desktopCategoryPanelDefaultWidth = 240;
+  static const double desktopCategoryTileMinWidth = 112;
+
   /// 可视化取色面板及选中圆环。
   static const double colorPickerPlane = 160;
   static const double colorPickerIndicator = 20;

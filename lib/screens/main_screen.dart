@@ -8,6 +8,7 @@ import '../models/main_tab_id.dart';
 import '../models/global_search_result.dart';
 import '../models/schedule_sync_progress.dart';
 import '../providers/main_tab_provider.dart';
+import '../providers/desktop_layout_provider.dart';
 import '../providers/time_provider.dart';
 import '../services/app_log_service.dart';
 import '../services/diary_local_store.dart';
@@ -19,6 +20,7 @@ import '../services/on_this_day_service.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/adaptive.dart';
+import '../utils/platform_features.dart';
 import '../widgets/main_tab_activity.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/main_tab_navigation.dart';
@@ -363,7 +365,9 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Widget _buildPage(BuildContext context) {
     final surfaces = AppSurfaces.of(context);
     final wallpaperTheme = AppWallpaperTheme.of(context);
-    if (!_mainTabProvider.isLoaded) {
+    final desktopLayout = context.watch<DesktopLayoutProvider?>();
+    if (!_mainTabProvider.isLoaded ||
+        (isDesktopPlatform && desktopLayout?.isLoaded == false)) {
       // 先读导航偏好，避免启动时构造已隐藏的页面或短暂显示默认顺序。
       return Scaffold(
         backgroundColor:
@@ -380,37 +384,53 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final scheduleSyncProgress =
         context.select<TimeProvider, ScheduleSyncProgress?>(
             (p) => p.scheduleSyncProgress);
-    // iPad 宽屏使用左侧导航栏，手机/分屏窄栏保持底部导航
-    if (isWideTablet(context)) {
+    return LayoutBuilder(builder: (context, constraints) {
+      final useRail = isWideTablet(context) ||
+          (isDesktopPlatform &&
+              desktopLayout?.navigationLayout == DesktopNavigationLayout.side &&
+              constraints.maxWidth >= AppSizes.desktopNavigationBreakpoint);
+      final showRail = useRail && showNavigation;
       return Scaffold(
         backgroundColor:
             wallpaperTheme.enabled ? Colors.transparent : surfaces.page,
+        // 始终使用同一个 Row/Expanded 结构，跨断点或切布局不重建 Tab。
         body: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Visibility(
-              visible: showNavigation,
-              child: NavigationRail(
-                selectedIndex: navigationIndex < 0 ? null : navigationIndex,
-                onDestinationSelected: (index) => _onItemTapped(items[index]),
-                labelType: NavigationRailLabelType.all,
-                leading: const SizedBox(height: AppSpacing.sm),
-                destinations: [
-                  for (final item in items)
-                    NavigationRailDestination(
-                      icon: Icon(item.icon),
-                      selectedIcon: Icon(item.selectedIcon),
-                      label: Text(item.label),
-                    ),
-                ],
-              ),
+            SizedBox(
+              width: showRail ? AppSizes.desktopNavigationRailWidth : 0,
+              child: showRail
+                  ? NavigationRail(
+                      key: const ValueKey('main-navigation-rail'),
+                      minWidth: AppSizes.desktopNavigationRailWidth,
+                      backgroundColor: surfaces.panel,
+                      scrollable: true,
+                      selectedIndex:
+                          navigationIndex < 0 ? null : navigationIndex,
+                      onDestinationSelected: (index) =>
+                          _onItemTapped(items[index]),
+                      labelType: NavigationRailLabelType.all,
+                      leading: const SizedBox(height: AppSpacing.sm),
+                      destinations: [
+                        for (final item in items)
+                          NavigationRailDestination(
+                            icon: Icon(item.icon),
+                            selectedIcon: Icon(item.selectedIcon),
+                            label: Text(item.label),
+                          ),
+                      ],
+                    )
+                  : null,
             ),
-            Visibility(
-              visible: showNavigation,
-              child: VerticalDivider(
-                width: AppSizes.hairline,
-                thickness: AppSizes.hairline,
-                color: surfaces.border,
-              ),
+            SizedBox(
+              width: showRail ? AppSizes.hairline : 0,
+              child: showRail
+                  ? VerticalDivider(
+                      width: AppSizes.hairline,
+                      thickness: AppSizes.hairline,
+                      color: surfaces.border,
+                    )
+                  : null,
             ),
             Expanded(
               child: _buildContentStack(
@@ -421,41 +441,32 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             ),
           ],
         ),
+        // 顶部一条弱边框，和内容区拉开层级。
+        bottomNavigationBar: showNavigation && !useRail
+            ? Container(
+                decoration: BoxDecoration(
+                  color: surfaces.panel,
+                  border: Border(top: BorderSide(color: surfaces.border)),
+                ),
+                child: NavigationBar(
+                  backgroundColor:
+                      wallpaperTheme.enabled ? Colors.transparent : null,
+                  selectedIndex: navigationIndex,
+                  onDestinationSelected: (index) => _onItemTapped(items[index]),
+                  destinations: [
+                    for (final item in items)
+                      NavigationDestination(
+                        icon: Icon(item.icon),
+                        selectedIcon: Icon(item.selectedIcon),
+                        label: item.label,
+                        tooltip: item.label,
+                      ),
+                  ],
+                ),
+              )
+            : null,
       );
-    }
-    return Scaffold(
-      backgroundColor:
-          wallpaperTheme.enabled ? Colors.transparent : surfaces.page,
-      body: _buildContentStack(
-        options: options,
-        safeIndex: selectedTab.index,
-        progress: scheduleSyncProgress,
-      ),
-      // 顶部一条弱边框，和内容区拉开层级（颜色与圆角统一走主题）
-      bottomNavigationBar: showNavigation
-          ? Container(
-              decoration: BoxDecoration(
-                color: surfaces.panel,
-                border: Border(top: BorderSide(color: surfaces.border)),
-              ),
-              child: NavigationBar(
-                backgroundColor:
-                    wallpaperTheme.enabled ? Colors.transparent : null,
-                selectedIndex: navigationIndex,
-                onDestinationSelected: (index) => _onItemTapped(items[index]),
-                destinations: [
-                  for (final item in items)
-                    NavigationDestination(
-                      icon: Icon(item.icon),
-                      selectedIcon: Icon(item.selectedIcon),
-                      label: item.label,
-                      tooltip: item.label,
-                    ),
-                ],
-              ),
-            )
-          : null,
-    );
+    });
   }
 
   Widget _buildContentStack({

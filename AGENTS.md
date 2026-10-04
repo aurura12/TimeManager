@@ -12,6 +12,7 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
   - `time_provider.dart` → `TimeProvider` (~10000 行) — 核心业务状态：时间块、分类、目标、模板、撤销栈、统计缓存、增量保存、Google 日历同步、日程(schedule)同步、已删除事件关系
   - `theme_mode_provider.dart` → `ThemeModeProvider` (52 行) — 主题模式 (light/dark/system)
   - `desktop_shortcut_provider.dart` → `DesktopShortcutProvider` — 本机快捷键偏好（`desktop_shortcuts_v1`），不依赖身份、不进同步或备份；保存成功后更新绑定。稳定命令与键位定义在 `models/desktop_shortcut.dart`，设置在「我的 → 设置 → 外观设置 → 键盘快捷键」。`DesktopShortcutHost` 分层注册全局 / 主导航 / 当前页 / 表单命令，不能把记录页撤销和切日动作放到 Navigator 外；隐藏 Tab 用 `MainTabActivity` + `ExcludeFocus` 禁用，弹层显示时检查宿主路由 `isCurrent`，输入焦点保留文字编辑并避让 IME composing。数字键按可见标签顺序，表单保存只调用既有校验和保存入口
+  - `desktop_layout_provider.dart` → `DesktopLayoutProvider` — 本机桌面导航与事件栏宽度（`desktop_layout_v1`），独立于身份、不进同步/备份，落盘成功后才更新偏好。默认底部导航，可在「我的 → 设置 → 外观设置 → 桌面布局」选宽屏左侧导航；1000 宽度断点以下回到底部。`MainScreen` 跨导航模式/宽度保持相同 `Row → Expanded → IndexedStack` 结构，不能重建 Tab 状态；排序、隐藏与快捷键仍统一使用 `MainTabProvider.visibleTabs`。`HomeScreen` 分隔条拖动时仅预览、松手保存，窗口变窄只限制显示宽度，不能覆盖用户偏好；桌面事件区用可拖排的多列布局，移动端仍保留列表
   - `target_stats_cache.dart` → `TargetStatsCache` (47 行) — 目标统计内存缓存，按日期失效
   - `wake_up_provider.dart` → `WakeUpProvider` — 目标页起床记录：每个自然日一条、精确到分钟，最近 7 天平均只计已记录日期。卡片「查看更多」进入 `WakeUpHistoryScreen`，可按最近 30 天 / 90 天 / 全部 / 自选日期查看平均、最早、最晚起床时间、趋势与每日明细；`recordsInRange` 按自然日含首尾筛选、日期倒序返回当前身份记录。应用入口全局创建，隐藏目标页也继续同步；本机经 `WakeUpLocalStore` 按身份保存数据与待上传标记，远端经 `WakeUpGiteeService` 双向同步。切身份清空旧视图，异步保存保留原身份归属、旧响应不能混入新身份；保存成功后才更新显示。目前不进 JSON 备份
   - `background_image_provider.dart` → `BackgroundImageProvider` — 背景图（壁纸）本机状态：图片路径 / 开关 / 照片不透明度 / 表面不透明度。**刻意独立于业务数据 Provider：本地图片路径绝不进同步或备份快照**（`lib/services/` 与 `lib/models/` 均不引用它）。契约见「数据流与关键模式」的背景图一节
@@ -230,6 +231,7 @@ Never commit them.
 - `test/wake_up_sync_test.dart` / `test/wake_up_gitee_service_test.dart` — 双端读改写与删除、离线重启恢复、旧记录迁移、SHA 冲突重试、损坏远端保护、上传期间编辑与身份切换、同步中心合并状态、自动刷新前后台边界与 Gitee 文档路径
 - `test/statistics_cache_test.dart` / `test/main_screen_lazy_loading_test.dart` — 趋势与分类缓存互不覆盖、词云按自然日复用、跨日边界、编辑/撤销/切身份失效，以及隐藏统计页零查询、返回刷新与筛选状态保活
 - `test/main_tab_provider_test.dart` / `test/main_tab_settings_screen_test.dart` — 导航偏好持久化与损坏修复、设置入口与最少标签约束、草稿取消/保存/恢复默认、触控和鼠标排序、窄屏大字与壁纸；`main_screen_lazy_loading_test.dart` 另覆盖自定义顺序启动、导航映射与隐藏/恢复页面保活
+- `test/desktop_layout_provider_test.dart` / `test/desktop_layout_settings_test.dart` — 桌面布局与宽度持久化、损坏恢复、保存失败与并发不丢设置；`main_screen_lazy_loading_test.dart` 覆盖两种导航切换/跨断点保活、快捷键和设置入口，`brush_mode_test.dart` 覆盖事件栏拖宽/自动分列/跨列排序、调宽后的刷子归属与方向键微调
 - `test/diary_reminder_service_test.dart` / `diary_reminder_diagnostics_test.dart` / `diary_reminder_drawer_test.dart` / `time_wheel_sheet_test.dart` — 写日记提醒的排程、原生事件导入、抽屉 UI 与滚轮时间面板
 - `test/check_in_reminder_service_test.dart` / `check_in_reminder_ui_test.dart` — 打卡提醒的多实例排程与编辑页入口
 - 写提醒相关的 widget 测试要注意：抽屉是长 `ListView`，懒构建会让折叠线以下的条目根本不挂载，需要把测试视口调高；另外 `AppIdentityService.load()` 每次都会重读偏好，测试里的身份必须放在偏好键 `schedule_user_kind` 里，靠 `adoptManualKind` 设进去会被覆盖

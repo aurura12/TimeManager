@@ -11,6 +11,7 @@ import 'package:time_manager/models/category.dart';
 import 'package:time_manager/models/main_tab_id.dart';
 import 'package:time_manager/models/global_search_result.dart';
 import 'package:time_manager/providers/main_tab_provider.dart';
+import 'package:time_manager/providers/desktop_layout_provider.dart';
 import 'package:time_manager/providers/background_image_provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
@@ -21,6 +22,7 @@ import 'package:time_manager/screens/main_screen.dart';
 import 'package:time_manager/screens/global_search_screen.dart';
 import 'package:time_manager/screens/add_target_screen.dart';
 import 'package:time_manager/screens/desktop_shortcut_settings_screen.dart';
+import 'package:time_manager/screens/desktop_layout_settings_screen.dart';
 import 'package:time_manager/providers/desktop_shortcut_provider.dart';
 import 'package:time_manager/utils/platform_features.dart';
 import 'package:time_manager/screens/main_tab_settings_screen.dart';
@@ -169,6 +171,7 @@ Future<TimeProvider> _pumpMainScreen(
         ChangeNotifierProvider<TimeProvider>.value(value: provider),
         ChangeNotifierProvider(create: (_) => MainTabProvider()),
         ChangeNotifierProvider(create: (_) => DesktopShortcutProvider()),
+        ChangeNotifierProvider(create: (_) => DesktopLayoutProvider()),
         ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
         ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
       ],
@@ -203,6 +206,84 @@ void main() {
     await tester.sendKeyUpEvent(modifier);
     await tester.pumpAndSettle();
   }
+
+  testWidgets('宽屏左侧导航沿用标签顺序，切布局和缩放保留页面与统计状态', (tester) async {
+    await _pumpMainScreen(tester,
+        createProvider: _CountingProvider.new,
+        screenSize: const Size(1400, 900),
+        initialPreferences: {
+          DesktopLayoutProvider.storageKey:
+              jsonEncode({'navigation': 'side', 'categoryWidth': 300}),
+          MainTabProvider.storageKey: jsonEncode({
+            'order': [
+              'record',
+              'profile',
+              'diary',
+              'target',
+              'travel',
+              'check_in'
+            ],
+            'hidden': ['travel', 'check_in'],
+          }),
+        });
+    expect(find.byType(NavigationBar), findsNothing);
+    final rail = tester.widget<NavigationRail>(find.byType(NavigationRail));
+    expect(rail.destinations.map((item) => (item.label as Text).data),
+        ['记录', '我的', '日记', '目标']);
+    final homeState = tester.state(find.byType(HomeScreen));
+    await tester.tap(find.descendant(
+        of: find.byType(NavigationRail), matching: find.text('我的')));
+    await tester.pumpAndSettle();
+    final profileState = tester.state(find.byType(ProfileScreen));
+    final layout =
+        tester.element(find.byType(MainScreen)).read<DesktopLayoutProvider>();
+    await layout.setNavigationLayout(DesktopNavigationLayout.bottom);
+    await tester.pumpAndSettle();
+    expect(tester.state(find.byType(ProfileScreen)), same(profileState));
+    expect(
+        tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
+        1);
+    await layout.setNavigationLayout(DesktopNavigationLayout.side);
+    await tester.pumpAndSettle();
+    expect(tester.state(find.byType(ProfileScreen)), same(profileState));
+    tester.view.physicalSize = const Size(800, 700);
+    await tester.pumpAndSettle();
+    expect(find.byType(NavigationRail), findsNothing);
+    expect(tester.state(find.byType(ProfileScreen)), same(profileState));
+    await tester.tap(_tab('记录'));
+    await tester.pumpAndSettle();
+    expect(tester.state(find.byType(HomeScreen)), same(homeState));
+    tester.view.physicalSize = const Size(1400, 900);
+    await tester.pumpAndSettle();
+    expect(find.byType(NavigationRail), findsOneWidget);
+    expect(tester.state(find.byType(HomeScreen)), same(homeState));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('左侧导航数字快捷键保持映射，桌面布局可从外观设置打开', (tester) async {
+    if (!isDesktopPlatform) return;
+    await _pumpMainScreen(tester,
+        createProvider: _CountingProvider.new,
+        screenSize: const Size(1400, 1100),
+        initialPreferences: {
+          DesktopLayoutProvider.storageKey: jsonEncode({'navigation': 'side'}),
+        });
+    await shortcut(tester, LogicalKeyboardKey.digit6);
+    expect(find.byType(ProfileScreen), findsOneWidget);
+    await shortcut(tester, LogicalKeyboardKey.comma);
+    await tester.tap(find.text('外观设置'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('桌面布局'));
+    await tester.tap(find.text('桌面布局'));
+    await tester.pumpAndSettle();
+    expect(find.byType(DesktopLayoutSettingsScreen), findsOneWidget);
+    await tester.tap(find.text('底部导航（原有布局）'));
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('数字快捷键遵循可见标签顺序，新建和搜索作用于当前模块', (tester) async {
     final provider = await _pumpMainScreen(

@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +10,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/category.dart';
 import 'package:time_manager/providers/main_tab_provider.dart';
+import 'package:time_manager/providers/desktop_layout_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/screens/home_screen.dart';
 import 'package:time_manager/screens/main_screen.dart';
@@ -115,16 +119,20 @@ Future<TimeProvider> _pumpHome(
   WidgetTester tester, {
   Size size = const Size(1000, 800),
   ThemeData? theme,
+  Map<String, Object> prefs = const {},
 }) async {
-  _installPluginMocks();
+  _installPluginMocks(prefs: prefs);
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
 
   final provider = TimeProvider();
   await tester.pumpWidget(
-    ChangeNotifierProvider<TimeProvider>.value(
-      value: provider,
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider<TimeProvider>.value(value: provider),
+        ChangeNotifierProvider(create: (_) => DesktopLayoutProvider()),
+      ],
       child: MaterialApp(
         theme: theme ?? AppTheme.light(),
         home: const HomeScreen(),
@@ -227,6 +235,121 @@ Future<void> _selectCell(WidgetTester tester, Offset point) async {
 }
 
 void main() {
+  testWidgets('拖宽事件栏可并排选择子事件，网格刷子与右键编辑仍然正确', (tester) async {
+    final provider = await _pumpHome(tester, size: const Size(1600, 900));
+    final panel = find.byKey(const ValueKey('category-panel'));
+    expect(tester.getSize(panel).width, 100);
+    final handle = find.byKey(const ValueKey('category-panel-resize'));
+    await tester.drag(handle, const Offset(-280, 0));
+    await tester.pumpAndSettle();
+    final layout =
+        tester.element(find.byType(HomeScreen)).read<DesktopLayoutProvider>();
+    expect(layout.categoryPanelWidth, greaterThan(320));
+    expect(tester.getSize(panel).width, layout.categoryPanelWidth);
+    final first =
+        find.byKey(ValueKey('category-tile-${provider.categories[0].id}'));
+    final second =
+        find.byKey(ValueKey('category-tile-${provider.categories[1].id}'));
+    expect(tester.getTopLeft(first).dy, tester.getTopLeft(second).dy);
+    expect(tester.getTopLeft(first).dx, lessThan(tester.getTopLeft(second).dx));
+    provider.setCategoryExpandState(_category(provider, '学习').id, true);
+    await tester.pump();
+    await _tapCategory(tester, '阅读');
+    final geometry = _gridGeometry(tester, provider, _todayColumn);
+    await tester.tapAt(_visiblePoint(geometry, 54));
+    await tester.pump();
+    expect(_labelAt(provider, 54), '阅读');
+    expect(_categoryIdAt(provider, 54), _category(provider, '学习').id);
+    final mouse = await tester.startGesture(
+        tester.getCenter(_categoryItem('工作')),
+        kind: PointerDeviceKind.mouse,
+        buttons: kSecondaryMouseButton);
+    await mouse.up();
+    await tester.pumpAndSettle();
+    expect(find.text('编辑事件'), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    final restored = DesktopLayoutProvider();
+    addTearDown(restored.dispose);
+    await restored.ready;
+    expect(restored.categoryPanelWidth, layout.categoryPanelWidth);
+    expect(tester.takeException(), isNull);
+    await _drainPendingSync(tester);
+  });
+
+  testWidgets('缩小窗口限制显示宽度但不覆盖偏好，方向键调宽不切换日期', (tester) async {
+    final provider =
+        await _pumpHome(tester, size: const Size(1400, 900), prefs: {
+      DesktopLayoutProvider.storageKey:
+          jsonEncode({'navigation': 'side', 'categoryWidth': 400}),
+    });
+    final layout =
+        tester.element(find.byType(HomeScreen)).read<DesktopLayoutProvider>();
+    final panel = find.byKey(const ValueKey('category-panel'));
+    expect(tester.getSize(panel).width, 400);
+    tester.view.physicalSize = const Size(850, 700);
+    await tester.pumpAndSettle();
+    expect(tester.getSize(panel).width, lessThan(400));
+    expect(layout.categoryPanelWidth, 400);
+    tester.view.physicalSize = const Size(1400, 900);
+    await tester.pumpAndSettle();
+    expect(tester.getSize(panel).width, 400);
+    final date = provider.currentDate;
+    await tester.tap(find.byKey(const ValueKey('category-panel-resize')));
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pumpAndSettle();
+    expect(layout.categoryPanelWidth, 416);
+    expect(provider.currentDate, date);
+    await tester.sendKeyEvent(LogicalKeyboardKey.home);
+    await tester.pumpAndSettle();
+    expect(
+        layout.categoryPanelWidth, AppSizes.desktopCategoryPanelDefaultWidth);
+    expect(tester.takeException(), isNull);
+    await _drainPendingSync(tester);
+  });
+
+  testWidgets('并排事件支持鼠标跨列拖动排序', (tester) async {
+    final provider =
+        await _pumpHome(tester, size: const Size(1400, 900), prefs: {
+      DesktopLayoutProvider.storageKey: jsonEncode({'categoryWidth': 360}),
+    });
+    final first = provider.categories.first;
+    final second = provider.categories[1];
+    final start = tester.getCenter(_categoryItem(first.name));
+    final target = tester.getCenter(_categoryItem(second.name));
+    final drag =
+        await tester.startGesture(start, kind: PointerDeviceKind.mouse);
+    await drag.moveBy(const Offset(12, 0));
+    await tester.pump();
+    await drag.moveTo(target);
+    await tester.pump(const Duration(milliseconds: 400));
+    await drag.up();
+    await tester.pumpAndSettle();
+    expect(provider.categories[0].id, second.id);
+    expect(provider.categories[1].id, first.id);
+    expect(tester.takeException(), isNull);
+    await _drainPendingSync(tester);
+  });
+
+  testWidgets('选中时间后调宽事件栏，仍分配到原来的日期和槽位', (tester) async {
+    final provider = await _pumpHome(tester, size: const Size(1400, 900));
+    final geometry = _gridGeometry(tester, provider, _prevColumn);
+    await _selectCell(tester, _visiblePoint(geometry, 54));
+    await tester.drag(find.byKey(const ValueKey('category-panel-resize')),
+        const Offset(-220, 0));
+    await tester.pumpAndSettle();
+    await _tapCategory(tester, '工作');
+    final yesterday = provider.currentDate.subtract(const Duration(days: 1));
+    final slot = provider.slotsForDate(yesterday)[54];
+    expect(slot.label, '工作');
+    expect(slot.categoryId, _category(provider, '工作').id);
+    expect(provider.slots[54].recorded, isFalse);
+    expect(find.byType(BrushModeCard), findsNothing);
+    expect(tester.takeException(), isNull);
+    await _drainPendingSync(tester);
+  });
+
   testWidgets('刷子卡片在窄侧栏中保持单行事件名和提示', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
