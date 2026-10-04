@@ -10,6 +10,9 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/platform_features.dart';
+import '../widgets/desktop_target_card.dart';
+import '../widgets/main_tab_activity.dart';
 
 class TargetScreen extends StatelessWidget {
   const TargetScreen({super.key});
@@ -18,25 +21,32 @@ class TargetScreen extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('我的计划'),
-        centerTitle: true,
+        title: Text(isDesktopPlatform ? '目标' : '我的计划'),
+        centerTitle: !isDesktopPlatform,
         // 如果是在底部导航栏的主页，通常不需要 leading 返回键，如有需要可自行开启
         actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () {
-              // 点击跳转到添加目标页面
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (context) => const AddTargetScreen()),
-              );
-            },
-          ),
+          if (isDesktopPlatform)
+            Padding(
+              padding: const EdgeInsets.only(right: AppSpacing.lg),
+              child: FilledButton.icon(
+                onPressed: () => showTargetEditor(context),
+                icon: const Icon(Icons.add),
+                label: const Text('新建目标'),
+              ),
+            )
+          else
+            IconButton(
+              tooltip: '新建目标',
+              icon: const Icon(Icons.add),
+              onPressed: () => showTargetEditor(context),
+            ),
         ],
       ),
       body: Consumer<TimeProvider>(
         builder: (context, timeProvider, child) {
+          if (isDesktopPlatform) {
+            return _buildDesktopList(context, timeProvider);
+          }
           if (timeProvider.targets.isEmpty) {
             return Center(
               child: Text(
@@ -148,13 +158,7 @@ class TargetScreen extends StatelessWidget {
                             child: InkWell(
                               onTap: () {
                                 // 处理编辑逻辑
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        AddTargetScreen(target: target),
-                                  ),
-                                );
+                                showTargetEditor(context, target: target);
                               },
                               child: Center(
                                 child: Icon(
@@ -204,6 +208,87 @@ class TargetScreen extends StatelessWidget {
             }).toList(),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildDesktopList(BuildContext context, TimeProvider provider) {
+    final scheme = Theme.of(context).colorScheme;
+    if (provider.targets.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: AppSpacing.cardComfortable,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.flag_outlined,
+                  size: AppSizes.minTapTarget, color: scheme.onSurfaceVariant),
+              const SizedBox(height: AppSpacing.lg),
+              const Text('暂无目标', style: AppText.sectionTitle),
+              const SizedBox(height: AppSpacing.sm),
+              Text('为已有事件设置时长、次数或时间点目标',
+                  textAlign: TextAlign.center,
+                  style: AppText.body.copyWith(color: scheme.onSurfaceVariant)),
+              const SizedBox(height: AppSpacing.xl),
+              FilledButton.icon(
+                onPressed: () => showTargetEditor(context),
+                icon: const Icon(Icons.add),
+                label: const Text('新建目标'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints:
+            const BoxConstraints(maxWidth: AppSizes.desktopContentMaxWidth),
+        child: Column(
+          children: [
+            Padding(
+              padding: AppSpacing.cardComfortable,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text('共 ${provider.targets.length} 个目标',
+                        style: AppText.caption
+                            .copyWith(color: scheme.onSurfaceVariant)),
+                  ),
+                  Text('拖动把手排序 · 右键打开菜单',
+                      style: AppText.caption
+                          .copyWith(color: scheme.onSurfaceVariant)),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ReorderableListView.builder(
+                padding: AppSpacing.page,
+                buildDefaultDragHandles: false,
+                itemCount: provider.targets.length,
+                onReorderItem: provider.reorderTargets,
+                itemBuilder: (context, index) {
+                  final target = provider.targets[index];
+                  return DesktopTargetCard(
+                    key: ValueKey(target.id),
+                    target: target,
+                    provider: provider,
+                    index: index,
+                    onOpen: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => TargetDetailScreen(targetId: target.id),
+                      ),
+                    ),
+                    onEdit: () => showTargetEditor(context, target: target),
+                    onDelete: () => _confirmDelete(context, provider, target),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -321,14 +406,40 @@ class _CountdownText extends StatefulWidget {
 }
 
 class _CountdownTextState extends State<_CountdownText> {
-  late Timer _timer;
+  Timer? _timer;
   Duration _remaining = Duration.zero;
+  bool _isActive = false;
 
   @override
   void initState() {
     super.initState();
     _updateTime();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _updateTime());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _isActive = MainTabActivity.isActiveOf(context);
+    _refreshTimer();
+  }
+
+  void _refreshTimer() {
+    _timer?.cancel();
+    if (_isActive) {
+      _updateTime();
+      if (_remaining > Duration.zero) {
+        _timer =
+            Timer.periodic(const Duration(minutes: 1), (_) => _updateTime());
+      }
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _CountdownText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.endTime != oldWidget.endTime) {
+      _refreshTimer();
+    }
   }
 
   void _updateTime() {
@@ -339,12 +450,12 @@ class _CountdownTextState extends State<_CountdownText> {
         _remaining = diff.isNegative ? Duration.zero : diff;
       });
     }
-    if (diff.isNegative) _timer.cancel();
+    if (diff <= Duration.zero) _timer?.cancel();
   }
 
   @override
   void dispose() {
-    _timer.cancel();
+    _timer?.cancel();
     super.dispose();
   }
 
@@ -353,15 +464,14 @@ class _CountdownTextState extends State<_CountdownText> {
     final days = _remaining.inDays;
     final hours = _remaining.inHours % 24;
     final minutes = _remaining.inMinutes % 60;
-    final seconds = _remaining.inSeconds % 60;
 
     String text;
     if (days > 0) {
       text =
-          "$days天 ${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}";
+          "$days天 ${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}";
     } else {
       text =
-          "${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}";
+          "${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}";
     }
 
     return Text(" $text", style: widget.style);

@@ -46,17 +46,14 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
             actions: [
               IconButton(
                 icon: const Icon(Icons.edit),
+                tooltip: '编辑目标',
                 onPressed: () async {
-                  await Navigator.push<Target>(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => AddTargetScreen(target: target),
-                    ),
-                  );
+                  await showTargetEditor(context, target: target);
                 },
               ),
               IconButton(
                 icon: const Icon(Icons.delete_outline),
+                tooltip: '删除目标',
                 onPressed: () {
                   showDialog<void>(
                     context: context,

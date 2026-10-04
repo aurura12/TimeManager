@@ -204,6 +204,7 @@ Never commit them.
 - `test/support/fake_app_log_store.dart` — 可注入失败的 Fake store
 - `test/support/fake_reminder_backend.dart` — 两类提醒共用的后端 Fake（刻意不实现删除通道的方法，作为「绝不删通道」的编译期保证）
 - `test/time_provider_save_test.dart` / `test/schedule_json_codec_test.dart` — 普通编辑保存合并、切后台/身份即时落盘、保存期间新编辑与待同步归属不丢、统计缓存按日期失效、后台 JSON 合并及旧哈希兼容
+- `test/target_desktop_ui_test.dart` — 桌面目标编辑表单、键盘保存/取消、数值与时间校验、子事件关联、周期天数与时长独立、右键删除、鼠标拖拽及浅深主题/窄窗口布局；桌面编辑入口统一走 `showTargetEditor`，移动端保留整页编辑
 - `test/statistics_cache_test.dart` / `test/main_screen_lazy_loading_test.dart` — 趋势与分类缓存互不覆盖、词云按自然日复用、跨日边界、编辑/撤销/切身份失效，以及隐藏统计页零查询、返回刷新与筛选状态保活
 - `test/diary_reminder_service_test.dart` / `diary_reminder_diagnostics_test.dart` / `diary_reminder_drawer_test.dart` / `time_wheel_sheet_test.dart` — 写日记提醒的排程、原生事件导入、抽屉 UI 与滚轮时间面板
 - `test/check_in_reminder_service_test.dart` / `check_in_reminder_ui_test.dart` — 打卡提醒的多实例排程与编辑页入口

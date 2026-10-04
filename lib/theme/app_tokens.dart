@@ -127,6 +127,12 @@ abstract final class AppSizes {
   /// 弹窗最大宽度（手机版）
   static const double dialogMaxWidth = 400;
 
+  /// 桌面列表与编辑表单的内容宽度，避免控件铺满宽窗口。
+  static const double desktopContentMaxWidth = 1080;
+  static const double desktopFormMaxWidth = 640;
+  static const double desktopTargetRowBreakpoint = 720;
+  static const double desktopTargetProgressWidth = 240;
+
   /// 可视化取色面板及选中圆环。
   static const double colorPickerPlane = 160;
   static const double colorPickerIndicator = 20;

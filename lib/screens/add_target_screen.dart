@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 import '../models/target.dart';
@@ -6,11 +9,33 @@ import '../models/target.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/platform_features.dart';
+
+/// 桌面端原地编辑，移动端继续使用完整页面。
+Future<Target?> showTargetEditor(BuildContext context, {Target? target}) {
+  final provider = context.read<TimeProvider>();
+  if (isDesktopPlatform) {
+    return showDialog<Target>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => ChangeNotifierProvider<TimeProvider>.value(
+        value: provider,
+        child: AddTargetScreen(target: target, asDialog: true),
+      ),
+    );
+  }
+  return Navigator.of(context).push<Target>(
+    MaterialPageRoute(
+      builder: (_) => AddTargetScreen(target: target),
+    ),
+  );
+}
 
 class AddTargetScreen extends StatefulWidget {
   final Target? target; // 接收可选的目标对象用于编辑
+  final bool asDialog;
 
-  const AddTargetScreen({super.key, this.target});
+  const AddTargetScreen({super.key, this.target, this.asDialog = false});
 
   @override
   State<AddTargetScreen> createState() => _AddTargetScreenState();
@@ -21,6 +46,11 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
   Color _selectedColor = AppSemanticColors.palette.first;
   String _selectedPeriod = "每周";
   bool _isSaving = false;
+  String? _saveError;
+  final _desktopFormKey = GlobalKey<FormState>();
+  final _scrollController = ScrollController();
+  String _periodMode = '每周';
+  String _periodDaysValue = '7';
 
   // --- 可编辑的表单数据 ---
   String _eventName = "运动";
@@ -33,6 +63,27 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
   String _endTime = "24:00";
 
   final List<Color> _themeColors = AppSemanticColors.palette;
+
+  static const _periods = [
+    '每天',
+    '每周',
+    '每月',
+    '每年',
+    '每n天',
+    '今天',
+    '本周',
+    '一周内',
+    '本月',
+    '一月内',
+    '今年',
+    '一年内',
+    'n天内',
+    '起止日期',
+  ];
+
+  List<String> get _compareTypes => _selectedType == TargetType.timePoint
+      ? const ['之前', '之后']
+      : const ['超过', '少于', '等于'];
 
   @override
   void initState() {
@@ -61,22 +112,115 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
         if (t.startTime.isNotEmpty) _startTime = t.startTime;
         if (t.endTime.isNotEmpty) _endTime = t.endTime;
       }
+    } else if (widget.asDialog) {
+      final categories = context.read<TimeProvider>().categories;
+      if (categories.isNotEmpty) {
+        final category = categories.firstWhere(
+          (category) => category.name == _eventName,
+          orElse: () => categories.first,
+        );
+        _eventName = category.name;
+        _categoryId = category.id;
+      }
     }
+    if (_selectedType == TargetType.timePoint) {
+      // 老版本的“少于/超过”等选项分别按之前/之后判断，保留其实际语义。
+      _compareType = _compareType.contains('前') || _compareType.contains('少')
+          ? '之前'
+          : '之后';
+    } else if (!_compareTypes.contains(_compareType)) {
+      _compareType = '超过';
+    }
+    final days = RegExp(r'^(?:每)?(\d+)天(?:内)?$').firstMatch(_selectedPeriod);
+    if (days != null) {
+      _periodDaysValue = days.group(1)!;
+      _periodMode = _selectedPeriod.startsWith('每') ? '每n天' : 'n天内';
+    } else {
+      _periodMode = _selectedPeriod.contains('~') ? '起止日期' : _selectedPeriod;
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _changeType(TargetType type) {
+    if (_isSaving || type == _selectedType) return;
+    setState(() {
+      _selectedType = type;
+      _compareType = type == TargetType.timePoint ? '之前' : '超过';
+      if (type == TargetType.timePoint) {
+        _selectedPeriod = '每天';
+        _periodMode = '每天';
+      }
+    });
+  }
+
+  String? _positiveNumber(String? value,
+      {required String label, bool integer = false}) {
+    final raw = value?.trim() ?? '';
+    final parsed =
+        integer ? int.tryParse(raw)?.toDouble() : double.tryParse(raw);
+    if (parsed == null || !parsed.isFinite || parsed <= 0) {
+      return integer ? '请输入正整数$label' : '请输入大于 0 的$label';
+    }
+    return null;
+  }
+
+  int? _timeMinutes(String value, {bool allowDayEnd = false}) {
+    final match = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(value.trim());
+    if (match == null) return null;
+    final hour = int.parse(match.group(1)!);
+    final minute = int.parse(match.group(2)!);
+    if (allowDayEnd && hour == 24 && minute == 0) return 1440;
+    if (hour > 23 || minute > 59) return null;
+    return hour * 60 + minute;
+  }
+
+  String? _validationMessage() {
+    if (_eventName.trim().isEmpty) return '请选择关联事件';
+    if (_selectedType == TargetType.duration) {
+      final message = _positiveNumber(_durationValue, label: '时长');
+      if (message != null) return message;
+    } else if (_selectedType == TargetType.frequency) {
+      final message =
+          _positiveNumber(_frequencyCount, label: '次数', integer: true);
+      if (message != null) return message;
+    } else {
+      if (_timeMinutes(_targetTime) == null) return '请输入有效的目标时间（HH:mm）';
+      final start = _timeMinutes(_startTime);
+      final end = _timeMinutes(_endTime, allowDayEnd: true);
+      if (start == null || end == null || start >= end) {
+        return '有效时间区间的结束时间必须晚于开始时间';
+      }
+    }
+    if (_selectedType != TargetType.timePoint &&
+        (_periodMode == '每n天' || _periodMode == 'n天内')) {
+      return _positiveNumber(_periodDaysValue, label: '天数', integer: true);
+    }
+    if (_selectedType != TargetType.timePoint &&
+        _periodMode == '起止日期' &&
+        !_selectedPeriod.contains('~')) {
+      return '请选择起止日期';
+    }
+    return null;
   }
 
   // --- 辅助方法：显示输入弹窗 ---
   Future<void> _showInputDialog(
       String title, String currentValue, Function(String) onSave,
       {bool isNumber = false}) async {
-    TextEditingController controller =
-        TextEditingController(text: currentValue);
-    return showDialog(
+    var inputValue = currentValue;
+    await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text("设置$title"),
-        content: TextField(
-          controller: controller,
+        content: TextFormField(
+          initialValue: currentValue,
           autofocus: true,
+          onChanged: (value) => inputValue = value,
           keyboardType: isNumber ? TextInputType.number : TextInputType.text,
           decoration: InputDecoration(hintText: "请输入$title"),
         ),
@@ -85,13 +229,17 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
               onPressed: () => Navigator.pop(context), child: const Text("取消")),
           TextButton(
             onPressed: () {
-              if (controller.text.isEmpty) {
-                // Show a message if the input is empty.
+              final error = isNumber
+                  ? _positiveNumber(inputValue,
+                      label: title == '时长(小时)' ? '时长' : title,
+                      integer: title != '时长(小时)')
+                  : (inputValue.trim().isEmpty ? '请输入$title' : null);
+              if (error != null) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('请输入天数')),
+                  SnackBar(content: Text(error)),
                 );
               } else {
-                onSave(controller.text);
+                onSave(inputValue.trim());
                 Navigator.pop(context);
                 setState(() {});
               }
@@ -219,7 +367,25 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
 
   Future<void> _saveTarget() async {
     if (_isSaving) return;
-    setState(() => _isSaving = true);
+    if (widget.asDialog &&
+        !(_desktopFormKey.currentState?.validate() ?? false)) {
+      return;
+    }
+    final validation = _validationMessage();
+    if (validation != null) {
+      if (widget.asDialog) {
+        setState(() => _saveError = validation);
+      } else {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(validation)));
+      }
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _isSaving = true;
+      _saveError = null;
+    });
 
     final provider = Provider.of<TimeProvider>(context, listen: false);
     final categoryId = _categoryId.isNotEmpty
@@ -233,21 +399,26 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
       color: _selectedColor,
       period: _selectedPeriod,
       compareType: _compareType,
-      durationHours: double.tryParse(_durationValue) ?? 0,
-      frequencyCount: int.tryParse(_frequencyCount) ?? 0,
-      targetTime: _targetTime,
-      startTime: _startTime,
-      endTime: _endTime,
+      durationHours: double.tryParse(_durationValue.trim()) ?? 0,
+      frequencyCount: int.tryParse(_frequencyCount.trim()) ?? 0,
+      targetTime: _targetTime.trim(),
+      startTime: _startTime.trim(),
+      endTime: _endTime.trim(),
     );
 
     if (widget.target != null) {
       final saved = await provider.updateTarget(newTarget);
       if (!mounted) return;
       if (!saved) {
-        setState(() => _isSaving = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('保存失败，请稍后重试')),
-        );
+        setState(() {
+          _isSaving = false;
+          _saveError = '保存失败，请稍后重试';
+        });
+        if (!widget.asDialog) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('保存失败，请稍后重试')),
+          );
+        }
         return;
       }
     } else {
@@ -258,8 +429,407 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
     Navigator.pop(context, newTarget);
   }
 
+  void _closeEditor() {
+    if (!_isSaving) Navigator.of(context).pop();
+  }
+
+  Widget _buildDesktopEditor() {
+    final scheme = Theme.of(context).colorScheme;
+    return Dialog(
+      insetPadding: const EdgeInsets.all(AppSpacing.xl),
+      constraints: const BoxConstraints(maxWidth: AppSizes.desktopFormMaxWidth),
+      clipBehavior: Clip.antiAlias,
+      child: PopScope(
+        canPop: !_isSaving,
+        child: CallbackShortcuts(
+          bindings: {
+            const SingleActivator(LogicalKeyboardKey.enter, control: true):
+                () => unawaited(_saveTarget()),
+            const SingleActivator(LogicalKeyboardKey.enter, meta: true): () =>
+                unawaited(_saveTarget()),
+            const SingleActivator(LogicalKeyboardKey.escape): _closeEditor,
+          },
+          child: FocusTraversalGroup(
+            child: SizedBox(
+              width: AppSizes.desktopFormMaxWidth,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(context).height -
+                      MediaQuery.viewInsetsOf(context).bottom -
+                      AppSpacing.xl * 2,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(AppSpacing.xl,
+                          AppSpacing.md, AppSpacing.md, AppSpacing.md),
+                      child: Row(children: [
+                        Expanded(
+                            child: Text(widget.target == null ? '新建目标' : '编辑目标',
+                                style: AppText.pageTitle)),
+                        IconButton(
+                          tooltip: '关闭',
+                          onPressed: _isSaving ? null : _closeEditor,
+                          icon: const Icon(Icons.close),
+                        ),
+                      ]),
+                    ),
+                    const Divider(height: AppSizes.hairline),
+                    Flexible(
+                      child: Scrollbar(
+                        controller: _scrollController,
+                        child: ScrollConfiguration(
+                          behavior: ScrollConfiguration.of(context)
+                              .copyWith(scrollbars: false),
+                          child: SingleChildScrollView(
+                            controller: _scrollController,
+                            padding: const EdgeInsets.all(AppSpacing.xl),
+                            child: Form(
+                              key: _desktopFormKey,
+                              autovalidateMode:
+                                  AutovalidateMode.onUserInteraction,
+                              child: _buildDesktopFields(),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const Divider(height: AppSizes.hairline),
+                    Padding(
+                      padding: const EdgeInsets.all(AppSpacing.lg),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (_saveError != null) ...[
+                            Text(_saveError!,
+                                style:
+                                    AppText.body.copyWith(color: scheme.error)),
+                            const SizedBox(height: AppSpacing.md),
+                          ],
+                          Row(children: [
+                            Expanded(
+                                child: Text('Ctrl / ⌘ + Enter 保存',
+                                    style: AppText.caption.copyWith(
+                                        color: scheme.onSurfaceVariant))),
+                            TextButton(
+                              onPressed: _isSaving ? null : _closeEditor,
+                              child: const Text('取消'),
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            FilledButton(
+                              onPressed: _isSaving ? null : _saveTarget,
+                              child: Text(_isSaving ? '保存中…' : '保存'),
+                            ),
+                          ]),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDesktopFields() {
+    final scheme = Theme.of(context).colorScheme;
+    final provider = context.read<TimeProvider>();
+    final events = <(String, String), String>{};
+    for (final category in provider.categories) {
+      events[(category.id, category.name)] = category.name;
+      for (final sub in category.subCategories) {
+        events[(category.id, sub)] = '${category.name} / $sub';
+      }
+    }
+    final selectedEvent = (_categoryId, _eventName);
+    if (widget.target != null && !events.containsKey(selectedEvent)) {
+      // 历史目标可以关联已删除的事件，编辑其他字段时保留该关联。
+      events[selectedEvent] = '$_eventName（原关联事件）';
+    }
+
+    final type = DropdownButtonFormField<TargetType>(
+      key: const ValueKey('target_type'),
+      initialValue: _selectedType,
+      decoration: const InputDecoration(labelText: '目标类型'),
+      isExpanded: true,
+      items: [
+        for (final type in TargetType.values)
+          DropdownMenuItem(value: type, child: Text(_getTypeName(type))),
+      ],
+      onChanged: _isSaving
+          ? null
+          : (value) {
+              if (value != null) _changeType(value);
+            },
+    );
+    final comparison = DropdownButtonFormField<String>(
+      key: const ValueKey('target_comparison'),
+      initialValue: _compareType,
+      decoration: const InputDecoration(labelText: '比较条件'),
+      items: [
+        for (final comparison in _compareTypes)
+          DropdownMenuItem(value: comparison, child: Text(comparison)),
+      ],
+      onChanged: _isSaving
+          ? null
+          : (value) {
+              if (value != null) setState(() => _compareType = value);
+            },
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DropdownButtonFormField<(String, String)>(
+          key: const ValueKey('target_event'),
+          initialValue:
+              events.containsKey(selectedEvent) ? selectedEvent : null,
+          isExpanded: true,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: '关联事件'),
+          hint: const Text('请选择已有事件'),
+          items: [
+            for (final entry in events.entries)
+              DropdownMenuItem(
+                  value: entry.key,
+                  child: Text(entry.value, overflow: TextOverflow.ellipsis)),
+          ],
+          validator: (value) => value == null ? '请选择关联事件' : null,
+          onChanged: _isSaving
+              ? null
+              : (value) {
+                  if (value != null) {
+                    setState(() {
+                      _categoryId = value.$1;
+                      _eventName = value.$2;
+                    });
+                  }
+                },
+        ),
+        if (events.isEmpty) ...[
+          const SizedBox(height: AppSpacing.sm),
+          Text('暂无已有事件，请先在记录页添加事件',
+              style: AppText.caption.copyWith(color: scheme.onSurfaceVariant)),
+        ],
+        const SizedBox(height: AppSpacing.lg),
+        _formPair(type, comparison),
+        const SizedBox(height: AppSpacing.lg),
+        if (_selectedType == TargetType.timePoint) ...[
+          _timeField('目标时间', _targetTime,
+              (value) => setState(() => _targetTime = value)),
+          const SizedBox(height: AppSpacing.lg),
+          _formPair(
+            _timeField('区间开始', _startTime,
+                (value) => setState(() => _startTime = value)),
+            _timeField(
+                '区间结束', _endTime, (value) => setState(() => _endTime = value),
+                allowDayEnd: true),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text('每天判断区间内的首次记录；当天结束可填写 24:00',
+              style: AppText.caption.copyWith(color: scheme.onSurfaceVariant)),
+        ] else ...[
+          _formPair(
+            TextFormField(
+              key: ValueKey(_selectedType == TargetType.duration
+                  ? 'target_duration'
+                  : 'target_frequency'),
+              initialValue: _selectedType == TargetType.duration
+                  ? _durationValue
+                  : _frequencyCount,
+              enabled: !_isSaving,
+              keyboardType: TextInputType.numberWithOptions(
+                  decimal: _selectedType == TargetType.duration),
+              textInputAction: TextInputAction.next,
+              decoration: InputDecoration(
+                labelText:
+                    _selectedType == TargetType.duration ? '目标时长' : '目标次数',
+                suffixText: _selectedType == TargetType.duration ? '小时' : '次',
+              ),
+              validator: (value) => _positiveNumber(value,
+                  label: _selectedType == TargetType.duration ? '时长' : '次数',
+                  integer: _selectedType == TargetType.frequency),
+              onChanged: (value) => setState(() {
+                if (_selectedType == TargetType.duration) {
+                  _durationValue = value;
+                } else {
+                  _frequencyCount = value;
+                }
+              }),
+            ),
+            DropdownButtonFormField<String>(
+              key: const ValueKey('target_period'),
+              initialValue: _periodMode,
+              decoration: const InputDecoration(labelText: '目标周期'),
+              isExpanded: true,
+              items: [
+                for (final period in {
+                  ..._periods,
+                  if (!_periods.contains(_periodMode)) _periodMode,
+                })
+                  DropdownMenuItem(
+                      value: period,
+                      child: Text(period == '每n天'
+                          ? '每 N 天'
+                          : period == 'n天内'
+                              ? 'N 天内'
+                              : period)),
+              ],
+              onChanged: _isSaving
+                  ? null
+                  : (value) {
+                      if (value == null) return;
+                      setState(() {
+                        _periodMode = value;
+                        _selectedPeriod = value.contains('n')
+                            ? value.replaceAll('n', _periodDaysValue)
+                            : value;
+                      });
+                    },
+            ),
+          ),
+          if (_periodMode == '每n天' || _periodMode == 'n天内') ...[
+            const SizedBox(height: AppSpacing.lg),
+            TextFormField(
+              key: const ValueKey('target_period_days'),
+              initialValue: _periodDaysValue,
+              enabled: !_isSaving,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.next,
+              decoration:
+                  const InputDecoration(labelText: '周期天数', suffixText: '天'),
+              validator: (value) =>
+                  _positiveNumber(value, label: '天数', integer: true),
+              onChanged: (value) => setState(() {
+                _periodDaysValue = value.trim();
+                _selectedPeriod = _periodMode.replaceAll('n', _periodDaysValue);
+              }),
+            ),
+          ],
+          if (_periodMode == '起止日期') ...[
+            const SizedBox(height: AppSpacing.sm),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _isSaving ? null : _pickDesktopDateRange,
+                icon: const Icon(Icons.date_range_outlined),
+                label: Text(
+                    _selectedPeriod.contains('~') ? _selectedPeriod : '选择起止日期'),
+              ),
+            ),
+          ],
+        ],
+        const SizedBox(height: AppSpacing.xl),
+        const Text('目标颜色', style: AppText.sectionTitle),
+        const SizedBox(height: AppSpacing.sm),
+        Wrap(
+          spacing: AppSpacing.xs,
+          runSpacing: AppSpacing.xs,
+          children: [
+            for (var i = 0; i < _themeColors.length; i++)
+              Tooltip(
+                message: '颜色 ${i + 1}',
+                child: Semantics(
+                  button: true,
+                  selected: _selectedColor == _themeColors[i],
+                  child: InkWell(
+                    borderRadius: AppRadius.controlAll,
+                    onTap: _isSaving
+                        ? null
+                        : () =>
+                            setState(() => _selectedColor = _themeColors[i]),
+                    child: SizedBox(
+                      width: AppSizes.minTapTarget,
+                      height: AppSizes.minTapTarget,
+                      child: Center(
+                        child: CircleAvatar(
+                          radius: AppSizes.chip / 2,
+                          backgroundColor:
+                              context.adaptSemanticFill(_themeColors[i]),
+                          child: _selectedColor == _themeColors[i]
+                              ? Icon(Icons.check,
+                                  size: AppSpacing.lg,
+                                  color: AppSemanticColors.onColor(context
+                                      .adaptSemanticColor(_themeColors[i])))
+                              : null,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        Container(
+          padding: AppSpacing.cardComfortable,
+          decoration: BoxDecoration(
+            color: context.wallpaperFill(AppSurfaces.of(context).subtle),
+            borderRadius: AppRadius.controlAll,
+          ),
+          child: Text(
+              '${_selectedType == TargetType.timePoint ? '每天' : _selectedPeriod} · ${_getPreviewText()}',
+              style: AppText.body),
+        ),
+      ],
+    );
+  }
+
+  Widget _formPair(Widget first, Widget second) {
+    return LayoutBuilder(builder: (context, constraints) {
+      if (constraints.maxWidth < AppSizes.dialogMaxWidth) {
+        return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              first,
+              const SizedBox(height: AppSpacing.lg),
+              second,
+            ]);
+      }
+      return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(child: first),
+        const SizedBox(width: AppSpacing.lg),
+        Expanded(child: second),
+      ]);
+    });
+  }
+
+  Widget _timeField(String label, String value, ValueChanged<String> onChanged,
+      {bool allowDayEnd = false}) {
+    return TextFormField(
+      key: ValueKey(label),
+      initialValue: value,
+      enabled: !_isSaving,
+      textInputAction: TextInputAction.next,
+      decoration: InputDecoration(labelText: label, hintText: 'HH:mm'),
+      validator: (raw) =>
+          _timeMinutes(raw ?? '', allowDayEnd: allowDayEnd) == null
+              ? '请输入有效时间（HH:mm）'
+              : null,
+      onChanged: onChanged,
+    );
+  }
+
+  Future<void> _pickDesktopDateRange() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null || !mounted) return;
+    String format(DateTime date) =>
+        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    setState(() =>
+        _selectedPeriod = '${format(picked.start)}~${format(picked.end)}');
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (widget.asDialog) return _buildDesktopEditor();
     final colorScheme = Theme.of(context).colorScheme;
     Color activeColor = _selectedColor;
 
@@ -279,11 +849,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
           PopupMenuButton<TargetType>(
             initialValue: _selectedType,
             onSelected: (TargetType type) {
-              setState(() {
-                _selectedType = type;
-                // 切换类型时自动调整默认比较词
-                _compareType = (type == TargetType.timePoint) ? "之前" : "超过";
-              });
+              _changeType(type);
             },
             child: Row(
               children: [
@@ -378,13 +944,26 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildFormRow("事件名称", _eventName, () => _showEventSelectionDialog()),
-          _buildFormRow("比较类型", _compareType, () {
-            List<String> types = ["超过", "少于", "等于"];
-            int index = types.indexOf(_compareType);
-            setState(() {
-              _compareType = types[(index + 1) % types.length];
-            });
-          }),
+          Row(
+            children: [
+              SizedBox(
+                width: AppSizes.iconButton * 2,
+                child: Text('比较类型',
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              ),
+              DropdownButton<String>(
+                value: _compareType,
+                items: [
+                  for (final type in _compareTypes)
+                    DropdownMenuItem(value: type, child: Text(type)),
+                ],
+                onChanged: (value) {
+                  if (value != null) setState(() => _compareType = value);
+                },
+              ),
+            ],
+          ),
           if (_selectedType == TargetType.duration)
             _buildFormRow(
                 "事件时长",
@@ -517,38 +1096,23 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
   }
 
   Widget _buildPeriodGrid() {
-    List<String> periods = [
-      "每天",
-      "每周",
-      "每月",
-      "每年",
-      "每n天",
-      "今天",
-      "本周",
-      "一周内",
-      "本月",
-      "一月内",
-      "今年",
-      "一年内",
-      "n天内",
-      "起止日期"
-    ];
     return Padding(
       // ----- 弹窗输入天数 -----
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Wrap(
         spacing: 8,
         runSpacing: 8,
-        children: periods
+        children: _periods
             .map((p) => ChoiceChip(
                   label: Text(p),
-                  selected: _selectedPeriod == p,
+                  selected: _periodMode == p,
                   onSelected: (val) async {
                     if (p == "每n天" || p == "n天内") {
-                      _showInputDialog("天数", _durationValue, (v) {
+                      _showInputDialog("天数", _periodDaysValue, (v) {
                         setState(() {
                           _selectedPeriod = p.replaceAll('n', v);
-                          _durationValue = v;
+                          _periodMode = p;
+                          _periodDaysValue = v;
                         });
                       }, isNumber: true);
                     } else if (p == "起止日期") {
@@ -564,10 +1128,14 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                           String end =
                               "${picked.end.year}-${picked.end.month.toString().padLeft(2, '0')}-${picked.end.day.toString().padLeft(2, '0')}";
                           _selectedPeriod = "$start~$end";
+                          _periodMode = p;
                         });
                       }
                     } else {
-                      setState(() => _selectedPeriod = p);
+                      setState(() {
+                        _selectedPeriod = p;
+                        _periodMode = p;
+                      });
                     }
                   },
                 ))
