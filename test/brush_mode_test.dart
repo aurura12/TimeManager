@@ -6,6 +6,7 @@ import 'package:google_sign_in_platform_interface/google_sign_in_platform_interf
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/category.dart';
+import 'package:time_manager/providers/main_tab_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/screens/home_screen.dart';
 import 'package:time_manager/screens/main_screen.dart';
@@ -482,8 +483,11 @@ void main() {
 
     final provider = TimeProvider();
     await tester.pumpWidget(
-      ChangeNotifierProvider<TimeProvider>.value(
-        value: provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<TimeProvider>.value(value: provider),
+          ChangeNotifierProvider(create: (_) => MainTabProvider()),
+        ],
         child: MaterialApp(theme: AppTheme.light(), home: const MainScreen()),
       ),
     );

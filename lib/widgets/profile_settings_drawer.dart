@@ -11,11 +11,13 @@ import 'package:provider/provider.dart';
 import '../providers/theme_mode_provider.dart';
 import '../providers/background_image_provider.dart';
 import '../providers/time_provider.dart';
+import '../providers/main_tab_provider.dart';
 import '../services/app_log_service.dart';
 import '../services/data_backup_service.dart';
 import '../services/diary_reminder_service.dart';
 import '../services/update_service.dart';
 import '../screens/app_log_screen.dart';
+import '../screens/main_tab_settings_screen.dart';
 import '../screens/sync_center_screen.dart';
 import '../screens/word_cloud_screen.dart';
 import '../screens/on_this_day_screen.dart';
@@ -505,6 +507,15 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           ),
         ],
       _ProfileDrawerSection.appearance => [
+          ListTile(
+            leading: const Icon(Icons.view_day_outlined),
+            title: const Text('底部标签'),
+            subtitle: const Text('自定义显示与顺序'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _openScreen(
+              MainTabSettingsScreen(provider: context.read<MainTabProvider>()),
+            ),
+          ),
           ListTile(
             leading: const Icon(Icons.palette_outlined),
             title: const Text('外观模式'),

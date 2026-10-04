@@ -11,6 +11,7 @@ import 'package:time_manager/models/category.dart';
 import 'package:time_manager/models/check_in_goal.dart';
 import 'package:time_manager/models/target.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
+import 'package:time_manager/providers/main_tab_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/screens/main_screen.dart';
 import 'package:time_manager/screens/word_cloud_screen.dart';
@@ -1023,6 +1024,7 @@ void main() {
         providers: [
           ChangeNotifierProvider(create: (_) => TimeProvider()),
           ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
+          ChangeNotifierProvider(create: (_) => MainTabProvider()),
         ],
         child: MaterialApp(
           theme: theme ?? AppTheme.light(),

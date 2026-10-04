@@ -7,11 +7,16 @@ import 'package:google_sign_in_platform_interface/google_sign_in_platform_interf
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/category.dart';
+import 'package:time_manager/models/main_tab_id.dart';
+import 'package:time_manager/providers/main_tab_provider.dart';
+import 'package:time_manager/providers/background_image_provider.dart';
+import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/screens/check_in_screen.dart';
 import 'package:time_manager/screens/diary_screen.dart';
 import 'package:time_manager/screens/home_screen.dart';
 import 'package:time_manager/screens/main_screen.dart';
+import 'package:time_manager/screens/main_tab_settings_screen.dart';
 import 'package:time_manager/screens/profile_screen.dart';
 import 'package:time_manager/screens/target_screen.dart';
 import 'package:time_manager/screens/travel_screen.dart';
@@ -137,9 +142,10 @@ Future<TimeProvider> _pumpMainScreen(
   WidgetTester tester, {
   TimeProvider Function()? createProvider,
   Map<String, Object> initialPreferences = const {},
+  Size screenSize = const Size(360, 800),
 }) async {
   _installPluginMocks(initialPreferences);
-  tester.view.physicalSize = const Size(360, 800);
+  tester.view.physicalSize = screenSize;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
 
@@ -150,8 +156,13 @@ Future<TimeProvider> _pumpMainScreen(
   });
 
   await tester.pumpWidget(
-    ChangeNotifierProvider<TimeProvider>.value(
-      value: provider,
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider<TimeProvider>.value(value: provider),
+        ChangeNotifierProvider(create: (_) => MainTabProvider()),
+        ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
+        ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
+      ],
       child: MaterialApp(
         theme: AppTheme.light(),
         darkTheme: AppTheme.dark(),
@@ -242,6 +253,134 @@ void main() {
     );
     expect(navigationBar.selectedIndex, 5);
     expect(_tab('我的'), findsOneWidget);
+  });
+
+  for (final size in [const Size(360, 800), const Size(1200, 800)]) {
+    testWidgets('$size 按已保存的顺序启动，隐藏页不构造且点击对应正确页面', (tester) async {
+      await _pumpMainScreen(
+        tester,
+        screenSize: size,
+        initialPreferences: {
+          MainTabProvider.storageKey: jsonEncode({
+            'order': [
+              'target',
+              'diary',
+              'profile',
+              'check_in',
+              'record',
+              'travel'
+            ],
+            'hidden': ['record', 'travel'],
+          }),
+        },
+      );
+
+      expect(find.byType(TargetScreen), findsOneWidget);
+      expect(find.byType(HomeScreen, skipOffstage: false), findsNothing);
+      expect(find.byType(TravelScreen, skipOffstage: false), findsNothing);
+      expect(_tab('记录'), findsNothing);
+      expect(_tab('出行'), findsNothing);
+      expect(
+        tester
+            .widgetList<NavigationDestination>(
+                find.byType(NavigationDestination))
+            .map((destination) => destination.label),
+        ['目标', '日记', '我的', '打卡'],
+      );
+      await tester.tap(_tab('日记'));
+      await tester.pump();
+      expect(find.byType(DiaryScreen), findsOneWidget);
+      await tester.tap(_tab('我的'));
+      await tester.pump();
+      expect(find.byType(ProfileScreen), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('排序保留选中的页面与状态，隐藏当前页后切换且恢复时仍保活', (tester) async {
+    await _pumpMainScreen(tester);
+    await tester.tap(_tab('日记'));
+    await tester.pump();
+    final diaryElement = tester.element(find.byType(DiaryScreen));
+    final tabs =
+        tester.element(find.byType(MainScreen)).read<MainTabProvider>();
+    final reordered = [
+      MainTabId.diary,
+      MainTabId.profile,
+      MainTabId.target,
+      MainTabId.record,
+      MainTabId.travel,
+      MainTabId.checkIn,
+    ];
+
+    await tabs.save(order: reordered, hiddenTabs: {});
+    await tester.pump();
+    expect(tester.element(find.byType(DiaryScreen)), same(diaryElement));
+    expect(
+      tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
+      0,
+    );
+
+    await tabs.save(order: reordered, hiddenTabs: {MainTabId.diary});
+    await tester.pump();
+    expect(_tab('日记'), findsNothing);
+    expect(find.byType(ProfileScreen), findsOneWidget);
+    expect(
+      tester.element(find.byType(DiaryScreen, skipOffstage: false)),
+      same(diaryElement),
+    );
+
+    await tabs.save(order: reordered, hiddenTabs: {});
+    await tester.pump();
+    expect(find.byType(ProfileScreen), findsOneWidget);
+    expect(
+      tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
+      1,
+    );
+    await tester.tap(_tab('日记'));
+    await tester.pump();
+    expect(tester.element(find.byType(DiaryScreen)), same(diaryElement));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('从我的页设置隐藏和排序，保存后立即更新主导航并留在原页面', (tester) async {
+    await _pumpMainScreen(tester);
+    await tester.tap(_tab('我的'));
+    await tester.pump();
+    final profileElement = tester.element(find.byType(ProfileScreen));
+    final profileScaffold = tester.state<ScaffoldState>(find.descendant(
+      of: find.byType(ProfileScreen),
+      matching: find.byType(Scaffold),
+    ));
+    profileScaffold.openDrawer();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('外观设置'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('底部标签'));
+    await tester.pumpAndSettle();
+    expect(find.byType(MainTabSettingsScreen), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('main-tab-switch-record')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byTooltip('调整顺序：我的'));
+    await tester.tap(find.byTooltip('调整顺序：我的'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('上移'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存设置'));
+    await tester.pumpAndSettle();
+    expect(find.byType(MainTabSettingsScreen), findsNothing);
+    expect(tester.element(find.byType(ProfileScreen)), same(profileElement));
+    expect(
+      tester
+          .widgetList<NavigationDestination>(find.byType(NavigationDestination))
+          .map((destination) => destination.label),
+      ['日记', '出行', '打卡', '我的', '目标'],
+    );
+    expect(
+      tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
+      3,
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('隐藏我的页不查询统计，返回后更新数据并保留筛选状态', (tester) async {

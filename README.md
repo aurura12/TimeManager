@@ -8,7 +8,7 @@ Flutter 实现，中文界面（英文为降级），支持 Android、Windows �
 
 ## 功能模块
 
-底部 6 个 Tab：**记录 / 日记 / 出行 / 打卡 / 目标 / 我的**
+底部默认 6 个 Tab：**记录 / 日记 / 出行 / 打卡 / 目标 / 我的**。手机和桌面均可在「我的 → 设置 → 外观设置 → 底部标签」隐藏标签、拖动排序或用菜单上移/下移，并恢复默认；点击保存后生效，设置只保存在本机。至少保留两个标签，「我的」始终显示以保留设置入口。
 
 - **记录** — 10 分钟槽位时间网格，支持单击/拖选刷块、分类与子事件、模板、语音建日程、撤销/重做（20 步）
 - **日记** — 按日期记录正文，全文搜索，Git（Gitee/GitHub）同步
@@ -32,7 +32,7 @@ Flutter 实现，中文界面（英文为降级），支持 Android、Windows �
 ```
 lib/
   main.dart              入口，全局错误捕获与平台初始化
-  providers/             状态层：TimeProvider（核心业务）、ThemeModeProvider、TargetStatsCache、BackgroundImageProvider（背景图）
+  providers/             状态层：TimeProvider（核心业务）、ThemeModeProvider、MainTabProvider（导航偏好）、TargetStatsCache、BackgroundImageProvider（背景图）
   models/                数据模型（时间块、分类、打卡、目标、出行、日记、同步状态、提醒等）
   screens/               页面（22 个）
   services/              业务服务（61 个）：Google 日历、Git 同步、打卡、AI、语音、日志、提醒等

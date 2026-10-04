@@ -13,6 +13,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/main.dart';
 import 'package:time_manager/providers/background_image_provider.dart';
+import 'package:time_manager/providers/main_tab_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/screens/home_screen.dart';
@@ -101,6 +102,7 @@ void main() {
             ChangeNotifierProvider(create: (_) => TimeProvider()),
             ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
             ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
+            ChangeNotifierProvider(create: (_) => MainTabProvider()),
           ],
           child: const TimeManagerApp(),
         ),
@@ -124,9 +126,8 @@ void main() {
       );
     }
 
-    final appearance = tester
-        .element(find.byType(TimeManagerApp))
-        .read<ThemeModeProvider>();
+    final appearance =
+        tester.element(find.byType(TimeManagerApp)).read<ThemeModeProvider>();
     // 偏好 Future 在启动时的真实事件循环中创建，更新也在同一环境中等待。
     await tester.runAsync(() async {
       await appearance.setThemeColor(AppSemanticColors.info);

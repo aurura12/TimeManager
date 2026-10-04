@@ -5,9 +5,11 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/diary_kind.dart';
 import 'package:time_manager/providers/background_image_provider.dart';
+import 'package:time_manager/providers/main_tab_provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/screens/app_log_screen.dart';
+import 'package:time_manager/screens/main_tab_settings_screen.dart';
 import 'package:time_manager/services/app_identity_service.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'package:time_manager/widgets/profile_settings_drawer.dart';
@@ -28,6 +30,7 @@ void main() {
           ChangeNotifierProvider.value(value: provider),
           ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
           ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
+          ChangeNotifierProvider(create: (_) => MainTabProvider()),
         ],
         child: MaterialApp(
           home: Scaffold(
@@ -91,6 +94,7 @@ void main() {
           ChangeNotifierProvider.value(value: provider),
           ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
           ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
+          ChangeNotifierProvider(create: (_) => MainTabProvider()),
         ],
         child: MaterialApp(
           theme: theme ?? AppTheme.light(),
@@ -313,6 +317,25 @@ void main() {
     expect(find.text('配色预览'), findsOneWidget);
     expect(find.text('应用主题色'), findsOneWidget);
   });
+
+  for (final desktop in [false, true]) {
+    testWidgets('${desktop ? '桌面' : '手机'}外观设置可打开底部标签设置', (tester) async {
+      final provider = await createIdentityProvider(tester);
+      addTearDown(provider.dispose);
+      await openDrawerWith(tester, provider,
+          desktop: desktop, android: !desktop);
+      await tester.tap(find.text('外观设置'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('底部标签'));
+      await tester.tap(find.text('底部标签'));
+      await tester.pumpAndSettle();
+      expect(find.byType(MainTabSettingsScreen), findsOneWidget);
+      expect(find.text('保存设置'), findsOneWidget);
+      expect(
+          find.byKey(const ValueKey('main-tab-switch-record')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('desktop identity switch requires confirmation', (tester) async {
     final provider = await createIdentityProvider(tester);

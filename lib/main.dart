@@ -9,6 +9,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/background_image_provider.dart';
+import 'providers/main_tab_provider.dart';
 import 'package:time_manager/theme/app_semantic_colors.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'providers/time_provider.dart';
@@ -457,6 +458,7 @@ Future<void> _initializeAndRunApplication({
           ),
         ),
         ChangeNotifierProvider(create: (context) => ThemeModeProvider()),
+        ChangeNotifierProvider(create: (_) => MainTabProvider()),
         ChangeNotifierProvider<BackgroundImageProvider>(
           create: (_) {
             final provider = BackgroundImageProvider();

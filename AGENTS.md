@@ -6,8 +6,9 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
 
 ## Architecture
 
-- **Entry**: `lib/main.dart` → `MainScreen` (6-tab bottom nav: 记录/日记/出行/打卡/目标/我的，Android / Windows / macOS 均显示)。启动时初始化 `AppLogService` 全局错误捕获，并对 MIUI 设备应用 SSL 修复的 `HttpOverrides`。
+- **Entry**: `lib/main.dart` → `MainScreen` (默认 6-tab bottom nav: 记录/日记/出行/打卡/目标/我的，Android / Windows / macOS 均支持自定义显示与排序)。启动时初始化 `AppLogService` 全局错误捕获，并对 MIUI 设备应用 SSL 修复的 `HttpOverrides`。
 - **State**: `lib/providers/`
+  - `main_tab_provider.dart` → `MainTabProvider` — 本机导航偏好（`app_main_tabs_v1`），与身份无关、不进同步/备份。入口「我的 → 设置 → 外观设置 → 底部标签」，至少显示两个标签且保留「我的」；`MainTabId` 的稳定身份与显示顺序分离，排序/隐藏不能交换或销毁已构建页面的状态。启动先读偏好，再按可见顺序懒构建首个页面
   - `time_provider.dart` → `TimeProvider` (~10000 行) — 核心业务状态：时间块、分类、目标、模板、撤销栈、统计缓存、增量保存、Google 日历同步、日程(schedule)同步、已删除事件关系
   - `theme_mode_provider.dart` → `ThemeModeProvider` (52 行) — 主题模式 (light/dark/system)
   - `target_stats_cache.dart` → `TargetStatsCache` (47 行) — 目标统计内存缓存，按日期失效
@@ -206,6 +207,7 @@ Never commit them.
 - `test/time_provider_save_test.dart` / `test/schedule_json_codec_test.dart` — 普通编辑保存合并、切后台/身份即时落盘、保存期间新编辑与待同步归属不丢、统计缓存按日期失效、后台 JSON 合并及旧哈希兼容
 - `test/target_desktop_ui_test.dart` — 桌面目标编辑表单、键盘保存/取消、数值与时间校验、子事件关联、周期天数与时长独立、右键删除、鼠标拖拽及浅深主题/窄窗口布局；桌面编辑入口统一走 `showTargetEditor`，移动端保留整页编辑
 - `test/statistics_cache_test.dart` / `test/main_screen_lazy_loading_test.dart` — 趋势与分类缓存互不覆盖、词云按自然日复用、跨日边界、编辑/撤销/切身份失效，以及隐藏统计页零查询、返回刷新与筛选状态保活
+- `test/main_tab_provider_test.dart` / `test/main_tab_settings_screen_test.dart` — 导航偏好持久化与损坏修复、设置入口与最少标签约束、草稿取消/保存/恢复默认、触控和鼠标排序、窄屏大字与壁纸；`main_screen_lazy_loading_test.dart` 另覆盖自定义顺序启动、导航映射与隐藏/恢复页面保活
 - `test/diary_reminder_service_test.dart` / `diary_reminder_diagnostics_test.dart` / `diary_reminder_drawer_test.dart` / `time_wheel_sheet_test.dart` — 写日记提醒的排程、原生事件导入、抽屉 UI 与滚轮时间面板
 - `test/check_in_reminder_service_test.dart` / `check_in_reminder_ui_test.dart` — 打卡提醒的多实例排程与编辑页入口
 - 写提醒相关的 widget 测试要注意：抽屉是长 `ListView`，懒构建会让折叠线以下的条目根本不挂载，需要把测试视口调高；另外 `AppIdentityService.load()` 每次都会重读偏好，测试里的身份必须放在偏好键 `schedule_user_kind` 里，靠 `adoptManualKind` 设进去会被覆盖

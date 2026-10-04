@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/screens/profile_screen.dart';
+import '../models/main_tab_id.dart';
 import '../models/schedule_sync_progress.dart';
+import '../providers/main_tab_provider.dart';
 import '../providers/time_provider.dart';
 import '../services/app_log_service.dart';
 import '../services/diary_local_store.dart';
@@ -14,8 +16,10 @@ import '../services/diary_reminder_service.dart';
 import '../services/diary_search_service.dart';
 import '../services/on_this_day_service.dart';
 import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 import '../utils/adaptive.dart';
 import '../widgets/main_tab_activity.dart';
+import '../widgets/main_tab_navigation.dart';
 import '../widgets/on_this_day_sheet.dart';
 import '../widgets/schedule_sync_progress_banner.dart';
 import 'check_in_screen.dart';
@@ -23,27 +27,6 @@ import 'diary_screen.dart';
 import 'home_screen.dart';
 import 'target_screen.dart';
 import 'travel_screen.dart';
-
-/// 底部导航 / 侧边导航的一项。图标分选中态与未选中态，
-/// 保证浅色、深色下选中状态都清晰。
-class _NavEntry {
-  const _NavEntry({
-    required this.icon,
-    required this.selectedIcon,
-    required this.label,
-  });
-
-  final IconData icon;
-  final IconData selectedIcon;
-  final String label;
-}
-
-class _MainTab {
-  const _MainTab({required this.navigation, required this.builder});
-
-  final _NavEntry navigation;
-  final Widget Function() builder;
-}
 
 /// 哪些生命周期状态算"进入后台"，需要停掉前台轮询并立即落盘。
 ///
@@ -63,11 +46,10 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
-  int _selectedIndex = 0;
+  MainTabId? _selectedTab;
 
-  late final List<_MainTab> _tabs;
+  late final Map<MainTabId, Widget Function()> _tabBuilders;
   late final List<Widget?> _tabPages;
-  final Set<int> _builtTabIndices = <int>{};
 
   // 「记录」页用 IndexedStack 常驻，离开 Tab 不会 dispose，
   // 所以刷子模式要靠这个 key 主动退出。
@@ -79,6 +61,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   static const _lastShownDateKey = 'on_this_day_last_shown_date';
 
   late final TimeProvider _timeProvider;
+  late final MainTabProvider _mainTabProvider;
 
   @override
   void initState() {
@@ -88,8 +71,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     // 在 initState 保存 Provider 引用，dispose 中不再使用 context（树已不稳定）
     _timeProvider = context.read<TimeProvider>();
     _timeProvider.addListener(_tryShowOnThisDay);
-    _tabs = _buildTabs();
-    _tabPages = List<Widget?>.filled(_tabs.length, null);
+    _tabBuilders = {
+      MainTabId.record: () => HomeScreen(key: _homeKey),
+      MainTabId.diary: () => const DiaryScreen(),
+      MainTabId.travel: () => const TravelScreen(),
+      MainTabId.checkIn: () => const CheckInScreen(),
+      MainTabId.target: () => const TargetScreen(),
+      MainTabId.profile: () => const ProfileScreen(),
+    };
+    _tabPages = List<Widget?>.filled(MainTabId.values.length, null);
+    _mainTabProvider = context.read<MainTabProvider>();
+    _mainTabProvider.addListener(_onTabSettingsChanged);
+    if (_mainTabProvider.isLoaded) {
+      _selectedTab = _mainTabProvider.visibleTabs.first;
+    }
     // 日记索引不能等用户第一次打开“日记”页才加载，否则启动后的“那年今日”
     // 和全局搜索会漏掉只存在于远端缓存中的历史日记。
     unawaited(_loadDiaryIndexInBackground());
@@ -109,6 +104,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     _timeProvider.removeListener(_tryShowOnThisDay);
+    _mainTabProvider.removeListener(_onTabSettingsChanged);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -224,90 +220,43 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
   }
 
-  List<_MainTab> _buildTabs() {
-    return <_MainTab>[
-      _MainTab(
-        navigation: const _NavEntry(
-          icon: Icons.home_outlined,
-          selectedIcon: Icons.home,
-          label: '记录',
-        ),
-        builder: () => HomeScreen(key: _homeKey),
-      ),
-      _MainTab(
-        navigation: const _NavEntry(
-          icon: Icons.menu_book_outlined,
-          selectedIcon: Icons.menu_book,
-          label: '日记',
-        ),
-        builder: () => const DiaryScreen(),
-      ),
-      _MainTab(
-        navigation: const _NavEntry(
-          icon: Icons.card_travel_outlined,
-          selectedIcon: Icons.card_travel,
-          label: '出行',
-        ),
-        builder: () => const TravelScreen(),
-      ),
-      _MainTab(
-        navigation: const _NavEntry(
-          icon: Icons.check_circle_outline,
-          selectedIcon: Icons.check_circle,
-          label: '打卡',
-        ),
-        builder: () => const CheckInScreen(),
-      ),
-      _MainTab(
-        navigation: const _NavEntry(
-          icon: Icons.flag_outlined,
-          selectedIcon: Icons.flag,
-          label: '目标',
-        ),
-        builder: () => const TargetScreen(),
-      ),
-      _MainTab(
-        navigation: const _NavEntry(
-          icon: Icons.person_outline,
-          selectedIcon: Icons.person,
-          label: '我的',
-        ),
-        builder: () => const ProfileScreen(),
-      ),
-    ];
+  void _onTabSettingsChanged() {
+    if (!mounted || !_mainTabProvider.isLoaded) return;
+    final visibleTabs = _mainTabProvider.visibleTabs;
+    final nextTab =
+        visibleTabs.contains(_selectedTab) ? _selectedTab! : visibleTabs.first;
+    if (_selectedTab == MainTabId.record && nextTab != MainTabId.record) {
+      _homeKey.currentState?.exitBrushMode();
+    }
+    setState(() => _selectedTab = nextTab);
   }
 
-  void _ensureTabBuilt(int index) {
-    if (index < 0 ||
-        index >= _tabs.length ||
-        _builtTabIndices.contains(index)) {
-      return;
-    }
-    _tabPages[index] = _tabs[index].builder();
-    _builtTabIndices.add(index);
+  void _ensureTabBuilt(MainTabId tab) {
+    _tabPages[tab.index] ??= _tabBuilders[tab]!();
   }
 
   List<Widget> _buildTabPages() {
     return List<Widget>.generate(
-      _tabs.length,
+      MainTabId.values.length,
       (index) => MainTabActivity(
-        isActive: index == _selectedIndex,
+        key: ValueKey(MainTabId.values[index]),
+        isActive: MainTabId.values[index] == _selectedTab,
         child: _tabPages[index] ?? const SizedBox.shrink(),
       ),
       growable: false,
     );
   }
 
-  void _onItemTapped(int index) {
-    if (index < 0 || index >= _tabs.length) return;
+  void _onItemTapped(MainTabId tab) {
+    if (!_mainTabProvider.visibleTabs.contains(tab)) return;
 
     // 离开「记录」页时退出刷子模式，避免回到该页还带着刷子
-    if (_selectedIndex == 0 && index != 0) {
+    if (_selectedTab == MainTabId.record && tab != MainTabId.record) {
       _homeKey.currentState?.exitBrushMode();
     }
     setState(() {
-      _selectedIndex = index;
-      _ensureTabBuilt(index);
+      _selectedTab = tab;
+      _ensureTabBuilt(tab);
     });
   }
 
@@ -315,10 +264,19 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final surfaces = AppSurfaces.of(context);
     final wallpaperTheme = AppWallpaperTheme.of(context);
-    final safeIndex = _selectedIndex.clamp(0, _tabs.length - 1);
-    _ensureTabBuilt(safeIndex);
+    if (!_mainTabProvider.isLoaded) {
+      // 先读导航偏好，避免启动时构造已隐藏的页面或短暂显示默认顺序。
+      return Scaffold(
+        backgroundColor:
+            wallpaperTheme.enabled ? Colors.transparent : surfaces.page,
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+    final items = _mainTabProvider.visibleTabs;
+    final selectedTab = _selectedTab!;
+    final navigationIndex = items.indexOf(selectedTab);
+    _ensureTabBuilt(selectedTab);
     final options = _buildTabPages();
-    final items = _tabs.map((tab) => tab.navigation).toList(growable: false);
     final scheduleSyncProgress =
         context.select<TimeProvider, ScheduleSyncProgress?>(
             (p) => p.scheduleSyncProgress);
@@ -330,10 +288,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         body: Row(
           children: [
             NavigationRail(
-              selectedIndex: safeIndex,
-              onDestinationSelected: _onItemTapped,
+              selectedIndex: navigationIndex,
+              onDestinationSelected: (index) => _onItemTapped(items[index]),
               labelType: NavigationRailLabelType.all,
-              leading: const SizedBox(height: 8),
+              leading: const SizedBox(height: AppSpacing.sm),
               destinations: [
                 for (final item in items)
                   NavigationRailDestination(
@@ -344,14 +302,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               ],
             ),
             VerticalDivider(
-              width: 1,
-              thickness: 1,
+              width: AppSizes.hairline,
+              thickness: AppSizes.hairline,
               color: surfaces.border,
             ),
             Expanded(
               child: _buildContentStack(
                 options: options,
-                safeIndex: safeIndex,
+                safeIndex: selectedTab.index,
                 progress: scheduleSyncProgress,
               ),
             ),
@@ -364,7 +322,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           wallpaperTheme.enabled ? Colors.transparent : surfaces.page,
       body: _buildContentStack(
         options: options,
-        safeIndex: safeIndex,
+        safeIndex: selectedTab.index,
         progress: scheduleSyncProgress,
       ),
       // 顶部一条弱边框，和内容区拉开层级（颜色与圆角统一走主题）
@@ -375,8 +333,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         ),
         child: NavigationBar(
           backgroundColor: wallpaperTheme.enabled ? Colors.transparent : null,
-          selectedIndex: safeIndex,
-          onDestinationSelected: _onItemTapped,
+          selectedIndex: navigationIndex,
+          onDestinationSelected: (index) => _onItemTapped(items[index]),
           destinations: [
             for (final item in items)
               NavigationDestination(
