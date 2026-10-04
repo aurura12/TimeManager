@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -145,6 +146,94 @@ void main() {
     expect(_detailIconBackground(tester), isNot(oldIconBackground));
     provider.dispose();
   });
+
+  for (final input in [PointerDeviceKind.mouse, PointerDeviceKind.touch]) {
+    testWidgets('目标日历支持 $input 左右拖动', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = Size(
+        input == PointerDeviceKind.mouse ? 900 : 360,
+        900,
+      );
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+
+      final target = _makeTarget();
+      final provider = await _createProvider(
+        tester,
+        saveSucceeds: true,
+        initialTarget: target,
+      );
+      addTearDown(provider.dispose);
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: provider,
+          child: MaterialApp(
+            home: TargetDetailScreen(targetId: target.id),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('日历'));
+      await tester.pumpAndSettle();
+
+      final calendarCard = find.ancestor(
+        of: find.text('日历'),
+        matching: find.byType(Card),
+      );
+      final calendar = find.descendant(
+        of: calendarCard,
+        matching: find.byType(SingleChildScrollView),
+      );
+      final controller =
+          tester.widget<SingleChildScrollView>(calendar).controller!;
+      final vertical = tester
+          .state<ScrollableState>(
+            find
+                .byWidgetPredicate(
+                  (widget) =>
+                      widget is Scrollable &&
+                      widget.axisDirection == AxisDirection.down,
+                )
+                .first,
+          )
+          .position;
+      expect(controller.position.maxScrollExtent, greaterThan(0));
+
+      for (final direction in [1.0, -1.0]) {
+        controller.jumpTo(controller.position.maxScrollExtent / 2);
+        await tester.pump();
+        final before = controller.offset;
+        final verticalBefore = vertical.pixels;
+        final gesture = await tester.startGesture(
+          tester.getCenter(calendar),
+          kind: input,
+        );
+        await gesture.moveBy(Offset(direction * 40, 0));
+        await tester.pump();
+        await gesture.moveBy(Offset(direction * 40, 0));
+        await tester.pump();
+
+        expect(
+          controller.offset,
+          direction > 0 ? lessThan(before) : greaterThan(before),
+        );
+        expect(vertical.pixels, verticalBefore);
+        await gesture.up();
+        await tester.pumpAndSettle();
+      }
+
+      if (input == PointerDeviceKind.touch) {
+        final before = vertical.pixels;
+        await tester.drag(calendar, const Offset(0, 100));
+        await tester.pumpAndSettle();
+        expect(vertical.pixels, lessThan(before));
+      }
+      expect(tester.takeException(), isNull);
+    },
+        variant: TargetPlatformVariant.only(input == PointerDeviceKind.mouse
+            ? TargetPlatform.macOS
+            : TargetPlatform.android));
+  }
 
   testWidgets('目标保存失败时编辑页保留并提示', (tester) async {
     final initial = _makeTarget();

@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
@@ -701,18 +702,27 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
 
   Widget _buildRealCalendar(DateTime startMonth, DateTime now, ColorScheme colorScheme) {
     final today = DateTime(now.year, now.month, now.day);
+    final scrollBehavior = ScrollConfiguration.of(context);
 
-    return SingleChildScrollView(
-      controller: _calendarScrollController,
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ...List.generate(6, (index) {
-            final month = DateTime(startMonth.year, startMonth.month + index, 1);
-            return _buildMonthCalendar(month, today, colorScheme);
-          }),
-        ],
+    return ScrollConfiguration(
+      behavior: scrollBehavior.copyWith(
+        dragDevices: {...scrollBehavior.dragDevices, PointerDeviceKind.mouse},
+      ),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.grab,
+        child: SingleChildScrollView(
+          controller: _calendarScrollController,
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ...List.generate(6, (index) {
+                final month = DateTime(startMonth.year, startMonth.month + index, 1);
+                return _buildMonthCalendar(month, today, colorScheme);
+              }),
+            ],
+          ),
+        ),
       ),
     );
   }
