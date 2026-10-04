@@ -28,10 +28,7 @@ class DesktopLayoutProvider extends ChangeNotifier {
   bool get isLoaded => _isLoaded;
   DesktopNavigationLayout get navigationLayout => _navigationLayout;
   double get categoryPanelWidth =>
-      _categoryPanelWidth ??
-      (_navigationLayout == DesktopNavigationLayout.side
-          ? AppSizes.desktopCategoryPanelDefaultWidth
-          : AppSizes.categoryPanelMinWidth);
+      _categoryPanelWidth ?? AppSizes.desktopCategoryPanelDefaultWidth;
 
   Future<void> _load() async {
     try {

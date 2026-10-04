@@ -12,12 +12,13 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('默认保持底部导航，左侧布局默认展开事件栏，重启与切身份保留偏好', () async {
+  test('两种导航共用事件栏默认宽度，重启与切身份保留偏好', () async {
     final provider = DesktopLayoutProvider();
     addTearDown(provider.dispose);
     await provider.ready;
     expect(provider.navigationLayout, DesktopNavigationLayout.bottom);
-    expect(provider.categoryPanelWidth, AppSizes.categoryPanelMinWidth);
+    expect(
+        provider.categoryPanelWidth, AppSizes.desktopCategoryPanelDefaultWidth);
     await provider.setNavigationLayout(DesktopNavigationLayout.side);
     expect(
         provider.categoryPanelWidth, AppSizes.desktopCategoryPanelDefaultWidth);
@@ -34,7 +35,8 @@ void main() {
     await provider.setNavigationLayout(DesktopNavigationLayout.bottom);
     expect(provider.categoryPanelWidth, 380);
     await provider.resetCategoryPanelWidth();
-    expect(provider.categoryPanelWidth, AppSizes.categoryPanelMinWidth);
+    expect(
+        provider.categoryPanelWidth, AppSizes.desktopCategoryPanelDefaultWidth);
   });
 
   test('损坏或未知设置保持旧导航，有效宽度单独恢复并收敛到边界', () async {
@@ -48,7 +50,8 @@ void main() {
       final provider = DesktopLayoutProvider();
       await provider.ready;
       expect(provider.navigationLayout, DesktopNavigationLayout.bottom);
-      expect(provider.categoryPanelWidth, AppSizes.categoryPanelMinWidth);
+      expect(provider.categoryPanelWidth,
+          AppSizes.desktopCategoryPanelDefaultWidth);
       provider.dispose();
     }
     SharedPreferences.setMockInitialValues({

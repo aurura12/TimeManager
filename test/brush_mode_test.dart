@@ -238,7 +238,8 @@ void main() {
   testWidgets('拖宽事件栏可并排选择子事件，网格刷子与右键编辑仍然正确', (tester) async {
     final provider = await _pumpHome(tester, size: const Size(1600, 900));
     final panel = find.byKey(const ValueKey('category-panel'));
-    expect(tester.getSize(panel).width, 100);
+    expect(
+        tester.getSize(panel).width, AppSizes.desktopCategoryPanelDefaultWidth);
     final handle = find.byKey(const ValueKey('category-panel-resize'));
     await tester.drag(handle, const Offset(-280, 0));
     await tester.pumpAndSettle();
