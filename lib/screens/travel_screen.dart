@@ -17,6 +17,7 @@ import '../services/travel_local_store.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/desktop_shortcut_host.dart';
 
 enum _TravelViewMode { table, calendar, stats }
 
@@ -324,67 +325,72 @@ class _TravelScreenState extends State<TravelScreen> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('新增出行记录'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        final picked = await _pickDate(initialDate: tempDate);
-                        if (picked == null) return;
-                        setDialogState(() => tempDate = picked);
-                      },
-                      icon: const Icon(Icons.calendar_today_outlined, size: 16),
-                      label: Text(DateFormat('yyyy-MM-dd').format(tempDate)),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: locationController,
-                      onChanged: (_) {
-                        if (locationError != null) {
-                          setDialogState(() => locationError = null);
-                        }
-                      },
-                      decoration: InputDecoration(
-                        labelText: '地点',
-                        border: const OutlineInputBorder(),
-                        isDense: true,
-                        errorText: locationError,
+            void submit() {
+              if (locationController.text.trim().isEmpty) {
+                setDialogState(() => locationError = '地点不能为空');
+                return;
+              }
+              Navigator.of(context).pop(true);
+            }
+
+            return DesktopShortcutHost(
+              onSaveForm: submit,
+              child: AlertDialog(
+                title: const Text('新增出行记录'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          final picked = await _pickDate(initialDate: tempDate);
+                          if (picked == null) return;
+                          setDialogState(() => tempDate = picked);
+                        },
+                        icon:
+                            const Icon(Icons.calendar_today_outlined, size: 16),
+                        label: Text(DateFormat('yyyy-MM-dd').format(tempDate)),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: eventController,
-                      decoration: const InputDecoration(
-                        labelText: '事件',
-                        border: OutlineInputBorder(),
-                        isDense: true,
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: locationController,
+                        autofocus: isDesktopPlatform,
+                        onChanged: (_) {
+                          if (locationError != null) {
+                            setDialogState(() => locationError = null);
+                          }
+                        },
+                        decoration: InputDecoration(
+                          labelText: '地点',
+                          border: const OutlineInputBorder(),
+                          isDense: true,
+                          errorText: locationError,
+                        ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: eventController,
+                        decoration: const InputDecoration(
+                          labelText: '事件',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('取消'),
+                  ),
+                  FilledButton(
+                    onPressed: submit,
+                    child: const Text('保存'),
+                  ),
+                ],
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('取消'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    // 校验放在弹窗内：地点为空时保持弹窗打开并就地提示，
-                    // 避免弹窗关闭后输入内容全部丢失。
-                    if (locationController.text.trim().isEmpty) {
-                      setDialogState(() => locationError = '地点不能为空');
-                      return;
-                    }
-                    Navigator.of(context).pop(true);
-                  },
-                  child: const Text('保存'),
-                ),
-              ],
             );
           },
         );
@@ -417,67 +423,72 @@ class _TravelScreenState extends State<TravelScreen> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('编辑出行记录'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        final picked = await _pickDate(initialDate: tempDate);
-                        if (picked == null) return;
-                        setDialogState(() => tempDate = picked);
-                      },
-                      icon: const Icon(Icons.calendar_today_outlined, size: 16),
-                      label: Text(DateFormat('yyyy-MM-dd').format(tempDate)),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: locationController,
-                      onChanged: (_) {
-                        if (locationError != null) {
-                          setDialogState(() => locationError = null);
-                        }
-                      },
-                      decoration: InputDecoration(
-                        labelText: '地点',
-                        border: const OutlineInputBorder(),
-                        isDense: true,
-                        errorText: locationError,
+            void submit() {
+              if (locationController.text.trim().isEmpty) {
+                setDialogState(() => locationError = '地点不能为空');
+                return;
+              }
+              Navigator.of(context).pop(true);
+            }
+
+            return DesktopShortcutHost(
+              onSaveForm: submit,
+              child: AlertDialog(
+                title: const Text('编辑出行记录'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          final picked = await _pickDate(initialDate: tempDate);
+                          if (picked == null) return;
+                          setDialogState(() => tempDate = picked);
+                        },
+                        icon:
+                            const Icon(Icons.calendar_today_outlined, size: 16),
+                        label: Text(DateFormat('yyyy-MM-dd').format(tempDate)),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: eventController,
-                      decoration: const InputDecoration(
-                        labelText: '事件',
-                        border: OutlineInputBorder(),
-                        isDense: true,
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: locationController,
+                        autofocus: isDesktopPlatform,
+                        onChanged: (_) {
+                          if (locationError != null) {
+                            setDialogState(() => locationError = null);
+                          }
+                        },
+                        decoration: InputDecoration(
+                          labelText: '地点',
+                          border: const OutlineInputBorder(),
+                          isDense: true,
+                          errorText: locationError,
+                        ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: eventController,
+                        decoration: const InputDecoration(
+                          labelText: '事件',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('取消'),
+                  ),
+                  FilledButton(
+                    onPressed: submit,
+                    child: const Text('保存'),
+                  ),
+                ],
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('取消'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    // 校验放在弹窗内：地点为空时保持弹窗打开并就地提示，
-                    // 避免弹窗关闭后输入内容全部丢失。
-                    if (locationController.text.trim().isEmpty) {
-                      setDialogState(() => locationError = '地点不能为空');
-                      return;
-                    }
-                    Navigator.of(context).pop(true);
-                  },
-                  child: const Text('保存'),
-                ),
-              ],
             );
           },
         );
@@ -1695,7 +1706,14 @@ class _TravelScreenState extends State<TravelScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => DesktopShortcutHost(
+        autofocus: true,
+        onNewItem: () => unawaited(_showAddRecordDialog()),
+        isAvailable: (_) => !_loading && !_processing,
+        child: _buildPage(context),
+      );
+
+  Widget _buildPage(BuildContext context) {
     if (_loading) {
       return Scaffold(
         appBar: AppBar(title: const Text('出行')),
@@ -1712,7 +1730,8 @@ class _TravelScreenState extends State<TravelScreen> {
             icon: const Icon(Icons.download_outlined),
           ),
           IconButton(
-            tooltip: '新增记录',
+            tooltip: desktopShortcutTooltip(
+                context, '新增记录', DesktopShortcutActionType.newItem),
             onPressed: _processing ? null : () => _showAddRecordDialog(),
             icon: const Icon(Icons.add),
           ),

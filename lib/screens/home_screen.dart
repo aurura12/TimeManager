@@ -19,6 +19,8 @@ import '../widgets/template_bar.dart';
 import '../widgets/time_grid.dart';
 import '../widgets/voice_schedule_sheet.dart';
 import 'global_search_screen.dart';
+import 'desktop_shortcut_settings_screen.dart';
+import '../models/global_search_result.dart';
 import '../utils/desktop_selection.dart';
 
 /// Windows 三列视图下列头高度，与左侧时间标签占位共用，保证对齐。
@@ -26,7 +28,7 @@ const double _kDayHeaderHeight = 40;
 const double _kCategorySidebarWidth = 100;
 const List<String> _kWeekdayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
-enum _HomeToolbarAction { keyboardHelp, undo, remoteView, sync }
+enum _HomeToolbarAction { keyboardHelp, undo, redo, remoteView, sync }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -653,11 +655,20 @@ class HomeScreenState extends State<HomeScreen> {
     );
 
     return DesktopShortcutHost(
+      autofocus: true,
       onUndo: timeProvider.undo,
+      onRedo: timeProvider.redo,
+      isAvailable: (action) => switch (action) {
+        DesktopShortcutActionType.undo => timeProvider.canUndo,
+        DesktopShortcutActionType.redo => timeProvider.canRedo,
+        _ => true,
+      },
       onPreviousDay: _goToPreviousDay,
       onNextDay: _goToNextDay,
       onToday: _goToToday,
       onOpenSearch: _openGlobalSearch,
+      onSearchPage: () => _openGlobalSearch(
+          initialContentType: GlobalSearchContentType.timeRecord),
       onEscape: handleDesktopEscape,
       child: pageWithPopScope,
     );
@@ -1565,7 +1576,7 @@ class HomeScreenState extends State<HomeScreen> {
 
   Widget _appBarIconButton({
     required IconData icon,
-    required VoidCallback onPressed,
+    required VoidCallback? onPressed,
     String? tooltip,
     double? iconSize,
     Widget? iconWidget,
@@ -1653,6 +1664,8 @@ class HomeScreenState extends State<HomeScreen> {
                 _showKeyboardShortcutHelp();
               case _HomeToolbarAction.undo:
                 provider.undo();
+              case _HomeToolbarAction.redo:
+                provider.redo();
               case _HomeToolbarAction.remoteView:
                 _leaveBrushAndClearSelection();
                 provider.toggleRemoteScheduleView();
@@ -1666,10 +1679,17 @@ class HomeScreenState extends State<HomeScreen> {
                 value: _HomeToolbarAction.keyboardHelp,
                 child: Text('键盘快捷键'),
               ),
-            const PopupMenuItem(
+            PopupMenuItem(
               value: _HomeToolbarAction.undo,
+              enabled: provider.canUndo,
               child: Text('撤销'),
             ),
+            if (isDesktopPlatform)
+              PopupMenuItem(
+                value: _HomeToolbarAction.redo,
+                enabled: provider.canRedo,
+                child: const Text('重做'),
+              ),
             PopupMenuItem(
               value: _HomeToolbarAction.remoteView,
               child: Text(remoteViewEnabled ? '关闭对方日程' : '查看对方日程'),
@@ -1697,14 +1717,23 @@ class HomeScreenState extends State<HomeScreen> {
         ),
       _appBarIconButton(
         icon: Icons.search,
-        tooltip: '搜索记录',
+        tooltip: desktopShortcutTooltip(
+            context, '全局搜索', DesktopShortcutActionType.openSearch),
         onPressed: _openGlobalSearch,
       ),
       _appBarIconButton(
         icon: Icons.undo,
-        tooltip: '撤销',
-        onPressed: () => provider.undo(),
+        tooltip: desktopShortcutTooltip(
+            context, '撤销', DesktopShortcutActionType.undo),
+        onPressed: provider.canUndo ? provider.undo : null,
       ),
+      if (isDesktopPlatform)
+        _appBarIconButton(
+          icon: Icons.redo,
+          tooltip: desktopShortcutTooltip(
+              context, '重做', DesktopShortcutActionType.redo),
+          onPressed: provider.canRedo ? provider.redo : null,
+        ),
       _appBarIconButton(
         tooltip: remoteViewEnabled ? '关闭对方日程' : '查看对方日程',
         icon: Icons.people_outline,
@@ -1802,11 +1831,15 @@ class HomeScreenState extends State<HomeScreen> {
         .goToDate(DateTime(now.year, now.month, now.day));
   }
 
-  void _openGlobalSearch() {
+  void _openGlobalSearch(
+      {GlobalSearchContentType initialContentType =
+          GlobalSearchContentType.all}) {
     if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => const GlobalSearchScreen(),
+        settings: const RouteSettings(name: 'global-search'),
+        builder: (_) =>
+            GlobalSearchScreen(initialContentType: initialContentType),
       ),
     );
   }
@@ -1830,46 +1863,7 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   void _showKeyboardShortcutHelp() {
-    if (!mounted) return;
-    final hints = desktopShortcutHints(macOS: Platform.isMacOS);
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('键盘快捷键'),
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: AppSizes.dialogMaxWidth),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (final hint in hints)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                  child: Row(
-                    children: [
-                      Expanded(child: Text(hint.action, style: AppText.body)),
-                      Text(hint.keys, style: AppText.body),
-                    ],
-                  ),
-                ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                '输入框获得焦点时不会接管文字编辑快捷键。',
-                style: AppText.caption.copyWith(
-                  color: Theme.of(dialogContext).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('知道了'),
-          ),
-        ],
-      ),
-    );
+    if (mounted) DesktopShortcutSettingsScreen.open(context);
   }
 
   void _clearSelection() {

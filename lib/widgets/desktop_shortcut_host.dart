@@ -2,238 +2,285 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 
+import '../models/desktop_shortcut.dart';
+import '../providers/desktop_shortcut_provider.dart';
 import '../utils/platform_features.dart';
+import 'main_tab_activity.dart';
 
-/// 应用桌面端快捷键的动作类型。
-enum DesktopShortcutActionType {
-  undo,
-  previousDay,
-  nextDay,
-  today,
-  openSearch,
-  escape,
-}
+export '../models/desktop_shortcut.dart';
 
-/// 一个桌面快捷键意图。
-class DesktopShortcutIntent extends Intent {
-  const DesktopShortcutIntent(this.type);
-
-  final DesktopShortcutActionType type;
-}
-
-/// 桌面端快捷键的简洁说明，供帮助入口和测试复用。
 class DesktopShortcutHint {
   const DesktopShortcutHint({required this.action, required this.keys});
-
   final String action;
   final String keys;
 }
 
-List<DesktopShortcutHint> desktopShortcutHints({bool? macOS}) {
-  final modifier = (macOS ?? Platform.isMacOS) ? '⌘' : 'Ctrl';
-  return <DesktopShortcutHint>[
-    DesktopShortcutHint(action: '撤销', keys: '$modifier+Z'),
-    DesktopShortcutHint(action: '重做', keys: '$modifier+Shift+Z（暂不支持）'),
-    const DesktopShortcutHint(action: '前一天', keys: '←'),
-    const DesktopShortcutHint(action: '后一天', keys: '→'),
-    const DesktopShortcutHint(action: '回今天', keys: 'T'),
-    DesktopShortcutHint(
-      action: '打开搜索',
-      keys: '$modifier+K / $modifier+F',
-    ),
-    const DesktopShortcutHint(action: '关闭弹层 / 刷子 / 选择', keys: 'Esc'),
+List<DesktopShortcutHint> desktopShortcutHints({
+  bool? macOS,
+  Map<DesktopShortcutActionType, DesktopKeyBinding?>? bindings,
+}) {
+  final useMeta = macOS ?? Platform.isMacOS;
+  return [
+    for (final entry in (bindings ?? defaultDesktopBindings()).entries)
+      DesktopShortcutHint(
+        action: entry.key.label,
+        keys: entry.value?.label(macOS: useMeta) ?? '已停用',
+      ),
   ];
 }
 
-/// 判断快捷键当前是否会落在可编辑控件中。
-///
-/// Action 收到的 context 通常是当前 primary focus 的 context。沿焦点
-/// context 向上检查 EditableText 及 Material 输入控件，可以让快捷键在
-/// 编辑器内返回 disabled，事件继续交给 Flutter 的文字编辑行为处理。
-@visibleForTesting
-bool isEditableShortcutContext(BuildContext? context) {
-  if (context == null) return false;
-
-  bool isEditableWidget(Widget widget) {
-    return widget is EditableText ||
-        widget is TextField ||
-        widget is TextFormField;
-  }
-
-  if (isEditableWidget(context.widget)) return true;
-
-  var editable = false;
-  context.visitAncestorElements((element) {
-    if (isEditableWidget(element.widget)) {
-      editable = true;
-      return false;
-    }
-    return true;
-  });
-  return editable;
+String desktopShortcutLabel(
+    BuildContext context, DesktopShortcutActionType action) {
+  final provider = context.watch<DesktopShortcutProvider?>();
+  return (provider?.bindings ?? defaultDesktopBindings())[action]
+          ?.label(macOS: Platform.isMacOS) ??
+      '';
 }
 
-typedef _DesktopShortcutCallback = Object? Function(
-  DesktopShortcutActionType type,
-  BuildContext? context,
-);
+String desktopShortcutTooltip(
+    BuildContext context, String label, DesktopShortcutActionType action) {
+  if (!isDesktopPlatform) return label;
+  final keys = desktopShortcutLabel(context, action);
+  return keys.isEmpty ? label : '$label ($keys)';
+}
 
-class _DesktopShortcutAction extends ContextAction<DesktopShortcutIntent> {
-  _DesktopShortcutAction({
-    required this.callback,
-    required this.isAvailable,
+bool _hasAncestorWidget(
+    BuildContext? context, bool Function(Widget) predicate) {
+  if (context == null) return false;
+  if (predicate(context.widget)) return true;
+  var found = false;
+  context.visitAncestorElements((element) {
+    if (!predicate(element.widget)) return true;
+    found = true;
+    return false;
   });
+  return found;
+}
 
-  final _DesktopShortcutCallback callback;
-  final bool Function(DesktopShortcutActionType type) isAvailable;
+@visibleForTesting
+bool isEditableShortcutContext(BuildContext? context) => _hasAncestorWidget(
+      context,
+      (widget) =>
+          widget is EditableText ||
+          widget is TextField ||
+          widget is TextFormField,
+    );
+
+bool _isComposing(BuildContext? context) => _hasAncestorWidget(
+      context,
+      (widget) =>
+          widget is EditableText &&
+          widget.controller.value.composing.isValid &&
+          !widget.controller.value.composing.isCollapsed,
+    );
+
+bool _isSelectionControl(BuildContext? context) => _hasAncestorWidget(
+      context,
+      (widget) =>
+          widget is Slider ||
+          widget is RangeSlider ||
+          widget is DropdownButton ||
+          widget is DropdownMenu ||
+          widget is RadioGroup,
+    );
+
+typedef _ShortcutCallback = bool Function(BuildContext? context);
+
+/// 各宿主只注册自己的命令。调度在 ShortcutManager 内完成，避免内层的
+/// 同类型 Action 遮住根层搜索 / 设置，同时保留未处理事件的正常冒泡。
+class _DesktopShortcutManager extends ShortcutManager {
+  Map<DesktopShortcutActionType, _ShortcutCallback> callbacks = {};
+  Map<DesktopShortcutActionType, DesktopKeyBinding?> bindings = {};
+  late BuildContext scopeContext;
+  bool macOS = false;
+  bool pageScoped = true;
+  bool active = true;
+  bool Function(DesktopShortcutActionType)? isAvailable;
 
   @override
-  bool isEnabled(
-    DesktopShortcutIntent intent, [
-    BuildContext? context,
-  ]) {
-    // Esc 仍交给宿主决定是否关闭当前临时状态；宿主必须结合当前路由
-    // 判断是否真的是可关闭弹层。其余动作在编辑焦点内全部让给文字编辑器。
-    if (intent.type != DesktopShortcutActionType.escape &&
-        isEditableShortcutContext(context)) {
-      return false;
-    }
-    return isAvailable(intent.type);
-  }
-
-  @override
-  Object? invoke(
-    DesktopShortcutIntent intent, [
-    BuildContext? context,
-  ]) {
-    return callback(intent.type, context);
-  }
-
-  @override
-  KeyEventResult toKeyEventResult(
-    DesktopShortcutIntent intent,
-    covariant Object? invokeResult,
-  ) {
-    // Esc 的回调返回 false 表示当前页面没有可关闭状态，继续向上冒泡，
-    // 让根层的弹窗/路由关闭逻辑有机会处理它。
-    if (intent.type == DesktopShortcutActionType.escape &&
-        invokeResult != true) {
+  KeyEventResult handleKeypress(BuildContext context, KeyEvent event) {
+    if (!active ||
+        (pageScoped && ModalRoute.of(scopeContext)?.isCurrent == false)) {
       return KeyEventResult.ignored;
     }
-    return KeyEventResult.handled;
+    final focusContext = FocusManager.instance.primaryFocus?.context;
+    if (_isComposing(focusContext)) return KeyEventResult.ignored;
+    final keyboard = HardwareKeyboard.instance;
+    for (final entry in callbacks.entries) {
+      final binding = bindings[entry.key];
+      if (binding == null) continue;
+      final redoAlias = !macOS &&
+          entry.key == DesktopShortcutActionType.redo &&
+          binding == defaultDesktopBindings()[DesktopShortcutActionType.redo] &&
+          const DesktopKeyBinding(LogicalKeyboardKey.keyY, primary: true)
+              .activator(macOS: false)
+              .accepts(event, keyboard);
+      if (!redoAlias &&
+          !binding.activator(macOS: macOS).accepts(event, keyboard)) {
+        continue;
+      }
+      if (isAvailable?.call(entry.key) == false) return KeyEventResult.ignored;
+      if (entry.key != DesktopShortcutActionType.escape) {
+        final scaffold =
+            focusContext == null ? null : Scaffold.maybeOf(focusContext);
+        if (scaffold?.isDrawerOpen == true ||
+            scaffold?.isEndDrawerOpen == true) {
+          return KeyEventResult.ignored;
+        }
+        final editing = isEditableShortcutContext(focusContext);
+        final textOwnsCommand = switch (entry.key) {
+          DesktopShortcutActionType.undo ||
+          DesktopShortcutActionType.redo ||
+          DesktopShortcutActionType.previousDay ||
+          DesktopShortcutActionType.nextDay ||
+          DesktopShortcutActionType.today ||
+          DesktopShortcutActionType.newItem =>
+            true,
+          _ => !binding.hasModifier,
+        };
+        if (editing && textOwnsCommand) return KeyEventResult.ignored;
+        if (!binding.hasModifier && _isSelectionControl(focusContext)) {
+          return KeyEventResult.ignored;
+        }
+      }
+      return entry.value(focusContext)
+          ? KeyEventResult.handled
+          : KeyEventResult.ignored;
+    }
+    return KeyEventResult.ignored;
   }
 }
 
-/// 桌面端快捷键宿主。
-///
-/// [enabled] 和 [macOS] 只用于测试或特殊宿主覆盖；生产代码默认读取
-/// 当前平台。移动端直接返回 child，不增加 Focus/Shortcuts 层。
-class DesktopShortcutHost extends StatelessWidget {
+class DesktopShortcutHost extends StatefulWidget {
   const DesktopShortcutHost({
     super.key,
     required this.child,
     this.onUndo,
+    this.onRedo,
     this.onPreviousDay,
     this.onNextDay,
     this.onToday,
     this.onOpenSearch,
+    this.onSearchPage,
+    this.onNewItem,
+    this.onOpenSettings,
+    this.onSaveForm,
+    this.onSelectTab,
     this.onEscape,
     this.onEscapeWithContext,
+    this.isAvailable,
+    this.pageScoped = true,
+    this.autofocus = false,
     this.enabled,
     this.macOS,
   });
 
   final Widget child;
   final VoidCallback? onUndo;
+  final VoidCallback? onRedo;
   final VoidCallback? onPreviousDay;
   final VoidCallback? onNextDay;
   final VoidCallback? onToday;
   final VoidCallback? onOpenSearch;
-
-  /// 返回 true 表示已关闭某个状态，false 表示继续让事件向上冒泡。
+  final VoidCallback? onSearchPage;
+  final VoidCallback? onNewItem;
+  final VoidCallback? onOpenSettings;
+  final VoidCallback? onSaveForm;
+  final void Function(int index)? onSelectTab;
   final bool Function()? onEscape;
-
-  /// 带当前键盘焦点上下文的 Esc 回调。用于根层区分表单页和
-  /// barrierDismissible 的 PopupRoute；保留 [onEscape] 兼容页面内快捷键。
   final bool Function(BuildContext? context)? onEscapeWithContext;
-
+  final bool Function(DesktopShortcutActionType)? isAvailable;
+  final bool pageScoped;
+  final bool autofocus;
   final bool? enabled;
   final bool? macOS;
 
   @override
+  State<DesktopShortcutHost> createState() => _DesktopShortcutHostState();
+}
+
+class _DesktopShortcutHostState extends State<DesktopShortcutHost> {
+  final _manager = _DesktopShortcutManager();
+  final _pageFocus = FocusNode(debugLabel: '页面快捷键');
+  bool _wasActive = false;
+
+  @override
+  void dispose() {
+    _manager.dispose();
+    _pageFocus.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final isEnabled = enabled ?? isDesktopPlatform;
-    if (!isEnabled) return child;
+    if (!(widget.enabled ?? isDesktopPlatform)) return widget.child;
+    final provider = context.watch<DesktopShortcutProvider?>();
+    final callbacks = <DesktopShortcutActionType, _ShortcutCallback>{};
+    void add(DesktopShortcutActionType type, VoidCallback? callback) {
+      if (callback != null) {
+        callbacks[type] = (_) {
+          callback();
+          return true;
+        };
+      }
+    }
 
-    final useMeta = macOS ?? Platform.isMacOS;
-    final modifier = <ShortcutActivator, Intent>{
-      SingleActivator(
-        LogicalKeyboardKey.keyZ,
-        control: !useMeta,
-        meta: useMeta,
-        includeRepeats: false,
-      ): const DesktopShortcutIntent(DesktopShortcutActionType.undo),
-      SingleActivator(
-        LogicalKeyboardKey.arrowLeft,
-        includeRepeats: false,
-      ): const DesktopShortcutIntent(DesktopShortcutActionType.previousDay),
-      SingleActivator(
-        LogicalKeyboardKey.arrowRight,
-        includeRepeats: false,
-      ): const DesktopShortcutIntent(DesktopShortcutActionType.nextDay),
-      const SingleActivator(
-        LogicalKeyboardKey.keyT,
-        includeRepeats: false,
-      ): const DesktopShortcutIntent(DesktopShortcutActionType.today),
-      SingleActivator(
-        LogicalKeyboardKey.keyK,
-        control: !useMeta,
-        meta: useMeta,
-        includeRepeats: false,
-      ): const DesktopShortcutIntent(DesktopShortcutActionType.openSearch),
-      SingleActivator(
-        LogicalKeyboardKey.keyF,
-        control: !useMeta,
-        meta: useMeta,
-        includeRepeats: false,
-      ): const DesktopShortcutIntent(DesktopShortcutActionType.openSearch),
-      const SingleActivator(
-        LogicalKeyboardKey.escape,
-        includeRepeats: false,
-      ): const DesktopShortcutIntent(DesktopShortcutActionType.escape),
-    };
-
-    final callbacks = <DesktopShortcutActionType, VoidCallback?>{
-      DesktopShortcutActionType.undo: onUndo,
-      DesktopShortcutActionType.previousDay: onPreviousDay,
-      DesktopShortcutActionType.nextDay: onNextDay,
-      DesktopShortcutActionType.today: onToday,
-      DesktopShortcutActionType.openSearch: onOpenSearch,
-    };
-
-    return Shortcuts(
-      shortcuts: modifier,
-      debugLabel: '桌面端快捷键',
-      child: Actions(
-        actions: <Type, Action<Intent>>{
-          DesktopShortcutIntent: _DesktopShortcutAction(
-            isAvailable: (type) => type == DesktopShortcutActionType.escape
-                ? onEscape != null || onEscapeWithContext != null
-                : callbacks[type] != null,
-            callback: (type, context) {
-              if (type == DesktopShortcutActionType.escape) {
-                return onEscapeWithContext?.call(context) ??
-                    onEscape?.call() ??
-                    false;
-              }
-              callbacks[type]?.call();
-              return null;
-            },
-          ),
-        },
-        child: child,
-      ),
-    );
+    add(DesktopShortcutActionType.undo, widget.onUndo);
+    add(DesktopShortcutActionType.redo, widget.onRedo);
+    add(DesktopShortcutActionType.previousDay, widget.onPreviousDay);
+    add(DesktopShortcutActionType.nextDay, widget.onNextDay);
+    add(DesktopShortcutActionType.today, widget.onToday);
+    add(DesktopShortcutActionType.openSearch, widget.onOpenSearch);
+    add(DesktopShortcutActionType.searchPage, widget.onSearchPage);
+    add(DesktopShortcutActionType.newItem, widget.onNewItem);
+    add(DesktopShortcutActionType.openSettings, widget.onOpenSettings);
+    add(DesktopShortcutActionType.saveForm, widget.onSaveForm);
+    if (widget.onSelectTab != null) {
+      final tabs = [
+        DesktopShortcutActionType.tab1,
+        DesktopShortcutActionType.tab2,
+        DesktopShortcutActionType.tab3,
+        DesktopShortcutActionType.tab4,
+        DesktopShortcutActionType.tab5,
+        DesktopShortcutActionType.tab6
+      ];
+      for (var index = 0; index < tabs.length; index++) {
+        final tabIndex = index;
+        callbacks[tabs[index]] = (_) {
+          widget.onSelectTab!(tabIndex);
+          return true;
+        };
+      }
+    }
+    if (widget.onEscape != null || widget.onEscapeWithContext != null) {
+      callbacks[DesktopShortcutActionType.escape] = (focusContext) =>
+          widget.onEscapeWithContext?.call(focusContext) ??
+          widget.onEscape?.call() ??
+          false;
+    }
+    _manager
+      ..scopeContext = context
+      ..callbacks = callbacks
+      ..bindings = provider?.bindings ?? defaultDesktopBindings()
+      ..macOS = widget.macOS ?? Platform.isMacOS
+      ..pageScoped = widget.pageScoped
+      ..active = !widget.pageScoped || MainTabActivity.isActiveOf(context)
+      ..isAvailable = widget.isAvailable;
+    if (widget.autofocus && _manager.active && !_wasActive) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted &&
+            _manager.active &&
+            !_pageFocus.hasFocus &&
+            ModalRoute.of(context)?.isCurrent != false) {
+          _pageFocus.requestFocus();
+        }
+      });
+    }
+    _wasActive = _manager.active;
+    return Shortcuts.manager(
+        manager: _manager,
+        child: Focus(focusNode: _pageFocus, child: widget.child));
   }
 }

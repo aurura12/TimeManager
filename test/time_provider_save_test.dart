@@ -163,6 +163,101 @@ void main() {
         .setMockMethodCallHandler(secureStorage, null);
   });
 
+  test('撤销重做深拷贝快照、更新统计与同步版本并保存删除墓碑', () async {
+    final (provider, store) =
+        await _createProvider(localSaveDebounce: const Duration(hours: 1));
+    final date = provider.currentDate;
+    expect(provider.canUndo, isFalse);
+    expect(provider.canRedo, isFalse);
+    provider.assignCategoryToSlots({49}, _focus);
+    final editTime = provider.slots[49].modifiedAt!;
+    expect(provider.canUndo, isTrue);
+    expect(provider.getStatistics(date, date)['专注'], closeTo(1 / 6, 1e-9));
+    provider.undo();
+    expect(provider.slots[49].recorded, isFalse);
+    expect(provider.slots[49].deletedAt, isNotNull);
+    expect(provider.getStatistics(date, date)['专注'] ?? 0, 0);
+    expect(provider.canUndo, isFalse);
+    expect(provider.canRedo, isTrue);
+    await provider.onAppBackgrounded();
+    var entries =
+        jsonDecode(store.completedSlotWrites.last)[_dateKey(date)] as List;
+    expect(entries.firstWhere((entry) => entry['i'] == 49)['del'], isTrue);
+    await provider.onAppResumed();
+    provider.redo();
+    expect(provider.slots[49].recorded, isTrue);
+    expect(provider.slots[49].label, '专注');
+    expect(provider.slots[49].deletedAt, isNull);
+    expect(provider.slots[49].modifiedAt!.isBefore(editTime), isFalse);
+    expect(provider.getStatistics(date, date)['专注'], closeTo(1 / 6, 1e-9));
+    expect(provider.canRedo, isFalse);
+    provider.undo();
+    provider.redo();
+    expect(provider.slots[49].label, '专注', reason: '后续编辑不能污染历史快照');
+    await provider.onAppBackgrounded();
+    entries =
+        jsonDecode(store.completedSlotWrites.last)[_dateKey(date)] as List;
+    expect(entries.firstWhere((entry) => entry['i'] == 49)['l'], '专注');
+  });
+
+  test('重做以最后编辑的日期为准，新编辑截断重做，历史记录限制 20 步', () async {
+    final (provider, _) =
+        await _createProvider(localSaveDebounce: const Duration(hours: 1));
+    final neighbor = provider.currentDate.add(const Duration(days: 1));
+    provider.assignCategoryToSlots({60}, _focus, date: neighbor);
+    provider.undo();
+    expect(provider.slotsForDate(neighbor)[60].recorded, isFalse);
+    provider.redo();
+    expect(provider.slotsForDate(neighbor)[60].recorded, isTrue);
+    expect(provider.slots[60].recorded, isFalse);
+    provider.undo();
+    provider.assignCategoryToSlots({50}, _focus);
+    expect(provider.canRedo, isFalse);
+    for (var index = 70; index < 95; index++) {
+      provider.assignCategoryToSlots({index}, _focus);
+    }
+    var undoCount = 0;
+    while (provider.canUndo) {
+      provider.undo();
+      undoCount++;
+    }
+    expect(undoCount, 20);
+    var redoCount = 0;
+    while (provider.canRedo) {
+      provider.redo();
+      redoCount++;
+    }
+    expect(redoCount, 20);
+  });
+
+  test('成功导入备份清空历史，不能重做导入前的编辑', () async {
+    final (provider, _) =
+        await _createProvider(localSaveDebounce: const Duration(hours: 1));
+    final backup = provider.exportBackupJson();
+    provider.assignCategoryToSlots({49}, _focus);
+    provider.undo();
+    expect(provider.canRedo, isTrue);
+    await provider.importBackupJson(backup);
+    expect(provider.canUndo, isFalse);
+    expect(provider.canRedo, isFalse);
+    provider.redo();
+    expect(provider.slots[49].recorded, isFalse);
+  });
+
+  test('切换身份清空重做，不会恢复上一身份数据', () async {
+    final (provider, _) = await _createProvider(
+        mobile: true, localSaveDebounce: const Duration(hours: 1));
+    provider.assignCategoryToSlots({49}, _focus);
+    provider.undo();
+    expect(provider.canRedo, isTrue);
+    await provider.setScheduleUser(DiaryKind.j);
+    expect(provider.canUndo, isFalse);
+    expect(provider.canRedo, isFalse);
+    provider.redo();
+    expect(provider.slots[49].recorded, isFalse);
+    expect(provider.slots[60].label, '晶晶原始');
+  });
+
   test('十次连续编辑合并成一次保存，历史日期保持不变', () async {
     final (provider, store) = await _createProvider();
     for (var index = 48; index < 58; index++) {

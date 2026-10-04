@@ -12,6 +12,8 @@ import '../providers/theme_mode_provider.dart';
 import '../providers/background_image_provider.dart';
 import '../providers/time_provider.dart';
 import '../providers/main_tab_provider.dart';
+import '../screens/desktop_shortcut_settings_screen.dart';
+import '../providers/desktop_shortcut_provider.dart';
 import '../services/app_log_service.dart';
 import '../services/data_backup_service.dart';
 import '../services/diary_reminder_service.dart';
@@ -507,6 +509,16 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           ),
         ],
       _ProfileDrawerSection.appearance => [
+          if (isDesktop && context.read<DesktopShortcutProvider?>() != null)
+            ListTile(
+              leading: const Icon(Icons.keyboard_outlined),
+              title: const Text('键盘快捷键'),
+              subtitle: const Text('查看、修改或停用快捷键'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _openScreen(DesktopShortcutSettingsScreen(
+                provider: context.read<DesktopShortcutProvider>(),
+              )),
+            ),
           ListTile(
             leading: const Icon(Icons.view_day_outlined),
             title: const Text('底部标签'),

@@ -5,11 +5,13 @@ import 'dart:ui';
 
 import 'package:home_widget/home_widget.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/background_image_provider.dart';
 import 'providers/main_tab_provider.dart';
+import 'providers/desktop_shortcut_provider.dart';
 import 'package:time_manager/theme/app_semantic_colors.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'providers/time_provider.dart';
@@ -470,6 +472,7 @@ Future<void> _initializeAndRunApplication({
         ),
         ChangeNotifierProvider(create: (context) => ThemeModeProvider()),
         ChangeNotifierProvider(create: (_) => MainTabProvider()),
+        ChangeNotifierProvider(create: (_) => DesktopShortcutProvider()),
         ChangeNotifierProvider<BackgroundImageProvider>(
           create: (_) {
             final provider = BackgroundImageProvider();
@@ -563,10 +566,20 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
   bool _pendingDiaryReminderRoute = false;
   bool _pendingCheckInReminderRoute = false;
   final _RootRouteTracker _rootRouteTracker = _RootRouteTracker();
+  final _mainScreenKey = GlobalKey<MainScreenState>();
+  static const _desktopCommands =
+      MethodChannel('time_manager/desktop_commands');
 
   @override
   void initState() {
     super.initState();
+    if (Platform.isMacOS) {
+      _desktopCommands.setMethodCallHandler((call) async {
+        if (call.method == 'openSettings') {
+          _mainScreenKey.currentState?.openSettings();
+        }
+      });
+    }
     // home_widget 只在 Android 注册小组件点击通道；其他平台不触碰该
     // platform channel，避免启动时出现 MissingPluginException。
     if (Platform.isAndroid) {
@@ -593,6 +606,7 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
 
   @override
   void dispose() {
+    if (Platform.isMacOS) _desktopCommands.setMethodCallHandler(null);
     _homeWidgetClicks?.cancel();
     super.dispose();
   }
@@ -714,7 +728,6 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
   Widget build(BuildContext context) {
     final themeSettings = context.watch<ThemeModeProvider>();
     final backgroundImage = context.watch<BackgroundImageProvider>();
-    final timeProvider = context.read<TimeProvider>();
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
       navigatorObservers: <NavigatorObserver>[_rootRouteTracker],
@@ -741,15 +754,17 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
       // 放在 Navigator 外层，保证 Dialog/BottomSheet 等临时路由也能用
       // Esc 关闭；HomeScreen 内层还会处理日期面板、刷子和时间选择。
       builder: (context, child) => DesktopShortcutHost(
-        onUndo: timeProvider.undo,
-        onPreviousDay: timeProvider.previousDay,
-        onNextDay: timeProvider.nextDay,
-        onToday: () => timeProvider.goToDate(DateTime.now()),
+        pageScoped: false,
+        onOpenSettings: () => _mainScreenKey.currentState?.openSettings(),
+        isAvailable: (action) =>
+            action == DesktopShortcutActionType.escape ||
+            _rootRouteTracker.topRoute?.isFirst == true,
         onOpenSearch: () {
           final navigator = rootNavigatorKey.currentState;
           if (navigator == null) return;
           navigator.push(
             MaterialPageRoute(
+              settings: const RouteSettings(name: 'global-search'),
               builder: (_) => const GlobalSearchScreen(),
             ),
           );
@@ -771,7 +786,7 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
           child: child ?? const SizedBox.shrink(),
         ),
       ),
-      home: const MainScreen(),
+      home: MainScreen(key: _mainScreenKey),
     );
   }
 }

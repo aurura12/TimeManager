@@ -269,9 +269,12 @@ void main() {
     expect(provider.targetById('duration')!.durationHours, 6);
     await tester.enterText(
         find.byKey(const ValueKey('target_duration')), '7.5');
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    final modifier = Platform.isMacOS
+        ? LogicalKeyboardKey.metaLeft
+        : LogicalKeyboardKey.controlLeft;
+    await tester.sendKeyDownEvent(modifier);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyUpEvent(modifier);
     await tester.pumpAndSettle();
     expect(find.byType(Dialog), findsNothing);
     expect(provider.targetById('duration')!.durationHours, 7.5);
@@ -459,6 +462,8 @@ void main() {
         expect(card.color!.a, closeTo(0.72, 0.001));
       }
       await _capture(tester, boundaryKey, 'targets_$variant');
+      await tester.ensureVisible(find.byTooltip('编辑目标').first);
+      await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('编辑目标').first);
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);

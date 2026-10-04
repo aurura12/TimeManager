@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +10,7 @@ import 'package:time_manager/screens/global_search_screen.dart';
 import 'package:time_manager/services/app_identity_service.dart';
 import 'package:time_manager/services/unified_search_service.dart';
 import 'package:time_manager/theme/app_theme.dart';
+import 'package:time_manager/utils/platform_features.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -85,6 +88,27 @@ void main() {
     expect(find.textContaining('2026年9月14日'), findsOneWidget);
     expect(find.textContaining('事件：散步'), findsOneWidget);
   });
+
+  testWidgets('搜索页快捷键聚焦并选中现有查询，不再打开重复搜索页', (tester) async {
+    await pumpSearch(tester);
+    await tester.enterText(find.byType(TextField), '西湖');
+    await tester.pump(const Duration(milliseconds: 300));
+    final field = tester.widget<TextField>(find.byType(TextField));
+    final modifier = Platform.isMacOS
+        ? LogicalKeyboardKey.metaLeft
+        : LogicalKeyboardKey.controlLeft;
+    for (final key in [LogicalKeyboardKey.keyK, LogicalKeyboardKey.keyF]) {
+      field.controller!.selection = const TextSelection.collapsed(offset: 2);
+      await tester.sendKeyDownEvent(modifier);
+      await tester.sendKeyEvent(key);
+      await tester.sendKeyUpEvent(modifier);
+      await tester.pumpAndSettle();
+      expect(field.controller!.selection,
+          const TextSelection(baseOffset: 0, extentOffset: 2));
+      expect(field.focusNode!.hasFocus, isTrue);
+      expect(find.byType(GlobalSearchScreen), findsOneWidget);
+    }
+  }, skip: !isDesktopPlatform);
 
   testWidgets('没有匹配项时显示清晰空状态', (tester) async {
     await pumpSearch(tester);

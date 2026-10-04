@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/screens/profile_screen.dart';
 import '../models/main_tab_id.dart';
+import '../models/global_search_result.dart';
 import '../models/schedule_sync_progress.dart';
 import '../providers/main_tab_provider.dart';
 import '../providers/time_provider.dart';
@@ -19,12 +20,14 @@ import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/adaptive.dart';
 import '../widgets/main_tab_activity.dart';
+import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/main_tab_navigation.dart';
 import '../widgets/on_this_day_sheet.dart';
 import '../widgets/schedule_sync_progress_banner.dart';
 import 'check_in_screen.dart';
 import 'diary_screen.dart';
 import 'home_screen.dart';
+import 'global_search_screen.dart';
 import 'target_screen.dart';
 import 'travel_screen.dart';
 
@@ -42,10 +45,10 @@ class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
 
   @override
-  State<MainScreen> createState() => _MainScreenState();
+  State<MainScreen> createState() => MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
+class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   MainTabId? _selectedTab;
   LocalHistoryEntry? _hiddenTabHistory;
 
@@ -55,6 +58,32 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   // 「记录」页用 IndexedStack 常驻，离开 Tab 不会 dispose，
   // 所以刷子模式要靠这个 key 主动退出。
   final GlobalKey<HomeScreenState> _homeKey = GlobalKey<HomeScreenState>();
+  final _profileKey = GlobalKey<ProfileScreenState>();
+  final _shortcutFocus = FocusNode(debugLabel: '主页面快捷键');
+
+  void openSettings() {
+    if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+    _hiddenTabHistory?.remove();
+    _onItemTapped(MainTabId.profile);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _profileKey.currentState?.openSettings();
+    });
+  }
+
+  void _searchCurrentPage() {
+    final type = switch (_selectedTab) {
+      MainTabId.record => GlobalSearchContentType.timeRecord,
+      MainTabId.diary => GlobalSearchContentType.diary,
+      MainTabId.travel => GlobalSearchContentType.travel,
+      MainTabId.checkIn => GlobalSearchContentType.checkIn,
+      MainTabId.target => GlobalSearchContentType.target,
+      _ => GlobalSearchContentType.all,
+    };
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      settings: const RouteSettings(name: 'global-search'),
+      builder: (_) => GlobalSearchScreen(initialContentType: type),
+    ));
+  }
 
   // 那年今日弹窗状态
   String? _onThisDayShownDateKey; // 本次会话已弹过的日期（跨午夜时重置）
@@ -78,7 +107,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       MainTabId.travel: () => const TravelScreen(),
       MainTabId.checkIn: () => const CheckInScreen(),
       MainTabId.target: () => const TargetScreen(),
-      MainTabId.profile: () => ProfileScreen(onOpenHiddenTab: _openHiddenTab),
+      MainTabId.profile: () =>
+          ProfileScreen(key: _profileKey, onOpenHiddenTab: _openHiddenTab),
     };
     _tabPages = List<Widget?>.filled(MainTabId.values.length, null);
     _mainTabProvider = context.read<MainTabProvider>();
@@ -110,6 +140,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _timeProvider.removeListener(_tryShowOnThisDay);
     _mainTabProvider.removeListener(_onTabSettingsChanged);
     WidgetsBinding.instance.removeObserver(this);
+    _shortcutFocus.dispose();
     super.dispose();
   }
 
@@ -275,9 +306,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       (index) => MainTabActivity(
         key: ValueKey(MainTabId.values[index]),
         isActive: MainTabId.values[index] == _selectedTab,
-        child: TickerMode(
-          enabled: MainTabId.values[index] == _selectedTab,
-          child: _tabPages[index] ?? const SizedBox.shrink(),
+        child: ExcludeFocus(
+          excluding: MainTabId.values[index] != _selectedTab,
+          child: TickerMode(
+            enabled: MainTabId.values[index] == _selectedTab,
+            child: _tabPages[index] ?? const SizedBox.shrink(),
+          ),
         ),
       ),
       growable: false,
@@ -286,6 +320,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   void _onItemTapped(MainTabId tab) {
     if (!_mainTabProvider.visibleTabs.contains(tab)) return;
+    _shortcutFocus.requestFocus();
 
     // 离开「记录」页时退出刷子模式，避免回到该页还带着刷子
     if (_selectedTab == MainTabId.record && tab != MainTabId.record) {
@@ -298,7 +333,34 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => DesktopShortcutHost(
+        onSearchPage: _searchCurrentPage,
+        onOpenSettings: openSettings,
+        onEscape: () =>
+            _selectedTab == MainTabId.profile &&
+            (_profileKey.currentState?.closeSettings() ?? false),
+        onSelectTab: (index) {
+          final tabs = _mainTabProvider.visibleTabs;
+          if (_hiddenTabHistory == null && index < tabs.length) {
+            _onItemTapped(tabs[index]);
+          }
+        },
+        isAvailable: (action) {
+          if (!_mainTabProvider.isLoaded) return false;
+          if (action.name.startsWith('tab')) {
+            final index = int.parse(action.name.substring(3)) - 1;
+            return _hiddenTabHistory == null &&
+                index < _mainTabProvider.visibleTabs.length;
+          }
+          return true;
+        },
+        child: Focus(
+            focusNode: _shortcutFocus,
+            autofocus: true,
+            child: _buildPage(context)),
+      );
+
+  Widget _buildPage(BuildContext context) {
     final surfaces = AppSurfaces.of(context);
     final wallpaperTheme = AppWallpaperTheme.of(context);
     if (!_mainTabProvider.isLoaded) {

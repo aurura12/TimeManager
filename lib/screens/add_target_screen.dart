@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 import '../models/target.dart';
@@ -9,6 +8,7 @@ import '../models/target.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/desktop_shortcut_host.dart';
 import '../utils/platform_features.dart';
 
 /// 桌面端原地编辑，移动端继续使用完整页面。
@@ -441,14 +441,14 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
       clipBehavior: Clip.antiAlias,
       child: PopScope(
         canPop: !_isSaving,
-        child: CallbackShortcuts(
-          bindings: {
-            const SingleActivator(LogicalKeyboardKey.enter, control: true):
-                () => unawaited(_saveTarget()),
-            const SingleActivator(LogicalKeyboardKey.enter, meta: true): () =>
-                unawaited(_saveTarget()),
-            const SingleActivator(LogicalKeyboardKey.escape): _closeEditor,
+        child: DesktopShortcutHost(
+          onSaveForm: () => unawaited(_saveTarget()),
+          onEscape: () {
+            if (_isSaving) return false;
+            _closeEditor();
+            return true;
           },
+          isAvailable: (_) => !_isSaving,
           child: FocusTraversalGroup(
             child: SizedBox(
               width: AppSizes.desktopFormMaxWidth,
@@ -509,7 +509,14 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                           ],
                           Row(children: [
                             Expanded(
-                                child: Text('Ctrl / ⌘ + Enter 保存',
+                                child: Text(
+                                    desktopShortcutLabel(
+                                                context,
+                                                DesktopShortcutActionType
+                                                    .saveForm)
+                                            .isEmpty
+                                        ? '点击保存提交'
+                                        : '${desktopShortcutLabel(context, DesktopShortcutActionType.saveForm)} 保存',
                                     style: AppText.caption.copyWith(
                                         color: scheme.onSurfaceVariant))),
                             TextButton(

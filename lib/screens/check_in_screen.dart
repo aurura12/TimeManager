@@ -14,6 +14,7 @@ import '../services/sync_status_coordinator.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/desktop_shortcut_host.dart';
 import '../utils/platform_features.dart';
 import '../widgets/check_in_map_preview.dart';
 import '../widgets/check_in_photo_sheet.dart';
@@ -60,7 +61,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
     if (mounted) setState(() {});
     // 目标列表是提醒的权威来源：刷新冗余的目标名/日期/归档状态，
     // 并清掉那些目标已不存在的提醒（另一端删了目标并同步过来时唯一的清理时机）。
-    unawaited(CheckInReminderService.reconcile(allGoals: _allGoals, force: true));
+    unawaited(
+        CheckInReminderService.reconcile(allGoals: _allGoals, force: true));
   }
 
   String? get _currentUserId => _sync.currentUser?.id;
@@ -247,7 +249,14 @@ class _CheckInScreenState extends State<CheckInScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => DesktopShortcutHost(
+        autofocus: true,
+        onNewItem: () => unawaited(_openAddGoal()),
+        isAvailable: (_) => !_sync.loading && !_sync.syncing,
+        child: _buildPage(context),
+      );
+
+  Widget _buildPage(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -272,7 +281,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
             ),
           IconButton(
             icon: const Icon(Icons.add),
-            tooltip: '添加打卡目标',
+            tooltip: desktopShortcutTooltip(
+                context, '添加打卡目标', DesktopShortcutActionType.newItem),
             onPressed: _openAddGoal,
           ),
         ],

@@ -33,11 +33,21 @@ class ProfileScreen extends StatefulWidget {
   final ValueChanged<MainTabId>? onOpenHiddenTab;
 
   @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
+  State<ProfileScreen> createState() => ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen>
+class ProfileScreenState extends State<ProfileScreen>
     with SingleTickerProviderStateMixin {
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
+
+  void openSettings() => _scaffoldKey.currentState?.openDrawer();
+
+  bool closeSettings() {
+    if (_scaffoldKey.currentState?.isDrawerOpen != true) return false;
+    _scaffoldKey.currentState!.closeDrawer();
+    return true;
+  }
+
   late TabController _tabController;
   int _groupValue = 0; // 0: 列表, 1: 饼图
   int _touchedIndex = -1;
@@ -73,6 +83,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     final wallpaperTheme = AppWallpaperTheme.of(context);
 
     return _lastBuiltPage = Scaffold(
+      key: _scaffoldKey,
       backgroundColor:
           wallpaperTheme.enabled ? Colors.transparent : colorScheme.surface,
       drawer: ProfileSettingsDrawer(onChanged: () => setState(() {})),

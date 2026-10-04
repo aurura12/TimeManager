@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/main.dart' show isDismissiblePopupRoute;
+import 'package:time_manager/providers/desktop_shortcut_provider.dart';
 import 'package:time_manager/widgets/desktop_shortcut_host.dart';
+import 'package:time_manager/widgets/main_tab_activity.dart';
 
 Future<void> _sendShortcut(
   WidgetTester tester,
@@ -39,10 +43,15 @@ Widget _shortcutProbe({
       enabled: enabled,
       macOS: macOS,
       onUndo: () => calls.add(DesktopShortcutActionType.undo),
+      onRedo: () => calls.add(DesktopShortcutActionType.redo),
       onPreviousDay: () => calls.add(DesktopShortcutActionType.previousDay),
       onNextDay: () => calls.add(DesktopShortcutActionType.nextDay),
       onToday: () => calls.add(DesktopShortcutActionType.today),
       onOpenSearch: () => calls.add(DesktopShortcutActionType.openSearch),
+      onSearchPage: () => calls.add(DesktopShortcutActionType.searchPage),
+      onNewItem: () => calls.add(DesktopShortcutActionType.newItem),
+      onSaveForm: () => calls.add(DesktopShortcutActionType.saveForm),
+      onOpenSettings: () => calls.add(DesktopShortcutActionType.openSettings),
       onEscape: onEscape ??
           () {
             calls.add(DesktopShortcutActionType.escape);
@@ -97,7 +106,7 @@ void main() {
       DesktopShortcutActionType.nextDay,
       DesktopShortcutActionType.today,
       DesktopShortcutActionType.openSearch,
-      DesktopShortcutActionType.openSearch,
+      DesktopShortcutActionType.searchPage,
       DesktopShortcutActionType.escape,
     ]);
   });
@@ -125,7 +134,8 @@ void main() {
       shift: true,
     );
 
-    expect(calls, [DesktopShortcutActionType.undo]);
+    expect(calls,
+        [DesktopShortcutActionType.undo, DesktopShortcutActionType.redo]);
   });
 
   testWidgets('移动端禁用桌面快捷键', (tester) async {
@@ -176,7 +186,10 @@ void main() {
       control: true,
     );
 
-    expect(calls, isEmpty);
+    expect(calls, [
+      DesktopShortcutActionType.openSearch,
+      DesktopShortcutActionType.searchPage
+    ]);
     expect(controller.text, 'abc');
   });
 
@@ -280,13 +293,178 @@ void main() {
     expect(calls, isEmpty);
   });
 
-  test('快捷键帮助明确说明当前没有 redo 实现', () {
+  test('快捷键帮助显示真实重做和模块搜索', () {
     final hints = desktopShortcutHints(macOS: false);
 
     expect(hints.map((hint) => hint.action), contains('重做'));
     expect(
       hints.firstWhere((hint) => hint.action == '重做').keys,
-      contains('暂不支持'),
+      'Ctrl+Shift+Z',
     );
+    expect(hints.firstWhere((hint) => hint.action == '当前页搜索').keys, 'Ctrl+F');
+  });
+
+  testWidgets('Windows 重做兼容 Ctrl+Y，新建、设置、保存均可用', (tester) async {
+    final calls = <DesktopShortcutActionType>[];
+    await tester
+        .pumpWidget(_shortcutProbe(calls: calls, enabled: true, macOS: false));
+    for (final key in [
+      LogicalKeyboardKey.keyY,
+      LogicalKeyboardKey.keyN,
+      LogicalKeyboardKey.comma,
+      LogicalKeyboardKey.enter
+    ]) {
+      await _sendShortcut(tester, key, control: true);
+    }
+    expect(calls, [
+      DesktopShortcutActionType.redo,
+      DesktopShortcutActionType.newItem,
+      DesktopShortcutActionType.openSettings,
+      DesktopShortcutActionType.saveForm
+    ]);
+  });
+
+  testWidgets('输入框中可以保存表单和搜索，中文组词时所有命令让给输入法', (tester) async {
+    final calls = <DesktopShortcutActionType>[];
+    final controller = TextEditingController(text: '日记');
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_shortcutProbe(
+        calls: calls, enabled: true, macOS: false, controller: controller));
+    await _sendShortcut(tester, LogicalKeyboardKey.enter, control: true);
+    await _sendShortcut(tester, LogicalKeyboardKey.keyN, control: true);
+    expect(calls, [DesktopShortcutActionType.saveForm]);
+    controller.value = const TextEditingValue(
+        text: '输入中', composing: TextRange(start: 0, end: 3));
+    await tester.pump();
+    await _sendShortcut(tester, LogicalKeyboardKey.keyK, control: true);
+    await _sendShortcut(tester, LogicalKeyboardKey.enter, control: true);
+    await _sendShortcut(tester, LogicalKeyboardKey.escape);
+    expect(calls, [DesktopShortcutActionType.saveForm]);
+    expect(controller.text, '输入中');
+  });
+
+  testWidgets('页面宿主不遮住外层全局快捷键，Esc 可逐层冒泡', (tester) async {
+    final calls = <String>[];
+    await tester.pumpWidget(MaterialApp(
+        home: DesktopShortcutHost(
+      enabled: true,
+      macOS: false,
+      pageScoped: false,
+      onOpenSearch: () => calls.add('global'),
+      onEscape: () {
+        calls.add('popup');
+        return true;
+      },
+      child: DesktopShortcutHost(
+          enabled: true,
+          macOS: false,
+          onSearchPage: () => calls.add('page'),
+          onEscape: () => false,
+          child: const Focus(autofocus: true, child: SizedBox.expand())),
+    )));
+    await _sendShortcut(tester, LogicalKeyboardKey.keyK, control: true);
+    await _sendShortcut(tester, LogicalKeyboardKey.keyF, control: true);
+    await _sendShortcut(tester, LogicalKeyboardKey.escape);
+    expect(calls, ['global', 'page', 'popup']);
+  });
+
+  testWidgets('无焦点的弹层也会阻止底下页面修改日程', (tester) async {
+    var edits = 0;
+    await tester.pumpWidget(MaterialApp(
+        home: DesktopShortcutHost(
+      enabled: true,
+      macOS: false,
+      onUndo: () => edits++,
+      child: Focus(
+          autofocus: true,
+          child: Builder(
+              builder: (context) => Scaffold(
+                    body: TextButton(
+                        onPressed: () => showDialog<void>(
+                            context: context,
+                            requestFocus: false,
+                            builder: (_) =>
+                                const AlertDialog(title: Text('浮层'))),
+                        child: const Text('打开')),
+                  ))),
+    )));
+    await tester.tap(find.text('打开'));
+    await tester.pumpAndSettle();
+    await _sendShortcut(tester, LogicalKeyboardKey.keyZ, control: true);
+    expect(edits, 0);
+  });
+
+  testWidgets('保活页不可见时不响应，回到页面重新获得快捷键焦点', (tester) async {
+    var active = true;
+    var calls = 0;
+    late StateSetter update;
+    await tester.pumpWidget(
+        MaterialApp(home: StatefulBuilder(builder: (context, setState) {
+      update = setState;
+      return MainTabActivity(
+          isActive: active,
+          child: DesktopShortcutHost(
+            enabled: true,
+            macOS: false,
+            autofocus: true,
+            onNewItem: () => calls++,
+            child: const SizedBox.expand(),
+          ));
+    })));
+    await tester.pump();
+    await _sendShortcut(tester, LogicalKeyboardKey.keyN, control: true);
+    update(() => active = false);
+    await tester.pump();
+    await _sendShortcut(tester, LogicalKeyboardKey.keyN, control: true);
+    update(() => active = true);
+    await tester.pump();
+    await tester.pump();
+    await _sendShortcut(tester, LogicalKeyboardKey.keyN, control: true);
+    expect(calls, 2);
+  });
+
+  testWidgets('重绑和停用实时生效，默认键不再触发', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final provider = DesktopShortcutProvider();
+    addTearDown(provider.dispose);
+    await provider.ready;
+    final calls = <DesktopShortcutActionType>[];
+    await tester.pumpWidget(ChangeNotifierProvider.value(
+        value: provider,
+        child: _shortcutProbe(calls: calls, enabled: true, macOS: false)));
+    final bindings = Map.of(provider.bindings);
+    bindings[DesktopShortcutActionType.openSearch] = const DesktopKeyBinding(
+        LogicalKeyboardKey.keyP,
+        primary: true,
+        shift: true);
+    bindings[DesktopShortcutActionType.redo] = null;
+    await provider.save(bindings);
+    await tester.pump();
+    await _sendShortcut(tester, LogicalKeyboardKey.keyK, control: true);
+    await _sendShortcut(tester, LogicalKeyboardKey.keyY, control: true);
+    await _sendShortcut(tester, LogicalKeyboardKey.keyP,
+        control: true, shift: true);
+    expect(calls, [DesktopShortcutActionType.openSearch]);
+  });
+
+  testWidgets('不可用命令不执行；滑块方向键不切日期', (tester) async {
+    var calls = 0;
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    await tester.pumpWidget(MaterialApp(
+        home: DesktopShortcutHost(
+      enabled: true,
+      macOS: false,
+      onUndo: () => calls++,
+      onNextDay: () => calls++,
+      isAvailable: (action) => action != DesktopShortcutActionType.undo,
+      child: Scaffold(
+          body: Slider(focusNode: focus, value: 0.5, onChanged: (_) {})),
+    )));
+    focus.requestFocus();
+    await tester.pump();
+    await _sendShortcut(tester, LogicalKeyboardKey.arrowRight);
+    await _sendShortcut(tester, LogicalKeyboardKey.keyZ, control: true);
+    expect(calls, 0);
   });
 }

@@ -11,6 +11,7 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
   - `main_tab_provider.dart` → `MainTabProvider` — 本机导航偏好（`app_main_tabs_v1`），与身份无关、不进同步/备份。入口「我的 → 设置 → 外观设置 → 底部标签」，至少显示两个标签且保留「我的」；`MainTabId` 的稳定身份与显示顺序分离，排序/隐藏不能交换或销毁已构建页面的状态。启动先读偏好，再按可见顺序懒构建首个页面
   - `time_provider.dart` → `TimeProvider` (~10000 行) — 核心业务状态：时间块、分类、目标、模板、撤销栈、统计缓存、增量保存、Google 日历同步、日程(schedule)同步、已删除事件关系
   - `theme_mode_provider.dart` → `ThemeModeProvider` (52 行) — 主题模式 (light/dark/system)
+  - `desktop_shortcut_provider.dart` → `DesktopShortcutProvider` — 本机快捷键偏好（`desktop_shortcuts_v1`），不依赖身份、不进同步或备份；保存成功后更新绑定。稳定命令与键位定义在 `models/desktop_shortcut.dart`，设置在「我的 → 设置 → 外观设置 → 键盘快捷键」。`DesktopShortcutHost` 分层注册全局 / 主导航 / 当前页 / 表单命令，不能把记录页撤销和切日动作放到 Navigator 外；隐藏 Tab 用 `MainTabActivity` + `ExcludeFocus` 禁用，弹层显示时检查宿主路由 `isCurrent`，输入焦点保留文字编辑并避让 IME composing。数字键按可见标签顺序，表单保存只调用既有校验和保存入口
   - `target_stats_cache.dart` → `TargetStatsCache` (47 行) — 目标统计内存缓存，按日期失效
   - `wake_up_provider.dart` → `WakeUpProvider` — 目标页起床记录：每个自然日一条、精确到分钟，最近 7 天平均只计已记录日期。卡片「查看更多」进入 `WakeUpHistoryScreen`，可按最近 30 天 / 90 天 / 全部 / 自选日期查看平均、最早、最晚起床时间、趋势与每日明细；`recordsInRange` 按自然日含首尾筛选、日期倒序返回当前身份记录。应用入口全局创建，隐藏目标页也继续同步；本机经 `WakeUpLocalStore` 按身份保存数据与待上传标记，远端经 `WakeUpGiteeService` 双向同步。切身份清空旧视图，异步保存保留原身份归属、旧响应不能混入新身份；保存成功后才更新显示。目前不进 JSON 备份
   - `background_image_provider.dart` → `BackgroundImageProvider` — 背景图（壁纸）本机状态：图片路径 / 开关 / 照片不透明度 / 表面不透明度。**刻意独立于业务数据 Provider：本地图片路径绝不进同步或备份快照**（`lib/services/` 与 `lib/models/` 均不引用它）。契约见「数据流与关键模式」的背景图一节
@@ -64,7 +65,7 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
   - `schedule/{userCode}/{dateKey}.json` — 日程，按天一份（覆盖拉取校验见 `ScheduleOverwriteSnapshot`）
   - 日记 / 出行 / 打卡 — `index.txt` 列表 + 逐条文件（日记文件名形如 `…YYYY年M月D日….md`，日期解析见 `lib/utils/diary_remote_path_utils.dart`）
 - **增量保存**：`TimeProvider` 追踪 `_categoriesDirty` / `_targetsDirty` / `_slotsDirty` 脏标记，只序列化变化部分。普通时间块编辑经 `_scheduleDataSave` 做 250ms 防抖；`_saveData` 直接取消防抖并等待落盘，供同步、切后台、切身份、导入等流程使用。`daily_slots` 格式保持单个 JSON blob，增量分支通过 `ScheduleJsonPatch` 在同一后台 isolate 中解码、合并和编码。保存成功清脏时同时核对保存请求版本与槽位编辑版本，避免后台编码期间的新编辑被清掉。统计缓存在内存修改时按日期区间立即失效，不能等防抖落盘再失效
-- **撤销系统**：`_undoStacks` 深拷贝快照，最多 20 步
+- **撤销系统**：`_undoStacks` / `_redoStacks` 深拷贝按日快照，最多 20 步，保留最近编辑的 7 个日期；桌面三列撤销以 `_lastEditedDateKey` 为准。新编辑清空重做分支，切身份 / 覆盖恢复 / 成功导入备份清空两种栈。撤销和重做本身是新修改，变化的槽位更新修改时间，恢复为空槽时写删除墓碑，并走既有缓存失效、待同步和防抖保存链路
 - **统计缓存**：分类区间、每日趋势与连续块次数各用独立缓存，修改日期只使相交区间失效。日期统计统一忽略时分秒并按自然日遍历，词云缓存键不能包含 `DateTime.now()` 的时分秒。`MainTabActivity` 给保活 Tab 传递可见状态；`ProfileScreen` 隐藏时复用已构建内容，返回时重新读取最新统计并保留滚动与筛选状态
 - **Google 日历同步**：3 秒防抖 + `_isSyncing` 锁防并发。事件以 "乖乖爱心晶晶" 为识别签名，区分本 App 创建和外部事件
 - **打卡合并策略**：`CheckInDocument.merge(local, remote)` 按 ID 去重，同 ID 保留较新记录

@@ -21,6 +21,7 @@ import 'diary_search_screen.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/desktop_shortcut_host.dart';
 
 enum _DiarySyncAction { pull, push }
 
@@ -46,6 +47,21 @@ class _DiaryScreenState extends State<DiaryScreen> {
   bool _processing = false;
   bool _suppressBodyListener = false;
   Timer? _saveDebounce;
+  bool _shortcutDateChanging = false;
+
+  Future<void> _changeDateByShortcut(DateTime date) async {
+    if (_shortcutDateChanging || _loading || _processing) return;
+    setState(() => _shortcutDateChanging = true);
+    try {
+      _saveDebounce?.cancel();
+      await _switchContext(date: date);
+    } on Object {
+      _showMessage('切换日记日期失败，请重试');
+    } finally {
+      if (mounted) setState(() => _shortcutDateChanging = false);
+    }
+  }
+
   bool _remoteTreeLoading = false;
   String? _remoteTreeError;
   List<String> _remoteDiaryPaths = const [];
@@ -1180,7 +1196,26 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => DesktopShortcutHost(
+        autofocus: true,
+        onSearchPage: () => unawaited(_openSearch()),
+        onPreviousDay: () => unawaited(_changeDateByShortcut(
+            _selectedDate.subtract(const Duration(days: 1)))),
+        onNextDay: () => unawaited(
+            _changeDateByShortcut(_selectedDate.add(const Duration(days: 1)))),
+        onToday: () => unawaited(_changeDateByShortcut(DateTime.now())),
+        onEscape: () {
+          if (_scaffoldKey.currentState?.isDrawerOpen != true) return false;
+          _scaffoldKey.currentState!.closeDrawer();
+          return true;
+        },
+        isAvailable: (action) =>
+            action == DesktopShortcutActionType.escape ||
+            (!_loading && !_processing && !_shortcutDateChanging),
+        child: _buildPage(context),
+      );
+
+  Widget _buildPage(BuildContext context) {
     if (_loading) {
       return Scaffold(
         appBar: AppBar(title: const Text('日记')),
@@ -1230,7 +1265,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
               icon: const Icon(Icons.menu),
             ),
           IconButton(
-            tooltip: '搜索日记',
+            tooltip: desktopShortcutTooltip(
+                context, '搜索日记', DesktopShortcutActionType.searchPage),
             onPressed: _openSearch,
             icon: const Icon(Icons.search),
           ),
@@ -1359,7 +1395,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                           controller: _bodyController,
                           maxLines: null,
                           expands: true,
-                          readOnly: _isReadOnlyContext,
+                          readOnly: _isReadOnlyContext || _shortcutDateChanging,
                           textAlignVertical: TextAlignVertical.top,
                           decoration: InputDecoration(
                             hintText:

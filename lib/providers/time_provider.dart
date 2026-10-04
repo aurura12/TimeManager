@@ -1151,6 +1151,8 @@ class TimeProvider with ChangeNotifier {
     _pendingScheduleGiteeDateKeys.clear();
     _scheduleGiteeDateRevisions.clear();
     _undoStacks.clear();
+    _redoStacks.clear();
+    _lastEditedDateKey = null;
     _remoteViewBackup.clear();
     _clearRemoteViewCache();
     _remoteViewEnabled = false;
@@ -1873,6 +1875,7 @@ class TimeProvider with ChangeNotifier {
   DateTime get currentDate => _currentDate;
 
   final Map<String, List<List<TimeSlot>>> _undoStacks = {};
+  final Map<String, List<List<TimeSlot>>> _redoStacks = {};
   final int _maxStackSize = 20; // 最大支持撤回 20 步
 
   List<TimeSlot> get slots {
@@ -2354,73 +2357,90 @@ class TimeProvider with ChangeNotifier {
     _scheduleCalendarSync();
   }
 
-  /// 清理超过最大保留天数的旧日期撤销栈（防止内存无限增长）
   static const int _maxUndoDayCount = 7;
 
-  void _cleanupOldUndoStacks() {
-    if (_undoStacks.length <= _maxUndoDayCount) return;
-    final now = DateTime.now();
-    final threshold = now.subtract(Duration(days: _maxUndoDayCount));
-    _undoStacks.removeWhere((dateKey, _) {
-      final parts = dateKey.split('-');
-      if (parts.length != 3) return true; // 格式异常的也清理
-      final year = int.tryParse(parts[0]);
-      final month = int.tryParse(parts[1]);
-      final day = int.tryParse(parts[2]);
-      if (year == null || month == null || day == null) return true;
-      final date = DateTime(year, month, day);
-      return date
-          .isBefore(DateTime(threshold.year, threshold.month, threshold.day));
-    });
-  }
+  List<TimeSlot> _copySlots(List<TimeSlot> slots) => slots
+      .map((s) => TimeSlot(
+            hour: s.hour,
+            minute10: s.minute10,
+            recorded: s.recorded,
+            label: s.label,
+            categoryId: s.categoryId,
+            color: s.color,
+            isFromCalendar: s.isFromCalendar,
+            calendarEventId: s.calendarEventId,
+            modifiedAt: s.modifiedAt,
+            deletedAt: s.deletedAt,
+          ))
+      .toList();
+
+  String get _historyDateKey => _lastEditedDateKey ?? _getDateKey(_currentDate);
+  bool get canUndo =>
+      _scheduleMutationBlockedMessage() == null &&
+      (_undoStacks[_historyDateKey]?.isNotEmpty ?? false);
+  bool get canRedo =>
+      _scheduleMutationBlockedMessage() == null &&
+      (_redoStacks[_historyDateKey]?.isNotEmpty ?? false);
 
   void _saveSnapshot([String? dateKey]) {
     final key = dateKey ?? _getDateKey(_currentDate);
     _lastEditedDateKey = key;
-    _undoStacks.putIfAbsent(key, () => []);
-
-    _cleanupOldUndoStacks();
-
-    // 深度拷贝当前的 slots
-    final daySlots =
-        _dailySlots.putIfAbsent(key, () => _generateInitialSlots());
-    List<TimeSlot> snapshot = daySlots
-        .map((s) => TimeSlot(
-              hour: s.hour,
-              minute10: s.minute10,
-              recorded: s.recorded,
-              label: s.label,
-              categoryId: s.categoryId,
-              color: s.color,
-              isFromCalendar: s.isFromCalendar,
-              calendarEventId: s.calendarEventId,
-              modifiedAt: s.modifiedAt,
-              deletedAt: s.deletedAt,
-            ))
-        .toList();
-
-    _undoStacks[key]!.add(snapshot);
-
-    // 如果超过最大步数，移除最早的一条
-    if (_undoStacks[key]!.length > _maxStackSize) {
-      _undoStacks[key]!.removeAt(0);
+    // 新编辑开启新的历史分支，不再允许恢复旧分支。
+    _redoStacks.clear();
+    final stack = _undoStacks.remove(key) ?? [];
+    _undoStacks[key] = stack;
+    while (_undoStacks.length > _maxUndoDayCount) {
+      _undoStacks.remove(_undoStacks.keys.first);
     }
+    stack.add(_copySlots(_dailySlots.putIfAbsent(key, _generateInitialSlots)));
+    if (stack.length > _maxStackSize) stack.removeAt(0);
   }
 
   void undo() {
-    if (!_allowScheduleMutation() || _remoteViewEnabled) return;
-    final dateKey = _lastEditedDateKey ?? _getDateKey(_currentDate);
-    if (_undoStacks[dateKey] != null && _undoStacks[dateKey]!.isNotEmpty) {
-      _dailySlots[dateKey] = _undoStacks[dateKey]!.removeLast();
-      _targetStatsCache.invalidateDate(dateKey);
-      _markSlotsDirty(dateKey);
-      _markPendingSync(dateKey);
-      _scheduleDataSave();
-      notifyListeners();
-      if (dateKey == _getDateKey(_currentDate)) {
-        _scheduleCalendarSync();
+    if (!_allowScheduleMutation() || !canUndo) return;
+    final dateKey = _historyDateKey;
+    final current = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
+    _redoStacks.putIfAbsent(dateKey, () => []).add(_copySlots(current));
+    _restoreHistory(dateKey, _undoStacks[dateKey]!.removeLast());
+  }
+
+  void redo() {
+    if (!_allowScheduleMutation() || !canRedo) return;
+    final dateKey = _historyDateKey;
+    final current = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
+    _undoStacks.putIfAbsent(dateKey, () => []).add(_copySlots(current));
+    _restoreHistory(dateKey, _redoStacks[dateKey]!.removeLast());
+  }
+
+  void _restoreHistory(String dateKey, List<TimeSlot> snapshot) {
+    final previous = _dailySlots[dateKey]!;
+    final restored = _copySlots(snapshot);
+    final now = DateTime.now();
+    for (var index = 0; index < restored.length; index++) {
+      final before = previous[index];
+      final after = restored[index];
+      if (before.recorded == after.recorded &&
+          before.label == after.label &&
+          before.categoryId == after.categoryId &&
+          before.color == after.color &&
+          before.isFromCalendar == after.isFromCalendar &&
+          before.calendarEventId == after.calendarEventId) {
+        // 未编辑的槽位保留现有同步版本。
+        after.modifiedAt = before.modifiedAt;
+        after.deletedAt = before.deletedAt;
+        continue;
       }
+      // 撤销 / 重做本身是一次新编辑，不能恢复旧版本时间戳。
+      after.modifiedAt = now;
+      after.deletedAt = after.recorded ? null : now;
     }
+    _dailySlots[dateKey] = restored;
+    _targetStatsCache.invalidateDate(dateKey);
+    _markSlotsDirty(dateKey);
+    _markPendingSync(dateKey);
+    _scheduleDataSave();
+    notifyListeners();
+    if (dateKey == _getDateKey(_currentDate)) _scheduleCalendarSync();
   }
 
   void assignCategoryToSlots(Set<int> indices, Category category,
@@ -4377,6 +4397,7 @@ class TimeProvider with ChangeNotifier {
         ..clear()
         ..addAll(nextDailySlots);
       _undoStacks.clear();
+      _redoStacks.clear();
       _pendingSyncState.replace();
       _pendingGiteeOwnerByDate.clear();
       _pendingScheduleGiteeDateKeys.clear();
@@ -8974,6 +8995,10 @@ class TimeProvider with ChangeNotifier {
       if (!saved) {
         throw StateError('备份导入保存失败，已保留原有数据');
       }
+      // 备份替换的是整份数据，旧历史不能在导入后复活上一份时间块。
+      _undoStacks.clear();
+      _redoStacks.clear();
+      _lastEditedDateKey = null;
       if (!_isDisposed) notifyListeners();
     } catch (_) {
       await snapshot.restore(this);

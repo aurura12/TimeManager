@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/category.dart';
 import 'package:time_manager/models/main_tab_id.dart';
+import 'package:time_manager/models/global_search_result.dart';
 import 'package:time_manager/providers/main_tab_provider.dart';
 import 'package:time_manager/providers/background_image_provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
@@ -16,6 +18,11 @@ import 'package:time_manager/screens/check_in_screen.dart';
 import 'package:time_manager/screens/diary_screen.dart';
 import 'package:time_manager/screens/home_screen.dart';
 import 'package:time_manager/screens/main_screen.dart';
+import 'package:time_manager/screens/global_search_screen.dart';
+import 'package:time_manager/screens/add_target_screen.dart';
+import 'package:time_manager/screens/desktop_shortcut_settings_screen.dart';
+import 'package:time_manager/providers/desktop_shortcut_provider.dart';
+import 'package:time_manager/utils/platform_features.dart';
 import 'package:time_manager/screens/main_tab_settings_screen.dart';
 import 'package:time_manager/screens/profile_screen.dart';
 import 'package:time_manager/screens/target_screen.dart';
@@ -161,6 +168,7 @@ Future<TimeProvider> _pumpMainScreen(
       providers: [
         ChangeNotifierProvider<TimeProvider>.value(value: provider),
         ChangeNotifierProvider(create: (_) => MainTabProvider()),
+        ChangeNotifierProvider(create: (_) => DesktopShortcutProvider()),
         ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
         ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
       ],
@@ -186,6 +194,82 @@ Finder _tab(String label) => find.descendant(
     );
 
 void main() {
+  Future<void> shortcut(WidgetTester tester, LogicalKeyboardKey key) async {
+    final modifier = Platform.isMacOS
+        ? LogicalKeyboardKey.metaLeft
+        : LogicalKeyboardKey.controlLeft;
+    await tester.sendKeyDownEvent(modifier);
+    await tester.sendKeyEvent(key);
+    await tester.sendKeyUpEvent(modifier);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('数字快捷键遵循可见标签顺序，新建和搜索作用于当前模块', (tester) async {
+    final provider = await _pumpMainScreen(
+      tester,
+      createProvider: _CountingProvider.new,
+      initialPreferences: {
+        MainTabProvider.storageKey: jsonEncode({
+          'order': [
+            'target',
+            'record',
+            'profile',
+            'diary',
+            'travel',
+            'check_in'
+          ],
+          'hidden': ['diary', 'travel', 'check_in'],
+        }),
+      },
+    );
+    final targetElement = tester.element(find.byType(TargetScreen));
+    await shortcut(tester, LogicalKeyboardKey.keyN);
+    expect(find.byType(AddTargetScreen), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    await shortcut(tester, LogicalKeyboardKey.keyF);
+    expect(
+        tester
+            .widget<GlobalSearchScreen>(find.byType(GlobalSearchScreen))
+            .initialContentType,
+        GlobalSearchContentType.target);
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    await shortcut(tester, LogicalKeyboardKey.digit2);
+    expect(find.byType(HomeScreen), findsOneWidget);
+    final category =
+        Category(id: 'shortcuts', name: '快捷键测试', color: AppTheme.seedColor);
+    provider.assignCategoryToSlots({48}, category);
+    await tester.pump();
+    await shortcut(tester, LogicalKeyboardKey.digit1);
+    expect(tester.element(find.byType(TargetScreen)), same(targetElement));
+    await shortcut(tester, LogicalKeyboardKey.keyZ);
+    expect(provider.slots[48].recorded, isTrue, reason: '目标页不能撤销记录页的编辑');
+    await shortcut(tester, LogicalKeyboardKey.digit2);
+    await shortcut(tester, LogicalKeyboardKey.keyZ);
+    expect(provider.slots[48].recorded, isFalse);
+    await shortcut(tester, LogicalKeyboardKey.digit3);
+    expect(find.byType(ProfileScreen), findsOneWidget);
+    await shortcut(tester, LogicalKeyboardKey.digit4);
+    expect(find.byType(ProfileScreen), findsOneWidget, reason: '隐藏标签不占快捷键位置');
+    expect(find.byType(DiaryScreen, skipOffstage: false), findsNothing);
+    await tester.runAsync(provider.onAppBackgrounded);
+  }, skip: !isDesktopPlatform);
+
+  testWidgets('设置快捷键打开我的抽屉，帮助入口进入可编辑的快捷键设置', (tester) async {
+    await _pumpMainScreen(tester, createProvider: _CountingProvider.new);
+    await shortcut(tester, LogicalKeyboardKey.comma);
+    expect(find.byType(ProfileScreen), findsOneWidget);
+    expect(find.byType(Drawer), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(Drawer), findsNothing);
+    await shortcut(tester, LogicalKeyboardKey.digit1);
+    await tester.tap(find.byTooltip('键盘快捷键'));
+    await tester.pumpAndSettle();
+    expect(find.byType(DesktopShortcutSettingsScreen), findsOneWidget);
+  }, skip: !isDesktopPlatform);
+
   testWidgets('启动时只构造记录页，未访问 Tab 保持未构造', (tester) async {
     await _pumpMainScreen(tester);
 
@@ -299,7 +383,11 @@ void main() {
       final pageElement = tester.element(find.byType(pageType));
       if (tab == MainTabId.diary) {
         expect(find.byTooltip('浏览远程日记'), findsOneWidget);
-        expect(find.byTooltip('搜索日记'), findsOneWidget);
+        expect(
+            find.byWidgetPredicate((widget) =>
+                widget is Tooltip &&
+                (widget.message?.startsWith('搜索日记') ?? false)),
+            findsOneWidget);
         await tester.tap(find.byTooltip('浏览远程日记'));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 400));

@@ -13,6 +13,7 @@ import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/platform_features.dart';
 import '../widgets/desktop_target_card.dart';
+import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/main_tab_activity.dart';
 import '../widgets/wake_up_card.dart';
 
@@ -35,7 +36,13 @@ class _TargetScreenContent extends StatelessWidget {
   const _TargetScreenContent();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => DesktopShortcutHost(
+        autofocus: true,
+        onNewItem: () => unawaited(showTargetEditor(context)),
+        child: _buildPage(context),
+      );
+
+  Widget _buildPage(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(

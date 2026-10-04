@@ -12,6 +12,8 @@ import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/time_wheel_sheet.dart';
+import '../widgets/desktop_shortcut_host.dart';
+import '../utils/platform_features.dart';
 
 class AddCheckInGoalScreen extends StatefulWidget {
   const AddCheckInGoalScreen({super.key, this.goal});
@@ -44,8 +46,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
   /// 保存过程中禁止重复提交：保存要等提醒排程，不是瞬时操作。
   bool _saving = false;
 
-  String get _reminderLabel =>
-      '${_reminderHour.toString().padLeft(2, '0')}:'
+  String get _reminderLabel => '${_reminderHour.toString().padLeft(2, '0')}:'
       '${_reminderMinute.toString().padLeft(2, '0')}';
 
   static const _themeColors = AppSemanticColors.palette;
@@ -285,7 +286,14 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => DesktopShortcutHost(
+        autofocus: true,
+        onSaveForm: () => unawaited(_save()),
+        isAvailable: (_) => !_saving,
+        child: _buildPage(context),
+      );
+
+  Widget _buildPage(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final isEdit = widget.goal != null;
     // 图标网格所在的底：选中态是"主题色淡涂 20%"，图标再叠上去，
@@ -310,6 +318,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
           const SizedBox(height: 8),
           TextField(
             controller: _nameController,
+            autofocus: isDesktopPlatform,
             onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(
               labelText: '目标名称',

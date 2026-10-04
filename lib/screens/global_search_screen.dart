@@ -9,6 +9,7 @@ import '../services/unified_search_service.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/desktop_shortcut_host.dart';
 import 'event_detail_screen.dart';
 import 'global_search_detail_screen.dart';
 import 'target_detail_screen.dart';
@@ -24,10 +25,12 @@ class GlobalSearchScreen extends StatefulWidget {
     super.key,
     this.searchService,
     this.initialIndex,
+    this.initialContentType = GlobalSearchContentType.all,
   });
 
   final UnifiedSearchService? searchService;
   final GlobalSearchIndex? initialIndex;
+  final GlobalSearchContentType initialContentType;
 
   @override
   State<GlobalSearchScreen> createState() => _GlobalSearchScreenState();
@@ -35,6 +38,14 @@ class GlobalSearchScreen extends StatefulWidget {
 
 class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
   final TextEditingController _controller = TextEditingController();
+  final _searchFocus = FocusNode(debugLabel: '全局搜索输入框');
+
+  void _focusSearch() {
+    _searchFocus.requestFocus();
+    _controller.selection =
+        TextSelection(baseOffset: 0, extentOffset: _controller.text.length);
+  }
+
   _SearchDateRange _dateRange = _SearchDateRange.all;
   GlobalSearchContentType _contentType = GlobalSearchContentType.all;
   GlobalSearchIdentityFilter _identity = GlobalSearchIdentityFilter.all;
@@ -52,6 +63,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
   @override
   void initState() {
     super.initState();
+    _contentType = widget.initialContentType;
     _searchService = widget.searchService ??
         UnifiedSearchService(
           timeProvider: context.read<TimeProvider>(),
@@ -65,6 +77,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
     _debounceTimer?.cancel();
     _controller.removeListener(_onQueryChanged);
     _controller.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -327,7 +340,13 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => DesktopShortcutHost(
+        onOpenSearch: _focusSearch,
+        onSearchPage: _focusSearch,
+        child: _buildPage(context),
+      );
+
+  Widget _buildPage(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final surfaces = AppSurfaces.of(context);
 
@@ -335,6 +354,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
       appBar: AppBar(
         title: TextField(
           controller: _controller,
+          focusNode: _searchFocus,
           autofocus: true,
           textInputAction: TextInputAction.search,
           onSubmitted: (_) => unawaited(_rememberCurrentSearch()),
