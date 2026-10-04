@@ -13,6 +13,8 @@ import 'providers/main_tab_provider.dart';
 import 'package:time_manager/theme/app_semantic_colors.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'providers/time_provider.dart';
+import 'providers/wake_up_provider.dart';
+import 'services/wake_up_sync_dependencies.dart';
 import 'package:time_manager/screens/main_screen.dart';
 import 'screens/check_in_screen.dart';
 import 'screens/diary_screen.dart';
@@ -451,10 +453,19 @@ Future<void> _initializeAndRunApplication({
             scheduleAutoRefreshInterval: const Duration(seconds: 60),
           ),
         ),
+        // 起床同步不依赖目标页是否打开或显示，隐藏该标签时仍能跨端同步。
+        ChangeNotifierProvider<WakeUpProvider>(
+          lazy: false,
+          create: (context) => WakeUpProvider(
+            syncDependencies: WakeUpSyncDependencies.production(),
+            statusCoordinator: context.read<SyncStatusCoordinator>(),
+          ),
+        ),
         ChangeNotifierProvider<SyncCenterController>(
           create: (context) => SyncCenterController.forProvider(
             context.read<TimeProvider>(),
             coordinator: context.read<SyncStatusCoordinator>(),
+            wakeUpProvider: context.read<WakeUpProvider>(),
           ),
         ),
         ChangeNotifierProvider(create: (context) => ThemeModeProvider()),

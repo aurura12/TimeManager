@@ -24,6 +24,7 @@ import 'package:time_manager/theme/app_theme.dart';
 import 'package:time_manager/theme/app_tokens.dart';
 import 'package:time_manager/utils/platform_features.dart';
 import 'package:time_manager/widgets/desktop_target_card.dart';
+import 'package:time_manager/widgets/wake_up_card.dart';
 
 final _exercise = Category(
   id: 'exercise',
@@ -167,6 +168,10 @@ Future<void> _pump(
               style: baseTheme.filledButtonTheme.style?.copyWith(
                   textStyle: WidgetStatePropertyAll(
                       AppText.button.copyWith(fontFamily: 'TargetPreview')))),
+          outlinedButtonTheme: OutlinedButtonThemeData(
+              style: baseTheme.outlinedButtonTheme.style?.copyWith(
+                  textStyle: WidgetStatePropertyAll(
+                      AppText.button.copyWith(fontFamily: 'TargetPreview')))),
           textButtonTheme: TextButtonThemeData(
               style: baseTheme.textButtonTheme.style?.copyWith(
                   textStyle: WidgetStatePropertyAll(
@@ -226,6 +231,28 @@ void main() {
   });
   setUp(AppIdentityService.resetForTesting);
   tearDown(AppIdentityService.resetForTesting);
+
+  testWidgets('目标页没有目标时也能记录起床时间', (tester) async {
+    final provider = await _provider(tester, targets: []);
+    final boundaryKey = GlobalKey();
+    await _pump(tester, provider,
+        size: const Size(360, 640), boundaryKey: boundaryKey);
+    expect(find.byType(WakeUpCard), findsOneWidget);
+    expect(find.text('我起床了'), findsOneWidget);
+    await _capture(tester, boundaryKey, 'wake_up_empty');
+    await tester.tap(find.byKey(const ValueKey('wake-up-now')));
+    await tester.pumpAndSettle();
+    expect(find.text('今天起床'), findsOneWidget);
+    expect(find.text('已起床'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    await _capture(tester, boundaryKey, 'wake_up_recorded');
+    await tester.tap(find.byKey(const ValueKey('wake-up-history-toggle')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await _capture(tester, boundaryKey, 'wake_up_history');
+  });
 
   testWidgets('桌面编辑原地打开，校验输入并用快捷键保存', (tester) async {
     final provider = await _provider(tester);

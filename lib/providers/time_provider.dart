@@ -6033,6 +6033,7 @@ class TimeProvider with ChangeNotifier {
           }
           return await _pullTargetsFromGitee();
         case SyncModule.diary:
+        case SyncModule.wakeUp:
         case SyncModule.travel:
         case SyncModule.checkIn:
           return const SyncOperationResult.failed('该模块由同步中心服务处理');

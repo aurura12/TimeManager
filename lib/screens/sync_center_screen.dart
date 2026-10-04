@@ -368,6 +368,7 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
       SyncModule.schedule => Icons.event_note_outlined,
       SyncModule.categories => Icons.category_outlined,
       SyncModule.targets => Icons.flag_outlined,
+      SyncModule.wakeUp => Icons.wb_sunny_outlined,
       SyncModule.diary => Icons.menu_book_outlined,
       SyncModule.travel => Icons.card_travel_outlined,
       SyncModule.checkIn => Icons.check_circle_outline,

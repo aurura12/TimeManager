@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../models/sync_center_state.dart';
 import '../models/travel_record.dart';
 import '../providers/time_provider.dart';
+import '../providers/wake_up_provider.dart';
 import 'check_in_sync_service.dart';
 import 'diary_local_store.dart';
 import 'diary_sync_service.dart';
@@ -65,7 +66,10 @@ class SyncCenterOperations {
     return operation();
   }
 
-  factory SyncCenterOperations.production(TimeProvider provider) {
+  factory SyncCenterOperations.production(
+    TimeProvider provider, {
+    WakeUpProvider? wakeUpProvider,
+  }) {
     final checkIn = CheckInSyncService();
     final diary = DiarySyncService();
     return SyncCenterOperations(
@@ -78,6 +82,9 @@ class SyncCenterOperations {
         ])
           module: () => provider.syncModuleForCenter(module),
         SyncModule.diary: diary.sync,
+        SyncModule.wakeUp: () =>
+            wakeUpProvider?.synchronize(source: '同步中心', reportStatus: false) ??
+            Future.value(const SyncOperationResult.disabled('起床记录同步未启用')),
         SyncModule.travel: _syncTravel,
         SyncModule.checkIn: () => _syncCheckIn(checkIn),
       },
@@ -256,12 +263,14 @@ class SyncCenterController extends ChangeNotifier {
 
   factory SyncCenterController.forProvider(
     TimeProvider provider, {
+    WakeUpProvider? wakeUpProvider,
     SyncStatusCoordinator? coordinator,
     SyncStatusStore? store,
     bool loadIdentityBeforeState = true,
   }) {
     return SyncCenterController(
-      operations: SyncCenterOperations.production(provider),
+      operations: SyncCenterOperations.production(provider,
+          wakeUpProvider: wakeUpProvider),
       coordinator: coordinator,
       store: store,
       loadIdentityBeforeState: loadIdentityBeforeState,

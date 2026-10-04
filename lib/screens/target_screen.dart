@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
+import '../providers/wake_up_provider.dart';
 import 'target_detail_screen.dart';
 import 'add_target_screen.dart';
 import '../models/target.dart';
@@ -13,9 +14,26 @@ import '../theme/app_tokens.dart';
 import '../utils/platform_features.dart';
 import '../widgets/desktop_target_card.dart';
 import '../widgets/main_tab_activity.dart';
+import '../widgets/wake_up_card.dart';
 
 class TargetScreen extends StatelessWidget {
   const TargetScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (context.read<WakeUpProvider?>() != null) {
+      return const _TargetScreenContent();
+    }
+    return ChangeNotifierProvider(
+      create: (_) => WakeUpProvider(),
+      child: const _TargetScreenContent(),
+    );
+  }
+}
+
+class _TargetScreenContent extends StatelessWidget {
+  const _TargetScreenContent();
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -48,16 +66,26 @@ class TargetScreen extends StatelessWidget {
             return _buildDesktopList(context, timeProvider);
           }
           if (timeProvider.targets.isEmpty) {
-            return Center(
-              child: Text(
-                "暂无计划，点击右上角添加",
-                style: TextStyle(color: colorScheme.onSurfaceVariant),
-              ),
+            return ListView(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+              children: [
+                _wakeUpHeader(),
+                Padding(
+                  padding: const EdgeInsets.all(AppSpacing.xl),
+                  child: Text(
+                    "暂无计划，点击右上角添加",
+                    textAlign: TextAlign.center,
+                    style: AppText.body
+                        .copyWith(color: colorScheme.onSurfaceVariant),
+                  ),
+                ),
+              ],
             );
           }
 
           return ReorderableListView(
             padding: const EdgeInsets.symmetric(vertical: 12),
+            header: _wakeUpHeader(),
             onReorderItem: (oldIndex, newIndex) {
               timeProvider.reorderTargets(oldIndex, newIndex);
             },
@@ -212,28 +240,41 @@ class TargetScreen extends StatelessWidget {
     );
   }
 
+  Widget _wakeUpHeader() => const Padding(
+        padding:
+            EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.sm),
+        child: WakeUpCard(),
+      );
+
   Widget _buildDesktopList(BuildContext context, TimeProvider provider) {
     final scheme = Theme.of(context).colorScheme;
     if (provider.targets.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: AppSpacing.cardComfortable,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+      return Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints:
+              const BoxConstraints(maxWidth: AppSizes.desktopContentMaxWidth),
+          child: ListView(
+            padding: const EdgeInsets.all(AppSpacing.lg),
             children: [
+              const WakeUpCard(),
+              const SizedBox(height: AppSpacing.xl),
               Icon(Icons.flag_outlined,
                   size: AppSizes.minTapTarget, color: scheme.onSurfaceVariant),
               const SizedBox(height: AppSpacing.lg),
-              const Text('暂无目标', style: AppText.sectionTitle),
+              const Text('暂无目标',
+                  style: AppText.sectionTitle, textAlign: TextAlign.center),
               const SizedBox(height: AppSpacing.sm),
               Text('为已有事件设置时长、次数或时间点目标',
                   textAlign: TextAlign.center,
                   style: AppText.body.copyWith(color: scheme.onSurfaceVariant)),
               const SizedBox(height: AppSpacing.xl),
-              FilledButton.icon(
-                onPressed: () => showTargetEditor(context),
-                icon: const Icon(Icons.add),
-                label: const Text('新建目标'),
+              Center(
+                child: FilledButton.icon(
+                  onPressed: () => showTargetEditor(context),
+                  icon: const Icon(Icons.add),
+                  label: const Text('新建目标'),
+                ),
               ),
             ],
           ),
@@ -246,8 +287,13 @@ class TargetScreen extends StatelessWidget {
       child: ConstrainedBox(
         constraints:
             const BoxConstraints(maxWidth: AppSizes.desktopContentMaxWidth),
-        child: Column(
-          children: [
+        child: ReorderableListView.builder(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          buildDefaultDragHandles: false,
+          itemCount: provider.targets.length,
+          onReorderItem: provider.reorderTargets,
+          header: Column(children: [
+            const WakeUpCard(),
             Padding(
               padding: AppSpacing.cardComfortable,
               child: Row(
@@ -263,31 +309,23 @@ class TargetScreen extends StatelessWidget {
                 ],
               ),
             ),
-            Expanded(
-              child: ReorderableListView.builder(
-                padding: AppSpacing.page,
-                buildDefaultDragHandles: false,
-                itemCount: provider.targets.length,
-                onReorderItem: provider.reorderTargets,
-                itemBuilder: (context, index) {
-                  final target = provider.targets[index];
-                  return DesktopTargetCard(
-                    key: ValueKey(target.id),
-                    target: target,
-                    provider: provider,
-                    index: index,
-                    onOpen: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => TargetDetailScreen(targetId: target.id),
-                      ),
-                    ),
-                    onEdit: () => showTargetEditor(context, target: target),
-                    onDelete: () => _confirmDelete(context, provider, target),
-                  );
-                },
+          ]),
+          itemBuilder: (context, index) {
+            final target = provider.targets[index];
+            return DesktopTargetCard(
+              key: ValueKey(target.id),
+              target: target,
+              provider: provider,
+              index: index,
+              onOpen: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => TargetDetailScreen(targetId: target.id),
+                ),
               ),
-            ),
-          ],
+              onEdit: () => showTargetEditor(context, target: target),
+              onDelete: () => _confirmDelete(context, provider, target),
+            );
+          },
         ),
       ),
     );

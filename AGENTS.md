@@ -12,11 +12,13 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
   - `time_provider.dart` → `TimeProvider` (~10000 行) — 核心业务状态：时间块、分类、目标、模板、撤销栈、统计缓存、增量保存、Google 日历同步、日程(schedule)同步、已删除事件关系
   - `theme_mode_provider.dart` → `ThemeModeProvider` (52 行) — 主题模式 (light/dark/system)
   - `target_stats_cache.dart` → `TargetStatsCache` (47 行) — 目标统计内存缓存，按日期失效
+  - `wake_up_provider.dart` → `WakeUpProvider` — 目标页起床记录：每个自然日一条、精确到分钟，最近 7 天平均只计已记录日期。应用入口全局创建，隐藏目标页也继续同步；本机经 `WakeUpLocalStore` 按身份保存数据与待上传标记，远端经 `WakeUpGiteeService` 双向同步。切身份清空旧视图，异步保存保留原身份归属、旧响应不能混入新身份；保存成功后才更新显示。目前不进 JSON 备份
   - `background_image_provider.dart` → `BackgroundImageProvider` — 背景图（壁纸）本机状态：图片路径 / 开关 / 照片不透明度 / 表面不透明度。**刻意独立于业务数据 Provider：本地图片路径绝不进同步或备份快照**（`lib/services/` 与 `lib/models/` 均不引用它）。契约见「数据流与关键模式」的背景图一节
 - **Models**: `lib/models/` (29 个文件)
   - 时间记录：`TimeSlot`, `Category`, `CalendarBlock`, `ScheduleTemplate`, `VoiceScheduleDraft`, `ScheduleSyncProgress`
   - 打卡系统：`CheckInGoal`, `CheckInRecord`, `CheckInDocument`, `CheckInViewFilter`
   - 目标系统：`Target`
+  - 起床记录：`WakeUpRecord`（起床时刻与 `updatedAt` 分开）、`WakeUpDocument`（按日期合并 + 删除墓碑，待上传标记仅写本机）
   - 出行：`TravelRecord`, `TravelRecordsDocument`（同一文件）
   - 日记：`DiaryKind`, `DiarySearchResult`
   - AI 复盘：`DailyReviewChatMessage`, `DailyReviewChatSession`
@@ -32,6 +34,7 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
   - **同步中心**：`SyncCenterOperations` + `SyncCenterController`（统一同步入口与重试）、`SyncStatusCoordinator` + `SharedPreferencesSyncStatusStore`/`InMemorySyncStatusStore`（跨页同步状态）、`SyncOperationLock`（互斥）、`RemoteSyncSettings`
   - **日程同步**：`ScheduleDayMergeService`、`ScheduleGiteeService`、`ScheduleOverwriteSnapshot`（覆盖拉取校验）、`ScheduleSyncDependencies`、`ScheduleSyncManifestStore`、日程坏格式防护相关服务
   - **分类 / 目标同步**：`CategoryGiteeService` + `CategoryDocumentMerge`（分类文档合并）、`CategorySyncDependencies`（前台分类同步 + 请求限流）、`TargetGiteeService` + `TargetDocument`（目标文档合并 + 删除墓碑）、`TargetSyncDependencies`
+  - **起床记录同步**：`WakeUpGiteeService` + `WakeUpSyncDependencies`（复用内容 API 与 Gitee Token）、`WakeUpLocalStore`（数据 / 修改时间 / 删除墓碑 / 待上传标记在一个 JSON 中原子保存）
   - **打卡业务**：`CheckInSyncService` (合并编排)、`CheckInImageService` (图片压缩)、`CheckInLocationService` (GPS 定位 + `geocoding` 逆地理)、`CheckInPhotoCache`/`CheckInPhotoResource` (远端照片缓存与校验)
   - **搜索**：`UnifiedSearchService` (时间记录/日记/出行/打卡/目标/AI 复盘聚合搜索)、`DiarySearchService` (日记全文搜索)
   - **AI 板块**：`SiliconFlowAiService` (API 调用带重试 90s 超时)、`DailyReviewSummary` (复盘生成 + 数据哈希缓存)、`DailyReviewChatService` + `DailyReviewChatStore` (多轮对话，最多 20 轮)
@@ -57,6 +60,7 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
 - **远端文档布局**：所有同步文档按**身份 code 分片**（`'g'` / `'j'`，即 `DiaryKind`），切换身份看到的是不同数据集，不存在跨身份合并
   - `categories/{userCode}.json` — 分类文档（合并见 `CategoryDocumentMerge`）
   - `targets/{userCode}.json` — 目标文档（合并 + 删除墓碑，见 `TargetDocument`）
+  - `wake_up/{userCode}.json` — 起床文档（独立于目标文档，避免旧版目标上传抹掉起床记录）
   - `schedule/{userCode}/{dateKey}.json` — 日程，按天一份（覆盖拉取校验见 `ScheduleOverwriteSnapshot`）
   - 日记 / 出行 / 打卡 — `index.txt` 列表 + 逐条文件（日记文件名形如 `…YYYY年M月D日….md`，日期解析见 `lib/utils/diary_remote_path_utils.dart`）
 - **增量保存**：`TimeProvider` 追踪 `_categoriesDirty` / `_targetsDirty` / `_slotsDirty` 脏标记，只序列化变化部分。普通时间块编辑经 `_scheduleDataSave` 做 250ms 防抖；`_saveData` 直接取消防抖并等待落盘，供同步、切后台、切身份、导入等流程使用。`daily_slots` 格式保持单个 JSON blob，增量分支通过 `ScheduleJsonPatch` 在同一后台 isolate 中解码、合并和编码。保存成功清脏时同时核对保存请求版本与槽位编辑版本，避免后台编码期间的新编辑被清掉。统计缓存在内存修改时按日期区间立即失效，不能等防抖落盘再失效
@@ -64,6 +68,7 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
 - **统计缓存**：分类区间、每日趋势与连续块次数各用独立缓存，修改日期只使相交区间失效。日期统计统一忽略时分秒并按自然日遍历，词云缓存键不能包含 `DateTime.now()` 的时分秒。`MainTabActivity` 给保活 Tab 传递可见状态；`ProfileScreen` 隐藏时复用已构建内容，返回时重新读取最新统计并保留滚动与筛选状态
 - **Google 日历同步**：3 秒防抖 + `_isSyncing` 锁防并发。事件以 "乖乖爱心晶晶" 为识别签名，区分本 App 创建和外部事件
 - **打卡合并策略**：`CheckInDocument.merge(local, remote)` 按 ID 去重，同 ID 保留较新记录
+- **起床同步**：修改后 3 秒防抖，启动 / 切身份 / 回前台自动拉取，前台每 60 秒刷新；后台停表，有待上传记录时补同步一次，慢拉取占用同步锁时由收尾补做。自动同步与同步中心共用入口和 `SyncOperationLock`：先读取并严格校验远端文档、按日期合并并本机落盘，再带 SHA 上传，版本冲突最多重试三次。`updatedAt` 较大的修改胜出，同时间戳取较早起床时间，删除同版本优先；删除墓碑保留以防离线旧记录复活。上传期间的新编辑保留待上传标记，失败不能覆盖远端或清掉本机记录；原先仅本机的 v1 记录迁移为最低版本加入首次同步
 - **已删除事件聚合**：删除子事件/父事件时写入本地 `DeletedEventRelation`（含 `categoryId`、删除时父名、事件名、`isParentEvent`），历史时间块保留原 `categoryId` 以便恢复父子关系。统计口径优先级：存活分类关系 > 已删除 > 临时。该关系**只本地持久化 + 进备份**，不写入远端分类文档
 - **日程自动同步（无感）**：推送靠编辑后 3 秒防抖（`_markScheduleGiteePending` → `_flushPendingScheduleGiteeSync`），切后台立即补推一次。拉取除启动/切日/切身份外，还有**前台每 60 秒轮询 + 回前台检查**（`refreshSchedulesFromRemoteInBackground`，间隔由 `scheduleAutoRefreshInterval` 控制，生产在 `main.dart` 传 60 秒）。轮询**只做一次远端文件列表请求**取 Git blob SHA，用 `ScheduleSyncManifest`（远端 SHA + 本地 FNV-1a 指纹，按身份分片存 `schedule_sync_manifest_v1_<userCode>`）判断哪些可见日期需要重新下载正文——远端与本地完全一致时 0 次正文下载、0 次落盘、0 次 `notifyListeners`；窗口为桌面 3 天 / 手机 1 天（`scheduleDatesForView`）。**改动这块前先读下面这些约束，都是踩过坑换来的：**
   - **远端文件列表**必须走 `GiteeContentsApi.listTree()`（它会读 `truncated` 并展开子树）。**不要裸调 tree 接口**——拿到被截断的列表会把缺失日期误判成"远端不存在"，之后长期看不到远端修改。另外：**目录列表不能按单文件大小否决**（`_giteeFetchTree` 曾对每个 blob 套 2MB 上限，而共享仓库里打卡照片合法到 10MB → 一张照片就让整份列表失败、后台日程同步全废）。单文件大小限制只属于正文读取/上传路径（`pullText`/`pushText`），tree 元数据使用独立的 `maxTreeResponseBytes`，并由 `maxTreeEntries` 等上限兜底。
@@ -206,6 +211,8 @@ Never commit them.
 - `test/support/fake_reminder_backend.dart` — 两类提醒共用的后端 Fake（刻意不实现删除通道的方法，作为「绝不删通道」的编译期保证）
 - `test/time_provider_save_test.dart` / `test/schedule_json_codec_test.dart` — 普通编辑保存合并、切后台/身份即时落盘、保存期间新编辑与待同步归属不丢、统计缓存按日期失效、后台 JSON 合并及旧哈希兼容
 - `test/target_desktop_ui_test.dart` — 桌面目标编辑表单、键盘保存/取消、数值与时间校验、子事件关联、周期天数与时长独立、右键删除、鼠标拖拽及浅深主题/窄窗口布局；桌面编辑入口统一走 `showTargetEditor`，移动端保留整页编辑
+- `test/wake_up_provider_test.dart` / `test/wake_up_card_test.dart` — 起床记录持久化、补填/修改/删除、未来时间校验、跨日与近 7 天平均、身份切换及保存失败保护；卡片每分钟重新计算经过时长，隐藏 Tab 或切后台停表，返回立即刷新
+- `test/wake_up_sync_test.dart` / `test/wake_up_gitee_service_test.dart` — 双端读改写与删除、离线重启恢复、旧记录迁移、SHA 冲突重试、损坏远端保护、上传期间编辑与身份切换、同步中心合并状态、自动刷新前后台边界与 Gitee 文档路径
 - `test/statistics_cache_test.dart` / `test/main_screen_lazy_loading_test.dart` — 趋势与分类缓存互不覆盖、词云按自然日复用、跨日边界、编辑/撤销/切身份失效，以及隐藏统计页零查询、返回刷新与筛选状态保活
 - `test/main_tab_provider_test.dart` / `test/main_tab_settings_screen_test.dart` — 导航偏好持久化与损坏修复、设置入口与最少标签约束、草稿取消/保存/恢复默认、触控和鼠标排序、窄屏大字与壁纸；`main_screen_lazy_loading_test.dart` 另覆盖自定义顺序启动、导航映射与隐藏/恢复页面保活
 - `test/diary_reminder_service_test.dart` / `diary_reminder_diagnostics_test.dart` / `diary_reminder_drawer_test.dart` / `time_wheel_sheet_test.dart` — 写日记提醒的排程、原生事件导入、抽屉 UI 与滚轮时间面板
