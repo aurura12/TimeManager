@@ -6,7 +6,7 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
 
 ## Architecture
 
-- **Entry**: `lib/main.dart` → `MainScreen` (6-tab bottom nav: 记录/日记/出行/打卡/目标/我的)。Windows 平台隐藏"目标" tab（平台特性见 `lib/utils/platform_features.dart`）。启动时初始化 `AppLogService` 全局错误捕获，并对 MIUI 设备应用 SSL 修复的 `HttpOverrides`。
+- **Entry**: `lib/main.dart` → `MainScreen` (6-tab bottom nav: 记录/日记/出行/打卡/目标/我的，Android / Windows / macOS 均显示)。启动时初始化 `AppLogService` 全局错误捕获，并对 MIUI 设备应用 SSL 修复的 `HttpOverrides`。
 - **State**: `lib/providers/`
   - `time_provider.dart` → `TimeProvider` (~10000 行) — 核心业务状态：时间块、分类、目标、模板、撤销栈、统计缓存、增量保存、Google 日历同步、日程(schedule)同步、已删除事件关系
   - `theme_mode_provider.dart` → `ThemeModeProvider` (52 行) — 主题模式 (light/dark/system)
@@ -215,7 +215,7 @@ Never commit them.
 
 - Code and UI text are in Chinese
 - Config files with secrets are always `.gitignore`d — never commit
-- 平台差异化功能通过 `lib/utils/platform_features.dart` 控制（如 Windows 隐藏目标 tab）
+- 平台差异化功能通过 `lib/utils/platform_features.dart` 控制（如拍照仅限移动端）
 - 视觉规范：页面不得硬编码颜色/圆角/间距/字号字面量，统一引用 `lib/theme/` 三文件（`AppSpacing`/`AppRadius`/`AppSizes`/`AppText`、`AppSurfaces.of(context)`、`AppSemanticColors`）；照片浮层等主题无关的黑色 scrim 属于允许的例外。**启用背景图时，叠在壁纸上的填充必须走 `context.wallpaperFill()` / `adaptSemanticFill()`（见「背景图」一节）**。守卫测试 `test/visual_system_test.dart`
 - 设计文档在 `docs/superpowers/{plans,specs}/`；已完结的问题记录归档在 `docs/archive/`。根目录只保留 `AGENTS.md`、`README.md` 和活跃的 `待修复问题.md` / `写日记提醒实施方案.md`
 - `third_party/` 下是 vendored 的第三方插件 fork，已在 `analysis_options.yaml` 里整体 exclude，不参与本项目的静态检查；升级上游时按该目录下 `FORK.md` 的步骤重做

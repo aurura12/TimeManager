@@ -20,7 +20,6 @@ import 'package:time_manager/services/app_identity_service.dart';
 import 'package:time_manager/services/schedule_gitee_service.dart';
 import 'package:time_manager/services/schedule_sync_dependencies.dart';
 import 'package:time_manager/theme/app_theme.dart';
-import 'package:time_manager/utils/platform_features.dart';
 
 class _FakeGoogleSignInPlatform extends GoogleSignInPlatform {
   @override
@@ -185,9 +184,7 @@ void main() {
     expect(find.byType(TargetScreen), findsNothing);
     expect(find.byType(ProfileScreen), findsNothing);
 
-    if (isDesktopPlatform) {
-      expect(_tab('目标'), findsNothing);
-    }
+    expect(_tab('目标'), findsOneWidget);
   });
 
   testWidgets('首次访问 Tab 后页面在 IndexedStack 中保活', (tester) async {
@@ -210,9 +207,30 @@ void main() {
     await tester.tap(_tab('日记'));
     await tester.pump();
     expect(tester.element(find.byType(DiaryScreen)), same(diaryElement));
+
+    await tester.tap(_tab('目标'));
+    await tester.pump();
+    expect(find.byType(TargetScreen), findsOneWidget);
+    final targetElement = tester.element(find.byType(TargetScreen));
+    expect(
+      tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
+      4,
+    );
+
+    await tester.tap(_tab('日记'));
+    await tester.pump();
+    expect(find.byType(TargetScreen), findsNothing);
+    expect(
+      tester.element(find.byType(TargetScreen, skipOffstage: false)),
+      same(targetElement),
+    );
+
+    await tester.tap(_tab('目标'));
+    await tester.pump();
+    expect(tester.element(find.byType(TargetScreen)), same(targetElement));
   });
 
-  testWidgets('平台过滤后的最后一个 Tab 仍导航到我的页面', (tester) async {
+  testWidgets('最后一个 Tab 导航到我的页面', (tester) async {
     await _pumpMainScreen(tester);
 
     await tester.tap(_tab('我的'));
@@ -222,7 +240,7 @@ void main() {
     final navigationBar = tester.widget<NavigationBar>(
       find.byType(NavigationBar),
     );
-    expect(navigationBar.selectedIndex, isDesktopPlatform ? 4 : 5);
+    expect(navigationBar.selectedIndex, 5);
     expect(_tab('我的'), findsOneWidget);
   });
 

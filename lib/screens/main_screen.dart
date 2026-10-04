@@ -1,7 +1,5 @@
 import 'dart:async';
 
-import '../utils/platform_features.dart';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -227,7 +225,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   List<_MainTab> _buildTabs() {
-    final tabs = <_MainTab>[
+    return <_MainTab>[
       _MainTab(
         navigation: const _NavEntry(
           icon: Icons.home_outlined,
@@ -260,24 +258,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         ),
         builder: () => const CheckInScreen(),
       ),
-    ];
-
-    // 平台过滤发生在建立 Tab 列表时，后续导航和 IndexedStack 共用这份列表，
-    // 因而桌面端移除「目标」后不会留下一个错位的索引。
-    if (!isDesktopPlatform) {
-      tabs.add(
-        _MainTab(
-          navigation: const _NavEntry(
-            icon: Icons.flag_outlined,
-            selectedIcon: Icons.flag,
-            label: '目标',
-          ),
-          builder: () => const TargetScreen(),
+      _MainTab(
+        navigation: const _NavEntry(
+          icon: Icons.flag_outlined,
+          selectedIcon: Icons.flag,
+          label: '目标',
         ),
-      );
-    }
-
-    tabs.add(
+        builder: () => const TargetScreen(),
+      ),
       _MainTab(
         navigation: const _NavEntry(
           icon: Icons.person_outline,
@@ -286,8 +274,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         ),
         builder: () => const ProfileScreen(),
       ),
-    );
-    return tabs;
+    ];
   }
 
   void _ensureTabBuilt(int index) {

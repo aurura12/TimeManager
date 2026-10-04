@@ -1042,13 +1042,10 @@ void main() {
       expect(find.byType(NavigationBar), findsOneWidget);
       expect(find.byType(BottomNavigationBar), findsNothing);
 
-      // 桌面端（Windows / macOS）隐藏「目标」tab，移动端保留 6 个
-      final expected = isDesktopPlatform ? 5 : 6;
-      expect(find.byType(NavigationDestination), findsNWidgets(expected));
+      expect(find.byType(NavigationDestination), findsNWidgets(6));
       expect(find.text('记录'), findsOneWidget);
       expect(find.text('日记'), findsOneWidget);
-      expect(
-          find.text('目标'), isDesktopPlatform ? findsNothing : findsOneWidget);
+      expect(find.text('目标'), findsOneWidget);
 
       expect(tester.takeException(), isNull);
     });
