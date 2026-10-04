@@ -11,6 +11,7 @@ import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import 'main_tab_activity.dart';
 import 'time_wheel_sheet.dart';
+import 'wake_up_chart.dart';
 
 class WakeUpCard extends StatefulWidget {
   const WakeUpCard({super.key});
@@ -103,79 +104,35 @@ class _WakeUpCardState extends State<WakeUpCard> with WidgetsBindingObserver {
           ] else if (provider.kind == null) ...[
             const Text('请先在“我的”中选择身份，再记录起床时间', style: AppText.body),
           ] else ...[
-            if (today == null) ...[
-              const Text('今天还未记录起床时间', style: AppText.body),
-              const SizedBox(height: AppSpacing.xs),
-              Text('起床后点一下，也可以补填实际时间。',
-                  style:
-                      AppText.caption.copyWith(color: scheme.onSurfaceVariant)),
-            ] else
-              Wrap(
-                spacing: AppSpacing.xl,
-                runSpacing: AppSpacing.md,
+            LayoutBuilder(builder: (context, constraints) {
+              final textScale = MediaQuery.textScalerOf(context)
+                      .scale(AppText.caption.fontSize!) /
+                  AppText.caption.fontSize!;
+              final details = _todayDetails(context, provider, now, today);
+              final chart = WakeUpChart(
+                today: now,
+                records: provider.recentRecords(now),
+              );
+              if (constraints.maxWidth >=
+                  AppSizes.desktopTargetRowBreakpoint * textScale) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(flex: 2, child: details),
+                    const SizedBox(width: AppSpacing.xl),
+                    Expanded(flex: 3, child: chart),
+                  ],
+                );
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _metric(context, '今天起床', today.timeLabel),
-                  _metric(context, '已起床', _elapsedLabel(today.elapsedAt(now))),
+                  details,
+                  const SizedBox(height: AppSpacing.lg),
+                  chart,
                 ],
-              ),
-            const SizedBox(height: AppSpacing.md),
-            Wrap(
-              spacing: AppSpacing.sm,
-              runSpacing: AppSpacing.sm,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                if (today == null) ...[
-                  FilledButton.icon(
-                    key: const ValueKey('wake-up-now'),
-                    onPressed: provider.canRecord
-                        ? () => _saveTime(
-                            provider, provider.now, provider.kind!,
-                            replaceExisting: false)
-                        : null,
-                    icon: const Icon(Icons.check),
-                    label: Text(provider.isSaving ? '正在保存…' : '我起床了'),
-                  ),
-                  TextButton(
-                    key: const ValueKey('wake-up-edit'),
-                    onPressed: provider.canRecord ? () => _pickTime(now) : null,
-                    child: const Text('补填时间'),
-                  ),
-                ] else ...[
-                  OutlinedButton.icon(
-                    key: const ValueKey('wake-up-edit'),
-                    onPressed: provider.canRecord ? () => _pickTime(now) : null,
-                    icon: const Icon(Icons.edit_outlined),
-                    label: Text(provider.isSaving ? '正在保存…' : '修改时间'),
-                  ),
-                  TextButton(
-                    onPressed: provider.canRecord ? () => _remove(today) : null,
-                    child: const Text('删除记录'),
-                  ),
-                ],
-              ],
-            ),
-            if (provider.syncEnabled) ...[
-              const SizedBox(height: AppSpacing.sm),
-              Wrap(
-                spacing: AppSpacing.sm,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Text(_syncLabel(provider.syncStatus),
-                      style: AppText.caption
-                          .copyWith(color: scheme.onSurfaceVariant)),
-                  if (provider.syncStatus == SyncModuleStatus.failed ||
-                      provider.syncStatus == SyncModuleStatus.offline ||
-                      provider.syncStatus == SyncModuleStatus.conflict)
-                    TextButton(
-                      key: const ValueKey('wake-up-sync-retry'),
-                      onPressed: provider.isSaving
-                          ? null
-                          : () => provider.synchronize(source: '目标页重试'),
-                      child: const Text('重试同步'),
-                    ),
-                ],
-              ),
-            ],
+              );
+            }),
             const SizedBox(height: AppSpacing.sm),
             Divider(color: scheme.outlineVariant),
             _historySummary(context, provider, now),
@@ -191,6 +148,88 @@ class _WakeUpCardState extends State<WakeUpCard> with WidgetsBindingObserver {
           ],
         ],
       ),
+    );
+  }
+
+  Widget _todayDetails(BuildContext context, WakeUpProvider provider,
+      DateTime now, WakeUpRecord? today) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      key: const ValueKey('wake-up-today'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (today == null) ...[
+          const Text('今天还未记录起床时间', style: AppText.body),
+          const SizedBox(height: AppSpacing.xs),
+          Text('起床后点一下，也可以补填实际时间。',
+              style: AppText.caption.copyWith(color: scheme.onSurfaceVariant)),
+        ] else
+          Wrap(
+            spacing: AppSpacing.xl,
+            runSpacing: AppSpacing.md,
+            children: [
+              _metric(context, '今天起床', today.timeLabel),
+              _metric(context, '已起床', _elapsedLabel(today.elapsedAt(now))),
+            ],
+          ),
+        const SizedBox(height: AppSpacing.md),
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.sm,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            if (today == null) ...[
+              FilledButton.icon(
+                key: const ValueKey('wake-up-now'),
+                onPressed: provider.canRecord
+                    ? () => _saveTime(provider, provider.now, provider.kind!,
+                        replaceExisting: false)
+                    : null,
+                icon: const Icon(Icons.check),
+                label: Text(provider.isSaving ? '正在保存…' : '我起床了'),
+              ),
+              TextButton(
+                key: const ValueKey('wake-up-edit'),
+                onPressed: provider.canRecord ? () => _pickTime(now) : null,
+                child: const Text('补填时间'),
+              ),
+            ] else ...[
+              OutlinedButton.icon(
+                key: const ValueKey('wake-up-edit'),
+                onPressed: provider.canRecord ? () => _pickTime(now) : null,
+                icon: const Icon(Icons.edit_outlined),
+                label: Text(provider.isSaving ? '正在保存…' : '修改时间'),
+              ),
+              TextButton(
+                onPressed: provider.canRecord ? () => _remove(today) : null,
+                child: const Text('删除记录'),
+              ),
+            ],
+          ],
+        ),
+        if (provider.syncEnabled) ...[
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: AppSpacing.sm,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(_syncLabel(provider.syncStatus),
+                  style:
+                      AppText.caption.copyWith(color: scheme.onSurfaceVariant)),
+              if (provider.syncStatus == SyncModuleStatus.failed ||
+                  provider.syncStatus == SyncModuleStatus.offline ||
+                  provider.syncStatus == SyncModuleStatus.conflict)
+                TextButton(
+                  key: const ValueKey('wake-up-sync-retry'),
+                  onPressed: provider.isSaving
+                      ? null
+                      : () => provider.synchronize(source: '目标页重试'),
+                  child: const Text('重试同步'),
+                ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 

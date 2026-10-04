@@ -1,3 +1,4 @@
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -70,6 +71,9 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  LineChartData chartData(WidgetTester tester) =>
+      tester.widget<LineChart>(find.byType(LineChart)).data;
 
   testWidgets('一键记录当前时间，分钟刷新并从保存的时间计算时长', (tester) async {
     await prepare(tester);
@@ -210,8 +214,99 @@ void main() {
     expect(find.text('我起床了'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('wake-up-history-toggle')));
     await tester.pumpAndSettle();
-    expect(find.text('07:00'), findsOneWidget);
+    expect(
+        find.descendant(
+            of: find.byKey(const ValueKey('wake-up-history-2026-10-04')),
+            matching: find.text('07:00')),
+        findsOneWidget);
     expect(provider.recordFor(DateTime(2026, 10, 4)), isNotNull);
+  });
+
+  testWidgets('曲线按七个自然日排列，空缺断开且补填、删除后立即更新', (tester) async {
+    await prepare(tester);
+    for (final time in [
+      DateTime(2026, 9, 27, 8), // 七天窗口外的记录不画入曲线。
+      DateTime(2026, 9, 28, 6, 40),
+      DateTime(2026, 9, 29, 7, 10),
+      DateTime(2026, 10, 1, 8, 5),
+      DateTime(2026, 10, 4, 9, 30),
+    ]) {
+      await provider.record(time, expectedKind: DiaryKind.j);
+    }
+    await mount(tester);
+    final data = chartData(tester);
+    expect(data.lineBarsData.single.spots, [
+      const FlSpot(0, 400),
+      const FlSpot(1, 430),
+      FlSpot.nullSpot,
+      const FlSpot(3, 485),
+      FlSpot.nullSpot,
+      FlSpot.nullSpot,
+      const FlSpot(6, 570),
+    ]);
+    expect(
+        tester
+            .widget<Semantics>(find.byKey(const ValueKey('wake-up-chart')))
+            .properties
+            .value,
+        '9月28日 06:40，9月29日 07:10，9月30日 未记录，10月1日 08:05，'
+        '10月2日 未记录，10月3日 未记录，10月4日 09:30');
+    final tooltip = data.lineTouchData.touchTooltipData.getTooltipItems([
+      LineBarSpot(data.lineBarsData.single, 0, const FlSpot(3, 485)),
+    ]);
+    expect(tooltip.single!.text, '10月1日\n08:05');
+
+    await provider.record(DateTime(2026, 9, 30, 7, 25),
+        expectedKind: DiaryKind.j);
+    await tester.pumpAndSettle();
+    expect(
+        chartData(tester).lineBarsData.single.spots[2], const FlSpot(2, 445));
+    await provider.remove(DateTime(2026, 9, 29), expectedKind: DiaryKind.j);
+    await tester.pumpAndSettle();
+    expect(chartData(tester).lineBarsData.single.spots[1], FlSpot.nullSpot);
+  });
+
+  testWidgets('曲线容纳凌晨和深夜记录，切换身份后清空旧曲线', (tester) async {
+    await prepare(tester);
+    await mount(tester);
+    expect(chartData(tester).lineBarsData, isEmpty);
+    expect(find.text('记录后即可查看起床趋势'), findsOneWidget);
+
+    await provider.record(DateTime(2026, 10, 3, 23, 59),
+        expectedKind: DiaryKind.j);
+    await provider.record(DateTime(2026, 10, 4, 0, 1),
+        expectedKind: DiaryKind.j);
+    await tester.pumpAndSettle();
+    final data = chartData(tester);
+    expect(data.minY, 0);
+    expect(data.maxY, 1440);
+    expect(data.lineBarsData.single.spots[5], const FlSpot(5, 1439));
+    expect(data.lineBarsData.single.spots[6], const FlSpot(6, 1));
+    expect(tester.takeException(), isNull);
+
+    AppIdentityService.adoptManualKind(DiaryKind.g);
+    await provider.reload();
+    await tester.pumpAndSettle();
+    expect(chartData(tester).lineBarsData, isEmpty);
+    expect(find.text('记录后即可查看起床趋势'), findsOneWidget);
+  });
+
+  testWidgets('宽屏曲线在记录右侧，缩窄后放到记录下方', (tester) async {
+    await prepare(tester);
+    tester.view.physicalSize = const Size(1100, 700);
+    await mount(tester);
+    final details = find.byKey(const ValueKey('wake-up-today'));
+    final chart = find.byKey(const ValueKey('wake-up-chart'));
+    expect(tester.getTopLeft(chart).dx,
+        greaterThan(tester.getTopRight(details).dx));
+    expect(tester.getTopLeft(chart).dy, tester.getTopLeft(details).dy);
+    expect(tester.takeException(), isNull);
+
+    tester.view.physicalSize = const Size(360, 640);
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(chart).dy,
+        greaterThan(tester.getBottomLeft(details).dy));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('隐藏目标页和切后台暂停刷新，返回立即更新经过时长', (tester) async {
@@ -270,6 +365,7 @@ void main() {
               theme.extension<AppWallpaperTheme>()!.enabled ? 0.72 : 1, 0.001));
       final toggle = find.byKey(const ValueKey('wake-up-history-toggle'));
       await tester.ensureVisible(toggle);
+      await tester.pumpAndSettle();
       await tester.tap(toggle);
       await tester.pumpAndSettle();
       await tester.ensureVisible(
