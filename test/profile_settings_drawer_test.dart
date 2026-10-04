@@ -7,6 +7,7 @@ import 'package:time_manager/models/diary_kind.dart';
 import 'package:time_manager/providers/background_image_provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
+import 'package:time_manager/screens/app_log_screen.dart';
 import 'package:time_manager/services/app_identity_service.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'package:time_manager/widgets/profile_settings_drawer.dart';
@@ -114,8 +115,11 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('directory groups tools and hides their detailed actions',
+  testWidgets('groups expand in place and only one group stays open',
       (tester) async {
+    tester.view.physicalSize = const Size(400, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     final provider = await createIdentityProvider(tester);
     addTearDown(provider.dispose);
 
@@ -130,20 +134,31 @@ void main() {
       expect(find.text(title), findsNothing);
     }
 
+    await tester.tap(find.text('外观设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('外观模式'), findsOneWidget);
+    expect(find.text('主题色'), findsOneWidget);
+    expect(find.text('同步中心'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('数据备份'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('数据备份'));
     await tester.pumpAndSettle();
     expect(find.text('导出备份'), findsOneWidget);
     expect(find.text('导入备份'), findsOneWidget);
-    expect(find.text('同步中心'), findsNothing);
+    expect(find.text('同步中心'), findsOneWidget);
+    expect(find.text('主题色'), findsNothing);
+    expect(find.text('外观设置'), findsOneWidget);
+    expect(find.byTooltip('返回设置目录'), findsNothing);
 
-    await tester.tap(find.byTooltip('返回设置目录'));
+    await tester.tap(find.text('数据备份'));
     await tester.pumpAndSettle();
     expect(find.text('同步中心'), findsOneWidget);
     expect(find.text('导入备份'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('system back returns to the directory before closing the drawer',
+  testWidgets('system back closes the drawer with an expanded group',
       (tester) async {
     final provider = await createIdentityProvider(tester);
     addTearDown(provider.dispose);
@@ -156,18 +171,12 @@ void main() {
 
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
-    expect(scaffold.isDrawerOpen, isTrue);
-    expect(find.text('同步中心'), findsOneWidget);
-    expect(find.text('主题色'), findsNothing);
-
-    await tester.binding.handlePopRoute();
-    await tester.pumpAndSettle();
     expect(scaffold.isDrawerOpen, isFalse);
+    expect(ModalRoute.of(scaffold.context)!.willHandlePopInternally, isFalse);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-      'closing a detail page leaves no history and reopens the directory',
+  testWidgets('reopening the drawer starts with all groups collapsed',
       (tester) async {
     final provider = await createIdentityProvider(tester);
     addTearDown(provider.dispose);
@@ -185,9 +194,28 @@ void main() {
     expect(find.text('同步中心'), findsOneWidget);
     expect(find.text('导入备份'), findsNothing);
 
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('opening a tool from an expanded group leaves no drawer history',
+      (tester) async {
+    final provider = await createIdentityProvider(tester);
+    addTearDown(provider.dispose);
+    await openDrawerWith(tester, provider, desktop: true);
+    final scaffold = tester.state<ScaffoldState>(find.byType(Scaffold));
+
+    await tester.ensureVisible(find.text('关于应用'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('关于应用'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('关闭设置'));
+    await tester.ensureVisible(find.text('运行日志'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('运行日志'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AppLogScreen), findsOneWidget);
+    expect(scaffold.isDrawerOpen, isFalse);
+
+    await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
     expect(scaffold.isDrawerOpen, isFalse);
     expect(ModalRoute.of(scaffold.context)!.willHandlePopInternally, isFalse);
@@ -219,9 +247,15 @@ void main() {
       );
       expect(tester.takeException(), isNull);
       await tester.ensureVisible(find.text('外观设置'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('外观设置'));
       await tester.pumpAndSettle();
       expect(find.text('外观模式'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.ensureVisible(find.text('背景图片'));
+      await tester.pumpAndSettle();
+      expect(find.text('背景图片').hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }

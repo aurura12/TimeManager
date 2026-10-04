@@ -59,8 +59,13 @@ class ProfileSettingsDrawer extends StatefulWidget {
 }
 
 class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
-  _ProfileDrawerSection? _section;
-  LocalHistoryEntry? _sectionHistoryEntry;
+  _ProfileDrawerSection? _expandedSection;
+  final _listKey = GlobalKey(debugLabel: 'profile-settings-list');
+  final _sectionKeys = {
+    for (final section in _ProfileDrawerSection.values)
+      section: GlobalKey(debugLabel: section.name),
+  };
+  final _scrollController = ScrollController();
   late final Future<PackageInfo> _packageInfo = PackageInfo.fromPlatform();
   bool _identitySwitching = false;
 
@@ -78,47 +83,48 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
 
   @override
   void dispose() {
-    // 抽屉被侧滑或遮罩关闭时，不能把分组的返回记录留在主页面上。
-    final entry = _sectionHistoryEntry;
-    _sectionHistoryEntry = null;
-    entry?.remove();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  void _openSection(_ProfileDrawerSection section) {
-    if (_sectionHistoryEntry == null) {
-      final route = ModalRoute.of(context);
-      if (route != null) {
-        late final LocalHistoryEntry entry;
-        entry = LocalHistoryEntry(
-          impliesAppBarDismissal: false,
-          onRemove: () {
-            if (!mounted || _sectionHistoryEntry != entry) return;
-            final previous = _section;
-            _sectionHistoryEntry = null;
-            setState(() => _section = null);
-            if (previous == _ProfileDrawerSection.account) {
-              unawaited(_loadDiaryReminderStatus());
-            }
-          },
-        );
-        _sectionHistoryEntry = entry;
-        route.addLocalHistoryEntry(entry);
-      }
+  void _toggleSection(_ProfileDrawerSection section) {
+    final previous = _expandedSection;
+    setState(() {
+      _expandedSection = previous == section ? null : section;
+    });
+    if (previous == _ProfileDrawerSection.account ||
+        _expandedSection == _ProfileDrawerSection.reminders) {
+      unawaited(_loadDiaryReminderStatus());
     }
-    setState(() => _section = section);
   }
 
-  void _backToDirectory() {
-    if (_sectionHistoryEntry != null) {
-      _sectionHistoryEntry!.remove();
-    } else {
-      setState(() => _section = null);
+  void _revealExpandedSection(_ProfileDrawerSection section) {
+    if (!mounted || _expandedSection != section) return;
+    final sectionContext = _sectionKeys[section]?.currentContext;
+    final sectionBox = sectionContext?.findRenderObject();
+    final listBox = _listKey.currentContext?.findRenderObject();
+    if (sectionContext == null ||
+        sectionBox is! RenderBox ||
+        listBox is! RenderBox ||
+        !sectionBox.hasSize ||
+        !listBox.hasSize) {
+      return;
     }
+    final offset = sectionBox.localToGlobal(Offset.zero, ancestor: listBox);
+    if (offset.dy >= 0 &&
+        offset.dy + sectionBox.size.height <= listBox.size.height) {
+      return;
+    }
+    unawaited(Scrollable.ensureVisible(
+      sectionContext,
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : kThemeAnimationDuration,
+      curve: Curves.easeInOut,
+    ));
   }
 
   void _closeDrawer() {
-    _backToDirectory();
     Navigator.of(context).pop();
   }
 
@@ -152,12 +158,11 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<TimeProvider>();
-    final backgroundImage = context.watch<BackgroundImageProvider>();
+    context.watch<BackgroundImageProvider>();
     final themeModeProvider = context.watch<ThemeModeProvider>();
     final colorScheme = Theme.of(context).colorScheme;
     final isAndroid = widget.androidPlatformOverride ?? Platform.isAndroid;
     final isDesktop = widget.desktopPlatformOverride ?? isDesktopPlatform;
-    final section = _section;
 
     return Drawer(
       backgroundColor: Colors.transparent,
@@ -167,44 +172,14 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
         child: SafeArea(
           child: Column(
             children: [
-              if (section != null) ...[
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.sm,
-                    vertical: AppSpacing.sm,
-                  ),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        tooltip: '返回设置目录',
-                        onPressed: _backToDirectory,
-                        icon: const Icon(Icons.arrow_back_rounded),
-                      ),
-                      const SizedBox(width: AppSpacing.xs),
-                      Expanded(
-                        child: Text(section.title, style: AppText.pageTitle),
-                      ),
-                      IconButton(
-                        tooltip: '关闭设置',
-                        onPressed: _closeDrawer,
-                        icon: const Icon(Icons.close_rounded),
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(height: AppSizes.hairline),
-              ],
               Expanded(
-                child: section == null
-                    ? _buildDirectory(context, provider, isAndroid, isDesktop)
-                    : _buildSectionContent(
-                        context,
-                        section,
-                        provider,
-                        themeModeProvider,
-                        backgroundImage,
-                        isDesktop,
-                      ),
+                child: _buildSettingsList(
+                  context,
+                  provider,
+                  themeModeProvider,
+                  isAndroid,
+                  isDesktop,
+                ),
               ),
               _buildVersionFooter(),
             ],
@@ -214,9 +189,10 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     );
   }
 
-  Widget _buildDirectory(
+  Widget _buildSettingsList(
     BuildContext context,
     TimeProvider provider,
+    ThemeModeProvider themeModeProvider,
     bool isAndroid,
     bool isDesktop,
   ) {
@@ -227,11 +203,16 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
             reminderStatus.message != null);
 
     return ListView(
-      key: const PageStorageKey('profile-settings-directory'),
+      key: _listKey,
+      controller: _scrollController,
       padding: AppSpacing.page,
       children: [
         const SizedBox(height: AppSpacing.lg),
-        _buildIdentityHeader(context, provider, isDesktop),
+        _buildExpandableSection(
+          context,
+          section: _ProfileDrawerSection.account,
+          header: _buildIdentityHeader(context, provider, isDesktop),
+        ),
         const SizedBox(height: AppSpacing.md),
         Material(
           color: context.wallpaperFill(colorScheme.primaryContainer),
@@ -263,20 +244,24 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
             )),
         const SizedBox(height: AppSpacing.sm),
         _buildSettingsPanel(context, [
-          _buildDirectoryTile(
+          _buildGroup(
             context,
             section: _ProfileDrawerSection.review,
             icon: Icons.history_rounded,
             subtitle: '事件词云 · 那年今日',
           ),
-          _buildDirectoryTile(
+          _buildGroup(
             context,
             section: _ProfileDrawerSection.appearance,
             icon: Icons.palette_outlined,
-            subtitle: '模式 · 主题色 · 背景',
+            subtitle: '${switch (themeModeProvider.themeMode) {
+              ThemeMode.system => '跟随系统',
+              ThemeMode.light => '浅色模式',
+              ThemeMode.dark => '深色模式',
+            }} · ${AppThemeColorPreset.labelFor(themeModeProvider.themeColor)}',
           ),
           if (isAndroid)
-            _buildDirectoryTile(
+            _buildGroup(
               context,
               section: _ProfileDrawerSection.reminders,
               icon: Icons.notifications_none_rounded,
@@ -285,13 +270,13 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                   : _diaryReminderSubtitle(reminderStatus),
               needsAttention: reminderNeedsAttention,
             ),
-          _buildDirectoryTile(
+          _buildGroup(
             context,
             section: _ProfileDrawerSection.backup,
             icon: Icons.backup_outlined,
             subtitle: '导出备份 · 导入备份',
           ),
-          _buildDirectoryTile(
+          _buildGroup(
             context,
             section: _ProfileDrawerSection.app,
             icon: Icons.info_outline_rounded,
@@ -327,29 +312,32 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                 ? '当前身份 · 手动模式'
                 : '选择后可同步数据';
 
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: CircleAvatar(
-        radius: AppSizes.button / 2,
-        backgroundColor: context.wallpaperFill(colorScheme.primaryContainer),
-        foregroundColor: colorScheme.onPrimaryContainer,
-        backgroundImage: googleUser?.photoUrl != null
-            ? NetworkImage(googleUser!.photoUrl!)
-            : null,
-        child: googleUser?.photoUrl != null
-            ? null
-            : selected
-                ? Text(label.characters.first, style: AppText.sectionTitle)
-                : const Icon(Icons.person_outline_rounded),
+    return Semantics(
+      expanded: _expandedSection == _ProfileDrawerSection.account,
+      child: ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: CircleAvatar(
+          radius: AppSizes.button / 2,
+          backgroundColor: context.wallpaperFill(colorScheme.primaryContainer),
+          foregroundColor: colorScheme.onPrimaryContainer,
+          backgroundImage: googleUser?.photoUrl != null
+              ? NetworkImage(googleUser!.photoUrl!)
+              : null,
+          child: googleUser?.photoUrl != null
+              ? null
+              : selected
+                  ? Text(label.characters.first, style: AppText.sectionTitle)
+                  : const Icon(Icons.person_outline_rounded),
+        ),
+        title: Text(label, style: AppText.sectionTitle),
+        subtitle: Text(subtitle, style: AppText.caption),
+        trailing: _buildExpansionArrow(context, _ProfileDrawerSection.account),
+        onTap: () => _toggleSection(_ProfileDrawerSection.account),
       ),
-      title: Text(label, style: AppText.sectionTitle),
-      subtitle: Text(subtitle, style: AppText.caption),
-      trailing: const Icon(Icons.chevron_right),
-      onTap: () => _openSection(_ProfileDrawerSection.account),
     );
   }
 
-  Widget _buildDirectoryTile(
+  Widget _buildGroup(
     BuildContext context, {
     required _ProfileDrawerSection section,
     required IconData icon,
@@ -357,30 +345,103 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     bool needsAttention = false,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
-    return ListTile(
-      leading: Icon(icon, color: colorScheme.onSurfaceVariant),
-      title: Text(section.title, style: AppText.sectionTitle),
-      subtitle: Text(
-        subtitle,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: AppText.caption.copyWith(
-          color:
-              needsAttention ? colorScheme.error : colorScheme.onSurfaceVariant,
+    final expanded = _expandedSection == section;
+    return _buildExpandableSection(
+      context,
+      section: section,
+      header: Semantics(
+        expanded: expanded,
+        child: ListTile(
+          leading: Icon(icon,
+              color: expanded
+                  ? colorScheme.primary
+                  : colorScheme.onSurfaceVariant),
+          title: Text(section.title,
+              style: AppText.sectionTitle.copyWith(
+                color: expanded ? colorScheme.primary : colorScheme.onSurface,
+              )),
+          subtitle: expanded
+              ? null
+              : Text(
+                  subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.caption.copyWith(
+                    color: needsAttention
+                        ? colorScheme.error
+                        : colorScheme.onSurfaceVariant,
+                  ),
+                ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (needsAttention) ...[
+                Icon(Icons.error_outline_rounded,
+                    color: colorScheme.error, size: AppSpacing.lg),
+                const SizedBox(width: AppSpacing.xs),
+              ],
+              _buildExpansionArrow(context, section),
+            ],
+          ),
+          onTap: () => _toggleSection(section),
         ),
       ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (needsAttention) ...[
-            Icon(Icons.error_outline_rounded,
-                color: colorScheme.error, size: AppSpacing.lg),
-            const SizedBox(width: AppSpacing.xs),
-          ],
-          const Icon(Icons.chevron_right),
-        ],
-      ),
-      onTap: () => _openSection(section),
+    );
+  }
+
+  Widget _buildExpansionArrow(
+    BuildContext context,
+    _ProfileDrawerSection section,
+  ) {
+    return AnimatedRotation(
+      turns: _expandedSection == section ? 0.25 : 0,
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : kThemeAnimationDuration,
+      curve: Curves.easeInOut,
+      child: const Icon(Icons.chevron_right),
+    );
+  }
+
+  Widget _buildExpandableSection(
+    BuildContext context, {
+    required _ProfileDrawerSection section,
+    required Widget header,
+  }) {
+    return Column(
+      key: _sectionKeys[section],
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        header,
+        AnimatedSize(
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : kThemeAnimationDuration,
+          curve: Curves.easeInOut,
+          alignment: Alignment.topCenter,
+          onEnd: () => _revealExpandedSection(section),
+          child: _expandedSection == section
+              ? Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.sm,
+                    0,
+                    AppSpacing.sm,
+                    AppSpacing.sm,
+                  ),
+                  child: Material(
+                    color:
+                        context.wallpaperFill(AppSurfaces.of(context).subtle),
+                    borderRadius: AppRadius.controlAll,
+                    clipBehavior: Clip.antiAlias,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: _buildSectionItems(context, section),
+                    ),
+                  ),
+                )
+              : const SizedBox.shrink(),
+        ),
+      ],
     );
   }
 
@@ -404,15 +465,15 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     );
   }
 
-  Widget _buildSectionContent(
+  List<Widget> _buildSectionItems(
     BuildContext context,
     _ProfileDrawerSection section,
-    TimeProvider provider,
-    ThemeModeProvider themeModeProvider,
-    BackgroundImageProvider backgroundImage,
-    bool isDesktop,
   ) {
-    final children = switch (section) {
+    final provider = context.read<TimeProvider>();
+    final themeModeProvider = context.read<ThemeModeProvider>();
+    final backgroundImage = context.read<BackgroundImageProvider>();
+    final isDesktop = widget.desktopPlatformOverride ?? isDesktopPlatform;
+    return switch (section) {
       _ProfileDrawerSection.account => [
           if (isDesktop || provider.isManualIdentityMode)
             _buildManualIdentitySection(context, provider, title: '用户身份')
@@ -447,8 +508,9 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           ListTile(
             leading: const Icon(Icons.palette_outlined),
             title: const Text('外观模式'),
-            trailing: DropdownButtonHideUnderline(
+            subtitle: DropdownButtonHideUnderline(
               child: DropdownButton<ThemeMode>(
+                isExpanded: true,
                 value: themeModeProvider.themeMode,
                 style: AppText.body
                     .copyWith(color: Theme.of(context).colorScheme.onSurface),
@@ -538,11 +600,6 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           ),
         ],
     };
-    return ListView(
-      key: ValueKey(section),
-      padding: const EdgeInsets.all(AppSpacing.lg),
-      children: [_buildSettingsPanel(context, children)],
-    );
   }
 
   Future<void> _openBackgroundImageSettings(
@@ -834,6 +891,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     final ok = await provider.setGoogleCalendarSyncEnabled(enabled);
     if (!context.mounted) return;
     setState(() => _identitySwitching = false);
+    unawaited(_loadDiaryReminderStatus());
     widget.onChanged();
     if (!ok) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -868,7 +926,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                     : '当前身份：${selected == DiaryKind.g ? '乖乖' : '晶晶'}',
           ),
         ),
-        // 已进入身份详情，直接列出选项。切换期间仍禁止重复选择。
+        // 身份分组展开后直接列出选项，切换期间禁止重复选择。
         AbsorbPointer(
           absorbing: _identitySwitching,
           child: RadioGroup<DiaryKind>(
@@ -951,7 +1009,10 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
         });
       }
     }
-    if (mounted) widget.onChanged();
+    if (mounted) {
+      unawaited(_loadDiaryReminderStatus());
+      widget.onChanged();
+    }
   }
 
   Widget _buildVersionFooter() {

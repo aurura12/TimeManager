@@ -230,7 +230,7 @@ void main() {
     expect(find.text('提醒初始化失败，请查看运行日志'), findsOneWidget);
   });
 
-  testWidgets('提醒异常在目录里可见，进入详情后仍显示处理说明', (tester) async {
+  testWidgets('提醒异常收起时可见，展开后显示处理说明', (tester) async {
     backend.throwOnInitialize = true;
 
     await pumpDrawer(tester, android: true, openReminders: false);
