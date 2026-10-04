@@ -385,11 +385,11 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         context.select<TimeProvider, ScheduleSyncProgress?>(
             (p) => p.scheduleSyncProgress);
     return LayoutBuilder(builder: (context, constraints) {
-      final useRail = isWideTablet(context) ||
+      final useSideNavigation = isWideTablet(context) ||
           (isDesktopPlatform &&
               desktopLayout?.navigationLayout == DesktopNavigationLayout.side &&
               constraints.maxWidth >= AppSizes.desktopNavigationBreakpoint);
-      final showRail = useRail && showNavigation;
+      final showSideNavigation = useSideNavigation && showNavigation;
       return Scaffold(
         backgroundColor:
             wallpaperTheme.enabled ? Colors.transparent : surfaces.page,
@@ -398,22 +398,25 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             SizedBox(
-              width: showRail ? AppSizes.desktopNavigationRailWidth : 0,
-              child: showRail
-                  ? NavigationRail(
-                      key: const ValueKey('main-navigation-rail'),
-                      minWidth: AppSizes.desktopNavigationRailWidth,
+              width: showSideNavigation ? AppSizes.desktopNavigationWidth : 0,
+              child: showSideNavigation
+                  ? NavigationDrawer(
+                      key: const ValueKey('main-side-navigation'),
                       backgroundColor: surfaces.panel,
-                      scrollable: true,
+                      indicatorColor:
+                          context.wallpaperFill(surfaces.navSelected),
+                      tilePadding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.xs,
+                      ),
                       selectedIndex:
                           navigationIndex < 0 ? null : navigationIndex,
                       onDestinationSelected: (index) =>
                           _onItemTapped(items[index]),
-                      labelType: NavigationRailLabelType.all,
-                      leading: const SizedBox(height: AppSpacing.sm),
-                      destinations: [
+                      header: const SizedBox(height: AppSpacing.md),
+                      children: [
                         for (final item in items)
-                          NavigationRailDestination(
+                          NavigationDrawerDestination(
                             icon: Icon(item.icon),
                             selectedIcon: Icon(item.selectedIcon),
                             label: Text(item.label),
@@ -423,8 +426,8 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   : null,
             ),
             SizedBox(
-              width: showRail ? AppSizes.hairline : 0,
-              child: showRail
+              width: showSideNavigation ? AppSizes.hairline : 0,
+              child: showSideNavigation
                   ? VerticalDivider(
                       width: AppSizes.hairline,
                       thickness: AppSizes.hairline,
@@ -442,7 +445,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           ],
         ),
         // 顶部一条弱边框，和内容区拉开层级。
-        bottomNavigationBar: showNavigation && !useRail
+        bottomNavigationBar: showNavigation && !useSideNavigation
             ? Container(
                 decoration: BoxDecoration(
                   color: surfaces.panel,

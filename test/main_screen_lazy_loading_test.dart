@@ -227,12 +227,16 @@ void main() {
           }),
         });
     expect(find.byType(NavigationBar), findsNothing);
-    final rail = tester.widget<NavigationRail>(find.byType(NavigationRail));
-    expect(rail.destinations.map((item) => (item.label as Text).data),
+    final navigation =
+        tester.widget<NavigationDrawer>(find.byType(NavigationDrawer));
+    expect(
+        navigation.children
+            .whereType<NavigationDrawerDestination>()
+            .map((item) => (item.label as Text).data),
         ['记录', '我的', '日记', '目标']);
     final homeState = tester.state(find.byType(HomeScreen));
     await tester.tap(find.descendant(
-        of: find.byType(NavigationRail), matching: find.text('我的')));
+        of: find.byType(NavigationDrawer), matching: find.text('我的')));
     await tester.pumpAndSettle();
     final profileState = tester.state(find.byType(ProfileScreen));
     final layout =
@@ -248,14 +252,14 @@ void main() {
     expect(tester.state(find.byType(ProfileScreen)), same(profileState));
     tester.view.physicalSize = const Size(800, 700);
     await tester.pumpAndSettle();
-    expect(find.byType(NavigationRail), findsNothing);
+    expect(find.byType(NavigationDrawer), findsNothing);
     expect(tester.state(find.byType(ProfileScreen)), same(profileState));
     await tester.tap(_tab('记录'));
     await tester.pumpAndSettle();
     expect(tester.state(find.byType(HomeScreen)), same(homeState));
     tester.view.physicalSize = const Size(1400, 900);
     await tester.pumpAndSettle();
-    expect(find.byType(NavigationRail), findsOneWidget);
+    expect(find.byType(NavigationDrawer), findsOneWidget);
     expect(tester.state(find.byType(HomeScreen)), same(homeState));
     expect(tester.takeException(), isNull);
   });

@@ -516,6 +516,39 @@ abstract final class AppTheme {
           color: scheme.onSurfaceVariant,
         ),
       ),
+      navigationDrawerTheme: NavigationDrawerThemeData(
+        backgroundColor: surfaces.panel,
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        tileHeight: AppSizes.desktopNavigationButtonHeight,
+        indicatorColor: surfaces.navSelected,
+        indicatorSize: const Size(
+          AppSizes.desktopNavigationWidth - AppSpacing.md * 2,
+          AppSizes.desktopNavigationButtonHeight,
+        ),
+        indicatorShape: const RoundedRectangleBorder(
+          borderRadius: AppRadius.controlAll,
+        ),
+        iconTheme: WidgetStateProperty.resolveWith(
+          (states) => IconThemeData(
+            size: AppSizes.desktopNavigationIcon,
+            color: states.contains(WidgetState.selected)
+                ? scheme.onPrimaryContainer
+                : scheme.onSurfaceVariant,
+          ),
+        ),
+        labelTextStyle: WidgetStateProperty.resolveWith(
+          (states) => AppText.sectionTitle.copyWith(
+            color: states.contains(WidgetState.selected)
+                ? scheme.onPrimaryContainer
+                : scheme.onSurfaceVariant,
+            fontWeight: states.contains(WidgetState.selected)
+                ? FontWeight.w600
+                : FontWeight.w400,
+          ),
+        ),
+      ),
 
       // ---------- 卡片与容器 ----------
       cardTheme: CardThemeData(
