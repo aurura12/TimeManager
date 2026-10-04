@@ -26,6 +26,8 @@ const double _kDayHeaderHeight = 40;
 const double _kCategorySidebarWidth = 100;
 const List<String> _kWeekdayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
+enum _HomeToolbarAction { keyboardHelp, undo, remoteView, sync }
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -1633,6 +1635,53 @@ class HomeScreenState extends State<HomeScreen> {
     bool remoteViewEnabled,
     bool hasPendingSync,
   ) {
+    // 临时打开隐藏页时多了返回键；窄窗口把工具收进菜单，为日期导航留出空间。
+    if (ModalRoute.of(context)?.impliesAppBarDismissal == true &&
+        MediaQuery.sizeOf(context).width < AppSizes.dialogMaxWidth) {
+      return [
+        _appBarIconButton(
+          icon: Icons.search,
+          tooltip: '搜索记录',
+          onPressed: _openGlobalSearch,
+        ),
+        PopupMenuButton<_HomeToolbarAction>(
+          tooltip: '记录工具',
+          icon: const Icon(Icons.more_vert),
+          onSelected: (action) {
+            switch (action) {
+              case _HomeToolbarAction.keyboardHelp:
+                _showKeyboardShortcutHelp();
+              case _HomeToolbarAction.undo:
+                provider.undo();
+              case _HomeToolbarAction.remoteView:
+                _leaveBrushAndClearSelection();
+                provider.toggleRemoteScheduleView();
+              case _HomeToolbarAction.sync:
+                provider.syncAll();
+            }
+          },
+          itemBuilder: (context) => [
+            if (isDesktopPlatform)
+              const PopupMenuItem(
+                value: _HomeToolbarAction.keyboardHelp,
+                child: Text('键盘快捷键'),
+              ),
+            const PopupMenuItem(
+              value: _HomeToolbarAction.undo,
+              child: Text('撤销'),
+            ),
+            PopupMenuItem(
+              value: _HomeToolbarAction.remoteView,
+              child: Text(remoteViewEnabled ? '关闭对方日程' : '查看对方日程'),
+            ),
+            const PopupMenuItem(
+              value: _HomeToolbarAction.sync,
+              child: Text('同步日程'),
+            ),
+          ],
+        ),
+      ];
+    }
     final surfaces = AppSurfaces.of(context);
     final pendingSyncColor = AppSemanticColors.readableOn(
       AppSemanticColors.warning,

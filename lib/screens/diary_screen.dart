@@ -1182,8 +1182,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(
-        body: Center(
+      return Scaffold(
+        appBar: AppBar(title: const Text('日记')),
+        body: const Center(
           child: CircularProgressIndicator(),
         ),
       );
@@ -1214,12 +1215,20 @@ class _DiaryScreenState extends State<DiaryScreen> {
       ),
       appBar: AppBar(
         title: const Text('日记'),
-        leading: IconButton(
-          tooltip: '浏览远程日记',
-          onPressed: _openRemoteTreeDrawer,
-          icon: const Icon(Icons.menu),
-        ),
+        leading: ModalRoute.of(context)?.impliesAppBarDismissal == true
+            ? const BackButton()
+            : IconButton(
+                tooltip: '浏览远程日记',
+                onPressed: _openRemoteTreeDrawer,
+                icon: const Icon(Icons.menu),
+              ),
         actions: [
+          if (ModalRoute.of(context)?.impliesAppBarDismissal == true)
+            IconButton(
+              tooltip: '浏览远程日记',
+              onPressed: _openRemoteTreeDrawer,
+              icon: const Icon(Icons.menu),
+            ),
           IconButton(
             tooltip: '搜索日记',
             onPressed: _openSearch,

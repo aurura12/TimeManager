@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
+import '../models/main_tab_id.dart';
+import '../providers/main_tab_provider.dart';
 import '../widgets/profile_settings_drawer.dart';
 import '../widgets/calendar_sync_status_badge.dart';
 import '../widgets/main_tab_activity.dart';
+import '../widgets/main_tab_navigation.dart';
 import '../providers/time_provider.dart';
 import '../utils/platform_features.dart';
 import 'event_detail_screen.dart';
@@ -25,7 +28,9 @@ enum _StatisticsFilterAction {
 }
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  const ProfileScreen({super.key, this.onOpenHiddenTab});
+
+  final ValueChanged<MainTabId>? onOpenHiddenTab;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -60,6 +65,10 @@ class _ProfileScreenState extends State<ProfileScreen>
       return _lastBuiltPage ?? const SizedBox.shrink();
     }
     final provider = Provider.of<TimeProvider>(context);
+    final tabs = context.watch<MainTabProvider>();
+    final hiddenTabs =
+        tabs.order.where(tabs.hiddenTabs.contains).toList(growable: false);
+    final showMore = hiddenTabs.isNotEmpty && widget.onOpenHiddenTab != null;
     final colorScheme = Theme.of(context).colorScheme;
     final wallpaperTheme = AppWallpaperTheme.of(context);
 
@@ -68,6 +77,44 @@ class _ProfileScreenState extends State<ProfileScreen>
           wallpaperTheme.enabled ? Colors.transparent : colorScheme.surface,
       drawer: ProfileSettingsDrawer(onChanged: () => setState(() {})),
       appBar: AppBar(
+        leadingWidth: showMore ? AppSizes.minTapTarget * 2 : null,
+        leading: Row(
+          children: [
+            const SizedBox(
+              width: AppSizes.minTapTarget,
+              child: DrawerButton(),
+            ),
+            if (showMore)
+              SizedBox(
+                width: AppSizes.minTapTarget,
+                child: PopupMenuButton<MainTabId>(
+                  tooltip: '更多功能',
+                  icon: const Icon(Icons.apps_outlined),
+                  position: PopupMenuPosition.under,
+                  color: context.wallpaperFill(AppSurfaces.of(context).card),
+                  onSelected: widget.onOpenHiddenTab,
+                  itemBuilder: (context) => [
+                    const PopupMenuItem<MainTabId>(
+                      enabled: false,
+                      child: Text('更多功能', style: AppText.sectionTitle),
+                    ),
+                    for (final tab in hiddenTabs)
+                      PopupMenuItem(
+                        key: ValueKey('hidden-main-tab-${tab.id}'),
+                        value: tab,
+                        child: Row(
+                          children: [
+                            Icon(tab.icon),
+                            const SizedBox(width: AppSpacing.md),
+                            Flexible(child: Text(tab.label)),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        ),
         title: Text(
           "个人中心",
           style: TextStyle(

@@ -253,6 +253,140 @@ void main() {
     );
     expect(navigationBar.selectedIndex, 5);
     expect(_tab('我的'), findsOneWidget);
+    expect(find.byTooltip('更多功能'), findsNothing);
+  });
+
+  for (final tab in MainTabId.values.where((tab) => tab != MainTabId.profile)) {
+    testWidgets('更多功能打开隐藏的${tab.label}，两种返回方式均保留隐藏设置与页面状态', (tester) async {
+      await _pumpMainScreen(
+        tester,
+        initialPreferences: {
+          MainTabProvider.storageKey: jsonEncode({
+            'order': [
+              MainTabId.profile.id,
+              ...MainTabId.values
+                  .where((tab) => tab != MainTabId.profile)
+                  .map((tab) => tab.id),
+            ],
+            'hidden': [tab.id],
+          }),
+        },
+      );
+      final profileElement = tester.element(find.byType(ProfileScreen));
+      final tabs = profileElement.read<MainTabProvider>();
+      final prefs = await SharedPreferences.getInstance();
+      final savedSettings = prefs.getString(MainTabProvider.storageKey);
+      final pageType = switch (tab) {
+        MainTabId.record => HomeScreen,
+        MainTabId.diary => DiaryScreen,
+        MainTabId.travel => TravelScreen,
+        MainTabId.checkIn => CheckInScreen,
+        MainTabId.target => TargetScreen,
+        MainTabId.profile => ProfileScreen,
+      };
+
+      expect(find.byType(pageType, skipOffstage: false), findsNothing);
+      expect(_tab(tab.label), findsNothing);
+      await tester.tap(find.byTooltip('更多功能'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey('hidden-main-tab-${tab.id}')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(pageType), findsOneWidget);
+      expect(find.byType(NavigationBar), findsNothing);
+      expect(find.byType(BackButton), findsOneWidget);
+      final pageElement = tester.element(find.byType(pageType));
+      if (tab == MainTabId.diary) {
+        expect(find.byTooltip('浏览远程日记'), findsOneWidget);
+        expect(find.byTooltip('搜索日记'), findsOneWidget);
+        await tester.tap(find.byTooltip('浏览远程日记'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.byType(Drawer), findsOneWidget);
+        await tester.binding.handlePopRoute();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.byType(Drawer), findsNothing);
+        expect(find.byType(DiaryScreen), findsOneWidget);
+        expect(find.byType(NavigationBar), findsNothing);
+      } else if (tab == MainTabId.record) {
+        await tester.tap(find.byTooltip('记录工具'));
+        await tester.pumpAndSettle();
+        expect(find.text('撤销'), findsOneWidget);
+        expect(find.text('查看对方日程'), findsOneWidget);
+        expect(find.text('同步日程'), findsOneWidget);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(find.byType(HomeScreen), findsOneWidget);
+        expect(find.byType(NavigationBar), findsNothing);
+      }
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(tester.element(find.byType(ProfileScreen)), same(profileElement));
+      expect(_tab(tab.label), findsNothing);
+      expect(tabs.hiddenTabs, {tab});
+      expect(prefs.getString(MainTabProvider.storageKey), savedSettings);
+
+      await tester.tap(find.byTooltip('更多功能'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey('hidden-main-tab-${tab.id}')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.element(find.byType(pageType)), same(pageElement));
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+      expect(tester.element(find.byType(ProfileScreen)), same(profileElement));
+      expect(_tab(tab.label), findsNothing);
+      expect(prefs.getString(MainTabProvider.storageKey), savedSettings);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('桌面更多功能仅按自定义顺序列出隐藏页，恢复显示后入口消失', (tester) async {
+    await _pumpMainScreen(
+      tester,
+      screenSize: const Size(1200, 800),
+      initialPreferences: {
+        MainTabProvider.storageKey: jsonEncode({
+          'order': [
+            'target',
+            'profile',
+            'travel',
+            'check_in',
+            'diary',
+            'record'
+          ],
+          'hidden': ['diary', 'travel', 'check_in', 'target'],
+        }),
+      },
+    );
+    final tabs =
+        tester.element(find.byType(MainScreen)).read<MainTabProvider>();
+    await tester.tap(find.byTooltip('更多功能'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widgetList<PopupMenuItem<MainTabId>>(
+              find.byType(PopupMenuItem<MainTabId>))
+          .where((item) => item.enabled)
+          .map((item) => item.value),
+      [MainTabId.target, MainTabId.travel, MainTabId.checkIn, MainTabId.diary],
+    );
+    await tester.tap(find.byKey(const ValueKey('hidden-main-tab-target')));
+    await tester.pumpAndSettle();
+    expect(find.byType(TargetScreen), findsOneWidget);
+    final targetElement = tester.element(find.byType(TargetScreen));
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    await tabs.save(order: tabs.order, hiddenTabs: {});
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('更多功能'), findsNothing);
+    await tester.tap(_tab('目标'));
+    await tester.pumpAndSettle();
+    expect(tester.element(find.byType(TargetScreen)), same(targetElement));
+    expect(find.byType(BackButton), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   for (final size in [const Size(360, 800), const Size(1200, 800)]) {
@@ -329,6 +463,16 @@ void main() {
       tester.element(find.byType(DiaryScreen, skipOffstage: false)),
       same(diaryElement),
     );
+
+    await tester.tap(find.byTooltip('更多功能'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('hidden-main-tab-diary')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.element(find.byType(DiaryScreen)), same(diaryElement));
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    expect(find.byType(ProfileScreen), findsOneWidget);
 
     await tabs.save(order: reordered, hiddenTabs: {});
     await tester.pump();
@@ -433,5 +577,45 @@ void main() {
     expect(provider.statsCalls, greaterThan(0));
     expect(provider.lastDailyStatistics!.last.hours, closeTo(1 / 6, 1e-9));
     expect(find.text(focus.name), findsWidgets);
+  });
+
+  testWidgets('临时打开隐藏页时暂停我的页统计，返回后恢复并保留筛选', (tester) async {
+    final provider = await _pumpMainScreen(
+      tester,
+      createProvider: _CountingProvider.new,
+      initialPreferences: {
+        MainTabProvider.storageKey: jsonEncode({
+          'order': [
+            'profile',
+            'record',
+            'diary',
+            'travel',
+            'check_in',
+            'target'
+          ],
+          'hidden': ['target'],
+        }),
+      },
+    ) as _CountingProvider;
+    await tester.tap(find.descendant(
+      of: find.byType(TabBar),
+      matching: find.text('总览'),
+    ));
+    await tester.pump();
+    await tester.tap(find.byTooltip('更多功能'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('hidden-main-tab-target')));
+    await tester.pumpAndSettle();
+    provider.resetCounters();
+    provider.notifyStatusOnly();
+    await tester.pump();
+    expect(provider.statsCalls, 0);
+    expect(provider.dailyCalls, 0);
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    expect(provider.statsCalls, greaterThan(0));
+    expect(provider.dailyCalls, greaterThan(0));
+    expect(tester.widget<TabBar>(find.byType(TabBar)).controller!.index, 3);
+    expect(tester.takeException(), isNull);
   });
 }

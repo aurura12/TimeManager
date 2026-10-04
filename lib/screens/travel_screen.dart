@@ -1583,7 +1583,8 @@ class _TravelScreenState extends State<TravelScreen> {
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  color: context.wallpaperFill(colorScheme.surfaceContainerHigh),
+                  color:
+                      context.wallpaperFill(colorScheme.surfaceContainerHigh),
                   child: const Row(
                     children: [
                       SizedBox(
@@ -1696,7 +1697,10 @@ class _TravelScreenState extends State<TravelScreen> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+        appBar: AppBar(title: const Text('出行')),
+        body: const Center(child: CircularProgressIndicator()),
+      );
     }
     return Scaffold(
       appBar: AppBar(

@@ -47,6 +47,7 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   MainTabId? _selectedTab;
+  LocalHistoryEntry? _hiddenTabHistory;
 
   late final Map<MainTabId, Widget Function()> _tabBuilders;
   late final List<Widget?> _tabPages;
@@ -77,7 +78,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       MainTabId.travel: () => const TravelScreen(),
       MainTabId.checkIn: () => const CheckInScreen(),
       MainTabId.target: () => const TargetScreen(),
-      MainTabId.profile: () => const ProfileScreen(),
+      MainTabId.profile: () => ProfileScreen(onOpenHiddenTab: _openHiddenTab),
     };
     _tabPages = List<Widget?>.filled(MainTabId.values.length, null);
     _mainTabProvider = context.read<MainTabProvider>();
@@ -103,6 +104,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    final hiddenTabHistory = _hiddenTabHistory;
+    _hiddenTabHistory = null;
+    hiddenTabHistory?.remove();
     _timeProvider.removeListener(_tryShowOnThisDay);
     _mainTabProvider.removeListener(_onTabSettingsChanged);
     WidgetsBinding.instance.removeObserver(this);
@@ -224,11 +228,41 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (!mounted || !_mainTabProvider.isLoaded) return;
     final visibleTabs = _mainTabProvider.visibleTabs;
     final nextTab =
-        visibleTabs.contains(_selectedTab) ? _selectedTab! : visibleTabs.first;
+        _hiddenTabHistory != null || visibleTabs.contains(_selectedTab)
+            ? _selectedTab!
+            : visibleTabs.first;
     if (_selectedTab == MainTabId.record && nextTab != MainTabId.record) {
       _homeKey.currentState?.exitBrushMode();
     }
     setState(() => _selectedTab = nextTab);
+  }
+
+  void _openHiddenTab(MainTabId tab) {
+    if (_hiddenTabHistory != null ||
+        !_mainTabProvider.hiddenTabs.contains(tab)) {
+      return;
+    }
+    final route = ModalRoute.of(context);
+    if (route == null) return;
+
+    // 只临时切换内容，页面仍留在原来的 IndexedStack 中保活。
+    // 本地路由历史让顶部返回键和系统返回都回到“我的”，不改变导航偏好。
+    final history = LocalHistoryEntry(onRemove: () {
+      if (!mounted || _hiddenTabHistory == null) return;
+      if (_selectedTab == MainTabId.record) {
+        _homeKey.currentState?.exitBrushMode();
+      }
+      setState(() {
+        _hiddenTabHistory = null;
+        _selectedTab = MainTabId.profile;
+      });
+    });
+    _hiddenTabHistory = history;
+    route.addLocalHistoryEntry(history);
+    setState(() {
+      _selectedTab = tab;
+      _ensureTabBuilt(tab);
+    });
   }
 
   void _ensureTabBuilt(MainTabId tab) {
@@ -241,7 +275,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       (index) => MainTabActivity(
         key: ValueKey(MainTabId.values[index]),
         isActive: MainTabId.values[index] == _selectedTab,
-        child: _tabPages[index] ?? const SizedBox.shrink(),
+        child: TickerMode(
+          enabled: MainTabId.values[index] == _selectedTab,
+          child: _tabPages[index] ?? const SizedBox.shrink(),
+        ),
       ),
       growable: false,
     );
@@ -275,6 +312,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final items = _mainTabProvider.visibleTabs;
     final selectedTab = _selectedTab!;
     final navigationIndex = items.indexOf(selectedTab);
+    final showNavigation = _hiddenTabHistory == null;
     _ensureTabBuilt(selectedTab);
     final options = _buildTabPages();
     final scheduleSyncProgress =
@@ -287,24 +325,30 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             wallpaperTheme.enabled ? Colors.transparent : surfaces.page,
         body: Row(
           children: [
-            NavigationRail(
-              selectedIndex: navigationIndex,
-              onDestinationSelected: (index) => _onItemTapped(items[index]),
-              labelType: NavigationRailLabelType.all,
-              leading: const SizedBox(height: AppSpacing.sm),
-              destinations: [
-                for (final item in items)
-                  NavigationRailDestination(
-                    icon: Icon(item.icon),
-                    selectedIcon: Icon(item.selectedIcon),
-                    label: Text(item.label),
-                  ),
-              ],
+            Visibility(
+              visible: showNavigation,
+              child: NavigationRail(
+                selectedIndex: navigationIndex < 0 ? null : navigationIndex,
+                onDestinationSelected: (index) => _onItemTapped(items[index]),
+                labelType: NavigationRailLabelType.all,
+                leading: const SizedBox(height: AppSpacing.sm),
+                destinations: [
+                  for (final item in items)
+                    NavigationRailDestination(
+                      icon: Icon(item.icon),
+                      selectedIcon: Icon(item.selectedIcon),
+                      label: Text(item.label),
+                    ),
+                ],
+              ),
             ),
-            VerticalDivider(
-              width: AppSizes.hairline,
-              thickness: AppSizes.hairline,
-              color: surfaces.border,
+            Visibility(
+              visible: showNavigation,
+              child: VerticalDivider(
+                width: AppSizes.hairline,
+                thickness: AppSizes.hairline,
+                color: surfaces.border,
+              ),
             ),
             Expanded(
               child: _buildContentStack(
@@ -326,26 +370,29 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         progress: scheduleSyncProgress,
       ),
       // 顶部一条弱边框，和内容区拉开层级（颜色与圆角统一走主题）
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: surfaces.panel,
-          border: Border(top: BorderSide(color: surfaces.border)),
-        ),
-        child: NavigationBar(
-          backgroundColor: wallpaperTheme.enabled ? Colors.transparent : null,
-          selectedIndex: navigationIndex,
-          onDestinationSelected: (index) => _onItemTapped(items[index]),
-          destinations: [
-            for (final item in items)
-              NavigationDestination(
-                icon: Icon(item.icon),
-                selectedIcon: Icon(item.selectedIcon),
-                label: item.label,
-                tooltip: item.label,
+      bottomNavigationBar: showNavigation
+          ? Container(
+              decoration: BoxDecoration(
+                color: surfaces.panel,
+                border: Border(top: BorderSide(color: surfaces.border)),
               ),
-          ],
-        ),
-      ),
+              child: NavigationBar(
+                backgroundColor:
+                    wallpaperTheme.enabled ? Colors.transparent : null,
+                selectedIndex: navigationIndex,
+                onDestinationSelected: (index) => _onItemTapped(items[index]),
+                destinations: [
+                  for (final item in items)
+                    NavigationDestination(
+                      icon: Icon(item.icon),
+                      selectedIcon: Icon(item.selectedIcon),
+                      label: item.label,
+                      tooltip: item.label,
+                    ),
+                ],
+              ),
+            )
+          : null,
     );
   }
 
