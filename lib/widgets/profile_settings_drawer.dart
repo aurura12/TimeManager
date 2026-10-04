@@ -29,6 +29,19 @@ import 'background_image_layer.dart';
 import 'theme_color_sheet.dart';
 import 'time_wheel_sheet.dart';
 
+enum _ProfileDrawerSection {
+  account('身份与连接'),
+  review('记录回顾'),
+  appearance('外观设置'),
+  reminders('提醒设置'),
+  backup('数据备份'),
+  app('关于应用');
+
+  const _ProfileDrawerSection(this.title);
+
+  final String title;
+}
+
 class ProfileSettingsDrawer extends StatefulWidget {
   final VoidCallback onChanged;
   final bool? desktopPlatformOverride;
@@ -46,8 +59,9 @@ class ProfileSettingsDrawer extends StatefulWidget {
 }
 
 class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
-  /// Windows 用户身份选择是否展开（选中角色后自动收起）
-  bool _identityExpanded = false;
+  _ProfileDrawerSection? _section;
+  LocalHistoryEntry? _sectionHistoryEntry;
+  late final Future<PackageInfo> _packageInfo = PackageInfo.fromPlatform();
   bool _identitySwitching = false;
 
   /// 写日记提醒（仅 Android）。不放进 Provider：它不是业务数据，
@@ -60,6 +74,58 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
   void initState() {
     super.initState();
     unawaited(_loadDiaryReminderStatus());
+  }
+
+  @override
+  void dispose() {
+    // 抽屉被侧滑或遮罩关闭时，不能把分组的返回记录留在主页面上。
+    final entry = _sectionHistoryEntry;
+    _sectionHistoryEntry = null;
+    entry?.remove();
+    super.dispose();
+  }
+
+  void _openSection(_ProfileDrawerSection section) {
+    if (_sectionHistoryEntry == null) {
+      final route = ModalRoute.of(context);
+      if (route != null) {
+        late final LocalHistoryEntry entry;
+        entry = LocalHistoryEntry(
+          impliesAppBarDismissal: false,
+          onRemove: () {
+            if (!mounted || _sectionHistoryEntry != entry) return;
+            final previous = _section;
+            _sectionHistoryEntry = null;
+            setState(() => _section = null);
+            if (previous == _ProfileDrawerSection.account) {
+              unawaited(_loadDiaryReminderStatus());
+            }
+          },
+        );
+        _sectionHistoryEntry = entry;
+        route.addLocalHistoryEntry(entry);
+      }
+    }
+    setState(() => _section = section);
+  }
+
+  void _backToDirectory() {
+    if (_sectionHistoryEntry != null) {
+      _sectionHistoryEntry!.remove();
+    } else {
+      setState(() => _section = null);
+    }
+  }
+
+  void _closeDrawer() {
+    _backToDirectory();
+    Navigator.of(context).pop();
+  }
+
+  void _openScreen(Widget screen) {
+    final navigator = Navigator.of(context);
+    _closeDrawer();
+    navigator.push(MaterialPageRoute<void>(builder: (_) => screen));
   }
 
   Future<void> _loadDiaryReminderStatus() async {
@@ -87,10 +153,11 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
   Widget build(BuildContext context) {
     final provider = context.watch<TimeProvider>();
     final backgroundImage = context.watch<BackgroundImageProvider>();
-    final googleUser = AppIdentityService.googleUser;
     final themeModeProvider = context.watch<ThemeModeProvider>();
     final colorScheme = Theme.of(context).colorScheme;
     final isAndroid = widget.androidPlatformOverride ?? Platform.isAndroid;
+    final isDesktop = widget.desktopPlatformOverride ?? isDesktopPlatform;
+    final section = _section;
 
     return Drawer(
       backgroundColor: Colors.transparent,
@@ -100,213 +167,381 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
         child: SafeArea(
           child: Column(
             children: [
-              Expanded(
-                child: ListView(
-                  padding: EdgeInsets.zero,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-                      child: Text(
-                        '账户与数据',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: colorScheme.onSurfaceVariant,
-                        ),
+              if (section != null) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm,
+                    vertical: AppSpacing.sm,
+                  ),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        tooltip: '返回设置目录',
+                        onPressed: _backToDirectory,
+                        icon: const Icon(Icons.arrow_back_rounded),
                       ),
-                    ),
-                    if (widget.desktopPlatformOverride ??
-                        isDesktopPlatform) ...[
-                      _buildManualIdentitySection(
-                        context,
-                        provider,
-                        title: 'Windows 用户身份',
+                      const SizedBox(width: AppSpacing.xs),
+                      Expanded(
+                        child: Text(section.title, style: AppText.pageTitle),
                       ),
-                    ] else ...[
-                      if (provider.isManualIdentityMode)
-                        _buildManualIdentitySection(
-                          context,
-                          provider,
-                          title: '手动用户身份',
-                        )
-                      else
-                        _buildLoginSection(
-                          context,
-                          provider.isGoogleIdentityMode
-                              ? AppIdentityService.googleUser
-                              : googleUser,
-                          provider,
-                        ),
-                      const Divider(height: 1),
-                      _buildRemoteSyncSection(context, provider),
+                      IconButton(
+                        tooltip: '关闭设置',
+                        onPressed: _closeDrawer,
+                        icon: const Icon(Icons.close_rounded),
+                      ),
                     ],
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: const Icon(Icons.sync_rounded),
-                      title: const Text('同步中心'),
-                      subtitle: Text(
-                        provider.hasPendingSync
-                            ? '有 ${provider.pendingSyncDates.length} 天待同步，查看全部状态'
-                            : '查看各模块同步状态并重试',
-                      ),
-                      onTap: () {
-                        final navigator = Navigator.of(context);
-                        navigator.pop();
-                        navigator.push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => const SyncCenterScreen(),
-                          ),
-                        );
-                      },
-                    ),
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: const Icon(Icons.palette_outlined),
-                      title: const Text('外观模式'),
-                      subtitle:
-                          Text(_themeModeLabel(themeModeProvider.themeMode)),
-                      trailing: DropdownButtonHideUnderline(
-                        child: DropdownButton<ThemeMode>(
-                          value: themeModeProvider.themeMode,
-                          onChanged: (mode) {
-                            if (mode != null) {
-                              themeModeProvider.setThemeMode(mode);
-                            }
-                          },
-                          items: const [
-                            DropdownMenuItem(
-                              value: ThemeMode.system,
-                              child: Text('跟随系统'),
-                            ),
-                            DropdownMenuItem(
-                              value: ThemeMode.light,
-                              child: Text('浅色'),
-                            ),
-                            DropdownMenuItem(
-                              value: ThemeMode.dark,
-                              child: Text('深色'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.color_lens_outlined),
-                      title: const Text('主题色'),
-                      subtitle: Text(
-                        AppThemeColorPreset.labelFor(
-                          themeModeProvider.themeColor,
-                        ),
-                      ),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => showThemeColorSheet(
-                        context,
-                        provider: themeModeProvider,
-                      ),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.wallpaper_outlined),
-                      title: const Text('背景图片'),
-                      subtitle: Text(
-                        !backgroundImage.hasPhoto
-                            ? '选择本机照片设置全屏背景'
-                            : backgroundImage.enabled
-                                ? '已启用 · 可调节照片与界面不透明度'
-                                : '已设置 · 当前未启用',
-                      ),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () =>
-                          _openBackgroundImageSettings(backgroundImage),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.upload_file_outlined),
-                      title: const Text('导出备份'),
-                      subtitle: const Text('保存 JSON 到本地'),
-                      onTap: () async {
-                        final rootContext =
-                            Navigator.of(context, rootNavigator: true).context;
-                        Navigator.pop(context);
-                        await _handleExport(rootContext, provider);
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.download_outlined),
-                      title: const Text('导入备份'),
-                      subtitle: const Text('从 JSON 恢复数据'),
-                      onTap: () async {
-                        final rootContext =
-                            Navigator.of(context, rootNavigator: true).context;
-                        Navigator.pop(context);
-                        await _handleImport(rootContext, provider);
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.receipt_long_outlined),
-                      title: const Text('运行日志'),
-                      subtitle: const Text('查看问题记录并导出日志'),
-                      onTap: () {
-                        final navigator = Navigator.of(context);
-                        navigator.pop();
-                        navigator.push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => const AppLogScreen(),
-                          ),
-                        );
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.bubble_chart_outlined),
-                      title: const Text('事件词云'),
-                      subtitle: const Text('按时长与出现次数查看事件热度'),
-                      onTap: () {
-                        Navigator.pop(context);
-                        WordCloudScreen.open(context);
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.history_rounded),
-                      title: const Text('那年今日'),
-                      subtitle: const Text('回顾往年今天的日记、出行和活动'),
-                      onTap: () {
-                        Navigator.pop(context);
-                        OnThisDayScreen.open(context);
-                      },
-                    ),
-                    // 独立分区，插在最后的「检查更新」之前，避免后续条目被视觉归到「提醒」下
-                    if (isAndroid) ...[
-                      const Divider(height: AppSizes.hairline),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(
-                          AppSpacing.pageHorizontal,
-                          AppSpacing.lg,
-                          AppSpacing.pageHorizontal,
-                          AppSpacing.md,
-                        ),
-                        child: Text(
-                          '提醒',
-                          style: AppText.caption.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ),
-                      _buildDiaryReminderSection(context, colorScheme),
-                    ],
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: const Icon(Icons.system_update_outlined),
-                      title: const Text('检查更新'),
-                      subtitle: const Text('检查是否有新版本'),
-                      onTap: () => _checkForUpdate(context),
-                    ),
-                  ],
+                  ),
                 ),
+                const Divider(height: AppSizes.hairline),
+              ],
+              Expanded(
+                child: section == null
+                    ? _buildDirectory(context, provider, isAndroid, isDesktop)
+                    : _buildSectionContent(
+                        context,
+                        section,
+                        provider,
+                        themeModeProvider,
+                        backgroundImage,
+                        isDesktop,
+                      ),
               ),
               _buildVersionFooter(),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildDirectory(
+    BuildContext context,
+    TimeProvider provider,
+    bool isAndroid,
+    bool isDesktop,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final reminderStatus = _diaryReminderStatus;
+    final reminderNeedsAttention = reminderStatus != null &&
+        (reminderStatus.issue != DiaryReminderIssue.none ||
+            reminderStatus.message != null);
+
+    return ListView(
+      key: const PageStorageKey('profile-settings-directory'),
+      padding: AppSpacing.page,
+      children: [
+        const SizedBox(height: AppSpacing.lg),
+        _buildIdentityHeader(context, provider, isDesktop),
+        const SizedBox(height: AppSpacing.md),
+        Material(
+          color: context.wallpaperFill(colorScheme.primaryContainer),
+          borderRadius: AppRadius.controlAll,
+          clipBehavior: Clip.antiAlias,
+          child: ListTile(
+            leading:
+                Icon(Icons.sync_rounded, color: colorScheme.onPrimaryContainer),
+            title: Text('同步中心',
+                style: AppText.sectionTitle
+                    .copyWith(color: colorScheme.onPrimaryContainer)),
+            subtitle: Text(
+              provider.hasPendingSync
+                  ? '有 ${provider.pendingSyncDates.length} 天待同步'
+                  : '查看各模块同步状态',
+              style: AppText.caption
+                  .copyWith(color: colorScheme.onPrimaryContainer),
+            ),
+            trailing: Icon(Icons.chevron_right,
+                color: colorScheme.onPrimaryContainer),
+            onTap: () => _openScreen(const SyncCenterScreen()),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.xl),
+        Text('工具与设置',
+            style: AppText.caption.copyWith(
+              color: colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+            )),
+        const SizedBox(height: AppSpacing.sm),
+        _buildSettingsPanel(context, [
+          _buildDirectoryTile(
+            context,
+            section: _ProfileDrawerSection.review,
+            icon: Icons.history_rounded,
+            subtitle: '事件词云 · 那年今日',
+          ),
+          _buildDirectoryTile(
+            context,
+            section: _ProfileDrawerSection.appearance,
+            icon: Icons.palette_outlined,
+            subtitle: '模式 · 主题色 · 背景',
+          ),
+          if (isAndroid)
+            _buildDirectoryTile(
+              context,
+              section: _ProfileDrawerSection.reminders,
+              icon: Icons.notifications_none_rounded,
+              subtitle: !_diaryReminderLoaded || reminderStatus == null
+                  ? '正在读取设置…'
+                  : _diaryReminderSubtitle(reminderStatus),
+              needsAttention: reminderNeedsAttention,
+            ),
+          _buildDirectoryTile(
+            context,
+            section: _ProfileDrawerSection.backup,
+            icon: Icons.backup_outlined,
+            subtitle: '导出备份 · 导入备份',
+          ),
+          _buildDirectoryTile(
+            context,
+            section: _ProfileDrawerSection.app,
+            icon: Icons.info_outline_rounded,
+            subtitle: '检查更新 · 运行日志',
+          ),
+        ]),
+        const SizedBox(height: AppSpacing.lg),
+      ],
+    );
+  }
+
+  Widget _buildIdentityHeader(
+    BuildContext context,
+    TimeProvider provider,
+    bool isDesktop,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final googleMode = !isDesktop && provider.isGoogleIdentityMode;
+    final googleUser = googleMode ? AppIdentityService.googleUser : null;
+    final selected = provider.hasSelectedScheduleUser;
+    final label = googleMode
+        ? googleUser?.label ?? '连接 Google 日历'
+        : selected
+            ? (provider.scheduleUser == DiaryKind.g ? '乖乖' : '晶晶')
+            : '选择用户身份';
+    final subtitle = _identitySwitching
+        ? '正在切换身份…'
+        : googleMode
+            ? GoogleCalendarService.isSignedIn
+                ? '当前身份 · Google 日历已连接'
+                : '当前身份 · Google 日历未连接'
+            : selected
+                ? '当前身份 · 手动模式'
+                : '选择后可同步数据';
+
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: CircleAvatar(
+        radius: AppSizes.button / 2,
+        backgroundColor: context.wallpaperFill(colorScheme.primaryContainer),
+        foregroundColor: colorScheme.onPrimaryContainer,
+        backgroundImage: googleUser?.photoUrl != null
+            ? NetworkImage(googleUser!.photoUrl!)
+            : null,
+        child: googleUser?.photoUrl != null
+            ? null
+            : selected
+                ? Text(label.characters.first, style: AppText.sectionTitle)
+                : const Icon(Icons.person_outline_rounded),
+      ),
+      title: Text(label, style: AppText.sectionTitle),
+      subtitle: Text(subtitle, style: AppText.caption),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: () => _openSection(_ProfileDrawerSection.account),
+    );
+  }
+
+  Widget _buildDirectoryTile(
+    BuildContext context, {
+    required _ProfileDrawerSection section,
+    required IconData icon,
+    required String subtitle,
+    bool needsAttention = false,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return ListTile(
+      leading: Icon(icon, color: colorScheme.onSurfaceVariant),
+      title: Text(section.title, style: AppText.sectionTitle),
+      subtitle: Text(
+        subtitle,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: AppText.caption.copyWith(
+          color:
+              needsAttention ? colorScheme.error : colorScheme.onSurfaceVariant,
+        ),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (needsAttention) ...[
+            Icon(Icons.error_outline_rounded,
+                color: colorScheme.error, size: AppSpacing.lg),
+            const SizedBox(width: AppSpacing.xs),
+          ],
+          const Icon(Icons.chevron_right),
+        ],
+      ),
+      onTap: () => _openSection(section),
+    );
+  }
+
+  Widget _buildSettingsPanel(BuildContext context, List<Widget> children) {
+    return Card(
+      margin: EdgeInsets.zero,
+      color: context.wallpaperFill(AppSurfaces.of(context).card),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          for (var i = 0; i < children.length; i++) ...[
+            if (i > 0)
+              const Divider(
+                height: AppSizes.hairline,
+                indent: AppSpacing.lg + AppSpacing.xl + AppSpacing.lg,
+              ),
+            children[i],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionContent(
+    BuildContext context,
+    _ProfileDrawerSection section,
+    TimeProvider provider,
+    ThemeModeProvider themeModeProvider,
+    BackgroundImageProvider backgroundImage,
+    bool isDesktop,
+  ) {
+    final children = switch (section) {
+      _ProfileDrawerSection.account => [
+          if (isDesktop || provider.isManualIdentityMode)
+            _buildManualIdentitySection(context, provider, title: '用户身份')
+          else
+            _buildLoginSection(
+                context, AppIdentityService.googleUser, provider),
+          if (!isDesktop) _buildRemoteSyncSection(context, provider),
+        ],
+      _ProfileDrawerSection.review => [
+          ListTile(
+            leading: const Icon(Icons.bubble_chart_outlined),
+            title: const Text('事件词云'),
+            subtitle: const Text('查看事件时长与出现次数'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              _closeDrawer();
+              WordCloudScreen.open(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.history_rounded),
+            title: const Text('那年今日'),
+            subtitle: const Text('回顾往年今天的记录'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              _closeDrawer();
+              OnThisDayScreen.open(context);
+            },
+          ),
+        ],
+      _ProfileDrawerSection.appearance => [
+          ListTile(
+            leading: const Icon(Icons.palette_outlined),
+            title: const Text('外观模式'),
+            trailing: DropdownButtonHideUnderline(
+              child: DropdownButton<ThemeMode>(
+                value: themeModeProvider.themeMode,
+                style: AppText.body
+                    .copyWith(color: Theme.of(context).colorScheme.onSurface),
+                onChanged: (mode) {
+                  if (mode != null) themeModeProvider.setThemeMode(mode);
+                },
+                items: const [
+                  DropdownMenuItem(
+                    value: ThemeMode.system,
+                    child: Text('跟随系统'),
+                  ),
+                  DropdownMenuItem(
+                    value: ThemeMode.light,
+                    child: Text('浅色'),
+                  ),
+                  DropdownMenuItem(
+                    value: ThemeMode.dark,
+                    child: Text('深色'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.color_lens_outlined),
+            title: const Text('主题色'),
+            subtitle: Text(
+                AppThemeColorPreset.labelFor(themeModeProvider.themeColor)),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () =>
+                showThemeColorSheet(context, provider: themeModeProvider),
+          ),
+          ListTile(
+            leading: const Icon(Icons.wallpaper_outlined),
+            title: const Text('背景图片'),
+            subtitle: Text(!backgroundImage.hasPhoto
+                ? '未设置'
+                : backgroundImage.enabled
+                    ? '已启用'
+                    : '已设置 · 未启用'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _openBackgroundImageSettings(backgroundImage),
+          ),
+        ],
+      _ProfileDrawerSection.reminders => [
+          _buildDiaryReminderSection(context, Theme.of(context).colorScheme),
+        ],
+      _ProfileDrawerSection.backup => [
+          ListTile(
+            leading: const Icon(Icons.upload_file_outlined),
+            title: const Text('导出备份'),
+            subtitle: const Text('保存 JSON 到本地'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              final rootContext =
+                  Navigator.of(context, rootNavigator: true).context;
+              _closeDrawer();
+              await _handleExport(rootContext, provider);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.download_outlined),
+            title: const Text('导入备份'),
+            subtitle: const Text('从 JSON 恢复数据'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              final rootContext =
+                  Navigator.of(context, rootNavigator: true).context;
+              _closeDrawer();
+              await _handleImport(rootContext, provider);
+            },
+          ),
+        ],
+      _ProfileDrawerSection.app => [
+          ListTile(
+            leading: const Icon(Icons.system_update_outlined),
+            title: const Text('检查更新'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _checkForUpdate(context),
+          ),
+          ListTile(
+            leading: const Icon(Icons.receipt_long_outlined),
+            title: const Text('运行日志'),
+            subtitle: const Text('查看问题记录并导出'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _openScreen(const AppLogScreen()),
+          ),
+        ],
+    };
+    return ListView(
+      key: ValueKey(section),
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      children: [_buildSettingsPanel(context, children)],
     );
   }
 
@@ -398,7 +633,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       case DiaryReminderIssue.statusUnavailable:
         return '读取设置失败';
       case DiaryReminderIssue.identityUnavailable:
-        return '请先选择上方用户身份';
+        return '请先选择用户身份';
       case DiaryReminderIssue.timezoneUnavailable:
         return '系统时区异常，已暂停提醒';
       case DiaryReminderIssue.notificationsDenied:
@@ -620,8 +855,6 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
   }) {
     final selected =
         provider.hasSelectedScheduleUser ? provider.scheduleUser : null;
-    // 未选择时强制展开以便选择；选中后默认收起，点击身份行可展开切换
-    final expanded = selected == null || _identityExpanded;
     return Column(
       children: [
         ListTile(
@@ -634,37 +867,31 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                     ? '请选择身份后再同步'
                     : '当前身份：${selected == DiaryKind.g ? '乖乖' : '晶晶'}',
           ),
-          trailing: Icon(expanded ? Icons.expand_less : Icons.expand_more),
-          onTap: () {
-            if (_identitySwitching) return;
-            setState(() => _identityExpanded = !_identityExpanded);
-          },
         ),
-        if (expanded)
-          // 切换进行中禁止再次选择（桌面端可能要等旧身份补推完）
-          AbsorbPointer(
-            absorbing: _identitySwitching,
-            child: RadioGroup<DiaryKind>(
-              groupValue: selected,
-              onChanged: (kind) {
-                if (kind != null) {
-                  _selectIdentity(provider, previous: selected, kind: kind);
-                }
-              },
-              child: const Column(
-                children: [
-                  RadioListTile<DiaryKind>(
-                    title: Text('乖乖'),
-                    value: DiaryKind.g,
-                  ),
-                  RadioListTile<DiaryKind>(
-                    title: Text('晶晶'),
-                    value: DiaryKind.j,
-                  ),
-                ],
-              ),
+        // 已进入身份详情，直接列出选项。切换期间仍禁止重复选择。
+        AbsorbPointer(
+          absorbing: _identitySwitching,
+          child: RadioGroup<DiaryKind>(
+            groupValue: selected,
+            onChanged: (kind) {
+              if (kind != null) {
+                _selectIdentity(provider, previous: selected, kind: kind);
+              }
+            },
+            child: const Column(
+              children: [
+                RadioListTile<DiaryKind>(
+                  title: Text('乖乖'),
+                  value: DiaryKind.g,
+                ),
+                RadioListTile<DiaryKind>(
+                  title: Text('晶晶'),
+                  value: DiaryKind.j,
+                ),
+              ],
             ),
           ),
+        ),
       ],
     );
   }
@@ -721,7 +948,6 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       if (mounted) {
         setState(() {
           _identitySwitching = false;
-          _identityExpanded = false; // 选中后收起
         });
       }
     }
@@ -730,20 +956,26 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
 
   Widget _buildVersionFooter() {
     return FutureBuilder<PackageInfo>(
-      future: PackageInfo.fromPlatform(),
+      future: _packageInfo,
       builder: (context, snapshot) {
         final version = snapshot.data?.version;
         if (version == null || version.isEmpty) {
-          return const SizedBox(height: 16);
+          return const SizedBox(height: AppSpacing.lg);
         }
         return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: Text(
-            'v$version',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.outline,
-              fontSize: 12,
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.sm,
+            AppSpacing.lg,
+            AppSpacing.lg,
+          ),
+          child: DefaultTextStyle.merge(
+            style: AppText.caption.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [const Text('Time Manager'), Text('v$version')],
             ),
           ),
         );
@@ -946,7 +1178,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                     clearManualIdentity: false,
                   );
                   widget.onChanged();
-                  if (context.mounted) Navigator.pop(context);
+                  if (context.mounted) _closeDrawer();
                 },
               ),
             ),
@@ -1032,7 +1264,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     if (ok) {
       provider.synchronizeCalendar();
       widget.onChanged();
-      Navigator.pop(context);
+      _closeDrawer();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1041,17 +1273,6 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           ),
         ),
       );
-    }
-  }
-
-  String _themeModeLabel(ThemeMode mode) {
-    switch (mode) {
-      case ThemeMode.system:
-        return '当前：跟随系统';
-      case ThemeMode.light:
-        return '当前：浅色';
-      case ThemeMode.dark:
-        return '当前：深色';
     }
   }
 
@@ -1222,8 +1443,7 @@ class _BackgroundImageSettingsSheetState
       animation: background,
       builder: (context, _) {
         final opacityPercent = (background.opacity * 100).round();
-        final surfaceOpacityPercent =
-            (background.surfaceOpacity * 100).round();
+        final surfaceOpacityPercent = (background.surfaceOpacity * 100).round();
         final opacityExceedsSafeValue =
             background.opacity > wallpaperTheme.safePhotoOpacity;
         return SingleChildScrollView(

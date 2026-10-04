@@ -105,6 +105,7 @@ void main() {
   Future<void> pumpDrawer(
     WidgetTester tester, {
     required bool android,
+    bool openReminders = true,
   }) async {
     // 视口给足高度：抽屉是长 ListView，懒构建会让折叠线以下的条目根本不挂载
     tester.view.physicalSize = const Size(400, 2600);
@@ -140,6 +141,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 20));
     }
     await tester.pump();
+    if (android && openReminders) {
+      await tester.tap(find.text('提醒设置'));
+      await tester.pumpAndSettle();
+    }
   }
 
   setUp(() {
@@ -164,7 +169,7 @@ void main() {
   testWidgets('Android 上显示提醒分区与默认时间', (tester) async {
     await pumpDrawer(tester, android: true);
 
-    expect(find.text('提醒'), findsOneWidget);
+    expect(find.text('提醒设置'), findsOneWidget);
     expect(find.text('写日记提醒'), findsOneWidget);
     expect(find.text('提醒时间'), findsOneWidget);
     expect(find.text('21:00'), findsOneWidget);
@@ -176,7 +181,7 @@ void main() {
   testWidgets('非 Android 平台不渲染提醒分区', (tester) async {
     await pumpDrawer(tester, android: false);
 
-    expect(find.text('提醒'), findsNothing);
+    expect(find.text('提醒设置'), findsNothing);
     expect(find.text('写日记提醒'), findsNothing);
     expect(find.text('提醒时间'), findsNothing);
     expect(find.text('发送测试通知'), findsNothing);
@@ -207,7 +212,7 @@ void main() {
 
     await pumpDrawer(tester, android: true);
 
-    expect(find.text('请先选择上方用户身份'), findsOneWidget);
+    expect(find.text('请先选择用户身份'), findsOneWidget);
     final switchTile = tester.widget<SwitchListTile>(
       find.byType(SwitchListTile).last,
     );
@@ -223,6 +228,21 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('写日记提醒'), findsOneWidget);
     expect(find.text('提醒初始化失败，请查看运行日志'), findsOneWidget);
+  });
+
+  testWidgets('提醒异常在目录里可见，进入详情后仍显示处理说明', (tester) async {
+    backend.throwOnInitialize = true;
+
+    await pumpDrawer(tester, android: true, openReminders: false);
+    expect(find.text('提醒设置'), findsOneWidget);
+    expect(find.text('排程失败'), findsOneWidget);
+    expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+    expect(find.text('写日记提醒'), findsNothing);
+
+    await tester.tap(find.text('提醒设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('提醒初始化失败，请查看运行日志'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('通知权限被拒时开关自动回滚为关闭', (tester) async {

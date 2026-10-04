@@ -2346,7 +2346,7 @@ void main() {
     expect(find.text('推送所有日程'), findsNothing);
     expect(find.text('覆盖拉取日程'), findsNothing);
     expect(find.text('同步中心'), findsOneWidget);
-    expect(find.text('Windows 用户身份'), findsOneWidget);
+    expect(find.byType(CircleAvatar), findsOneWidget);
   });
 
   testWidgets('mobile drawer no longer exposes manual schedule sync entries',

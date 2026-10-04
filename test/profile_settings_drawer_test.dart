@@ -8,6 +8,7 @@ import 'package:time_manager/providers/background_image_provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/services/app_identity_service.dart';
+import 'package:time_manager/theme/app_theme.dart';
 import 'package:time_manager/widgets/profile_settings_drawer.dart';
 
 void main() {
@@ -79,6 +80,9 @@ void main() {
     WidgetTester tester,
     TimeProvider provider, {
     required bool desktop,
+    bool android = false,
+    ThemeData? theme,
+    TextScaler? textScaler,
   }) async {
     await tester.pumpWidget(
       MultiProvider(
@@ -88,10 +92,18 @@ void main() {
           ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
         ],
         child: MaterialApp(
+          theme: theme ?? AppTheme.light(),
+          builder: (context, child) => textScaler == null
+              ? child!
+              : MediaQuery(
+                  data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+                  child: child!,
+                ),
           home: Scaffold(
             drawer: ProfileSettingsDrawer(
               onChanged: () {},
               desktopPlatformOverride: desktop,
+              androidPlatformOverride: android,
             ),
           ),
         ),
@@ -102,6 +114,118 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('directory groups tools and hides their detailed actions',
+      (tester) async {
+    final provider = await createIdentityProvider(tester);
+    addTearDown(provider.dispose);
+
+    await openDrawerWith(tester, provider, desktop: false, android: true);
+
+    for (final title in ['记录回顾', '外观设置', '提醒设置', '数据备份', '关于应用']) {
+      expect(find.text(title), findsOneWidget);
+    }
+    expect(find.text('同步中心'), findsOneWidget);
+    expect(find.text('乖乖'), findsOneWidget);
+    for (final title in ['事件词云', '主题色', '背景图片', '导入备份', '运行日志']) {
+      expect(find.text(title), findsNothing);
+    }
+
+    await tester.tap(find.text('数据备份'));
+    await tester.pumpAndSettle();
+    expect(find.text('导出备份'), findsOneWidget);
+    expect(find.text('导入备份'), findsOneWidget);
+    expect(find.text('同步中心'), findsNothing);
+
+    await tester.tap(find.byTooltip('返回设置目录'));
+    await tester.pumpAndSettle();
+    expect(find.text('同步中心'), findsOneWidget);
+    expect(find.text('导入备份'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('system back returns to the directory before closing the drawer',
+      (tester) async {
+    final provider = await createIdentityProvider(tester);
+    addTearDown(provider.dispose);
+    await openDrawerWith(tester, provider, desktop: false, android: true);
+    final scaffold = tester.state<ScaffoldState>(find.byType(Scaffold));
+
+    await tester.tap(find.text('外观设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('主题色'), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(scaffold.isDrawerOpen, isTrue);
+    expect(find.text('同步中心'), findsOneWidget);
+    expect(find.text('主题色'), findsNothing);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(scaffold.isDrawerOpen, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'closing a detail page leaves no history and reopens the directory',
+      (tester) async {
+    final provider = await createIdentityProvider(tester);
+    addTearDown(provider.dispose);
+    await openDrawerWith(tester, provider, desktop: true);
+    final scaffold = tester.state<ScaffoldState>(find.byType(Scaffold));
+
+    await tester.tap(find.text('数据备份'));
+    await tester.pumpAndSettle();
+    scaffold.closeDrawer();
+    await tester.pumpAndSettle();
+    expect(ModalRoute.of(scaffold.context)!.willHandlePopInternally, isFalse);
+
+    scaffold.openDrawer();
+    await tester.pumpAndSettle();
+    expect(find.text('同步中心'), findsOneWidget);
+    expect(find.text('导入备份'), findsNothing);
+
+    await tester.tap(find.text('关于应用'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('关闭设置'));
+    await tester.pumpAndSettle();
+    expect(scaffold.isDrawerOpen, isFalse);
+    expect(ModalRoute.of(scaffold.context)!.willHandlePopInternally, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final appearance in [
+    ('light', AppTheme.light()),
+    ('dark', AppTheme.dark()),
+    (
+      'wallpaper',
+      AppTheme.light(backgroundEnabled: true, surfaceOpacity: 0.72)
+    ),
+  ]) {
+    testWidgets('narrow drawer supports large text in ${appearance.$1}',
+        (tester) async {
+      tester.view.physicalSize = const Size(320, 720);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final provider = await createIdentityProvider(tester);
+      addTearDown(provider.dispose);
+
+      await openDrawerWith(
+        tester,
+        provider,
+        desktop: true,
+        theme: appearance.$2,
+        textScaler: const TextScaler.linear(2),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.ensureVisible(find.text('外观设置'));
+      await tester.tap(find.text('外观设置'));
+      await tester.pumpAndSettle();
+      expect(find.text('外观模式'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('background image setting exposes the complete opaque sheet',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
@@ -109,6 +233,8 @@ void main() {
     addTearDown(provider.dispose);
 
     await openDrawerWith(tester, provider, desktop: true);
+    await tester.tap(find.text('外观设置'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('背景图片'));
     await tester.pumpAndSettle();
 
@@ -140,6 +266,8 @@ void main() {
     addTearDown(provider.dispose);
 
     await openDrawerWith(tester, provider, desktop: true);
+    await tester.tap(find.text('外观设置'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('主题色'));
     await tester.pumpAndSettle();
 
@@ -158,8 +286,7 @@ void main() {
     expect(provider.scheduleUser, DiaryKind.g);
 
     await openDrawerWith(tester, provider, desktop: true);
-    // 已选中身份时默认收起，先展开
-    await tester.tap(find.text('Windows 用户身份'));
+    await tester.tap(find.text('乖乖'));
     await tester.pumpAndSettle();
     expect(find.text('晶晶'), findsOneWidget);
 
@@ -190,7 +317,7 @@ void main() {
     addTearDown(provider.dispose);
 
     await openDrawerWith(tester, provider, desktop: false);
-    await tester.tap(find.text('手动用户身份'));
+    await tester.tap(find.text('乖乖'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('晶晶'));
@@ -239,7 +366,8 @@ void main() {
     expect(provider.hasSelectedScheduleUser, isFalse);
 
     await openDrawerWith(tester, provider, desktop: true);
-    // 未选择时身份列表默认展开
+    await tester.tap(find.text('选择用户身份'));
+    await tester.pumpAndSettle();
     expect(find.text('晶晶'), findsOneWidget);
     await tester.tap(find.text('晶晶'));
     await tester.pumpAndSettle();
@@ -279,7 +407,7 @@ void main() {
     expect(find.text('推送所有日程'), findsNothing);
     expect(find.text('覆盖拉取日程'), findsNothing);
     expect(find.text('同步中心'), findsOneWidget);
-    expect(find.text('Windows 用户身份'), findsOneWidget);
+    expect(find.byType(CircleAvatar), findsOneWidget);
   });
 
   testWidgets(
@@ -340,9 +468,13 @@ void main() {
         find.byType(Scaffold),
       );
       scaffoldState.openDrawer();
-      await tester.pump();
+      await tester.pumpAndSettle();
 
-      expect(find.text('手动用户身份'), findsNothing);
+      await tester.tap(find.byType(CircleAvatar));
+      await tester.pumpAndSettle();
+
+      expect(find.text('用户身份'), findsNothing);
+      expect(find.text('Google 日历同步'), findsOneWidget);
     },
   );
 }
