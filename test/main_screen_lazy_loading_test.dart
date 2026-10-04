@@ -143,6 +143,7 @@ Future<TimeProvider> _pumpMainScreen(
   TimeProvider Function()? createProvider,
   Map<String, Object> initialPreferences = const {},
   Size screenSize = const Size(360, 800),
+  ThemeData? theme,
 }) async {
   _installPluginMocks(initialPreferences);
   tester.view.physicalSize = screenSize;
@@ -164,8 +165,8 @@ Future<TimeProvider> _pumpMainScreen(
         ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
       ],
       child: MaterialApp(
-        theme: AppTheme.light(),
-        darkTheme: AppTheme.dark(),
+        theme: theme ?? AppTheme.light(),
+        darkTheme: theme ?? AppTheme.dark(),
         home: const MainScreen(),
       ),
     ),
@@ -341,6 +342,54 @@ void main() {
       expect(prefs.getString(MainTabProvider.storageKey), savedSettings);
       expect(tester.takeException(), isNull);
     });
+  }
+
+  for (final brightness in Brightness.values) {
+    for (final surfaceOpacity in [0.2, AppSurfaces.defaultSurfaceOpacity]) {
+      testWidgets('更多功能菜单在 $brightness / $surfaceOpacity 壁纸模式下保持不透明',
+          (tester) async {
+        final theme = AppTheme.themeFor(
+          brightness,
+          backgroundEnabled: true,
+          surfaceOpacity: surfaceOpacity,
+        );
+        await _pumpMainScreen(
+          tester,
+          createProvider: _CountingProvider.new,
+          theme: theme,
+          initialPreferences: {
+            MainTabProvider.storageKey: jsonEncode({
+              'order': [
+                'profile',
+                'record',
+                'diary',
+                'travel',
+                'check_in',
+                'target'
+              ],
+              'hidden': ['travel', 'check_in'],
+            }),
+          },
+        );
+        await tester.tap(find.byTooltip('更多功能'));
+        await tester.pumpAndSettle();
+
+        final menuMaterial = tester.widget<Material>(find
+            .ancestor(
+              of: find.byKey(const ValueKey('hidden-main-tab-travel')),
+              matching: find.byType(Material),
+            )
+            .first);
+        expect(menuMaterial.color, theme.extension<AppSurfaces>()!.overlay);
+        expect(menuMaterial.color!.a, 1);
+        expect(find.byKey(const ValueKey('hidden-main-tab-check_in')),
+            findsOneWidget);
+        expect(tester.takeException(), isNull);
+
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+      });
+    }
   }
 
   testWidgets('桌面更多功能仅按自定义顺序列出隐藏页，恢复显示后入口消失', (tester) async {

@@ -208,6 +208,9 @@ color = Colors.orange;  // 用 AppSemanticColors.warning
 **规则：叠在壁纸上的大面积填充一律走 `context.wallpaperFill(color)`，语义实色卡片走
 `context.adaptSemanticFill(color)`。** 直接给原始实色会把照片盖死。
 
+对话框、底部弹层、弹出菜单等浮层使用 `AppSurfaces.overlay` 或对应组件主题，
+保持不透明，不调用 `wallpaperFill`，避免底层图表、文字透入浮层。
+
 ```dart
 // 对：启用壁纸时按界面不透明度变半透明，未启用时原样返回
 Container(color: context.wallpaperFill(colorScheme.surfaceContainerHigh))
@@ -312,7 +315,7 @@ Container(color: context.adaptSemanticFill(goal.color))
 - [ ] 背景图：大面积填充是否走 `wallpaperFill` / `adaptSemanticFill`，且没有把半透明色喂给 `onColor`（见 3.5）
 - [ ] 时间块可读性
 - [ ] 删除 / 警告颜色（亮红 `danger` 在白底只有 3.34:1，当文字必须压深）
-- [ ] 输入框、弹窗、底部弹层、PopupMenu 背景（分别是 `surfaces.card`）
+- [ ] 输入框使用 `surfaces.subtle`；弹窗、底部弹层、PopupMenu 使用不透明的 `surfaces.overlay`
 - [ ] 带缓存/记忆化的组件：缓存里是否混进了与主题相关的量（如词云曾把文字色存进布局缓存）
 - [ ] 小屏幕上没有按钮或文字溢出（360×640 是基准尺寸）
 

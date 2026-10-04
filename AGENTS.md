@@ -87,6 +87,7 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
 - **背景图（壁纸，仅本机）**：`BackgroundImageProvider` 持有图片路径与两档不透明度，`BackgroundImageLayer` 经 `MaterialApp.builder` 挂在 Navigator 之下（`lib/main.dart:755`，Provider 在 `main.dart:460` 注册）；主题侧由 `AppTheme.light/dark(backgroundEnabled:, surfaceOpacity:)` 生成 `AppWallpaperTheme` 扩展。**改动前先读这些约束：**
   - **绝不进同步与备份**：本地图片路径只存本机偏好，`lib/services/`（含 `DataBackupService`）与 `lib/models/` 均不引用它——路径一旦泄漏到远端/备份，在别的设备上指向不存在的文件。Provider 也因此刻意独立于业务数据 Provider
   - **叠在照片上的填充必须走 `context.wallpaperFill(color)` / `adaptSemanticFill(color)`**，不能直接给原始色（半透明色要能透出壁纸）；`test/visual_system_test.dart` 断言填充 alpha 等于 `surfaceOpacity`
+  - **浮层保持不透明**：对话框、底部弹层、弹出菜单使用 `AppSurfaces.overlay` 或对应组件主题，不能用 `card` / `wallpaperFill` 覆盖浮层底色，否则底层图表与文字会穿透菜单
   - **对比度契约**：正文对比度下限 4.5（`BackgroundImageContrast.bodyTextRatio`），按 sRGB 逐通道合成（`BackgroundImageContrast.composite`），不要依赖渲染器的 blend mode
   - **默认值与上限**：照片不透明度 0.15、界面表面 0.72，单张图片上限 32MB；图片复制进应用支持目录 `time_manager/backgrounds`，偏好键 `background_image_{path,enabled,opacity,surface_opacity}_v1`；照片文件丢失时启动校验会清掉该路径
   - 改动背景图相关代码要跑 `test/background_image_contrast_test.dart`、`test/background_image_provider_test.dart` 与 `test/visual_system_test.dart`

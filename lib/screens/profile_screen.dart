@@ -91,7 +91,6 @@ class _ProfileScreenState extends State<ProfileScreen>
                   tooltip: '更多功能',
                   icon: const Icon(Icons.apps_outlined),
                   position: PopupMenuPosition.under,
-                  color: context.wallpaperFill(AppSurfaces.of(context).card),
                   onSelected: widget.onOpenHiddenTab,
                   itemBuilder: (context) => [
                     const PopupMenuItem<MainTabId>(
