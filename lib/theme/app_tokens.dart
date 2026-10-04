@@ -155,7 +155,9 @@ abstract final class AppSizes {
   static const double categoryPanelMinWidth = 100;
   static const double categoryPanelMaxWidth = 600;
   static const double desktopCategoryPanelDefaultWidth = 240;
-  static const double desktopCategoryTileMinWidth = 112;
+
+  /// 标准字号下，含内边距与列间距的事件栏在 208 / 312 宽时分成两 / 三列。
+  static const double desktopCategoryTileMinWidth = 96;
 
   /// 可视化取色面板及选中圆环。
   static const double colorPickerPlane = 160;
