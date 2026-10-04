@@ -111,6 +111,35 @@ void main() {
     expect(restored.averageMinute(today), 8 * 60);
   });
 
+  test('历史查询覆盖全部记录，日期范围含首尾并忽略时分秒', () async {
+    final provider = await makeProvider();
+    for (final time in [
+      DateTime(2025, 12, 31, 7),
+      DateTime(2026, 1, 1, 8),
+      DateTime(2026, 9, 4, 9),
+      DateTime(2026, 10, 4, 10),
+    ]) {
+      await provider.record(time, expectedKind: DiaryKind.j);
+    }
+    expect(provider.recordsInRange().map((r) => r.dateKey), [
+      '2026-10-04',
+      '2026-09-04',
+      '2026-01-01',
+      '2025-12-31',
+    ]);
+    expect(
+        provider
+            .recordsInRange(
+                start: DateTime(2025, 12, 31, 23, 59),
+                end: DateTime(2026, 1, 1))
+            .map((r) => r.timeLabel),
+        ['08:00', '07:00']);
+    expect(provider.recordsInRange(end: DateTime(2025, 12, 30)), isEmpty);
+    expect(() => provider.recordsInRange().clear(), throwsUnsupportedError);
+    await provider.remove(DateTime(2025, 12, 31), expectedKind: DiaryKind.j);
+    expect(provider.recordsInRange(), hasLength(3));
+  });
+
   test('不同身份的记录隔离，旧身份打开的编辑不能写入新身份', () async {
     final provider = await makeProvider();
     await provider.record(DateTime(2026, 10, 4, 7), expectedKind: DiaryKind.j);
@@ -118,6 +147,7 @@ void main() {
     await provider.reload();
     expect(provider.kind, DiaryKind.g);
     expect(provider.recordFor(today), isNull);
+    expect(provider.recordsInRange(), isEmpty);
     await expectLater(
         provider.record(DateTime(2026, 10, 4, 8), expectedKind: DiaryKind.j),
         throwsStateError);

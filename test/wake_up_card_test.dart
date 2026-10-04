@@ -8,6 +8,7 @@ import 'package:time_manager/models/diary_kind.dart';
 import 'package:time_manager/models/wake_up_document.dart';
 import 'package:time_manager/models/wake_up_record.dart';
 import 'package:time_manager/providers/wake_up_provider.dart';
+import 'package:time_manager/screens/wake_up_history_screen.dart';
 import 'package:time_manager/services/app_identity_service.dart';
 import 'package:time_manager/services/wake_up_local_store.dart';
 import 'package:time_manager/services/wake_up_sync_dependencies.dart';
@@ -200,6 +201,31 @@ void main() {
     await tester.tap(find.text('删除'));
     await tester.pumpAndSettle();
     expect(provider.recordFor(DateTime(2026, 10, 3)), isNull);
+    expect(find.text('尚无起床记录'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('查看更多打开历史统计，包含七天以前的记录并可返回', (tester) async {
+    await prepare(tester);
+    await provider.record(DateTime(2026, 9, 15, 7, 30),
+        expectedKind: DiaryKind.j);
+    await mount(tester);
+    expect(find.text('尚无起床记录'), findsOneWidget);
+    final more = find.byKey(const ValueKey('wake-up-history-more'));
+    await tester.ensureVisible(more);
+    await tester.tap(more);
+    await tester.pumpAndSettle();
+    expect(find.byType(WakeUpHistoryScreen), findsOneWidget);
+    expect(find.text('已记录 1 天'), findsOneWidget);
+    await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('wake-up-record-2026-09-15')), 150,
+        scrollable: find.descendant(
+            of: find.byKey(const ValueKey('wake-up-history-scroll')),
+            matching: find.byType(Scrollable)));
+    expect(find.text('2026年9月15日'), findsOneWidget);
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    expect(find.byType(WakeUpHistoryScreen), findsNothing);
     expect(find.text('尚无起床记录'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

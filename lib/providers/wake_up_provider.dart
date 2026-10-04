@@ -87,6 +87,19 @@ class WakeUpProvider extends ChangeNotifier with WidgetsBindingObserver {
   WakeUpRecord? recordFor(DateTime date) =>
       _state?.document.records[WakeUpRecord.keyForDate(date)];
 
+  /// 按自然日筛选（含首尾日期），未指定边界时读取全部记录，最新日期在前。
+  List<WakeUpRecord> recordsInRange({DateTime? start, DateTime? end}) {
+    final startKey = start == null ? null : WakeUpRecord.keyForDate(start);
+    final endKey = end == null ? null : WakeUpRecord.keyForDate(end);
+    final records = [
+      for (final record in _state?.document.records.values ?? <WakeUpRecord>[])
+        if ((startKey == null || record.dateKey.compareTo(startKey) >= 0) &&
+            (endKey == null || record.dateKey.compareTo(endKey) <= 0))
+          record,
+    ]..sort((a, b) => b.time.compareTo(a.time));
+    return List.unmodifiable(records);
+  }
+
   /// 固定取最近七个自然日，未记录的日期不参与平均值。
   List<WakeUpRecord> recentRecords(DateTime today) => [
         for (var offset = 0; offset < 7; offset++)

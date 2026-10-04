@@ -7,12 +7,30 @@ import '../models/wake_up_record.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 
-/// 最近七个自然日的起床时刻；空缺日期断开曲线，不按零点补值。
+/// 按自然日绘制起床时刻；空缺日期断开曲线，不按零点补值。
 class WakeUpChart extends StatelessWidget {
-  const WakeUpChart({super.key, required this.today, required this.records});
+  const WakeUpChart({
+    super.key,
+    required DateTime today,
+    required this.records,
+  })  : endDate = today,
+        startDate = null,
+        periodLabel = '最近 7 天',
+        _showTodayLabel = true;
 
-  final DateTime today;
+  const WakeUpChart.range({
+    super.key,
+    required this.startDate,
+    required this.endDate,
+    required this.records,
+    required this.periodLabel,
+  }) : _showTodayLabel = false;
+
+  final DateTime? startDate;
+  final DateTime endDate;
   final List<WakeUpRecord> records;
+  final String periodLabel;
+  final bool _showTodayLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -21,9 +39,16 @@ class WakeUpChart extends StatelessWidget {
     final textScale =
         MediaQuery.textScalerOf(context).scale(AppText.caption.fontSize!) /
             AppText.caption.fontSize!;
+    final start =
+        startDate ?? DateTime(endDate.year, endDate.month, endDate.day - 6);
+    // 用 UTC 的日期组件求天数，避免夏令时让自然日变成 23 / 25 小时。
+    final dayCount = DateTime.utc(endDate.year, endDate.month, endDate.day)
+            .difference(DateTime.utc(start.year, start.month, start.day))
+            .inDays +
+        1;
     final dates = [
-      for (var index = 0; index < 7; index++)
-        DateTime(today.year, today.month, today.day - 6 + index),
+      for (var index = 0; index < dayCount; index++)
+        DateTime(start.year, start.month, start.day + index),
     ];
     final byDate = {for (final record in records) record.dateKey: record};
     final daily = [
@@ -48,29 +73,32 @@ class WakeUpChart extends StatelessWidget {
 
     return Semantics(
       key: const ValueKey('wake-up-chart'),
-      label: '最近 7 天起床时间曲线图',
+      label: '$periodLabel起床时间曲线图',
       value: [
         for (var index = 0; index < dates.length; index++)
-          '${dates[index].month}月${dates[index].day}日 '
-              '${daily[index]?.timeLabel ?? '未记录'}',
+          if (_showTodayLabel || daily[index] != null)
+            '${_showTodayLabel ? '' : '${dates[index].year}年'}'
+                '${dates[index].month}月${dates[index].day}日 '
+                '${daily[index]?.timeLabel ?? '未记录'}',
       ].join('，'),
       child: ExcludeSemantics(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('最近 7 天起床趋势', style: labelStyle),
+            Text('$periodLabel起床趋势', style: labelStyle),
             const SizedBox(height: AppSpacing.md),
             SizedBox(
               height: AppSizes.listRow * 3 + AppSpacing.xl * (textScale - 1),
               child: LayoutBuilder(builder: (context, constraints) {
                 final plotWidth =
                     constraints.maxWidth - leftSize - AppSpacing.md;
+                final crossesYear = start.year != endDate.year;
+                final labelWidth =
+                    AppSizes.minTapTarget * textScale * (crossesYear ? 1.5 : 1);
+                final labelCount =
+                    math.max(2, (plotWidth / labelWidth).floor());
                 final dateInterval =
-                    plotWidth >= AppSizes.minTapTarget * 7 * textScale
-                        ? 1
-                        : plotWidth >= AppSizes.minTapTarget * 4 * textScale
-                            ? 2
-                            : 3;
+                    math.max(1.0, (dates.length - 1) / (labelCount - 1));
                 return Padding(
                   padding: const EdgeInsets.only(
                       top: AppSpacing.sm, right: AppSpacing.md),
@@ -81,7 +109,7 @@ class WakeUpChart extends StatelessWidget {
                         duration: Duration.zero,
                         LineChartData(
                           minX: 0,
-                          maxX: 6,
+                          maxX: math.max(1, dates.length - 1).toDouble(),
                           minY: minY,
                           maxY: maxY,
                           borderData: FlBorderData(show: false),
@@ -122,10 +150,16 @@ class WakeUpChart extends StatelessWidget {
                               sideTitles: SideTitles(
                                 showTitles: true,
                                 reservedSize: bottomSize,
-                                interval: dateInterval.toDouble(),
+                                interval: dateInterval,
+                                maxIncluded: dates.length > 1,
                                 getTitlesWidget: (value, meta) {
-                                  final index = value.toInt();
+                                  final index = value.round();
+                                  if (index < 0 || index >= dates.length) {
+                                    return const SizedBox.shrink();
+                                  }
                                   final date = dates[index];
+                                  final isToday = _showTodayLabel &&
+                                      index == dates.length - 1;
                                   return SideTitleWidget(
                                     meta: meta,
                                     space: AppSpacing.sm,
@@ -133,11 +167,12 @@ class WakeUpChart extends StatelessWidget {
                                         SideTitleFitInsideData.fromTitleMeta(
                                             meta),
                                     child: Text(
-                                      index == 6
+                                      isToday
                                           ? '今天'
-                                          : '${date.month}/${date.day}',
+                                          : '${crossesYear ? '${date.year % 100}/' : ''}'
+                                              '${date.month}/${date.day}',
                                       style: labelStyle.copyWith(
-                                        color: index == 6
+                                        color: isToday
                                             ? scheme.primary
                                             : scheme.onSurfaceVariant,
                                       ),
@@ -170,7 +205,9 @@ class WakeUpChart extends StatelessWidget {
                                 dotData: FlDotData(
                                   getDotPainter: (spot, percent, bar, index) =>
                                       FlDotCirclePainter(
-                                    radius: AppSpacing.xs,
+                                    radius: dates.length > 90
+                                        ? AppSizes.border * 2
+                                        : AppSpacing.xs,
                                     color: scheme.primary,
                                     strokeWidth: AppSizes.border * 2,
                                     strokeColor: AppSurfaces.of(context).card,
@@ -190,6 +227,7 @@ class WakeUpChart extends StatelessWidget {
                               getTooltipItems: (spots) => [
                                 for (final spot in spots)
                                   LineTooltipItem(
+                                    '${_showTodayLabel ? '' : '${dates[spot.x.toInt()].year}年'}'
                                     '${dates[spot.x.toInt()].month}月'
                                     '${dates[spot.x.toInt()].day}日\n'
                                     '${WakeUpRecord.labelForMinute(spot.y.round())}',

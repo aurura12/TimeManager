@@ -7,6 +7,7 @@ import '../models/diary_kind.dart';
 import '../models/sync_center_state.dart';
 import '../models/wake_up_record.dart';
 import '../providers/wake_up_provider.dart';
+import '../screens/wake_up_history_screen.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import 'main_tab_activity.dart';
@@ -268,6 +269,13 @@ class _WakeUpCardState extends State<WakeUpCard> with WidgetsBindingObserver {
               : '平均 ${WakeUpRecord.labelForMinute(average)} · 已记录 $count 天',
           style: AppText.caption
               .copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+        TextButton.icon(
+          key: const ValueKey('wake-up-history-more'),
+          onPressed: () => WakeUpHistoryScreen.open(context),
+          icon: const Icon(Icons.chevron_right),
+          iconAlignment: IconAlignment.end,
+          label: const Text('查看更多'),
         ),
       ],
     );

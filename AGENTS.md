@@ -12,7 +12,7 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
   - `time_provider.dart` → `TimeProvider` (~10000 行) — 核心业务状态：时间块、分类、目标、模板、撤销栈、统计缓存、增量保存、Google 日历同步、日程(schedule)同步、已删除事件关系
   - `theme_mode_provider.dart` → `ThemeModeProvider` (52 行) — 主题模式 (light/dark/system)
   - `target_stats_cache.dart` → `TargetStatsCache` (47 行) — 目标统计内存缓存，按日期失效
-  - `wake_up_provider.dart` → `WakeUpProvider` — 目标页起床记录：每个自然日一条、精确到分钟，最近 7 天平均只计已记录日期。应用入口全局创建，隐藏目标页也继续同步；本机经 `WakeUpLocalStore` 按身份保存数据与待上传标记，远端经 `WakeUpGiteeService` 双向同步。切身份清空旧视图，异步保存保留原身份归属、旧响应不能混入新身份；保存成功后才更新显示。目前不进 JSON 备份
+  - `wake_up_provider.dart` → `WakeUpProvider` — 目标页起床记录：每个自然日一条、精确到分钟，最近 7 天平均只计已记录日期。卡片「查看更多」进入 `WakeUpHistoryScreen`，可按最近 30 天 / 90 天 / 全部 / 自选日期查看平均、最早、最晚起床时间、趋势与每日明细；`recordsInRange` 按自然日含首尾筛选、日期倒序返回当前身份记录。应用入口全局创建，隐藏目标页也继续同步；本机经 `WakeUpLocalStore` 按身份保存数据与待上传标记，远端经 `WakeUpGiteeService` 双向同步。切身份清空旧视图，异步保存保留原身份归属、旧响应不能混入新身份；保存成功后才更新显示。目前不进 JSON 备份
   - `background_image_provider.dart` → `BackgroundImageProvider` — 背景图（壁纸）本机状态：图片路径 / 开关 / 照片不透明度 / 表面不透明度。**刻意独立于业务数据 Provider：本地图片路径绝不进同步或备份快照**（`lib/services/` 与 `lib/models/` 均不引用它）。契约见「数据流与关键模式」的背景图一节
 - **Models**: `lib/models/` (29 个文件)
   - 时间记录：`TimeSlot`, `Category`, `CalendarBlock`, `ScheduleTemplate`, `VoiceScheduleDraft`, `ScheduleSyncProgress`
@@ -225,6 +225,7 @@ Never commit them.
 - `test/time_provider_save_test.dart` / `test/schedule_json_codec_test.dart` — 普通编辑保存合并、切后台/身份即时落盘、保存期间新编辑与待同步归属不丢、统计缓存按日期失效、后台 JSON 合并及旧哈希兼容
 - `test/target_desktop_ui_test.dart` — 桌面目标编辑表单、键盘保存/取消、数值与时间校验、子事件关联、周期天数与时长独立、右键删除、鼠标拖拽及浅深主题/窄窗口布局；桌面编辑入口统一走 `showTargetEditor`，移动端保留整页编辑
 - `test/wake_up_provider_test.dart` / `test/wake_up_card_test.dart` — 起床记录持久化、补填/修改/删除、未来时间校验、跨日与近 7 天平均、身份切换及保存失败保护；卡片每分钟重新计算经过时长，隐藏 Tab 或切后台停表，返回立即刷新
+- `test/wake_up_history_screen_test.dart` — 起床历史入口、30 / 90 天边界、跨年全部记录、自选日期含首尾、单日与空时段、身份隔离、实时更新、窄屏大字与浅深壁纸主题
 - `test/wake_up_sync_test.dart` / `test/wake_up_gitee_service_test.dart` — 双端读改写与删除、离线重启恢复、旧记录迁移、SHA 冲突重试、损坏远端保护、上传期间编辑与身份切换、同步中心合并状态、自动刷新前后台边界与 Gitee 文档路径
 - `test/statistics_cache_test.dart` / `test/main_screen_lazy_loading_test.dart` — 趋势与分类缓存互不覆盖、词云按自然日复用、跨日边界、编辑/撤销/切身份失效，以及隐藏统计页零查询、返回刷新与筛选状态保活
 - `test/main_tab_provider_test.dart` / `test/main_tab_settings_screen_test.dart` — 导航偏好持久化与损坏修复、设置入口与最少标签约束、草稿取消/保存/恢复默认、触控和鼠标排序、窄屏大字与壁纸；`main_screen_lazy_loading_test.dart` 另覆盖自定义顺序启动、导航映射与隐藏/恢复页面保活
