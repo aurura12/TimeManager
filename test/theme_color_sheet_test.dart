@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/theme/app_semantic_colors.dart';
 import 'package:time_manager/theme/app_theme.dart';
+import 'package:time_manager/widgets/color_picker_panel.dart';
 import 'package:time_manager/widgets/theme_color_sheet.dart';
 
 void main() {
@@ -68,6 +69,46 @@ void main() {
   });
 
   for (final brightness in Brightness.values) {
+    testWidgets('$brightness 下通过调色板选色，预览后应用并保存', (tester) async {
+      final provider = await openSheet(tester, brightness: brightness);
+      final originalHex =
+          tester.widget<TextField>(find.byType(TextField)).controller!.text;
+      final slider = find.byType(Slider);
+      await tester.ensureVisible(slider);
+      await tester.drag(slider, const Offset(80, 0));
+      await tester.pumpAndSettle();
+      final plane = find.byKey(const ValueKey('color-picker-plane'));
+      await tester.ensureVisible(plane);
+      final rect = tester.getRect(plane);
+      await tester
+          .tapAt(rect.topLeft + Offset(rect.width * 0.7, rect.height * 0.4));
+      await tester.pumpAndSettle();
+
+      final hex =
+          tester.widget<TextField>(find.byType(TextField)).controller!.text;
+      final selected = AppSemanticColors.parseOpaqueHex(hex)!;
+      expect(hex, isNot(originalHex));
+      expect(HSVColor.fromColor(selected).saturation, closeTo(0.7, 0.01));
+      expect(HSVColor.fromColor(selected).value, closeTo(0.6, 0.01));
+      expect(provider.themeColor, AppSemanticColors.brand);
+      final preview = Theme.of(tester.element(find.text('配色预览'))).colorScheme;
+      expect(preview.brightness, brightness);
+      expect(
+        preview.primary,
+        ColorScheme.fromSeed(seedColor: selected, brightness: brightness)
+            .primary,
+      );
+      await tester.ensureVisible(find.text('应用主题色'));
+      await tester.tap(find.text('应用主题色'));
+      await tester.pumpAndSettle();
+      expect(provider.themeColor, selected);
+      final restored = ThemeModeProvider();
+      addTearDown(restored.dispose);
+      await restored.ready;
+      expect(restored.themeColor, selected);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('$brightness 下应用预设色并保存到本机', (tester) async {
       final provider = await openSheet(tester, brightness: brightness);
       await tester.tap(find.widgetWithText(ChoiceChip, '薰衣紫'));
@@ -97,6 +138,7 @@ void main() {
 
   testWidgets('无效自定义输入不能应用，8 位输入应用时丢弃透明度', (tester) async {
     final provider = await openSheet(tester);
+    await tester.ensureVisible(find.byType(TextField));
     await tester.enterText(find.byType(TextField), 'ZZ345678');
     await tester.pumpAndSettle();
     expect(find.text('请输入合法的 6 位或 8 位十六进制色值'), findsOneWidget);
@@ -112,6 +154,34 @@ void main() {
     await tester.tap(find.text('应用主题色'));
     await tester.pumpAndSettle();
     expect(provider.themeColor, const Color(0xFF345678));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('输入色值同步到调色板，重新点选可修正无效输入', (tester) async {
+    final provider = await openSheet(tester);
+    final field = find.byType(TextField);
+    await tester.ensureVisible(field);
+    await tester.enterText(field, '#80345678');
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<ColorPickerPanel>(find.byType(ColorPickerPanel)).color,
+      const Color(0xFF345678),
+    );
+    expect(tester.widget<Slider>(find.byType(Slider)).value, closeTo(210, 1));
+    await tester.enterText(field, 'INVALID');
+    await tester.pumpAndSettle();
+    expect(find.text('请输入合法的 6 位或 8 位十六进制色值'), findsOneWidget);
+
+    final plane = find.byKey(const ValueKey('color-picker-plane'));
+    await tester.ensureVisible(plane);
+    await tester.tapAt(tester.getRect(plane).center);
+    await tester.pumpAndSettle();
+    expect(find.text('请输入合法的 6 位或 8 位十六进制色值'), findsNothing);
+    final selected =
+        tester.widget<ColorPickerPanel>(find.byType(ColorPickerPanel)).color;
+    expect(tester.widget<TextField>(field).controller!.text,
+        AppThemeColorPreset.hexOf(selected));
+    expect(provider.themeColor, AppSemanticColors.brand);
     expect(tester.takeException(), isNull);
   });
 

@@ -4,6 +4,7 @@ import '../providers/theme_mode_provider.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import 'color_picker_panel.dart';
 
 Future<void> showThemeColorSheet(
   BuildContext context, {
@@ -155,6 +156,11 @@ class _ThemeColorSheetState extends State<_ThemeColorSheet> {
                   ],
                 ),
                 const SizedBox(height: AppSpacing.lg),
+                ColorPickerPanel(
+                  color: _draftColor,
+                  onChanged: _saving ? null : _selectColor,
+                ),
+                const SizedBox(height: AppSpacing.lg),
                 TextField(
                   controller: _hexController,
                   enabled: !_saving,
@@ -166,7 +172,9 @@ class _ThemeColorSheetState extends State<_ThemeColorSheet> {
                     labelText: '自定义色值',
                     hintText: '#RRGGBB',
                     helperText: '例如 #4DA8EE；支持粘贴 6 位或 8 位色值',
+                    helperMaxLines: 2,
                     errorText: _inputError,
+                    errorMaxLines: 2,
                   ),
                   onChanged: _updateHex,
                   onSubmitted: (_) => _apply(),

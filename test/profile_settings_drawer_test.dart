@@ -146,6 +146,8 @@ void main() {
     expect(find.text('橄榄绿'), findsWidgets);
     expect(find.text('天空蓝'), findsOneWidget);
     expect(find.text('自定义色值'), findsOneWidget);
+    expect(find.text('调色板'), findsOneWidget);
+    expect(find.byKey(const ValueKey('color-picker-plane')), findsOneWidget);
     expect(find.text('配色预览'), findsOneWidget);
     expect(find.text('应用主题色'), findsOneWidget);
   });

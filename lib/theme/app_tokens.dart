@@ -126,6 +126,10 @@ abstract final class AppSizes {
 
   /// 弹窗最大宽度（手机版）
   static const double dialogMaxWidth = 400;
+
+  /// 可视化取色面板及选中圆环。
+  static const double colorPickerPlane = 160;
+  static const double colorPickerIndicator = 20;
 }
 
 /// 文字层级。页面只引用语义层级，不自己写字号。

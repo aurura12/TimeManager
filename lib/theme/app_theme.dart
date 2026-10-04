@@ -258,6 +258,22 @@ class AppWallpaperTheme extends ThemeExtension<AppWallpaperTheme> {
   int get hashCode => Object.hash(enabled, safePhotoOpacity, surfaceOpacity);
 }
 
+/// 取色面板的颜色端点，独立于界面配色和业务语义色。
+abstract final class AppColorPickerColors {
+  static const Color light = Colors.white;
+  static const Color dark = Colors.black;
+
+  static final LinearGradient hueSpectrum = LinearGradient(
+    begin: AlignmentDirectional.centerStart,
+    end: AlignmentDirectional.centerEnd,
+    colors: List<Color>.generate(
+      7,
+      (index) => HSVColor.fromAHSV(1, index * 60, 1, 1).toColor(),
+      growable: false,
+    ),
+  );
+}
+
 /// 外观设置中的预设主题色。业务语义色仍由 [AppSemanticColors] 管理。
 enum AppThemeColorPreset {
   olive('橄榄绿', AppSemanticColors.brand),

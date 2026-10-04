@@ -68,7 +68,7 @@ Container(color: surfaces.card, ...)
 | 选中区域 | `colorScheme.primaryContainer` |
 | 删除 / 错误 | `colorScheme.error` |
 
-默认主题种子色为品牌绿 `#9CB86A`。「我的 → 设置 → 主题色」提供 8 种预设及自定义十六进制色值，先预览、再应用，也可恢复默认绿。
+默认主题种子色为品牌绿 `#9CB86A`。「我的 → 设置 → 主题色」提供 8 种预设、可视化调色板和十六进制色值输入，先预览、再应用，也可恢复默认绿。调色板用二维面板选择饱和度 / 明暗、色相滑条选择色调；鼠标与触控都可点选 / 拖动，面板获焦后方向键可微调。调色板、预设及输入色值双向同步，黑 / 白 / 灰色保留取色中的色相，取色面板端点颜色集中在 `AppColorPickerColors`。
 
 `ThemeModeProvider` 将外观模式与主题色保存为本机偏好（`app_theme_mode` / `app_theme_color_v1`），不按身份切换、不参与业务同步与备份。`AppTheme.light/dark/themeFor(seedColor:)` 从选定颜色生成浅色 / 深色 `ColorScheme`；未传参数时保持既有默认配色。所有入口将色值收成不透明色，旧设置缺失或无效时回退默认绿。背景图的透明度与对比度继续由原有主题计算负责。
 
