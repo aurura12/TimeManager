@@ -2,15 +2,18 @@
 ; 用法：
 ;   1. 先构建 release：flutter build windows --release
 ;   2. 用 Inno Setup 编译本脚本：
-;      "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" scripts\installer.iss
+;      "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=1.114.0 scripts\installer.iss
 ;   3. 产物：installer_output\time_manager_setup_<版本>.exe
 ;   4. 运行 scripts\generate_update_metadata.ps1 installer_output\time_manager_setup_<版本>.exe
 ;   5. 将 exe 和同名 .exe.sha256 一起上传到 Gitee release（tag 与版本一致）
 ;
-; 版本号需与 pubspec.yaml 的 version 保持一致（只取前三段，如 1.84.0+1 → 1.84.0）
+; build_windows.bat / publish_windows_release.bat 自动从 pubspec.yaml 传入版本。
+; 手动编译时须传 /DMyAppVersion=<版本>（只取前三段，如 1.84.0+1 → 1.84.0）。
 
 #define MyAppName "时间块"
-#define MyAppVersion "1.111.0"
+#ifndef MyAppVersion
+  #error Use build_windows.bat / publish_windows_release.bat or pass /DMyAppVersion=<version>
+#endif
 #define MyAppPublisher "时间块"
 #define MyAppExeName "time_manager.exe"
 ; Flutter Windows release 产物目录

@@ -60,10 +60,55 @@ flutter test test/widget_test.dart  # 运行单个测试文件
 
 scripts/build_android.sh            # Android arm64 构建，默认不跑测试；输出到 dist/
 scripts/build_windows.bat           # Windows 构建
+scripts/publish_windows_release.bat # Windows 构建安装包并发布到 Gitee（在 Windows 上运行）
 scripts/update_macos.sh             # macOS 构建并安装到 /Applications，默认不跑测试
 scripts/install_latest_android.sh   # 从 Gitee 下载最新 Android 版并安装到 adb 连接的设备
 flutter build apk --release         # 直接构建 release APK
 ```
+
+## Windows 发布到 Gitee
+
+在 Windows 上准备好 Flutter、Visual Studio 的「使用 C++ 的桌面开发」、Inno Setup 6，以及下方列出的本机配置文件。Git 自动提交需要配置作者信息和当前分支的上游。更新 `docs/release-notes.md` 后，在项目根目录的 PowerShell 或 CMD 运行：
+
+```powershell
+.\scripts\publish_windows_release.bat
+```
+
+脚本默认将次版本号 +1、patch 归零、构建号 +1，构建 Windows x64 应用，按同一版本打包为 `dist/time_manager_setup_<版本>.exe` 并生成同名 `.exe.sha256`。只提交 `pubspec.yaml` 的版本号变更并推送上游，然后在 `zhou-jiaqi10/time_manager_releases` 创建或复用 Release，先上传校验文件，再上传 EXE。默认跳过分析和测试；不需要安装 Bash、jq 或 curl。
+
+Token 优先取 `GITEE_TOKEN` 环境变量，未设置时自动读取 `lib/config/diary_gitee_config.dart` 的 `hardcodedToken`。可在 PowerShell 中临时指定：
+
+```powershell
+$env:GITEE_TOKEN = '你的 Gitee Token'
+.\scripts\publish_windows_release.bat
+```
+
+常用选项：
+
+```powershell
+# 预览版本、产物路径和发布仓库；不联网、不改文件
+.\scripts\publish_windows_release.bat --dry-run
+
+# 发布前运行 flutter analyze 和 flutter test
+.\scripts\publish_windows_release.bat --run-tests
+
+# Android 已发布当前版本时，给同一 Release 补上 Windows 安装包
+# 先 git pull 同步 Android 自动提交的 pubspec.yaml 版本，再执行：
+.\scripts\publish_windows_release.bat --skip-bump
+
+# 禁用版本号的自动提交和推送
+.\scripts\publish_windows_release.bat --no-git
+
+# 上传失败后复用已有安装包；文件名中的版本必须与 pubspec.yaml 一致
+.\scripts\publish_windows_release.bat --artifact dist\time_manager_setup_1.114.0.exe
+
+# Inno Setup 装在其他位置时显式指定编译器
+.\scripts\publish_windows_release.bat --iscc 'D:\Tools\Inno Setup 6\ISCC.exe'
+
+.\scripts\publish_windows_release.bat --help
+```
+
+说明查重在构建前完成；复用同一版本 Release 时不查重，也不会重传同名附件。新版本说明重复会拒绝发布，可用 `--allow-stale-notes` 跳过。自动提交前要求 `pubspec.yaml` 没有未提交改动，其他文件的改动不会带入版本提交。构建失败或中断只回滚本次版本号修改；打包成功后上传失败则保留版本和安装包，便于重试。相对路径以项目根目录为基准。`--owner` / `--repo` 与 `GITEE_OWNER` / `GITEE_REPO` 可覆盖发布仓库，修改正式发布仓库时需同步修改 `UpdateService`。
 
 ## 配置文件（必需）
 
@@ -86,6 +131,7 @@ flutter build apk --release         # 直接构建 release APK
 
 - `test/widget_test.dart` — smoke test 与平台通道 mock 模板（`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道）
 - `test/visual_system_test.dart` — 视觉系统守护测试，改动 `lib/theme/` 或页面配色时必须运行
+- `test/publish_windows_release_script_test.ps1` — Windows 发布脚本的模拟构建/API 回归测试，在 PowerShell 中运行 `powershell -NoProfile -ExecutionPolicy Bypass -File test/publish_windows_release_script_test.ps1`（macOS/Linux 可用 `pwsh`）；不联网、不构建真实应用、不提交或上传
 
 ## 文档
 

@@ -122,6 +122,7 @@ flutter test test/widget_test.dart # 运行单个测试文件
 flutter test test/foo_test.dart --plain-name "测试用例名"  # 运行单个测试用例
 bash test/update_macos_script_test.sh      # shell 脚本测试（flutter test 不会收集）
 bash test/update_metadata_script_test.sh   # shell 脚本测试（flutter test 不会收集）
+powershell -NoProfile -ExecutionPolicy Bypass -File test/publish_windows_release_script_test.ps1 # Windows 发布模拟测试（macOS/Linux 用 pwsh）
 flutter run                        # 启动开发模式（移动端）
 flutter run -d windows             # Windows 桌面版启动
 flutter build apk --release        # 构建 Android release APK
@@ -135,6 +136,7 @@ scripts/install_latest_android.sh  # 下载 Gitee 最新 Android APK，校验 SH
 scripts/package_macos_release.sh   # macOS .app 打包为 dist/*.dmg + .dmg.sha256
 scripts/generate_update_metadata.sh <安装包…>  # 为 APK/EXE/DMG 生成同名 .sha256（Windows 用 generate_update_metadata.ps1）
 scripts/publish_android_release.sh # 构建 + 发布到 Gitee Release（见「构建与发布」）
+scripts/publish_windows_release.bat # Windows x64 构建 + Inno Setup 打包 + 发布 Gitee Release（PowerShell 5.1+，见「构建与发布」）
 scripts/installer.iss              # Inno Setup 6 打 Windows 安装包（上传 Gitee release）
 ```
 
@@ -169,6 +171,16 @@ scripts/installer.iss              # Inno Setup 6 打 Windows 安装包（上传
 - 用 `--artifact <已有 APK>` + `--skip-build` 可以跳过构建、只发已有的包
 
 两个仓库不要混淆：**同步数据**在 `RemoteRepoConfig` 里的 `love_diary`，**应用发布**在 `time_manager_releases`。
+
+`scripts/publish_windows_release.bat` 是 Windows 的同类发布入口，由 `publish_windows_release.ps1` 实现，参数沿用 `--run-tests` / `--skip-bump` / `--no-git` / `--artifact` 等写法，无需 Bash、jq 或 curl：
+
+- 默认在构建前查重 `docs/release-notes.md`，跳过分析和测试；次版本 +1、patch 归零、构建号 +1
+- 构建 Windows x64 release，自动定位 Inno Setup 6（可用 `--iscc` / `ISCC_PATH` 指定），从 `pubspec.yaml` 传入安装包版本；`build_windows.bat` 也自动传入版本，直接编译 `installer.iss` 时必须传 `/DMyAppVersion=<版本>`
+- 输出 `dist/time_manager_setup_<版本>.exe` 和同名 `.exe.sha256`，只提交并推送 `pubspec.yaml`；自动提交前拒绝该文件已有未提交改动，其他文件的 staged / unstaged 改动不带入提交
+- 发布仓库、Token 来源和先传校验文件的顺序与 Android 一致；复用同版本 Release、不重传同名附件
+- Android 已发布后，Windows 先拉取最新 `pubspec.yaml` 再用 `--skip-bump`，给同一个 Release 补 Windows 安装包
+- 构建失败 / 中断只回滚本次版本号；打包成功后的提交 / 上传失败保留版本与产物，可通过 `--artifact` 重试；已有 EXE 文件名中的版本必须与 `pubspec.yaml` 一致
+- PowerShell 中文脚本使用 UTF-8 BOM，以兼容 Windows PowerShell 5.1；模拟回归测试为 `test/publish_windows_release_script_test.ps1`，不联网、不发布
 
 ## Config Files (Secrets — .gitignore'd)
 

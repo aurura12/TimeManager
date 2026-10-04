@@ -1,4 +1,5 @@
 @echo off
+setlocal
 cd /d "%~dp0.."
 
 echo ============================================
@@ -33,12 +34,20 @@ echo   OK: build\windows\x64\runner\Release\
 
 echo.
 echo [3/5] Check Inno Setup and build installer
+set "PUBSPEC_VER="
+for /f "tokens=2 delims= " %%v in ('findstr /b "version:" pubspec.yaml') do set "PUBSPEC_VER=%%v"
+if not defined PUBSPEC_VER (
+  echo   [ERROR] Cannot read version from pubspec.yaml
+  pause
+  exit /b 1
+)
+for /f "tokens=1 delims=+" %%v in ("%PUBSPEC_VER%") do set "INSTALLER_VER=%%v"
 set "ISCC="
 if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if exist "C:\Program Files\Inno Setup 6\ISCC.exe" set "ISCC=C:\Program Files\Inno Setup 6\ISCC.exe"
 if not defined ISCC goto no_iscc
 echo   Using %ISCC%
-"%ISCC%" scripts\installer.iss
+"%ISCC%" "/DMyAppVersion=%INSTALLER_VER%" scripts\installer.iss
 if not errorlevel 1 goto iscc_ok
 echo   [ERROR] Installer build failed!
 pause
@@ -71,7 +80,7 @@ echo.
 echo [5/5] Check version
 for /f "tokens=2 delims= " %%v in ('findstr /b "version:" pubspec.yaml') do set "PUBSPEC_VER=%%v"
 echo   pubspec.yaml version: %PUBSPEC_VER%
-echo   Make sure installer.iss MyAppVersion matches before publishing.
+echo   Installer version was read automatically from pubspec.yaml.
 echo   Upload each installer together with its .sha256 file to Gitee release.
 
 echo.
