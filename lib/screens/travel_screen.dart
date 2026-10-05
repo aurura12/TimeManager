@@ -35,6 +35,7 @@ class TravelScreen extends StatefulWidget {
 class _TravelScreenState extends State<TravelScreen> {
   DateTime _selectedDate = DateTime.now();
   DateTime _calendarMonth = DateTime.now();
+  bool _multiMonthCalendar = true;
   _TravelViewMode _viewMode = _TravelViewMode.table;
   TravelRecordsDocument _document = const TravelRecordsDocument(records: []);
   String? _token;
@@ -881,6 +882,18 @@ class _TravelScreenState extends State<TravelScreen> {
     });
   }
 
+  void _selectCalendarDate(DateTime date) {
+    final normalizedDate = _normalizedDate(date);
+    setState(() {
+      _selectedDate = normalizedDate;
+      if (!_multiMonthCalendar &&
+          (normalizedDate.year != _calendarMonth.year ||
+              normalizedDate.month != _calendarMonth.month)) {
+        _calendarMonth = DateTime(normalizedDate.year, normalizedDate.month);
+      }
+    });
+  }
+
   Widget _buildRecordActions(TravelRecord record) {
     return PopupMenuButton<_TravelRecordAction>(
       tooltip: '记录操作',
@@ -920,11 +933,30 @@ class _TravelScreenState extends State<TravelScreen> {
   void _changeCalendarMonth(int delta) {
     final nextMonth =
         DateTime(_calendarMonth.year, _calendarMonth.month + delta);
-    final lastDay = DateTime(nextMonth.year, nextMonth.month + 1, 0).day;
+    final monthCount = _multiMonthCalendar ? 3 : 1;
+    final selectedMonthOffset = (_selectedDate.year - nextMonth.year) * 12 +
+        _selectedDate.month -
+        nextMonth.month;
     setState(() {
       _calendarMonth = nextMonth;
-      _selectedDate = DateTime(nextMonth.year, nextMonth.month,
-          _selectedDate.day > lastDay ? lastDay : _selectedDate.day);
+      if (selectedMonthOffset < 0 || selectedMonthOffset >= monthCount) {
+        final lastDay = DateTime(nextMonth.year, nextMonth.month + 1, 0).day;
+        _selectedDate = DateTime(
+          nextMonth.year,
+          nextMonth.month,
+          _selectedDate.day > lastDay ? lastDay : _selectedDate.day,
+        );
+      }
+    });
+  }
+
+  void _setMultiMonthCalendar(bool multiMonth) {
+    if (_multiMonthCalendar == multiMonth) return;
+    setState(() {
+      _multiMonthCalendar = multiMonth;
+      if (!multiMonth) {
+        _calendarMonth = DateTime(_selectedDate.year, _selectedDate.month);
+      }
     });
   }
 
@@ -1013,23 +1045,22 @@ class _TravelScreenState extends State<TravelScreen> {
   }
 
   Widget _buildCalendarContent() {
-    return LayoutBuilder(builder: (context, constraints) {
-      if (isDesktopPlatform &&
-          constraints.maxWidth >= AppSizes.desktopTravelLayoutBreakpoint) {
-        return TravelDesktopCalendar(
-          month: _calendarMonth,
-          selectedDate: _selectedDate,
-          records: _document.records,
-          selectedDateDetails:
-              _buildSelectedDateCard(_recordForDate(_selectedDate)),
-          onSelectDate: _selectTravelDate,
-          onChangeMonth: _changeCalendarMonth,
-          onPickMonth: () => unawaited(_pickCalendarMonth()),
-          onToday: () => _selectTravelDate(DateTime.now()),
-        );
-      }
-      return _buildCalendarView();
-    });
+    if (isDesktopPlatform) {
+      return TravelDesktopCalendar(
+        month: _calendarMonth,
+        selectedDate: _selectedDate,
+        records: _document.records,
+        multiMonth: _multiMonthCalendar,
+        selectedDateDetails:
+            _buildSelectedDateCard(_recordForDate(_selectedDate)),
+        onSelectDate: _selectCalendarDate,
+        onChangeMonth: _changeCalendarMonth,
+        onToggleMultiMonth: _setMultiMonthCalendar,
+        onPickMonth: () => unawaited(_pickCalendarMonth()),
+        onToday: () => _selectTravelDate(DateTime.now()),
+      );
+    }
+    return _buildCalendarView();
   }
 
   Widget _buildCalendarView() {

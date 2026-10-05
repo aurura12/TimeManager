@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models/travel_record.dart';
+import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 
-/// 桌面月历直接展示记录，宽窗口在右侧保留所选日期与本月记录。
+/// 桌面出行月历按窗口宽度排布多个月份，并保留单月详细视图。
 class TravelDesktopCalendar extends StatelessWidget {
   const TravelDesktopCalendar({
     super.key,
@@ -17,6 +18,8 @@ class TravelDesktopCalendar extends StatelessWidget {
     required this.onChangeMonth,
     required this.onPickMonth,
     required this.onToday,
+    this.multiMonth = false,
+    this.onToggleMultiMonth,
   });
 
   final DateTime month;
@@ -27,20 +30,25 @@ class TravelDesktopCalendar extends StatelessWidget {
   final ValueChanged<int> onChangeMonth;
   final VoidCallback onPickMonth;
   final VoidCallback onToday;
+  final bool multiMonth;
+  final ValueChanged<bool>? onToggleMultiMonth;
 
   String _dateKey(DateTime date) => DateFormat('yyyy-MM-dd').format(date);
+  String _monthLabel(DateTime value) => '${value.year}年${value.month}月';
 
   @override
   Widget build(BuildContext context) {
-    final monthRecords = records
-        .where((record) =>
-            record.date.year == month.year && record.date.month == month.month)
-        .toList()
-      ..sort((a, b) => b.date.compareTo(a.date));
     return LayoutBuilder(builder: (context, constraints) {
-      final calendar = _buildMonth(context);
+      final selectedMonth = DateTime(selectedDate.year, selectedDate.month);
+      final monthRecords = _recordsInMonth(selectedMonth);
       final monthSummary = _buildMonthRecords(context, monthRecords);
-      if (constraints.maxWidth >= AppSizes.desktopTravelCalendarBreakpoint) {
+      if (constraints.maxWidth >= AppSizes.desktopTravelDetailsBreakpoint) {
+        final calendar = multiMonth
+            ? _buildMultiMonthCalendar(
+                context,
+                availableWidth: constraints.maxWidth,
+              )
+            : _buildMonth(context);
         return Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -61,6 +69,26 @@ class TravelDesktopCalendar extends StatelessWidget {
           ],
         );
       }
+
+      if (multiMonth) {
+        return Column(
+          children: [
+            _buildSelectedDateSummary(
+              context,
+              showAsDialog: constraints.maxWidth >=
+                  AppSizes.desktopTravelThreeMonthBreakpoint,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Expanded(
+              child: _buildMultiMonthCalendar(
+                context,
+                availableWidth: constraints.maxWidth,
+              ),
+            ),
+          ],
+        );
+      }
+
       final scale =
           MediaQuery.textScalerOf(context).scale(AppText.body.fontSize!) /
               AppText.body.fontSize!;
@@ -70,7 +98,7 @@ class TravelDesktopCalendar extends StatelessWidget {
         children: [
           SizedBox(
             height: AppSizes.desktopTravelCalendarHeight * scale,
-            child: calendar,
+            child: _buildMonth(context),
           ),
           const SizedBox(height: AppSpacing.lg),
           selectedDateDetails,
@@ -79,6 +107,370 @@ class TravelDesktopCalendar extends StatelessWidget {
         ],
       );
     });
+  }
+
+  List<TravelRecord> _recordsInMonth(DateTime value) => records
+      .where((record) =>
+          record.date.year == value.year && record.date.month == value.month)
+      .toList()
+    ..sort((a, b) => b.date.compareTo(a.date));
+
+  Widget _buildMonthModeSwitch() => SegmentedButton<bool>(
+        showSelectedIcon: false,
+        segments: const [
+          ButtonSegment<bool>(value: false, label: Text('单月')),
+          ButtonSegment<bool>(value: true, label: Text('多月')),
+        ],
+        selected: {multiMonth},
+        onSelectionChanged: onToggleMultiMonth == null
+            ? null
+            : (selection) => onToggleMultiMonth!(selection.first),
+      );
+
+  String _rangeLabel() {
+    if (!multiMonth) return _monthLabel(month);
+    final end = DateTime(month.year, month.month + 2);
+    final endLabel =
+        end.year == month.year ? '${end.month}月' : _monthLabel(end);
+    return '${_monthLabel(month)} — $endLabel';
+  }
+
+  Widget _buildCalendarToolbar(BuildContext context) => Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: AppSpacing.xs,
+        runSpacing: AppSpacing.xs,
+        children: [
+          TextButton(
+            onPressed: onPickMonth,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(_rangeLabel(), style: AppText.pageTitle),
+                const SizedBox(width: AppSpacing.xs),
+                const Icon(Icons.unfold_more, size: AppSpacing.lg),
+              ],
+            ),
+          ),
+          _buildMonthModeSwitch(),
+          TextButton(onPressed: onToday, child: const Text('今天')),
+          IconButton(
+            tooltip: multiMonth ? '上一个月' : '上个月',
+            onPressed: () => onChangeMonth(-1),
+            icon: const Icon(Icons.chevron_left),
+          ),
+          IconButton(
+            tooltip: multiMonth ? '下一个月' : '下个月',
+            onPressed: () => onChangeMonth(1),
+            icon: const Icon(Icons.chevron_right),
+          ),
+        ],
+      );
+
+  Widget _buildMultiMonthCalendar(
+    BuildContext context, {
+    required double availableWidth,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final surfaces = AppSurfaces.of(context);
+    final scale =
+        MediaQuery.textScalerOf(context).scale(AppText.body.fontSize!) /
+            AppText.body.fontSize!;
+    final recordsByDate = {
+      for (final record in records) record.dateKey: record,
+    };
+    final columns = availableWidth >= AppSizes.desktopTravelThreeMonthBreakpoint
+        ? 3
+        : availableWidth >= AppSizes.desktopTravelTwoMonthBreakpoint
+            ? 2
+            : 1;
+    return Container(
+      key: const ValueKey('travel-desktop-multi-month'),
+      padding: AppSpacing.cardComfortable,
+      decoration: BoxDecoration(
+        color: surfaces.card,
+        borderRadius: AppRadius.cardAll,
+        border: Border.all(color: surfaces.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildCalendarToolbar(context),
+          const SizedBox(height: AppSpacing.sm),
+          Expanded(
+            child: GridView.builder(
+              primary: false,
+              padding: EdgeInsets.zero,
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: columns,
+                mainAxisExtent:
+                    AppSizes.desktopTravelMultiMonthCardHeight * scale,
+                mainAxisSpacing: AppSpacing.md,
+                crossAxisSpacing: AppSpacing.md,
+              ),
+              itemCount: 3,
+              itemBuilder: (context, index) => _buildCompactMonth(
+                context,
+                DateTime(month.year, month.month + index),
+                recordsByDate: recordsByDate,
+                scheme: scheme,
+                surfaces: surfaces,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompactMonth(
+    BuildContext context,
+    DateTime date, {
+    required Map<String, TravelRecord> recordsByDate,
+    required ColorScheme scheme,
+    required AppSurfaces surfaces,
+  }) {
+    final daysInMonth = DateTime(date.year, date.month + 1, 0).day;
+    final startOffset = (DateTime(date.year, date.month, 1).weekday - 1) % 7;
+    final todayKey = _dateKey(DateTime.now());
+    final selectedKey = _dateKey(selectedDate);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+            child: Text(_monthLabel(date), style: AppText.sectionTitle),
+          ),
+          Row(
+            children: [
+              for (final weekday in const ['一', '二', '三', '四', '五', '六', '日'])
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                    child: Text(
+                      weekday,
+                      textAlign: TextAlign.center,
+                      style: AppText.caption.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          Expanded(
+            child: Column(
+              children: List.generate(6, (week) {
+                return Expanded(
+                  child: Row(
+                    children: List.generate(7, (weekday) {
+                      final day = week * 7 + weekday - startOffset + 1;
+                      if (day < 1 || day > daysInMonth) {
+                        return const Expanded(child: SizedBox.shrink());
+                      }
+                      final dayDate = DateTime(date.year, date.month, day);
+                      final key = _dateKey(dayDate);
+                      return Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.all(AppSpacing.xs / 2),
+                          child: _buildCompactDay(
+                            context,
+                            date: dayDate,
+                            record: recordsByDate[key],
+                            selected: key == selectedKey,
+                            today: key == todayKey,
+                            scheme: scheme,
+                            surfaces: surfaces,
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                );
+              }),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompactDay(
+    BuildContext context, {
+    required DateTime date,
+    required TravelRecord? record,
+    required bool selected,
+    required bool today,
+    required ColorScheme scheme,
+    required AppSurfaces surfaces,
+  }) {
+    final fill = selected
+        ? context.wallpaperFill(scheme.primaryContainer)
+        : record != null
+            ? context.wallpaperFill(scheme.surfaceContainerHigh)
+            : Colors.transparent;
+    final foreground = selected ? scheme.onPrimaryContainer : scheme.onSurface;
+    return Semantics(
+      selected: selected,
+      button: true,
+      label: '${DateFormat('yyyy年M月d日').format(date)}'
+          '${record == null ? '' : '，${record.location}'}',
+      child: Material(
+        key: ValueKey('travel-calendar-day-${_dateKey(date)}'),
+        color: fill,
+        shape: RoundedRectangleBorder(
+          borderRadius: AppRadius.controlAll,
+          side: BorderSide(
+            color: selected || today ? scheme.primary : surfaces.border,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => onSelectDate(date),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Text(
+                '${date.day}',
+                style: AppText.body.copyWith(
+                  color: foreground,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                ),
+              ),
+              if (record != null)
+                Positioned(
+                  bottom: AppSpacing.xs,
+                  child: const DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: AppSemanticColors.success,
+                      shape: BoxShape.circle,
+                    ),
+                    child:
+                        SizedBox(width: AppSpacing.xs, height: AppSpacing.xs),
+                  ),
+                ),
+              if (today && !selected)
+                Positioned(
+                  top: AppSpacing.xs,
+                  right: AppSpacing.xs,
+                  child: Text('今',
+                      style: AppText.badge.copyWith(color: foreground)),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSelectedDateSummary(
+    BuildContext context, {
+    required bool showAsDialog,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final record = records
+        .where((item) => item.dateKey == _dateKey(selectedDate))
+        .firstOrNull;
+    final weekdays = const ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+    return Card(
+      margin: EdgeInsets.zero,
+      child: LayoutBuilder(builder: (context, constraints) {
+        final compact =
+            constraints.maxWidth < AppSizes.desktopTravelTwoMonthBreakpoint;
+        return Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm,
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.event_note_outlined, color: scheme.primary),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(DateFormat('yyyy年M月d日').format(selectedDate),
+                        style: AppText.button),
+                    Text(
+                      '${weekdays[selectedDate.weekday - 1]} · '
+                      '${record?.location ?? '暂无记录'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.caption.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (compact)
+                IconButton(
+                  tooltip: '查看所选日期详情',
+                  onPressed: () => _showSelectedDateDetails(
+                    context,
+                    showAsDialog: showAsDialog,
+                  ),
+                  icon: const Icon(Icons.open_in_new),
+                )
+              else
+                TextButton.icon(
+                  onPressed: () => _showSelectedDateDetails(
+                    context,
+                    showAsDialog: showAsDialog,
+                  ),
+                  icon: const Icon(Icons.open_in_new, size: AppSpacing.lg),
+                  label: const Text('查看详情'),
+                ),
+            ],
+          ),
+        );
+      }),
+    );
+  }
+
+  Future<void> _showSelectedDateDetails(
+    BuildContext context, {
+    required bool showAsDialog,
+  }) async {
+    final summary = _buildMonthRecords(context, _recordsInMonth(selectedDate));
+    final content = ListView(
+      padding: AppSpacing.cardComfortable,
+      children: [
+        selectedDateDetails,
+        const SizedBox(height: AppSpacing.lg),
+        summary,
+      ],
+    );
+    final surfaces = AppSurfaces.of(context);
+    if (showAsDialog) {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => Dialog(
+          backgroundColor: surfaces.overlay,
+          child: SizedBox(
+            width: AppSizes.desktopTravelDetailsWidth,
+            height: MediaQuery.sizeOf(context).height * 0.78,
+            child: content,
+          ),
+        ),
+      );
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      backgroundColor: surfaces.overlay,
+      shape: const RoundedRectangleBorder(borderRadius: AppRadius.sheetTop),
+      builder: (context) => FractionallySizedBox(
+        heightFactor: 0.88,
+        child: content,
+      ),
+    );
   }
 
   Widget _buildMonth(BuildContext context) {
@@ -106,39 +498,9 @@ class TravelDesktopCalendar extends StatelessWidget {
         border: Border.all(color: surfaces.border),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton(
-                    onPressed: onPickMonth,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text('${month.year}年${month.month}月',
-                            style: AppText.pageTitle),
-                        const SizedBox(width: AppSpacing.xs),
-                        const Icon(Icons.unfold_more, size: AppSpacing.lg),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              TextButton(onPressed: onToday, child: const Text('今天')),
-              IconButton(
-                tooltip: '上个月',
-                onPressed: () => onChangeMonth(-1),
-                icon: const Icon(Icons.chevron_left),
-              ),
-              IconButton(
-                tooltip: '下个月',
-                onPressed: () => onChangeMonth(1),
-                icon: const Icon(Icons.chevron_right),
-              ),
-            ],
-          ),
+          _buildCalendarToolbar(context),
           const SizedBox(height: AppSpacing.md),
           Row(
             children: [
