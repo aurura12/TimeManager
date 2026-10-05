@@ -15,10 +15,10 @@ function Show-ReleaseUsage {
   .\scripts\publish_windows_release.bat [选项]
 
 默认行为：
-  1. 在构建前检查 docs/release-notes.md 是否与线上最新 Release 重复；
-  2. 获取依赖，次版本号 +1、patch 归零、构建号 +1；
+  1. 不校验 Release 说明；需要与线上最新说明对比时加 --check-notes；
+  2. 按 pubspec.yaml 当前版本发布（默认不自增版本号，适合给已有 Release 补 EXE）；
   3. 构建 Windows x64 release，用 Inno Setup 6 打包到 dist/；
-  4. 生成同名 .exe.sha256，只提交 pubspec.yaml 的版本号并推送上游；
+  4. 生成同名 .exe.sha256；加 --bump 时才会自增版本号并提交、推送 pubspec.yaml；
   5. 创建或复用 <版本> Gitee Release，先传 SHA-256，再传 EXE。
 
 默认跳过 flutter analyze 和 flutter test；需要检查时使用 --run-tests。
@@ -31,11 +31,12 @@ function Show-ReleaseUsage {
   --skip-build             跳过构建，必须同时指定 --artifact
   --run-tests              构建前运行 flutter analyze 和 flutter test
   --skip-tests             显式跳过分析和测试（默认）
-  --skip-bump              按 pubspec.yaml 当前版本构建，可给 Android 同一 Release 补 EXE
+  --bump                   自增版本号（次版本 +1、patch 归零、构建号 +1）并发起版本提交，用于发新版本
+  --skip-bump              按当前版本构建（默认行为，保留为显式写法）
   --no-git                 不自动提交、推送版本号
   --dist-dir DIR           安装包输出目录，默认 <项目根>/dist
   --notes-file FILE        Release 说明，默认 docs/release-notes.md
-  --allow-stale-notes      跳过说明查重；复用同一版本 Release 本来就不查重
+  --check-notes            发布前对比线上最新 Release 的说明，重复则拒绝（默认不检查）
   --iscc PATH              指定 Inno Setup 6.3+ 的 ISCC.exe
   --owner OWNER            覆盖 Gitee 用户名/组织名
   --repo REPO              覆盖发布仓库名
@@ -182,7 +183,7 @@ function Assert-FreshReleaseNotes([string] $Tag, [string] $Notes) {
     $latestBody = [string] (Get-JsonProperty $latest 'body')
     if (-not $latestTag -or -not $latestBody -or $latestTag -eq $Tag) { return }
     if (($latestBody -replace '\s', '') -ceq ($Notes -replace '\s', '')) {
-        throw "Release 说明与线上最新版本（$latestTag）完全相同。请更新说明，或加 --allow-stale-notes"
+        throw "Release 说明与线上最新版本（$latestTag）完全相同。请更新说明后重试，或去掉 --check-notes"
     }
     Write-ReleaseLog "Release 说明查重通过（线上最新版本 $latestTag）"
 }
@@ -244,11 +245,14 @@ function ConvertTo-InnoCompilerVersion([string] $Value) {
     if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
     $match = [regex]::Match($Value, '^(\d+)\.(\d+)')
     if (-not $match.Success) { return $null }
+    # Inno Setup 的 ISCC.exe 版本资源被写死成 0.0.0.0（占位），主版本 0 不可能是真实版本，
+    # 视为无法判断并返回 $null，交由调用方按「未知」放行。
+    if ([int] $match.Groups[1].Value -lt 1) { return $null }
     return [version] ($match.Groups[1].Value + '.' + $match.Groups[2].Value)
 }
 
 function Get-InnoCompilerVersion([string] $Path) {
-    # 读取 ISCC.exe 的版本；读不到时返回 $null，交由调用方放行。
+    # 读取 ISCC.exe 的版本；读不到（含 0.0.0.0 占位）时返回 $null，交由调用方放行。
     $info = $null
     try { $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($Path) } catch { return $null }
     if ($null -eq $info) { return $null }
@@ -360,9 +364,9 @@ function Invoke-WindowsRelease([string[]] $PublishArgs) {
     $isccPath = $env:ISCC_PATH
     $skipBuild = $false
     $runTests = $false
-    $skipBump = $false
+    $skipBump = $true
     $noGit = $false
-    $allowStaleNotes = $false
+    $checkNotes = $false
     $dryRun = $false
     $bumped = $false
     $buildCompleted = $false
@@ -392,8 +396,9 @@ function Invoke-WindowsRelease([string[]] $PublishArgs) {
                 '--run-tests' { $runTests = $true }
                 '--skip-tests' { $runTests = $false }
                 '--skip-bump' { $skipBump = $true }
+                '--bump' { $skipBump = $false }
                 '--no-git' { $noGit = $true }
-                '--allow-stale-notes' { $allowStaleNotes = $true }
+                '--check-notes' { $checkNotes = $true }
                 '--dry-run' { $dryRun = $true }
                 { $_ -in @('-h', '--help') } { Show-ReleaseUsage; return }
                 default { throw "未知选项：$option（使用 --help 查看用法）" }
@@ -427,7 +432,7 @@ function Invoke-WindowsRelease([string[]] $PublishArgs) {
         if (-not $skipBuild -and -not $skipBump -and -not $noGit) { Assert-CleanPubspec }
         $script:giteeToken = Get-ReleaseToken
         $script:client = New-GiteeClient
-        if (-not $allowStaleNotes) { Assert-FreshReleaseNotes $tag $notes }
+        if ($checkNotes) { Assert-FreshReleaseNotes $tag $notes }
         if (-not $skipBuild) {
             Initialize-WindowsNuget
             Invoke-ReleaseCommand 'flutter' @('pub', 'get')
@@ -440,7 +445,8 @@ function Invoke-WindowsRelease([string[]] $PublishArgs) {
                 Set-AppVersion $original.Value $version
                 $bumped = $true
             }
-            Invoke-ReleaseCommand 'flutter' @('build', 'windows', '--release', '--target-platform', 'windows-x64')
+            # flutter build windows 不支持 --target-platform（x64 主机默认构建 x64）
+            Invoke-ReleaseCommand 'flutter' @('build', 'windows', '--release')
             if (-not [IO.File]::Exists((Join-Path $script:repoRoot 'build/windows/x64/runner/Release/time_manager.exe'))) {
                 throw 'Windows 构建完成，但找不到 build/windows/x64/runner/Release/time_manager.exe'
             }

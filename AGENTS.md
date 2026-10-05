@@ -185,13 +185,13 @@ scripts/installer.iss              # Inno Setup 6.3+ 打 Windows 安装包（上
 
 两个仓库不要混淆：**同步数据**在 `RemoteRepoConfig` 里的 `love_diary`，**应用发布**在 `time_manager_releases`。
 
-`scripts/publish_windows_release.bat` 是 Windows 的同类发布入口，由 `publish_windows_release.ps1` 实现，参数沿用 `--run-tests` / `--skip-bump` / `--no-git` / `--artifact` 等写法，无需 Bash、jq 或 curl：
+`scripts/publish_windows_release.bat` 是 Windows 的同类发布入口，由 `publish_windows_release.ps1` 实现，参数沿用 `--run-tests` / `--bump` / `--no-git` / `--artifact` 等写法，无需 Bash、jq 或 curl：
 
-- 默认在构建前查重 `docs/release-notes.md`，跳过分析和测试；次版本 +1、patch 归零、构建号 +1
+- 默认**不**查重 `docs/release-notes.md`（需要与线上最新 Release 的说明对比时加 `--check-notes`，完全相同才拒绝发布），并默认**按 `pubspec.yaml` 当前版本发布**（即给已有 Release 补 EXE，不自增版本号）；加 `--bump` 才做次版本 +1、patch 归零、构建号 +1 并发起版本提交
 - 构建 Windows x64 release，自动定位 Inno Setup 6.3+（可用 `--iscc` / `ISCC_PATH` 指定，版本低于 6.3 会明确报错），从 `pubspec.yaml` 传入安装包版本；`build_windows.bat` 也自动传入版本，直接编译 `installer.iss` 时必须传 `/DMyAppVersion=<版本>`
 - 输出 `dist/time_manager_setup_<版本>.exe` 和同名 `.exe.sha256`，只提交并推送 `pubspec.yaml`；自动提交前拒绝该文件已有未提交改动，其他文件的 staged / unstaged 改动不带入提交
 - 发布仓库、Token 来源和先传校验文件的顺序与 Android 一致；复用同版本 Release、不重传同名附件
-- Android 已发布后，Windows 先拉取最新 `pubspec.yaml` 再用 `--skip-bump`，给同一个 Release 补 Windows 安装包
+- Android 已发布后，Windows 先拉取最新 `pubspec.yaml` 直接运行即可（默认按当前版本补包），给同一个 Release 补 Windows 安装包；`--skip-bump` 保留为显式等价写法
 - 构建失败 / 中断只回滚本次版本号；打包成功后的提交 / 上传失败保留版本与产物，可通过 `--artifact` 重试；已有 EXE 文件名中的版本必须与 `pubspec.yaml` 一致
 - PowerShell 中文脚本使用 UTF-8 BOM，以兼容 Windows PowerShell 5.1；模拟回归测试为 `test/publish_windows_release_script_test.ps1`，不联网、不发布
 

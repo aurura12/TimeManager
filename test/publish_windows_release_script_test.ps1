@@ -184,7 +184,7 @@ function Pass([string] $Name) { $script:testCount++; [Console]::WriteLine("PASS:
 try {
     Reset-Fixture
     $before = Read-PubspecBytes
-    Invoke-WindowsRelease @('--dry-run')
+    Invoke-WindowsRelease @('--dry-run', '--bump')
     Invoke-WindowsRelease @('--dry-run', '--skip-bump', '--dist-dir', 'custom output')
     Assert-Equal $before (Read-PubspecBytes) 'dry-run must preserve the pubspec bytes'
     Assert-Equal 0 $script:commands.Count 'dry-run must not run commands'
@@ -193,12 +193,11 @@ try {
     Pass 'dry-run has no side effects'
 
     Reset-Fixture
-    Add-NotesResponse
     Add-NewReleaseResponses
-    Invoke-WindowsRelease @('--run-tests')
+    Invoke-WindowsRelease @('--bump', '--run-tests')
     Assert-Equal '1.115.0+33' (Get-AppVersion).Value 'version bump'
     $sequence = @($script:commands | ForEach-Object { "$([IO.Path]::GetFileName($_.Command)) $($_.Arguments -join ' ')" }) -join "`n"
-    Assert-True ($sequence -match 'flutter pub get\nflutter analyze\nflutter test --reporter compact\nflutter build windows --release --target-platform windows-x64') 'checks must precede the build'
+    Assert-True ($sequence -match 'flutter pub get\nflutter analyze\nflutter test --reporter compact\nflutter build windows --release') 'checks must precede the build'
     $compiler = $script:commands | Where-Object { $_.Command.EndsWith('iscc.exe') }
     Assert-True ($compiler.Arguments -contains '/DMyAppVersion=1.115.0') 'installer version must match the app version'
     $commit = $script:commands | Where-Object { $_.Command -eq 'git' -and $_.Arguments[0] -eq 'commit' }
@@ -214,9 +213,8 @@ try {
     Pass 'full build, checks, version commit, UTF-8 release notes and upload order'
 
     Reset-Fixture
-    Add-NotesResponse
     Add-NewReleaseResponses
-    Invoke-WindowsRelease @('--no-git', '--run-tests', '--skip-tests', '--dist-dir', 'custom output')
+    Invoke-WindowsRelease @('--bump', '--no-git', '--run-tests', '--skip-tests', '--dist-dir', 'custom output')
     Assert-Equal 0 @($script:commands | Where-Object { $_.Command -eq 'git' -or $_.Arguments[0] -in @('analyze', 'test') }).Count 'no-git and skip-tests'
     Assert-True ([IO.File]::Exists((Join-Path $script:repoRoot 'custom output/time_manager_setup_1.115.0.exe'))) 'custom output path'
     Assert-Uploads 'time_manager_setup_1.115.0.exe.sha256,time_manager_setup_1.115.0.exe'
@@ -225,15 +223,14 @@ try {
     Reset-Fixture
     $before = Read-PubspecBytes
     Add-NotesResponse ($script:notes -replace '\s', '')
-    Assert-Fails { Invoke-WindowsRelease @() } '完全相同'
+    Assert-Fails { Invoke-WindowsRelease @('--bump', '--check-notes') } '完全相同'
     Assert-Equal $before (Read-PubspecBytes) 'stale notes must not change version'
     Assert-Equal 1 $script:commands.Count 'only the read-only git preflight may run'
     Assert-Equal 'status' $script:commands[0].Arguments[0] 'no build or commit before notes guard'
     Assert-Equal 1 $script:handler.Requests.Count 'notes guard must stop before release mutation'
-    Pass 'stale notes stop before build and version bump'
+    Pass '--check-notes stops before build when notes are identical'
 
     Reset-Fixture
-    Add-NotesResponse $script:notes '1.114.3'
     Add-Response 200 '[]'
     Add-Response 200 '[{"id":222,"tag_name":"1.114.3"}]'
     Add-Response 200 '[{"name":"android-release.apk"},{"name":"time_manager_setup_1.114.3.exe.sha256"}]'
@@ -246,10 +243,18 @@ try {
     Pass 'reuse same release, empty tag response fallback, preserve other platform assets'
 
     Reset-Fixture
+    Add-NewReleaseResponses '1.114.3'
+    Invoke-WindowsRelease @()
+    Assert-Equal '1.114.3+32' (Get-AppVersion).Value 'default mode must not bump the version'
+    Assert-Equal 0 @($script:commands | Where-Object { $_.Command -eq 'git' }).Count 'default mode must not commit or push'
+    Assert-Uploads 'time_manager_setup_1.114.3.exe.sha256,time_manager_setup_1.114.3.exe'
+    Pass 'default publishes the current version without bumping'
+
+    Reset-Fixture
     $artifact = New-ExistingInstaller
     Add-Response 200 '{"data":{"id":222}}'
     Add-Response 200 '[{"name":"time_manager_setup_1.114.3.exe.sha256"},{"name":"time_manager_setup_1.114.3.exe"}]'
-    Invoke-WindowsRelease @('--artifact', 'existing packages/time_manager_setup_1.114.3.exe', '--allow-stale-notes')
+    Invoke-WindowsRelease @('--artifact', 'existing packages/time_manager_setup_1.114.3.exe')
     Assert-Equal 0 $script:commands.Count 'artifact upload must not build or commit'
     Assert-True ([IO.File]::Exists("$artifact.sha256")) 'metadata for existing installer'
     Assert-Uploads ''
@@ -259,21 +264,19 @@ try {
         Reset-Fixture
         $before = Read-PubspecBytes
         $script:failCommand = $failure
-        Add-NotesResponse
-        Assert-Fails { Invoke-WindowsRelease @('--no-git') } 'mock failure'
+        Assert-Fails { Invoke-WindowsRelease @('--no-git', '--bump') } 'mock failure'
         Assert-Equal $before (Read-PubspecBytes) 'failed build must restore exact BOM, CRLF and comment bytes'
-        Assert-Equal 1 $script:handler.Requests.Count 'failed build must not mutate remote release'
+        Assert-Equal 0 $script:handler.Requests.Count 'failed build must not touch the network'
         Pass "failure rollback: $failure"
     }
 
     Reset-Fixture
-    Add-NotesResponse
     Add-Response 404 '{}'
     Add-Response 200 '[]'
     Add-Response 201 '{"release_id":999}'
     Add-Response 200 '[]'
     Add-Response 503 '{"message":"upload unavailable"}'
-    Assert-Fails { Invoke-WindowsRelease @('--no-git') } 'HTTP 503'
+    Assert-Fails { Invoke-WindowsRelease @('--no-git', '--bump') } 'HTTP 503'
     Assert-Equal '1.115.0+33' (Get-AppVersion).Value 'upload failure must retain built version'
     Assert-True ([IO.File]::Exists((Join-Path $script:repoRoot 'dist/time_manager_setup_1.115.0.exe'))) 'retain installer for retry'
     Assert-Uploads 'time_manager_setup_1.115.0.exe.sha256'
@@ -284,7 +287,7 @@ try {
     Add-Response 200 '{"id":999}'
     Add-Response 200 '[]'
     Add-Response 201 '{"name":"wrong.exe.sha256"}'
-    Assert-Fails { Invoke-WindowsRelease @('--artifact', $artifact, '--allow-stale-notes') } '附件名'
+    Assert-Fails { Invoke-WindowsRelease @('--artifact', $artifact) } '附件名'
     Assert-Uploads 'time_manager_setup_1.114.3.exe.sha256'
     Pass 'unexpected checksum asset response blocks EXE upload'
 
@@ -292,7 +295,7 @@ try {
         Reset-Fixture
         $before = Read-PubspecBytes
         Add-Response $response[0] $response[1]
-        Assert-Fails { Invoke-WindowsRelease @('--no-git') } $response[2]
+        Assert-Fails { Invoke-WindowsRelease @('--no-git', '--check-notes') } $response[2]
         Assert-Equal $before (Read-PubspecBytes) 'bad preflight HTTP must not change version'
         Assert-Equal 0 $script:commands.Count 'bad preflight HTTP must not build'
         Pass "preflight error: $($response[2])"
@@ -306,7 +309,7 @@ try {
 
     Reset-Fixture
     $script:dirtyPubspec = $true
-    Assert-Fails { Invoke-WindowsRelease @() } 'pubspec.yaml 有未提交改动'
+    Assert-Fails { Invoke-WindowsRelease @('--bump') } 'pubspec.yaml 有未提交改动'
     Assert-Equal 0 $script:handler.Requests.Count 'dirty pubspec must stop before network'
     Pass 'prevent unrelated pubspec edits in auto commit'
 
@@ -327,7 +330,7 @@ try {
     Add-Response 200 (ConvertTo-Json -Compress -InputObject $assets)
     Add-Response 200 '[{"name":"time_manager_setup_1.114.3.exe.sha256"}]'
     Add-Response 201 '{"name":"time_manager_setup_1.114.3.exe"}'
-    Invoke-WindowsRelease @('--artifact', $artifact, '--allow-stale-notes')
+    Invoke-WindowsRelease @('--artifact', $artifact)
     Assert-Uploads 'time_manager_setup_1.114.3.exe'
     Assert-Equal 2 @($script:handler.Requests | Where-Object { $_.Url.Contains('page=2') }).Count 'paginate releases and assets'
     Pass 'release and asset pagination'
@@ -335,9 +338,8 @@ try {
     foreach ($warning in @('noUpstream', 'pushFails')) {
         Reset-Fixture
         Set-Variable -Name $warning -Value $true -Scope Script
-        Add-NotesResponse
         Add-NewReleaseResponses
-        Invoke-WindowsRelease @()
+        Invoke-WindowsRelease @('--bump')
         Assert-True (@($script:logs | Where-Object { $_.Contains('警告：') }).Count -gt 0) 'git push problems must be visible'
         Assert-Uploads 'time_manager_setup_1.115.0.exe.sha256,time_manager_setup_1.115.0.exe'
         Pass "git warning: $warning"
@@ -398,6 +400,7 @@ try {
     Assert-Equal ([version] '6.3') (ConvertTo-InnoCompilerVersion '6.3.3 (abc)') 'parse version with suffix'
     Assert-Equal $null (ConvertTo-InnoCompilerVersion '') 'empty version'
     Assert-Equal $null (ConvertTo-InnoCompilerVersion 'not-a-version') 'unparsable version'
+    Assert-Equal $null (ConvertTo-InnoCompilerVersion '0.0.0.0') 'placeholder version resource'
     Pass 'require Inno Setup 6.3+ but tolerate unknown versions'
 
     foreach ($file in @('publish_windows_release.ps1', 'generate_update_metadata.ps1')) {

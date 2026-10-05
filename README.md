@@ -118,9 +118,11 @@ $env:GITEE_TOKEN = '你的 Gitee Token'
 # 发布前运行 flutter analyze 和 flutter test
 .\scripts\publish_windows_release.bat --run-tests
 
-# Android 已发布当前版本时，给同一 Release 补上 Windows 安装包
-# 先 git pull 同步 Android 自动提交的 pubspec.yaml 版本，再执行：
-.\scripts\publish_windows_release.bat --skip-bump
+# 默认就是「补包」：先 git pull 同步 Android 自动提交的 pubspec.yaml 版本，再直接执行
+.\scripts\publish_windows_release.bat
+
+# 用 Windows 主动发一个新版本（版本号 +1、自动提交推送）
+.\scripts\publish_windows_release.bat --bump
 
 # 禁用版本号的自动提交和推送
 .\scripts\publish_windows_release.bat --no-git
@@ -134,7 +136,7 @@ $env:GITEE_TOKEN = '你的 Gitee Token'
 .\scripts\publish_windows_release.bat --help
 ```
 
-说明查重在构建前完成；复用同一版本 Release 时不查重，也不会重传同名附件。新版本说明重复会拒绝发布，可用 `--allow-stale-notes` 跳过。自动提交前要求 `pubspec.yaml` 没有未提交改动，其他文件的改动不会带入版本提交。构建失败或中断只回滚本次版本号修改；打包成功后上传失败则保留版本和安装包，便于重试。相对路径以项目根目录为基准。`--owner` / `--repo` 与 `GITEE_OWNER` / `GITEE_REPO` 可覆盖发布仓库，修改正式发布仓库时需同步修改 `UpdateService`。
+默认不查重；需要与线上最新 Release 的说明对比时加 `--check-notes`，完全相同会拒绝发布。默认**按 `pubspec.yaml` 当前版本发布**（即补包），复用同一版本 Release 且不会重传同名附件；加 `--bump` 才会自增版本号并自动提交、推送 `pubspec.yaml`（此时才要求它没有未提交改动，其他文件的改动不会带入版本提交）。构建失败或中断只回滚本次版本号修改；打包成功后上传失败则保留版本和安装包，便于重试。相对路径以项目根目录为基准。`--owner` / `--repo` 与 `GITEE_OWNER` / `GITEE_REPO` 可覆盖发布仓库，修改正式发布仓库时需同步修改 `UpdateService`。
 
 ## 配置文件（必需）
 
