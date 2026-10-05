@@ -255,6 +255,16 @@ void main() {
     expect(tester.getTopLeft(first).dx, lessThan(tester.getTopLeft(second).dx));
     provider.setCategoryExpandState(_category(provider, '学习').id, true);
     await tester.pump();
+    // 桌面分类网格必须自带滚动视图：展开分组撑高后才能上下滚动。
+    // 回归点：ReorderableWrap 一旦同时传 controller 与
+    // ignorePrimaryScrollController，会退化成裸 Wrap、丢掉这里的滚动容器。
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('category-panel')),
+        matching: find.byType(SingleChildScrollView),
+      ),
+      findsOneWidget,
+    );
     await _tapCategory(tester, '阅读');
     final geometry = _gridGeometry(tester, provider, _todayColumn);
     await tester.tapAt(_visiblePoint(geometry, 54));

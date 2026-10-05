@@ -912,7 +912,9 @@ class HomeScreenState extends State<HomeScreen> {
               1, provider.categories.isEmpty ? 1 : provider.categories.length);
       final tileWidth = (available - (columns - 1) * AppSpacing.sm) / columns;
       return ReorderableWrap(
-        controller: _categoryScrollController,
+        // 不能传 controller：与 ignorePrimaryScrollController 同时出现会让
+        // reorderables 走「裸 Wrap」分支、丢掉 SingleChildScrollView，导致
+        // 展开分组撑高后无法滚动（桌面端）。留空由包内部自建滚动视图。
         ignorePrimaryScrollController: true,
         padding: const EdgeInsets.all(AppSpacing.xs),
         spacing: AppSpacing.sm,
