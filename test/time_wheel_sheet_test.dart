@@ -110,6 +110,77 @@ void main() {
     expect(picked, const TimeOfDay(hour: 21, minute: 1));
   });
 
+  testWidgets('直接输入合法时间，确定后返回该值', (tester) async {
+    await pumpHost(tester, const TimeOfDay(hour: 21, minute: 0));
+
+    await tester.enterText(
+      find.byKey(const ValueKey('time-wheel-input')),
+      '09:30',
+    );
+    await tester.pump();
+
+    // 输入框本身就是预览，滚轮面板仍保留
+    expect(find.text('09:30'), findsOneWidget);
+    expect(find.byKey(const ValueKey('time-wheel-hour')), findsOneWidget);
+
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+
+    expect(picked, const TimeOfDay(hour: 9, minute: 30));
+  });
+
+  testWidgets('输入非法时间时提示错误，面板不关闭也不返回值', (tester) async {
+    await pumpHost(tester, const TimeOfDay(hour: 21, minute: 0));
+
+    await tester.enterText(
+      find.byKey(const ValueKey('time-wheel-input')),
+      '25:00',
+    );
+    await tester.pump();
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('请输入有效时间（HH:mm）'), findsOneWidget);
+    expect(completed, isFalse);
+    expect(picked, isNull);
+
+    // 改回合法值即清掉错误，再确定才返回
+    await tester.enterText(
+      find.byKey(const ValueKey('time-wheel-input')),
+      '08:05',
+    );
+    await tester.pump();
+    expect(find.text('请输入有效时间（HH:mm）'), findsNothing);
+
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+    expect(picked, const TimeOfDay(hour: 8, minute: 5));
+  });
+
+  testWidgets('输入合法时间会驱动滚轮，再从滚轮微调', (tester) async {
+    await pumpHost(tester, const TimeOfDay(hour: 21, minute: 0));
+
+    await tester.enterText(
+      find.byKey(const ValueKey('time-wheel-input')),
+      '09:30',
+    );
+    await tester.pump();
+
+    // 输入已同步滚轮：从 09:30 再往上拖一格分钟，应该得到 09:31
+    await tester.drag(
+      find.byKey(const ValueKey('time-wheel-minute')),
+      const Offset(0, -44),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('09:31'), findsOneWidget);
+
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+
+    expect(picked, const TimeOfDay(hour: 9, minute: 31));
+  });
+
   testWidgets('面板没有溢出，浅色深色都能渲染', (tester) async {
     for (final theme in <ThemeData>[AppTheme.light(), AppTheme.dark()]) {
       await tester.pumpWidget(

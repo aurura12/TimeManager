@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../theme/app_tokens.dart';
 
@@ -46,8 +47,15 @@ class _TimeWheelSheetState extends State<_TimeWheelSheet> {
 
   late final FixedExtentScrollController _hourController;
   late final FixedExtentScrollController _minuteController;
+  late final TextEditingController _textController;
   late int _hour;
   late int _minute;
+
+  /// 输入框正在驱动滚轮时置位，避免滚轮的 onSelectedItemChanged 再回写输入框。
+  bool _syncingFromText = false;
+
+  /// 输入非法时显示在输入框下方的提示；null 表示没有错误。
+  String? _textError;
 
   @override
   void initState() {
@@ -56,17 +64,55 @@ class _TimeWheelSheetState extends State<_TimeWheelSheet> {
     _minute = widget.initialTime.minute;
     _hourController = FixedExtentScrollController(initialItem: _hour);
     _minuteController = FixedExtentScrollController(initialItem: _minute);
+    _textController = TextEditingController(text: _label);
   }
 
   @override
   void dispose() {
     _hourController.dispose();
     _minuteController.dispose();
+    _textController.dispose();
     super.dispose();
   }
 
-  String get _label =>
-      '${_hour.toString().padLeft(2, '0')}:${_minute.toString().padLeft(2, '0')}';
+  String get _label => '${_twoDigits(_hour)}:${_twoDigits(_minute)}';
+
+  /// 解析 HH:mm / H:mm（分钟必须两位），返回当天分钟数；非法返回 null。
+  int? _parseMinutes(String raw) {
+    final match = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(raw.trim());
+    if (match == null) return null;
+    final hour = int.parse(match.group(1)!);
+    final minute = int.parse(match.group(2)!);
+    if (hour > 23 || minute > 59) return null;
+    return hour * 60 + minute;
+  }
+
+  /// 输入合法时同步滚轮到对应位置；未成形就只清错误、不动滚轮。
+  void _onTextChanged(String raw) {
+    final minutes = _parseMinutes(raw);
+    setState(() {
+      _textError = null;
+      if (minutes == null) return;
+      _hour = minutes ~/ 60;
+      _minute = minutes % 60;
+      _syncingFromText = true;
+      _hourController.jumpToItem(_hour);
+      _minuteController.jumpToItem(_minute);
+      _syncingFromText = false;
+    });
+  }
+
+  /// 「确定」按钮与回车共用：输入非法时提示错误并保持面板打开。
+  void _confirm() {
+    final minutes = _parseMinutes(_textController.text);
+    if (minutes == null) {
+      setState(() => _textError = '请输入有效时间（HH:mm）');
+      return;
+    }
+    Navigator.of(context).pop(
+      TimeOfDay(hour: minutes ~/ 60, minute: minutes % 60),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -78,11 +124,36 @@ class _TimeWheelSheetState extends State<_TimeWheelSheet> {
         Divider(height: AppSizes.hairline, color: colorScheme.outlineVariant),
         Padding(
           padding: const EdgeInsets.only(top: AppSpacing.lg),
-          child: Text(
-            _label,
+          child: TextField(
+            key: const ValueKey('time-wheel-input'),
+            controller: _textController,
+            textAlign: TextAlign.center,
+            keyboardType: TextInputType.datetime,
+            textInputAction: TextInputAction.done,
+            onChanged: _onTextChanged,
+            onSubmitted: (_) => _confirm(),
             style: AppText.pageTitle.copyWith(color: colorScheme.onSurface),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[0-9:]')),
+              LengthLimitingTextInputFormatter(5),
+            ],
+            decoration: const InputDecoration(
+              border: InputBorder.none,
+              isDense: true,
+              contentPadding: EdgeInsets.zero,
+              hintText: 'HH:mm',
+            ),
           ),
         ),
+        if (_textError != null)
+          Padding(
+            padding: const EdgeInsets.only(top: AppSpacing.xs),
+            child: Text(
+              _textError!,
+              textAlign: TextAlign.center,
+              style: AppText.caption.copyWith(color: colorScheme.error),
+            ),
+          ),
         const SizedBox(height: AppSpacing.md),
         SizedBox(
           height: _wheelHeight,
@@ -131,9 +202,7 @@ class _TimeWheelSheetState extends State<_TimeWheelSheet> {
             ),
           ),
           TextButton(
-            onPressed: () => Navigator.of(context).pop(
-              TimeOfDay(hour: _hour, minute: _minute),
-            ),
+            onPressed: _confirm,
             child: const Text('确定'),
           ),
         ],
@@ -170,7 +239,14 @@ class _TimeWheelSheetState extends State<_TimeWheelSheet> {
       itemExtent: _itemExtent,
       overAndUnderCenterOpacity: 0.35,
       physics: const FixedExtentScrollPhysics(),
-      onSelectedItemChanged: (index) => setState(() => _hour = index),
+      onSelectedItemChanged: (index) {
+        if (_syncingFromText) return;
+        setState(() {
+          _hour = index;
+          _textController.text = _label;
+          _textError = null;
+        });
+      },
       childDelegate: ListWheelChildBuilderDelegate(
         childCount: _hourCount,
         builder: (context, index) =>
@@ -186,7 +262,14 @@ class _TimeWheelSheetState extends State<_TimeWheelSheet> {
       itemExtent: _itemExtent,
       overAndUnderCenterOpacity: 0.35,
       physics: const FixedExtentScrollPhysics(),
-      onSelectedItemChanged: (index) => setState(() => _minute = index),
+      onSelectedItemChanged: (index) {
+        if (_syncingFromText) return;
+        setState(() {
+          _minute = index;
+          _textController.text = _label;
+          _textError = null;
+        });
+      },
       childDelegate: ListWheelChildBuilderDelegate(
         childCount: _minuteCount,
         builder: (context, index) =>
