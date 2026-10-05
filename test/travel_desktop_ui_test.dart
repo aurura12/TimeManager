@@ -252,8 +252,18 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('多月视图一次排布 6 个月（宽屏 3 列两行）且不溢出', (tester) async {
+  testWidgets('多月视图按窗口大小自适应月份数量且不出现半截行', (tester) async {
     final boundary = GlobalKey();
+    const allMonths = [
+      '2026年10月',
+      '2026年11月',
+      '2026年12月',
+      '2027年1月',
+      '2027年2月',
+      '2027年3月',
+    ];
+
+    // 宽屏高窗口：3 列两行，完整 6 个月
     await _pump(
         tester,
         _calendar(
@@ -263,20 +273,27 @@ void main() {
         boundaryKey: boundary);
     expect(
         find.byKey(const ValueKey('travel-desktop-multi-month')), findsOneWidget);
-    for (final label in const [
-      '2026年10月',
-      '2026年11月',
-      '2026年12月',
-      '2027年1月',
-      '2027年2月',
-      '2027年3月',
-    ]) {
+    for (final label in allMonths) {
       expect(find.text(label), findsOneWidget, reason: '缺少月份 $label');
     }
     await _capture(tester, boundary, 'travel_calendar_multi_month');
     expect(tester.takeException(), isNull);
 
-    // 窄窗口只排一列，仍能滚动读完 6 个月
+    // 宽但矮：只放得下一行，自动降到 3 个月，不出现半截行
+    await _pump(
+        tester,
+        _calendar(
+            selectedDate: DateTime(2026, 10, 15),
+            onSelectDate: (_) {},
+            multiMonth: true),
+        size: const Size(1400, 700));
+    expect(find.text('2026年10月'), findsOneWidget);
+    expect(find.text('2026年12月'), findsOneWidget);
+    expect(find.text('2027年1月'), findsNothing,
+        reason: '放不下就不显示第二行');
+    expect(tester.takeException(), isNull);
+
+    // 窄窗口：一列，只显示能放下的月份
     await _pump(
         tester,
         _calendar(
@@ -284,6 +301,8 @@ void main() {
             onSelectDate: (_) {},
             multiMonth: true),
         size: const Size(520, 640));
+    expect(find.text('2026年10月'), findsOneWidget);
+    expect(find.text('2026年11月'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

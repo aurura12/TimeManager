@@ -147,7 +147,8 @@ abstract final class AppSizes {
   static const double desktopTravelDetailsWidth = 320;
   static const double desktopTravelCalendarHeight = 720;
   static const double desktopTravelCalendarCellHeight = 96;
-  static const double desktopTravelMultiMonthCardMinHeight = 208;
+  static const double desktopTravelMultiMonthCardHeight = 300;
+  static const double desktopTravelMultiMonthToolbarHeight = 48;
 
   /// 桌面宽屏导航与可拖宽事件栏的布局边界。
   static const double desktopNavigationBreakpoint = 1000;

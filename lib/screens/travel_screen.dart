@@ -36,6 +36,10 @@ class _TravelScreenState extends State<TravelScreen> {
   DateTime _selectedDate = DateTime.now();
   DateTime _calendarMonth = DateTime.now();
   bool _multiMonthCalendar = true;
+
+  /// 多月视图当前实际展示的月份数量，由 [TravelDesktopCalendar] 在 build 时回写。
+  /// 只作缓存、不触发重建，供 [build] 之外的导航吸附使用。
+  int _visibleMonthCount = TravelDesktopCalendar.maxMultiMonthCount;
   _TravelViewMode _viewMode = _TravelViewMode.table;
   TravelRecordsDocument _document = const TravelRecordsDocument(records: []);
   String? _token;
@@ -933,8 +937,7 @@ class _TravelScreenState extends State<TravelScreen> {
   void _changeCalendarMonth(int delta) {
     final nextMonth =
         DateTime(_calendarMonth.year, _calendarMonth.month + delta);
-    final monthCount =
-        _multiMonthCalendar ? TravelDesktopCalendar.multiMonthCount : 1;
+    final monthCount = _multiMonthCalendar ? _visibleMonthCount : 1;
     final selectedMonthOffset = (_selectedDate.year - nextMonth.year) * 12 +
         _selectedDate.month -
         nextMonth.month;
@@ -1057,6 +1060,7 @@ class _TravelScreenState extends State<TravelScreen> {
         onSelectDate: _selectCalendarDate,
         onChangeMonth: _changeCalendarMonth,
         onToggleMultiMonth: _setMultiMonthCalendar,
+        onVisibleMonthCount: (count) => _visibleMonthCount = count,
         onPickMonth: () => unawaited(_pickCalendarMonth()),
         onToday: () => _selectTravelDate(DateTime.now()),
       );

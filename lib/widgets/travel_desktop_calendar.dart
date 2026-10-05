@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -6,7 +8,7 @@ import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 
-/// 桌面出行月历按窗口宽度并排多个月份（最多 6 个月，宽屏为 3 列两行），
+/// 桌面出行月历按可用区域排布多个月份（最多 6 个、最多 3 列），
 /// 并保留单月详细视图。格子沿用移动端的干净样式。
 class TravelDesktopCalendar extends StatelessWidget {
   const TravelDesktopCalendar({
@@ -21,10 +23,14 @@ class TravelDesktopCalendar extends StatelessWidget {
     required this.onToday,
     this.multiMonth = false,
     this.onToggleMultiMonth,
+    this.onVisibleMonthCount,
   });
 
-  /// 多月视图一次展示的月份数量（宽屏 3 列两行）。
-  static const int multiMonthCount = 6;
+  /// 多月视图一次展示的月份数量上限。
+  static const int maxMultiMonthCount = 6;
+
+  /// 多月视图的列数上限。
+  static const int maxMultiMonthColumns = 3;
 
   final DateTime month;
   final DateTime selectedDate;
@@ -37,6 +43,10 @@ class TravelDesktopCalendar extends StatelessWidget {
   final bool multiMonth;
   final ValueChanged<bool>? onToggleMultiMonth;
 
+  /// 报告当前实际展示的月份数量，供页面侧同步导航吸附范围。
+  /// 只在 build 期间回写一个缓存字段，不触发重建，因此可以直接调用。
+  final ValueChanged<int>? onVisibleMonthCount;
+
   String _dateKey(DateTime date) => DateFormat('yyyy-MM-dd').format(date);
   String _monthLabel(DateTime value) => '${value.year}年${value.month}月';
 
@@ -47,12 +57,8 @@ class TravelDesktopCalendar extends StatelessWidget {
       final monthRecords = _recordsInMonth(selectedMonth);
       final monthSummary = _buildMonthRecords(context, monthRecords);
       if (constraints.maxWidth >= AppSizes.desktopTravelDetailsBreakpoint) {
-        final calendar = multiMonth
-            ? _buildMultiMonthCalendar(
-                context,
-                availableWidth: constraints.maxWidth,
-              )
-            : _buildMonth(context);
+        final calendar =
+            multiMonth ? _buildMultiMonthCalendar(context) : _buildMonth(context);
         return Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -83,12 +89,7 @@ class TravelDesktopCalendar extends StatelessWidget {
                   AppSizes.desktopTravelThreeMonthBreakpoint,
             ),
             const SizedBox(height: AppSpacing.md),
-            Expanded(
-              child: _buildMultiMonthCalendar(
-                context,
-                availableWidth: constraints.maxWidth,
-              ),
-            ),
+            Expanded(child: _buildMultiMonthCalendar(context)),
           ],
         );
       }
@@ -131,15 +132,19 @@ class TravelDesktopCalendar extends StatelessWidget {
             : (selection) => onToggleMultiMonth!(selection.first),
       );
 
-  String _rangeLabel() {
+  String _rangeLabel(int monthCount) {
     if (!multiMonth) return _monthLabel(month);
-    final end = DateTime(month.year, month.month + multiMonthCount - 1);
+    final end = DateTime(month.year, month.month + monthCount - 1);
     final endLabel =
         end.year == month.year ? '${end.month}月' : _monthLabel(end);
     return '${_monthLabel(month)} — $endLabel';
   }
 
-  Widget _buildCalendarToolbar(BuildContext context) => Wrap(
+  Widget _buildCalendarToolbar(
+    BuildContext context, {
+    required int monthCount,
+  }) =>
+      Wrap(
         alignment: WrapAlignment.spaceBetween,
         crossAxisAlignment: WrapCrossAlignment.center,
         spacing: AppSpacing.xs,
@@ -150,7 +155,7 @@ class TravelDesktopCalendar extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(_rangeLabel(), style: AppText.pageTitle),
+                Text(_rangeLabel(monthCount), style: AppText.pageTitle),
                 const SizedBox(width: AppSpacing.xs),
                 const Icon(Icons.unfold_more, size: AppSpacing.lg),
               ],
@@ -171,10 +176,7 @@ class TravelDesktopCalendar extends StatelessWidget {
         ],
       );
 
-  Widget _buildMultiMonthCalendar(
-    BuildContext context, {
-    required double availableWidth,
-  }) {
+  Widget _buildMultiMonthCalendar(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final surfaces = AppSurfaces.of(context);
     final scale =
@@ -183,55 +185,82 @@ class TravelDesktopCalendar extends StatelessWidget {
     final recordsByDate = {
       for (final record in records) record.dateKey: record,
     };
-    final columns = availableWidth >= AppSizes.desktopTravelThreeMonthBreakpoint
-        ? 3
-        : availableWidth >= AppSizes.desktopTravelTwoMonthBreakpoint
-            ? 2
-            : 1;
-    final rows = (multiMonthCount / columns).ceil();
-    return Container(
-      key: const ValueKey('travel-desktop-multi-month'),
-      padding: AppSpacing.cardComfortable,
-      decoration: BoxDecoration(
-        color: surfaces.card,
-        borderRadius: AppRadius.cardAll,
-        border: Border.all(color: surfaces.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildCalendarToolbar(context),
-          const SizedBox(height: AppSpacing.sm),
-          Expanded(
-            child: LayoutBuilder(builder: (context, constraints) {
-              // 一屏放下全部月份；窗口太矮时收紧到最小高度并允许滚动。
-              final rowHeight =
-                  ((constraints.maxHeight - AppSpacing.md * (rows - 1)) / rows)
-                      .clamp(
-                          AppSizes.desktopTravelMultiMonthCardMinHeight * scale,
-                          double.infinity);
-              return GridView.builder(
-                primary: false,
-                padding: EdgeInsets.zero,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: columns,
-                  mainAxisExtent: rowHeight,
-                  mainAxisSpacing: AppSpacing.md,
-                  crossAxisSpacing: AppSpacing.md,
-                ),
-                itemCount: multiMonthCount,
-                itemBuilder: (context, index) => _buildCompactMonth(
-                  context,
-                  DateTime(month.year, month.month + index),
-                  recordsByDate: recordsByDate,
-                  scheme: scheme,
-                ),
-              );
-            }),
-          ),
-        ],
-      ),
-    );
+    return LayoutBuilder(builder: (context, constraints) {
+      final columns = (constraints.maxWidth >=
+              AppSizes.desktopTravelThreeMonthBreakpoint
+          ? 3
+          : constraints.maxWidth >= AppSizes.desktopTravelTwoMonthBreakpoint
+              ? 2
+              : 1)
+          .clamp(1, maxMultiMonthColumns);
+      final cardHeight = AppSizes.desktopTravelMultiMonthCardHeight * scale;
+      // 预算出工具栏与内边距之后，真正能放下几行固定高度的月份卡。
+      final gridBudget = constraints.maxHeight.isFinite
+          ? constraints.maxHeight -
+              AppSpacing.cardComfortable.vertical -
+              AppSizes.desktopTravelMultiMonthToolbarHeight -
+              AppSpacing.sm
+          : cardHeight;
+      final maxRows = gridBudget.isFinite
+          ? math.max(
+              1,
+              ((gridBudget + AppSpacing.md) / (cardHeight + AppSpacing.md))
+                  .floor(),
+            )
+          : 1;
+      final monthCount = (columns * maxRows).clamp(1, maxMultiMonthCount);
+      final rowsUsed = (monthCount / columns).ceil();
+      onVisibleMonthCount?.call(monthCount);
+      return Container(
+        key: const ValueKey('travel-desktop-multi-month'),
+        padding: AppSpacing.cardComfortable,
+        decoration: BoxDecoration(
+          color: surfaces.card,
+          borderRadius: AppRadius.cardAll,
+          border: Border.all(color: surfaces.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildCalendarToolbar(context, monthCount: monthCount),
+            const SizedBox(height: AppSpacing.sm),
+            Expanded(
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: LayoutBuilder(builder: (context, gridConstraints) {
+                  // 固定舒适高度；极小窗口或工具栏换行时略微压缩，避免出现半截行。
+                  final fitted = gridConstraints.maxHeight.isFinite
+                      ? (gridConstraints.maxHeight -
+                              AppSpacing.md * (rowsUsed - 1)) /
+                          rowsUsed
+                      : cardHeight;
+                  final cellHeight = math.min(cardHeight, fitted);
+                  return GridView.builder(
+                    primary: false,
+                    padding: EdgeInsets.zero,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: columns,
+                      mainAxisExtent: cellHeight,
+                      mainAxisSpacing: AppSpacing.md,
+                      crossAxisSpacing: AppSpacing.md,
+                    ),
+                    itemCount: monthCount,
+                    itemBuilder: (context, index) => _buildCompactMonth(
+                      context,
+                      DateTime(month.year, month.month + index),
+                      recordsByDate: recordsByDate,
+                      scheme: scheme,
+                    ),
+                  );
+                }),
+              ),
+            ),
+          ],
+        ),
+      );
+    });
   }
 
   Widget _buildCompactMonth(
@@ -502,7 +531,7 @@ class TravelDesktopCalendar extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildCalendarToolbar(context),
+          _buildCalendarToolbar(context, monthCount: 1),
           const SizedBox(height: AppSpacing.md),
           Row(
             children: [
