@@ -7,7 +7,7 @@ echo  time_manager Windows build script
 echo ============================================
 
 echo.
-echo [1/4] Check nuget.exe (required by geolocator plugin)
+echo [1/5] Check nuget.exe (required by geolocator plugin)
 set "NUGET_DIR=build\windows\x64\_deps\nuget-subbuild\nuget-populate-prefix\src"
 if exist "%NUGET_DIR%\nuget.exe" goto nuget_ok
 echo   nuget.exe not found, downloading...
@@ -23,7 +23,7 @@ exit /b 1
 echo   nuget.exe ready
 
 echo.
-echo [2/4] Build Windows release...
+echo [2/5] Build Windows release...
 call flutter build windows --release
 if not errorlevel 1 goto build_ok
 echo   [ERROR] Build failed!
