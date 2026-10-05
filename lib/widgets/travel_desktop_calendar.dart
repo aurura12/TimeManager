@@ -370,7 +370,8 @@ class TravelDesktopCalendar extends StatelessWidget {
         child: InkWell(
           onTap: () => onSelectDate(date),
           child: Stack(
-            alignment: Alignment.center,
+            alignment:
+                record == null ? Alignment.center : const Alignment(0, -0.3),
             children: [
               Text(
                 '${date.day}',
@@ -381,7 +382,7 @@ class TravelDesktopCalendar extends StatelessWidget {
               ),
               if (record != null)
                 const Positioned(
-                  bottom: 2,
+                  bottom: 0,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       color: AppSemanticColors.success,
