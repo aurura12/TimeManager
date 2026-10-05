@@ -152,6 +152,7 @@ scripts/package_macos_release.sh   # macOS .app 打包为 dist/*.dmg + .dmg.sha2
 scripts/generate_update_metadata.sh <安装包…>  # 为 APK/EXE/DMG 生成同名 .sha256（Windows 用 generate_update_metadata.ps1）
 scripts/publish_android_release.sh # 构建 + 发布到 Gitee Release（见「构建与发布」）
 scripts/publish_windows_release.bat # Windows x64 构建 + Inno Setup 打包 + 发布 Gitee Release（PowerShell 5.1+，见「构建与发布」）
+scripts/publish_all_release.bat    # 一键：版本号 +1、构建并发布 Android + Windows 到同一个 Gitee Release（PowerShell 5.1+，见「构建与发布」）
 scripts/installer.iss              # Inno Setup 6.3+ 打 Windows 安装包（上传 Gitee release）
 ```
 
@@ -196,6 +197,14 @@ scripts/installer.iss              # Inno Setup 6.3+ 打 Windows 安装包（上
 - Android 已发布后，Windows 先拉取最新 `pubspec.yaml` 直接运行即可（默认按当前版本补包），给同一个 Release 补 Windows 安装包；`--skip-bump` 保留为显式等价写法
 - 构建失败 / 中断只回滚本次版本号；打包成功后的提交 / 上传失败保留版本与产物，可通过 `--artifact` 重试；已有 EXE 文件名中的版本必须与 `pubspec.yaml` 一致
 - PowerShell 中文脚本使用 UTF-8 BOM，以兼容 Windows PowerShell 5.1；模拟回归测试为 `test/publish_windows_release_script_test.ps1`，不联网、不发布
+
+`scripts/publish_all_release.bat`（由 `publish_all_release.ps1` 实现）是**一键双端发布**入口，把 Android 与 Windows 合成一步，同样无需 Bash、jq 或 curl：
+
+- 默认**版本号 +1**（次版本 +1、patch 归零、构建号 +1）、构建前跑 `flutter analyze` + `flutter test`、构建成功后代提交并推送 `pubspec.yaml`；`--skip-bump` / `--skip-tests` / `--no-git` 可关掉
+- 依次构建 Windows x64 安装包（Inno Setup 6.3+）和 Android arm64-v8a APK（`flutter build apk --release --target-platform android-arm64 --split-per-abi`，**需要 JDK 17**），产出 `dist/time_manager_setup_<版本>.exe` 与 `dist/time_manager-v<版本>-arm64-v8a.apk` 及各自 `.sha256`
+- 版本号只写一次，两端用同一版本构建；tag = 版本名（不带 `v`、不带 `+build`），上传到**同一个** Gitee Release，顺序为 APK 的 sha→apk、EXE 的 sha→exe
+- `--skip-android` / `--skip-windows` 只发单端；`--check-notes` 才与线上最新说明查重（默认不查）；`--dry-run` 只看计划；`--skip-build`（配 `--apk` / `--exe`）可跳过构建直接上传
+- 回滚边界与 Windows 脚本一致：只有构建失败 / 中断才回滚版本号；构建成功后上传失败保留产物与版本号。是自带一份实现的独立脚本，改 Gitee 协议时需与 `publish_windows_release.ps1` 一起改
 
 ## Config Files (Secrets — .gitignore'd)
 
