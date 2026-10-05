@@ -94,7 +94,7 @@ flutter build apk --release         # 直接构建 release APK
 
 ## Windows 发布到 Gitee
 
-在 Windows 上准备好 Flutter、Visual Studio 的「使用 C++ 的桌面开发」、Inno Setup 6，以及下方列出的本机配置文件。Git 自动提交需要配置作者信息和当前分支的上游。更新 `docs/release-notes.md` 后，在项目根目录的 PowerShell 或 CMD 运行：
+在 Windows 上准备好 Flutter、Visual Studio 的「使用 C++ 的桌面开发」、Inno Setup 6.3+（`installer.iss` 使用 6.3 引入的 `x64compatible` 并以无 BOM 的 UTF-8 保存中文），以及下方列出的本机配置文件。Git 自动提交需要配置作者信息和当前分支的上游。更新 `docs/release-notes.md` 后，在项目根目录的 PowerShell 或 CMD 运行：
 
 ```powershell
 .\scripts\publish_windows_release.bat

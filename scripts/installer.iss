@@ -1,4 +1,4 @@
-; time_manager Windows 安装包脚本（Inno Setup 6）
+; time_manager Windows 安装包脚本（要求 Inno Setup 6.3+：x64compatible 与无 BOM 的 UTF-8）
 ; 用法：
 ;   1. 先构建 release：flutter build windows --release
 ;   2. 用 Inno Setup 编译本脚本：

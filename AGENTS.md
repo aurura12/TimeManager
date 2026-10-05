@@ -150,7 +150,7 @@ scripts/package_macos_release.sh   # macOS .app 打包为 dist/*.dmg + .dmg.sha2
 scripts/generate_update_metadata.sh <安装包…>  # 为 APK/EXE/DMG 生成同名 .sha256（Windows 用 generate_update_metadata.ps1）
 scripts/publish_android_release.sh # 构建 + 发布到 Gitee Release（见「构建与发布」）
 scripts/publish_windows_release.bat # Windows x64 构建 + Inno Setup 打包 + 发布 Gitee Release（PowerShell 5.1+，见「构建与发布」）
-scripts/installer.iss              # Inno Setup 6 打 Windows 安装包（上传 Gitee release）
+scripts/installer.iss              # Inno Setup 6.3+ 打 Windows 安装包（上传 Gitee release）
 ```
 
 ### 环境要求
@@ -188,7 +188,7 @@ scripts/installer.iss              # Inno Setup 6 打 Windows 安装包（上传
 `scripts/publish_windows_release.bat` 是 Windows 的同类发布入口，由 `publish_windows_release.ps1` 实现，参数沿用 `--run-tests` / `--skip-bump` / `--no-git` / `--artifact` 等写法，无需 Bash、jq 或 curl：
 
 - 默认在构建前查重 `docs/release-notes.md`，跳过分析和测试；次版本 +1、patch 归零、构建号 +1
-- 构建 Windows x64 release，自动定位 Inno Setup 6（可用 `--iscc` / `ISCC_PATH` 指定），从 `pubspec.yaml` 传入安装包版本；`build_windows.bat` 也自动传入版本，直接编译 `installer.iss` 时必须传 `/DMyAppVersion=<版本>`
+- 构建 Windows x64 release，自动定位 Inno Setup 6.3+（可用 `--iscc` / `ISCC_PATH` 指定，版本低于 6.3 会明确报错），从 `pubspec.yaml` 传入安装包版本；`build_windows.bat` 也自动传入版本，直接编译 `installer.iss` 时必须传 `/DMyAppVersion=<版本>`
 - 输出 `dist/time_manager_setup_<版本>.exe` 和同名 `.exe.sha256`，只提交并推送 `pubspec.yaml`；自动提交前拒绝该文件已有未提交改动，其他文件的 staged / unstaged 改动不带入提交
 - 发布仓库、Token 来源和先传校验文件的顺序与 Android 一致；复用同版本 Release、不重传同名附件
 - Android 已发布后，Windows 先拉取最新 `pubspec.yaml` 再用 `--skip-bump`，给同一个 Release 补 Windows 安装包

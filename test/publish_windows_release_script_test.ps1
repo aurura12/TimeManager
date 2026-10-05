@@ -387,6 +387,19 @@ try {
     }
     Pass 'NuGet download failure cleanup and retry'
 
+    Reset-Fixture
+    Assert-Fails { Assert-InnoCompilerVersion ([version] '6.2.0') 'ISCC.exe' } 'Inno Setup'
+    Assert-Fails { Assert-InnoCompilerVersion ([version] '5.6.1') 'ISCC.exe' } 'Inno Setup'
+    Assert-InnoCompilerVersion ([version] '6.3.0') 'ISCC.exe'
+    Assert-InnoCompilerVersion ([version] '7.0.0') 'ISCC.exe'
+    # 读不到版本时不能阻塞构建（自编译或非标准 ISCC）
+    Assert-InnoCompilerVersion $null 'ISCC.exe'
+    Assert-Equal ([version] '6.2') (ConvertTo-InnoCompilerVersion '6.2.2.0') 'parse product version'
+    Assert-Equal ([version] '6.3') (ConvertTo-InnoCompilerVersion '6.3.3 (abc)') 'parse version with suffix'
+    Assert-Equal $null (ConvertTo-InnoCompilerVersion '') 'empty version'
+    Assert-Equal $null (ConvertTo-InnoCompilerVersion 'not-a-version') 'unparsable version'
+    Pass 'require Inno Setup 6.3+ but tolerate unknown versions'
+
     foreach ($file in @('publish_windows_release.ps1', 'generate_update_metadata.ps1')) {
         $bytes = [IO.File]::ReadAllBytes((Join-Path $projectRoot "scripts/$file"))
         Assert-Equal 'EF-BB-BF' ([BitConverter]::ToString($bytes[0..2])) 'PowerShell 5.1 Chinese script encoding'

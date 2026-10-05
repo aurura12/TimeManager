@@ -22,7 +22,8 @@ function Show-ReleaseUsage {
   5. 创建或复用 <版本> Gitee Release，先传 SHA-256，再传 EXE。
 
 默认跳过 flutter analyze 和 flutter test；需要检查时使用 --run-tests。
-构建需要 Windows、Flutter（含 Visual Studio C++ 桌面开发环境）和 Inno Setup 6。
+构建需要 Windows、Flutter（含 Visual Studio C++ 桌面开发环境）和 Inno Setup 6.3+。
+（installer.iss 使用 6.3 引入的 x64compatible，并用无 BOM 的 UTF-8 保存中文。）
 上传使用 PowerShell/.NET，无需安装 Bash、jq 或 curl。
 
 选项：
@@ -35,7 +36,7 @@ function Show-ReleaseUsage {
   --dist-dir DIR           安装包输出目录，默认 <项目根>/dist
   --notes-file FILE        Release 说明，默认 docs/release-notes.md
   --allow-stale-notes      跳过说明查重；复用同一版本 Release 本来就不查重
-  --iscc PATH              指定 Inno Setup 6 的 ISCC.exe
+  --iscc PATH              指定 Inno Setup 6.3+ 的 ISCC.exe
   --owner OWNER            覆盖 Gitee 用户名/组织名
   --repo REPO              覆盖发布仓库名
   --dry-run                只显示发布计划，不联网、不构建、不改文件
@@ -238,22 +239,58 @@ function Invoke-ReleaseCommand([string] $Command, [string[]] $Arguments) {
     if ($LASTEXITCODE -ne 0) { throw "$Command 执行失败（退出码 $LASTEXITCODE）" }
 }
 
+function ConvertTo-InnoCompilerVersion([string] $Value) {
+    # 只取主次版本号；解析失败返回 $null。
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
+    $match = [regex]::Match($Value, '^(\d+)\.(\d+)')
+    if (-not $match.Success) { return $null }
+    return [version] ($match.Groups[1].Value + '.' + $match.Groups[2].Value)
+}
+
+function Get-InnoCompilerVersion([string] $Path) {
+    # 读取 ISCC.exe 的版本；读不到时返回 $null，交由调用方放行。
+    $info = $null
+    try { $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($Path) } catch { return $null }
+    if ($null -eq $info) { return $null }
+    foreach ($candidate in @($info.ProductVersion, $info.FileVersion)) {
+        $version = ConvertTo-InnoCompilerVersion $candidate
+        if ($null -ne $version) { return $version }
+    }
+    return $null
+}
+
+function Assert-InnoCompilerVersion([version] $Version, [string] $Path) {
+    # installer.iss 依赖 6.3 引入的 x64compatible，且以无 BOM 的 UTF-8 保存中文；
+    # 更早的版本会直接编译失败（或中文乱码）。
+    if ($null -eq $Version) { return }
+    $minimum = [version] '6.3'
+    if ($Version -ge $minimum) { return }
+    throw "Inno Setup $minimum 或更高版本是必需的（installer.iss 使用 x64compatible 与无 BOM 的 UTF-8），当前版本：$Version（$Path）"
+}
+
 function Find-InnoCompiler([string] $Path) {
+    $resolved = $null
     if ($Path) {
         $resolved = Resolve-ReleasePath $Path
         if (-not [IO.File]::Exists($resolved)) { throw "找不到 Inno Setup 编译器：$resolved" }
-        return $resolved
-    }
-    $command = Get-Command 'ISCC.exe' -ErrorAction SilentlyContinue
-    if ($command) { return $command.Source }
-    foreach ($directory in @(${env:ProgramFiles(x86)}, $env:ProgramFiles, $env:LOCALAPPDATA)) {
-        if (-not $directory) { continue }
-        foreach ($relative in @('Inno Setup 6/ISCC.exe', 'Programs/Inno Setup 6/ISCC.exe')) {
-            $candidate = Join-Path $directory $relative
-            if ([IO.File]::Exists($candidate)) { return $candidate }
+    } else {
+        $command = Get-Command 'ISCC.exe' -ErrorAction SilentlyContinue
+        if ($command) { $resolved = $command.Source }
+        if (-not $resolved) {
+            foreach ($directory in @(${env:ProgramFiles(x86)}, $env:ProgramFiles, $env:LOCALAPPDATA)) {
+                if (-not $directory) { continue }
+                foreach ($relative in @('Inno Setup 6/ISCC.exe', 'Programs/Inno Setup 6/ISCC.exe')) {
+                    $candidate = Join-Path $directory $relative
+                    if ([IO.File]::Exists($candidate)) { $resolved = $candidate; break }
+                }
+                if ($resolved) { break }
+            }
         }
+        if (-not $resolved) { throw '找不到 Inno Setup 6.3+，请安装后重试，或使用 --iscc 指定 ISCC.exe' }
     }
-    throw '找不到 Inno Setup 6，请安装后重试，或使用 --iscc 指定 ISCC.exe'
+    $version = Get-InnoCompilerVersion $resolved
+    Assert-InnoCompilerVersion $version $resolved
+    return $resolved
 }
 
 function Assert-WindowsBuild {
@@ -278,6 +315,7 @@ function Initialize-WindowsNuget {
 
 function Assert-CleanPubspec {
     if (-not (Get-Command 'git' -ErrorAction SilentlyContinue)) { throw '找不到 git；可使用 --no-git 跳过版本号提交' }
+    $PSNativeCommandUseErrorActionPreference = $false
     $status = & git status --porcelain -- pubspec.yaml
     if ($LASTEXITCODE -ne 0) { throw '无法读取 Git 状态；可使用 --no-git 跳过版本号提交' }
     if ($status) { throw 'pubspec.yaml 有未提交改动，请先提交，或使用 --no-git，避免把其他修改带入版本提交' }
@@ -364,6 +402,7 @@ function Invoke-WindowsRelease([string[]] $PublishArgs) {
         if ($owner -notmatch '^[A-Za-z0-9_.-]+$' -or $repo -notmatch '^[A-Za-z0-9_.-]+$') { throw 'Gitee owner/repo 格式无效' }
         if ($skipBuild -and -not $artifact) { throw '--skip-build 必须同时通过 --artifact 指定 EXE' }
         $notesFile = Resolve-ReleasePath $notesFile
+        if (-not [IO.File]::Exists($notesFile)) { throw "找不到 Release 说明文件：$notesFile" }
         $notes = [IO.File]::ReadAllText($notesFile)
         if ([string]::IsNullOrWhiteSpace($notes)) { throw "Release 说明不能为空：$notesFile" }
         $original = Get-AppVersion
