@@ -62,6 +62,14 @@ class _DiaryScreenState extends State<DiaryScreen> {
     }
   }
 
+  bool get _dateNavigationEnabled => !_processing && !_shortcutDateChanging;
+
+  void _goToPreviousDay() => unawaited(
+      _changeDateByShortcut(_selectedDate.subtract(const Duration(days: 1))));
+
+  void _goToNextDay() => unawaited(
+      _changeDateByShortcut(_selectedDate.add(const Duration(days: 1))));
+
   bool _remoteTreeLoading = false;
   String? _remoteTreeError;
   List<String> _remoteDiaryPaths = const [];
@@ -1344,13 +1352,34 @@ class _DiaryScreenState extends State<DiaryScreen> {
                           }
                         },
                       ),
-                      OutlinedButton.icon(
-                        onPressed: _processing ? null : _showCalendarPicker,
-                        icon:
-                            const Icon(Icons.calendar_today_outlined, size: 16),
-                        label: Text(
-                          DateFormat('yyyy年M月d日').format(_selectedDate),
-                        ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: desktopShortcutTooltip(context, '前一天',
+                                DesktopShortcutActionType.previousDay),
+                            onPressed: _dateNavigationEnabled
+                                ? _goToPreviousDay
+                                : null,
+                            icon: const Icon(Icons.chevron_left),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed:
+                                _processing ? null : _showCalendarPicker,
+                            icon: const Icon(Icons.calendar_today_outlined,
+                                size: 16),
+                            label: Text(
+                              DateFormat('yyyy年M月d日').format(_selectedDate),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: desktopShortcutTooltip(context, '后一天',
+                                DesktopShortcutActionType.nextDay),
+                            onPressed:
+                                _dateNavigationEnabled ? _goToNextDay : null,
+                            icon: const Icon(Icons.chevron_right),
+                          ),
+                        ],
                       ),
                     ],
                   ),
