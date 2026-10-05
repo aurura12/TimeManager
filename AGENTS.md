@@ -4,6 +4,14 @@
 
 Flutter time management app (package name `time_manager`) with Google Calendar integration, daily diary, travel records, check-in tracking, target tracking, AI daily review, voice scheduling, app logging, global search, a unified sync center, and Android local reminders (daily diary + per check-in goal). Chinese-language UI with English fallback. Supports Android, Windows desktop, and macOS.
 
+## 首次本地开发前提
+
+1. 在 `lib/config/` 下创建 6 个密钥文件（无 `.example.dart` 模板，字段结构参考引用方 service，见「Config Files」）——**缺少任一文件项目无法编译**
+2. `flutter pub get` 安装依赖
+3. `flutter run`（移动端）或 `flutter run -d windows`（桌面）
+
+Android 构建必须用 JDK 17（详见「环境要求」），用系统默认的 JDK 25 会失败。
+
 ## Architecture
 
 - **Entry**: `lib/main.dart` → `MainScreen` (默认 6-tab bottom nav: 记录/日记/出行/打卡/目标/我的，Android / Windows / macOS 均支持自定义显示与排序)。启动时初始化 `AppLogService` 全局错误捕获，并对 MIUI 设备应用 SSL 修复的 `HttpOverrides`。
@@ -124,8 +132,9 @@ flutter analyze                    # 静态检查 (flutter_lints，无自定义�
 flutter test                       # 运行所有测试
 flutter test test/widget_test.dart # 运行单个测试文件
 flutter test test/foo_test.dart --plain-name "测试用例名"  # 运行单个测试用例
-bash test/update_macos_script_test.sh      # shell 脚本测试（flutter test 不会收集）
-bash test/update_metadata_script_test.sh   # shell 脚本测试（flutter test 不会收集）
+bash test/update_macos_script_test.sh           # shell 脚本测试（flutter test 不会收集）
+bash test/update_metadata_script_test.sh        # shell 脚本测试（flutter test 不会收集）
+bash test/publish_android_release_script_test.sh # shell 脚本测试（flutter test 不会收集）
 powershell -NoProfile -ExecutionPolicy Bypass -File test/publish_windows_release_script_test.ps1 # Windows 发布模拟测试（macOS/Linux 用 pwsh）
 flutter run                        # 启动开发模式（移动端）
 flutter run -d windows             # Windows 桌面版启动
@@ -155,7 +164,7 @@ scripts/installer.iss              # Inno Setup 6 打 Windows 安装包（上传
 `scripts/build_android.sh` 的默认行为不只是构建，成功后还会 **git commit + push**：
 
 1. 获取依赖并跑 `flutter analyze`；默认不跑 `flutter test`，需要时加 `--run-tests`
-2. 自动递增版本号：次版本 +1、patch 归零、构建号 +1（如 `1.95.3+13` → `1.96.0+14`）
+2. 自动递增版本号：次版本 +1、patch 归零、构建号 +1（如 `1.114.0+32` → `1.115.0+33`）
 3. 构建 Android arm64-v8a release APK
 4. 把带版本号的 APK 和同名 `.sha256` 复制到 `dist/`
 5. 只提交 `pubspec.yaml` 的版本号变更并 push 到当前分支的上游（不会把其他未提交改动带进这次提交）
@@ -247,5 +256,5 @@ Never commit them.
 - Config files with secrets are always `.gitignore`d — never commit
 - 平台差异化功能通过 `lib/utils/platform_features.dart` 控制（如拍照仅限移动端）
 - 视觉规范：页面不得硬编码颜色/圆角/间距/字号字面量，统一引用 `lib/theme/` 三文件（`AppSpacing`/`AppRadius`/`AppSizes`/`AppText`、`AppSurfaces.of(context)`、`AppSemanticColors`）；照片浮层等主题无关的黑色 scrim 属于允许的例外。**启用背景图时，叠在壁纸上的填充必须走 `context.wallpaperFill()` / `adaptSemanticFill()`（见「背景图」一节）**。守卫测试 `test/visual_system_test.dart`
-- 设计文档在 `docs/superpowers/{plans,specs}/`；已完结的问题记录归档在 `docs/archive/`。根目录只保留 `AGENTS.md`、`README.md` 和活跃的 `待修复问题.md` / `写日记提醒实施方案.md`
+- 设计文档在 `docs/superpowers/{plans,specs}/`；视觉规范在 `docs/design-system.md`；已完结的问题记录归档在 `docs/archive/`；`docs/release-notes.md` 是两个发布脚本默认的 Release 说明来源，发版前必须先更新（否则发布查重会拒绝）。根目录只保留 `AGENTS.md`、`README.md` 和活跃的 `待修复问题.md` / `写日记提醒实施方案.md`
 - `third_party/` 下是 vendored 的第三方插件 fork，已在 `analysis_options.yaml` 里整体 exclude，不参与本项目的静态检查；升级上游时按该目录下 `FORK.md` 的步骤重做
