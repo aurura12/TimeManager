@@ -105,6 +105,8 @@ Widget _calendar({
   VoidCallback? onAdd,
   VoidCallback? onEdit,
   VoidCallback? onDelete,
+  bool multiMonth = false,
+  ValueChanged<bool>? onToggleMultiMonth,
 }) {
   final entry =
       _records.where((record) => record.date == selectedDate).firstOrNull;
@@ -123,6 +125,8 @@ Widget _calendar({
     onChangeMonth: onChangeMonth ?? (_) {},
     onPickMonth: onPickMonth ?? () {},
     onToday: onToday ?? () {},
+    multiMonth: multiMonth,
+    onToggleMultiMonth: onToggleMultiMonth,
   );
 }
 
@@ -245,6 +249,41 @@ void main() {
     expect(monthPickerCalls, 1);
     expect(todayCalls, 1);
     expect(find.text('上一月记录'), findsNothing, reason: '月度列表不能混入其它月份');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('多月视图一次排布 6 个月（宽屏 3 列两行）且不溢出', (tester) async {
+    final boundary = GlobalKey();
+    await _pump(
+        tester,
+        _calendar(
+            selectedDate: DateTime(2026, 10, 15),
+            onSelectDate: (_) {},
+            multiMonth: true),
+        boundaryKey: boundary);
+    expect(
+        find.byKey(const ValueKey('travel-desktop-multi-month')), findsOneWidget);
+    for (final label in const [
+      '2026年10月',
+      '2026年11月',
+      '2026年12月',
+      '2027年1月',
+      '2027年2月',
+      '2027年3月',
+    ]) {
+      expect(find.text(label), findsOneWidget, reason: '缺少月份 $label');
+    }
+    await _capture(tester, boundary, 'travel_calendar_multi_month');
+    expect(tester.takeException(), isNull);
+
+    // 窄窗口只排一列，仍能滚动读完 6 个月
+    await _pump(
+        tester,
+        _calendar(
+            selectedDate: DateTime(2026, 10, 15),
+            onSelectDate: (_) {},
+            multiMonth: true),
+        size: const Size(520, 640));
     expect(tester.takeException(), isNull);
   });
 

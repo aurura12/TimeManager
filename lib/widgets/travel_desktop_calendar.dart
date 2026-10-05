@@ -6,7 +6,8 @@ import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 
-/// 桌面出行月历按窗口宽度排布多个月份，并保留单月详细视图。
+/// 桌面出行月历按窗口宽度并排多个月份（最多 6 个月，宽屏为 3 列两行），
+/// 并保留单月详细视图。格子沿用移动端的干净样式。
 class TravelDesktopCalendar extends StatelessWidget {
   const TravelDesktopCalendar({
     super.key,
@@ -21,6 +22,9 @@ class TravelDesktopCalendar extends StatelessWidget {
     this.multiMonth = false,
     this.onToggleMultiMonth,
   });
+
+  /// 多月视图一次展示的月份数量（宽屏 3 列两行）。
+  static const int multiMonthCount = 6;
 
   final DateTime month;
   final DateTime selectedDate;
@@ -129,7 +133,7 @@ class TravelDesktopCalendar extends StatelessWidget {
 
   String _rangeLabel() {
     if (!multiMonth) return _monthLabel(month);
-    final end = DateTime(month.year, month.month + 2);
+    final end = DateTime(month.year, month.month + multiMonthCount - 1);
     final endLabel =
         end.year == month.year ? '${end.month}月' : _monthLabel(end);
     return '${_monthLabel(month)} — $endLabel';
@@ -184,6 +188,7 @@ class TravelDesktopCalendar extends StatelessWidget {
         : availableWidth >= AppSizes.desktopTravelTwoMonthBreakpoint
             ? 2
             : 1;
+    final rows = (multiMonthCount / columns).ceil();
     return Container(
       key: const ValueKey('travel-desktop-multi-month'),
       padding: AppSpacing.cardComfortable,
@@ -198,25 +203,31 @@ class TravelDesktopCalendar extends StatelessWidget {
           _buildCalendarToolbar(context),
           const SizedBox(height: AppSpacing.sm),
           Expanded(
-            child: GridView.builder(
-              primary: false,
-              padding: EdgeInsets.zero,
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: columns,
-                mainAxisExtent:
-                    AppSizes.desktopTravelMultiMonthCardHeight * scale,
-                mainAxisSpacing: AppSpacing.md,
-                crossAxisSpacing: AppSpacing.md,
-              ),
-              itemCount: 3,
-              itemBuilder: (context, index) => _buildCompactMonth(
-                context,
-                DateTime(month.year, month.month + index),
-                recordsByDate: recordsByDate,
-                scheme: scheme,
-                surfaces: surfaces,
-              ),
-            ),
+            child: LayoutBuilder(builder: (context, constraints) {
+              // 一屏放下全部月份；窗口太矮时收紧到最小高度并允许滚动。
+              final rowHeight =
+                  ((constraints.maxHeight - AppSpacing.md * (rows - 1)) / rows)
+                      .clamp(
+                          AppSizes.desktopTravelMultiMonthCardMinHeight * scale,
+                          double.infinity);
+              return GridView.builder(
+                primary: false,
+                padding: EdgeInsets.zero,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: columns,
+                  mainAxisExtent: rowHeight,
+                  mainAxisSpacing: AppSpacing.md,
+                  crossAxisSpacing: AppSpacing.md,
+                ),
+                itemCount: multiMonthCount,
+                itemBuilder: (context, index) => _buildCompactMonth(
+                  context,
+                  DateTime(month.year, month.month + index),
+                  recordsByDate: recordsByDate,
+                  scheme: scheme,
+                ),
+              );
+            }),
           ),
         ],
       ),
@@ -228,10 +239,10 @@ class TravelDesktopCalendar extends StatelessWidget {
     DateTime date, {
     required Map<String, TravelRecord> recordsByDate,
     required ColorScheme scheme,
-    required AppSurfaces surfaces,
   }) {
     final daysInMonth = DateTime(date.year, date.month + 1, 0).day;
     final startOffset = (DateTime(date.year, date.month, 1).weekday - 1) % 7;
+    final weeks = ((startOffset + daysInMonth) / 7).ceil();
     final todayKey = _dateKey(DateTime.now());
     final selectedKey = _dateKey(selectedDate);
 
@@ -242,7 +253,11 @@ class TravelDesktopCalendar extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-            child: Text(_monthLabel(date), style: AppText.sectionTitle),
+            child: Text(
+              _monthLabel(date),
+              textAlign: TextAlign.center,
+              style: AppText.sectionTitle,
+            ),
           ),
           Row(
             children: [
@@ -263,7 +278,7 @@ class TravelDesktopCalendar extends StatelessWidget {
           ),
           Expanded(
             child: Column(
-              children: List.generate(6, (week) {
+              children: List.generate(weeks, (week) {
                 return Expanded(
                   child: Row(
                     children: List.generate(7, (weekday) {
@@ -283,7 +298,6 @@ class TravelDesktopCalendar extends StatelessWidget {
                             selected: key == selectedKey,
                             today: key == todayKey,
                             scheme: scheme,
-                            surfaces: surfaces,
                           ),
                         ),
                       );
@@ -305,13 +319,7 @@ class TravelDesktopCalendar extends StatelessWidget {
     required bool selected,
     required bool today,
     required ColorScheme scheme,
-    required AppSurfaces surfaces,
   }) {
-    final fill = selected
-        ? context.wallpaperFill(scheme.primaryContainer)
-        : record != null
-            ? context.wallpaperFill(scheme.surfaceContainerHigh)
-            : Colors.transparent;
     final foreground = selected ? scheme.onPrimaryContainer : scheme.onSurface;
     return Semantics(
       selected: selected,
@@ -320,12 +328,14 @@ class TravelDesktopCalendar extends StatelessWidget {
           '${record == null ? '' : '，${record.location}'}',
       child: Material(
         key: ValueKey('travel-calendar-day-${_dateKey(date)}'),
-        color: fill,
+        color: selected
+            ? context.wallpaperFill(scheme.primaryContainer)
+            : Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: AppRadius.controlAll,
-          side: BorderSide(
-            color: selected || today ? scheme.primary : surfaces.border,
-          ),
+          borderRadius: AppRadius.badgeAll,
+          side: today
+              ? BorderSide(color: scheme.primary, width: 1.5)
+              : BorderSide.none,
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -341,23 +351,15 @@ class TravelDesktopCalendar extends StatelessWidget {
                 ),
               ),
               if (record != null)
-                Positioned(
-                  bottom: AppSpacing.xs,
-                  child: const DecoratedBox(
+                const Positioned(
+                  bottom: 2,
+                  child: DecoratedBox(
                     decoration: BoxDecoration(
                       color: AppSemanticColors.success,
                       shape: BoxShape.circle,
                     ),
-                    child:
-                        SizedBox(width: AppSpacing.xs, height: AppSpacing.xs),
+                    child: SizedBox(width: 5, height: 5),
                   ),
-                ),
-              if (today && !selected)
-                Positioned(
-                  top: AppSpacing.xs,
-                  right: AppSpacing.xs,
-                  child: Text('今',
-                      style: AppText.badge.copyWith(color: foreground)),
                 ),
             ],
           ),
@@ -569,7 +571,6 @@ class TravelDesktopCalendar extends StatelessWidget {
     required bool today,
   }) {
     final scheme = Theme.of(context).colorScheme;
-    final surfaces = AppSurfaces.of(context);
     final inMonth = date.month == month.month && date.year == month.year;
     final foreground = selected
         ? scheme.onPrimaryContainer
@@ -589,7 +590,7 @@ class TravelDesktopCalendar extends StatelessWidget {
                 : Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: AppRadius.controlAll,
-          side: BorderSide(color: today ? scheme.primary : surfaces.border),
+          side: today ? BorderSide(color: scheme.primary) : BorderSide.none,
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -599,18 +600,8 @@ class TravelDesktopCalendar extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text('${date.day}',
-                          style:
-                              AppText.sectionTitle.copyWith(color: foreground)),
-                    ),
-                    if (today)
-                      Text('今',
-                          style: AppText.badge.copyWith(color: foreground)),
-                  ],
-                ),
+                Text('${date.day}',
+                    style: AppText.sectionTitle.copyWith(color: foreground)),
                 if (record != null && inMonth) ...[
                   const SizedBox(height: AppSpacing.md),
                   Tooltip(

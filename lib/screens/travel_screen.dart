@@ -933,7 +933,8 @@ class _TravelScreenState extends State<TravelScreen> {
   void _changeCalendarMonth(int delta) {
     final nextMonth =
         DateTime(_calendarMonth.year, _calendarMonth.month + delta);
-    final monthCount = _multiMonthCalendar ? 3 : 1;
+    final monthCount =
+        _multiMonthCalendar ? TravelDesktopCalendar.multiMonthCount : 1;
     final selectedMonthOffset = (_selectedDate.year - nextMonth.year) * 12 +
         _selectedDate.month -
         nextMonth.month;
