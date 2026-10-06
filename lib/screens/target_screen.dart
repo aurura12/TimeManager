@@ -11,8 +11,10 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
-import '../utils/platform_features.dart';
 import '../widgets/desktop_target_card.dart';
+import '../widgets/target_progress_indicator.dart';
+import '../widgets/target_day_refresh.dart';
+import '../services/target_progress_calculator.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/main_tab_activity.dart';
 import '../widgets/wake_up_card.dart';
@@ -36,21 +38,26 @@ class _TargetScreenContent extends StatelessWidget {
   const _TargetScreenContent();
 
   @override
-  Widget build(BuildContext context) => DesktopShortcutHost(
-        autofocus: true,
-        onNewItem: () => unawaited(showTargetEditor(context)),
-        child: _buildPage(context),
+  Widget build(BuildContext context) => TargetDayRefresh(
+        builder: (context) => DesktopShortcutHost(
+          autofocus: true,
+          onNewItem: () => unawaited(showTargetEditor(context)),
+          child: _buildPage(context),
+        ),
       );
 
   Widget _buildPage(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final platform = Theme.of(context).platform;
+    final desktop =
+        platform == TargetPlatform.windows || platform == TargetPlatform.macOS;
     return Scaffold(
       appBar: AppBar(
-        title: Text(isDesktopPlatform ? '目标' : '我的计划'),
-        centerTitle: !isDesktopPlatform,
+        title: Text(desktop ? '目标' : '我的计划'),
+        centerTitle: !desktop,
         // 如果是在底部导航栏的主页，通常不需要 leading 返回键，如有需要可自行开启
         actions: [
-          if (isDesktopPlatform)
+          if (desktop)
             Padding(
               padding: const EdgeInsets.only(right: AppSpacing.lg),
               child: FilledButton.icon(
@@ -69,7 +76,7 @@ class _TargetScreenContent extends StatelessWidget {
       ),
       body: Consumer<TimeProvider>(
         builder: (context, timeProvider, child) {
-          if (isDesktopPlatform) {
+          if (desktop) {
             return _buildDesktopList(context, timeProvider);
           }
           if (timeProvider.targets.isEmpty) {
@@ -97,85 +104,38 @@ class _TargetScreenContent extends StatelessWidget {
               timeProvider.reorderTargets(oldIndex, newIndex);
             },
             children: timeProvider.targets.map((target) {
-              // 动态计算进度 (目前主要实现时长类型的计算)
-              String progressText = "";
-              String title = "";
+              final title = switch (target.type) {
+                TargetType.duration =>
+                  '${target.name}${target.compareType}${target.durationHours}小时',
+                TargetType.frequency =>
+                  '${target.name}${target.compareType}${target.frequencyCount}次',
+                TargetType.timePoint =>
+                  '${target.targetTime}${target.compareType}${target.name}',
+              };
               final cardColor = context.adaptSemanticColor(target.color);
               final onCardColor = AppSemanticColors.onColor(cardColor);
-
-              // 使用 Provider 计算当前周期的进度
-              double currentValue =
-                  timeProvider.calculateTargetProgress(target);
-
-              if (target.type == TargetType.duration) {
-                final double hours = currentValue;
-                final double percent = target.durationHours > 0
-                    ? (hours / target.durationHours * 100).clamp(0.0, 100.0)
-                    : 0.0;
-                progressText =
-                    "已完成：${hours.toStringAsFixed(1)}小时(${percent.toStringAsFixed(1)}%)";
-                title =
-                    "${target.name}${target.compareType}${target.durationHours}小时";
-              } else if (target.type == TargetType.frequency) {
-                final int count = currentValue.toInt();
-                progressText = "已完成 $count/${target.frequencyCount}";
-                title =
-                    "${target.name}${target.compareType}${target.frequencyCount}次";
-              } else {
-                final days = timeProvider.getTargetPersistenceDays(target);
-                progressText = "坚持了$days天";
-                title =
-                    "${target.targetTime}${target.compareType}${target.name}";
-              }
+              final progress = timeProvider.getTargetProgress(target);
 
               Widget? topRightWidget;
-              if (target.period.startsWith("每") &&
-                  target.period.endsWith("天") &&
-                  target.period != "每天") {
-                try {
-                  final createTime =
-                      DateTime.fromMillisecondsSinceEpoch(int.parse(target.id));
-                  final now = DateTime.now();
-                  final d1 = DateTime(
-                      createTime.year, createTime.month, createTime.day);
-                  final d2 = DateTime(now.year, now.month, now.day);
-                  final days = d2.difference(d1).inDays + 1;
-                  topRightWidget = Text("第$days天",
-                      style: TextStyle(color: onCardColor, fontSize: 15));
-                } catch (_) {}
-              } else {
-                DateTime? endTime;
-                // 获取当前 UTC 时间并转换为北京时间（UTC+8）的日期组件
-                final nowUtc = DateTime.now().toUtc();
-                final nowBeijing = nowUtc.add(const Duration(hours: 8));
-
-                // 计算北京时间下的截止时间（此时得到的 targetBeijing 是以 UTC 容器存储的北京时间墙钟）
-                DateTime? targetBeijing;
-                if (target.period == "今天") {
-                  targetBeijing = DateTime.utc(
-                      nowBeijing.year, nowBeijing.month, nowBeijing.day + 1);
-                } else if (target.period == "本周") {
-                  targetBeijing = DateTime.utc(
-                      nowBeijing.year,
-                      nowBeijing.month,
-                      nowBeijing.day + (8 - nowBeijing.weekday));
-                } else if (target.period == "本月") {
-                  targetBeijing =
-                      DateTime.utc(nowBeijing.year, nowBeijing.month + 1, 1);
-                } else if (target.period == "今年") {
-                  targetBeijing = DateTime.utc(nowBeijing.year + 1, 1, 1);
+              if (RegExp(r'^每\d+天$').hasMatch(target.period) &&
+                  progress.period.isValid) {
+                final today = TargetProgressCalculator.day(DateTime.now());
+                final start = progress.period.start;
+                if (!today.isBefore(start)) {
+                  final days = DateTime.utc(today.year, today.month, today.day)
+                          .difference(
+                              DateTime.utc(start.year, start.month, start.day))
+                          .inDays +
+                      1;
+                  topRightWidget = Text('本周期第$days天',
+                      style: AppText.caption.copyWith(color: onCardColor));
                 }
-
-                if (targetBeijing != null) {
-                  // 将北京时间的截止时间还原为真实的 UTC 时间戳
-                  // 因为 targetBeijing 是北京时间（比 UTC 快 8 小时），所以要减去 8 小时才是真实的 UTC 截止时间
-                  endTime = targetBeijing.subtract(const Duration(hours: 8));
-
-                  topRightWidget = _CountdownText(
-                    endTime: endTime,
-                    style: TextStyle(color: onCardColor, fontSize: 15),
-                  );
-                }
+              } else if (!TargetProgressCalculator.isRepeating(target) &&
+                  progress.period.isValid) {
+                topRightWidget = _CountdownText(
+                  endTime: progress.period.end,
+                  style: AppText.body.copyWith(color: onCardColor),
+                );
               }
 
               return Slidable(
@@ -226,7 +186,11 @@ class _TargetScreenContent extends StatelessWidget {
                   key: ValueKey("card_${target.name}"), // 这里用不同的 key 区分
                   subtitle: target.period,
                   title: title,
-                  progressText: progressText,
+                  progress: TargetProgressIndicator(
+                      progress: progress,
+                      showTodayLabel: true,
+                      foregroundColor: onCardColor,
+                      surface: cardColor),
                   topRightWidget: topRightWidget,
                   color: target.color,
                   onTap: () {
@@ -344,7 +308,7 @@ class _TargetScreenContent extends StatelessWidget {
     required Key key,
     String? subtitle,
     required String title,
-    required String progressText,
+    required Widget progress,
     Widget? topRightWidget,
     required Color color,
     VoidCallback? onTap,
@@ -371,16 +335,16 @@ class _TargetScreenContent extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              spacing: AppSpacing.lg,
+              runSpacing: AppSpacing.sm,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 if (subtitle != null)
                   Text(
                     subtitle,
-                    style: TextStyle(
-                      color: onCardColor.withValues(alpha: 0.75),
-                      fontSize: 13,
-                    ),
+                    style: AppText.caption
+                        .copyWith(color: onCardColor.withValues(alpha: 0.75)),
                   ),
                 if (topRightWidget != null) topRightWidget,
               ],
@@ -397,13 +361,7 @@ class _TargetScreenContent extends StatelessWidget {
             const SizedBox(height: 24),
             Align(
               alignment: Alignment.bottomRight,
-              child: Text(
-                progressText,
-                style: TextStyle(
-                  color: onCardColor.withValues(alpha: 0.92),
-                  fontSize: 15,
-                ),
-              ),
+              child: progress,
             ),
           ],
         ),

@@ -83,7 +83,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
 
   List<String> get _compareTypes => _selectedType == TargetType.timePoint
       ? const ['之前', '之后']
-      : const ['超过', '少于', '等于'];
+      : const ['至少', '超过', '少于', '等于'];
 
   @override
   void initState() {

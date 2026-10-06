@@ -7,6 +7,8 @@ import '../services/google_calendar_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import '../models/target.dart';
+import '../models/target_progress.dart';
+import '../services/target_progress_calculator.dart';
 import '../models/schedule_template.dart';
 import '../models/calendar_block.dart';
 import '../models/search_result.dart';
@@ -10211,64 +10213,190 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  /// 获取时间点目标在指定日期的状态
+  /// 时长以小时计，次数按连续的匹配时间块计；缓存随日期编辑失效。
+  double getTargetValueOnDate(Target target, DateTime date) {
+    final key = _getDateKey(date);
+    final cached = _targetStatsCache.getCachedCount(target.id, key);
+    if (cached != null) return cached;
+    final slots = _dailySlots[key] ?? const <TimeSlot>[];
+    var value = 0.0;
+    var inBlock = false;
+    for (final slot in slots) {
+      final matches = slotMatchesTarget(slot, target);
+      if (target.type == TargetType.frequency) {
+        if (matches && !inBlock) value++;
+        inBlock = matches;
+      } else if (matches) {
+        value += 10;
+      }
+    }
+    if (target.type != TargetType.frequency) value /= 60;
+    _targetStatsCache.cacheCount(target.id, key, value);
+    return value;
+  }
+
+  int? getTargetFirstMinute(Target target, DateTime date) {
+    final slots = _dailySlots[_getDateKey(date)] ?? const <TimeSlot>[];
+    final start =
+        target.startTime.isNotEmpty ? _parseTime(target.startTime) : 0;
+    final end = target.endTime.isNotEmpty ? _parseTime(target.endTime) : 1440;
+    int? first;
+    for (final slot in slots) {
+      final minute = slot.hour * 60 + slot.minute10 * 10;
+      if (slotMatchesTarget(slot, target) &&
+          minute >= start &&
+          minute < end &&
+          (first == null || minute < first)) {
+        first = minute;
+      }
+    }
+    return first;
+  }
+
+  /// 时间点使用有效区间内的首次记录，兼容旧版少于/超过条件。
   TimePointStatus getTimePointStatus(Target target, DateTime date) {
-    final dateKey = _getDateKey(date);
-    final daySlots = _dailySlots[dateKey];
-    if (daySlots == null) return TimePointStatus.notDone;
-
-    // 1. 筛选匹配目标的记录
-    var slots = daySlots.where((s) => slotMatchesTarget(s, target)).toList();
-    if (slots.isEmpty) return TimePointStatus.notDone;
-
-    // 2. 有效时间区间过滤（如果设置了）
-    if (target.startTime.isNotEmpty && target.endTime.isNotEmpty) {
-      int startMins = _parseTime(target.startTime);
-      int endMins = _parseTime(target.endTime);
-      slots = slots.where((s) {
-        int t = s.hour * 60 + s.minute10 * 10;
-        return t >= startMins && t < endMins;
-      }).toList();
+    final key = _getDateKey(date);
+    final cached = _targetStatsCache.getCachedTimePointStatus(target.id, key);
+    if (cached != null) return cached;
+    final first = getTargetFirstMinute(target, date);
+    var status = TimePointStatus.notDone;
+    if (first != null) {
+      final goal = _parseTime(target.targetTime);
+      final before =
+          target.compareType.contains('前') || target.compareType.contains('少');
+      final matches = before ? first <= goal : first >= goal;
+      status = matches ? TimePointStatus.onTime : TimePointStatus.late;
     }
+    _targetStatsCache.cacheTimePointStatus(target.id, key, status);
+    return status;
+  }
 
-    if (slots.isEmpty) return TimePointStatus.notDone;
-
-    // 3. 取最早记录和目标时间比较
-    int targetMins = _parseTime(target.targetTime);
-    int earliestMins = slots
-        .map((s) => s.hour * 60 + s.minute10 * 10)
-        .reduce((a, b) => a < b ? a : b);
-
-    bool isOnTime;
-    if (target.compareType.contains("前") || target.compareType.contains("少")) {
-      isOnTime = earliestMins <= targetMins;
-    } else {
-      isOnTime = earliestMins >= targetMins;
+  TargetProgress _targetProgressForPeriod(
+    Target target,
+    TargetPeriodRange period,
+    DateTime now,
+  ) {
+    if (target.type == TargetType.timePoint) {
+      final first = getTargetFirstMinute(target, period.start);
+      return TargetProgressCalculator.evaluate(
+        target: target,
+        period: period,
+        now: now,
+        value:
+            getTimePointStatus(target, period.start) == TimePointStatus.onTime
+                ? 1
+                : 0,
+        hasRecords: first != null,
+        firstMinute: first,
+      );
     }
+    var value = 0.0;
+    if (period.isValid) {
+      for (var date = period.start;
+          date.isBefore(period.end);
+          date = TargetProgressCalculator.nextDay(date)) {
+        value += getTargetValueOnDate(target, date);
+      }
+    }
+    return TargetProgressCalculator.evaluate(
+      target: target,
+      period: period,
+      now: now,
+      value: value,
+      hasRecords: value > 0,
+    );
+  }
 
-    return isOnTime ? TimePointStatus.onTime : TimePointStatus.late;
+  /// 卡片与日期明细共用完整周期的进度。
+  TargetProgress getTargetProgress(Target target,
+      {DateTime? date, DateTime? now}) {
+    final clock = now ?? DateTime.now();
+    return _targetProgressForPeriod(
+      target,
+      TargetProgressCalculator.periodFor(target, date ?? clock),
+      clock,
+    );
+  }
+
+  /// 多日目标的日期格只显示当天记录；每日目标才显示当天的达标状态。
+  TargetProgress getTargetDayProgress(Target target, DateTime date,
+      {DateTime? now}) {
+    final clock = now ?? DateTime.now();
+    final period = TargetProgressCalculator.periodFor(target, date);
+    if (period.isDaily || target.type == TargetType.timePoint) {
+      if (!period.contains(TargetProgressCalculator.day(date))) {
+        return TargetProgress(
+            target: target,
+            period: period,
+            value: 0,
+            goal: target.type == TargetType.duration
+                ? target.durationHours
+                : target.frequencyCount.toDouble(),
+            hasRecords: false,
+            status: TargetProgressStatus.outsidePeriod);
+      }
+      return _targetProgressForPeriod(target, period, clock);
+    }
+    final inside = period.contains(TargetProgressCalculator.day(date));
+    final value = inside ? getTargetValueOnDate(target, date) : 0.0;
+    return TargetProgress(
+      target: target,
+      period: period,
+      value: value,
+      goal: target.type == TargetType.duration
+          ? target.durationHours
+          : target.frequencyCount.toDouble(),
+      hasRecords: value > 0,
+      recordOnly: true,
+      status: !period.isValid
+          ? TargetProgressStatus.invalid
+          : !inside
+              ? TargetProgressStatus.outsidePeriod
+              : value > 0
+                  ? TargetProgressStatus.inProgress
+                  : TargetProgressStatus.notRecorded,
+    );
+  }
+
+  /// 已记录周期中的达标率；等于/少于目标只统计已经结束的周期。
+  double getTargetAchievementRate(Target target, DateTime start, DateTime end,
+      {DateTime? now}) {
+    final clock = now ?? DateTime.now();
+    var recorded = 0;
+    var achieved = 0;
+    for (final period
+        in TargetProgressCalculator.periodsInRange(target, start, end)) {
+      // 历史图按周期结束日归属月份，避免同一周/年被重复计入多个柱。
+      final last =
+          DateTime(period.end.year, period.end.month, period.end.day - 1);
+      if (last.isBefore(start) ||
+          !last.isBefore(end) ||
+          period.start.isAfter(clock)) {
+        continue;
+      }
+      if (target.type != TargetType.timePoint &&
+          (target.compareType == '少于' || target.compareType == '等于') &&
+          !period.isFinishedAt(clock)) {
+        continue;
+      }
+      final progress = _targetProgressForPeriod(target, period, clock);
+      if (!progress.hasRecords) continue;
+      recorded++;
+      if (progress.isAchieved) achieved++;
+    }
+    return recorded > 0 ? achieved / recorded : 0;
   }
 
   int getTargetPersistenceDays(Target target) {
-    int count = 0;
-    _dailySlots.forEach((dateKey, daySlots) {
-      if (target.type == TargetType.timePoint) {
-        final dateParts = dateKey.split('-');
-        if (dateParts.length < 3) return;
-        final y = int.tryParse(dateParts[0]);
-        final m = int.tryParse(dateParts[1]);
-        final d = int.tryParse(dateParts[2]);
-        if (y == null || m == null || d == null) return;
-        final date = DateTime(y, m, d);
-        if (getTimePointStatus(target, date) == TimePointStatus.onTime) {
-          count++;
-        }
-      } else {
-        if (daySlots.any((s) => slotMatchesTarget(s, target))) {
-          count++;
-        }
+    var count = 0;
+    for (final key in _dailySlots.keys) {
+      final date = _parseDateKey(key);
+      if (date == null) continue;
+      final progress = getTargetDayProgress(target, date);
+      if (progress.recordOnly ? progress.hasRecords : progress.isAchieved) {
+        count++;
       }
-    });
+    }
     return count;
   }
 
@@ -10370,121 +10498,9 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
-  // 计算目标在当前周期内的进度
-  double calculateTargetProgress(Target target) {
-    DateTime now = DateTime.now();
-    // 归一化到当天的 00:00:00
-    DateTime startDate = DateTime(now.year, now.month, now.day);
-    DateTime endDate = startDate.add(const Duration(days: 1));
-
-    // 1. 确定统计的时间范围
-    if (target.period == "每周" || target.period == "本周") {
-      // 假设周一为一周开始
-      startDate = startDate.subtract(Duration(days: startDate.weekday - 1));
-      endDate = startDate.add(const Duration(days: 7));
-    } else if (target.period == "每月" || target.period == "本月") {
-      startDate = DateTime(now.year, now.month, 1);
-      endDate = DateTime(now.year, now.month + 1, 1);
-    } else if (target.period == "每年" || target.period == "今年") {
-      startDate = DateTime(now.year, 1, 1);
-      endDate = DateTime(now.year + 1, 1, 1);
-    } else if (target.period.startsWith("每") &&
-        target.period.endsWith("天") &&
-        target.period != "每天") {
-      try {
-        final match = RegExp(r'每(\d+)天').firstMatch(target.period);
-        if (match != null) {
-          final periodDays = int.tryParse(match.group(1) ?? '');
-          if (periodDays != null && periodDays > 0) {
-            final targetIdMs = int.tryParse(target.id);
-            if (targetIdMs != null) {
-              DateTime createTime =
-                  DateTime.fromMillisecondsSinceEpoch(targetIdMs);
-              DateTime startOfCreate =
-                  DateTime(createTime.year, createTime.month, createTime.day);
-              int daysSince = startDate.difference(startOfCreate).inDays;
-              if (daysSince >= 0) {
-                int cycleIndex = daysSince ~/ periodDays;
-                startDate =
-                    startOfCreate.add(Duration(days: cycleIndex * periodDays));
-                endDate = startDate.add(Duration(days: periodDays));
-              }
-            }
-          }
-        }
-      } catch (_) {}
-    }
-
-    double totalValue = 0.0;
-    for (DateTime d = startDate;
-        d.isBefore(endDate);
-        d = d.add(const Duration(days: 1))) {
-      String key = _getDateKey(d);
-      if (_dailySlots.containsKey(key)) {
-        List<TimeSlot> slots = _dailySlots[key]!;
-        if (target.type == TargetType.duration) {
-          totalValue +=
-              slots.where((s) => slotMatchesTarget(s, target)).length *
-                  10.0 /
-                  60.0;
-        } else if (target.type == TargetType.frequency) {
-          bool inBlock = false;
-          for (var slot in slots) {
-            bool isTarget = slotMatchesTarget(slot, target);
-            if (isTarget && !inBlock) {
-              totalValue += 1;
-              inBlock = true;
-            } else if (!isTarget) {
-              inBlock = false;
-            }
-          }
-        }
-      }
-    }
-    return totalValue;
-  }
-
-  /// 获取目标的每日目标次数
-  int getTargetDailyGoal(Target target) {
-    if (target.type == TargetType.frequency) {
-      return target.frequencyCount;
-    }
-    return 1;
-  }
-
-  /// 获取目标的周目标次数
-  int getTargetWeeklyGoal(Target target) {
-    final dailyGoal = getTargetDailyGoal(target);
-    if (target.period == "每天") return dailyGoal * 7;
-    if (target.period == "每周" || target.period == "本周") {
-      return target.frequencyCount;
-    }
-    return dailyGoal * 7;
-  }
-
-  /// 获取目标的月目标次数
-  int getTargetMonthlyGoal(Target target) {
-    final dailyGoal = getTargetDailyGoal(target);
-    if (target.period == "每天") return dailyGoal * 30;
-    if (target.period == "每月" || target.period == "本月") {
-      return target.frequencyCount;
-    }
-    return dailyGoal * 30;
-  }
-
-  /// 获取目标的季度目标次数
-  int getTargetQuarterlyGoal(Target target) {
-    final dailyGoal = getTargetDailyGoal(target);
-    if (target.period == "每天") return dailyGoal * 91;
-    return getTargetMonthlyGoal(target) * 3;
-  }
-
-  /// 获取目标的年目标次数
-  int getTargetYearlyGoal(Target target) {
-    final dailyGoal = getTargetDailyGoal(target);
-    if (target.period == "每天") return dailyGoal * 365;
-    return getTargetMonthlyGoal(target) * 12;
-  }
+  // 兼容旧调用方，所有端的数值与状态统一走相同周期解析。
+  double calculateTargetProgress(Target target) =>
+      getTargetProgress(target).value;
 
   // 日期统计忽略时分秒，并按自然日推进，避免跨日不足 24 小时或夏令时漏天。
   Iterable<String> _statisticsDateKeys(DateTime start, DateTime end) sync* {

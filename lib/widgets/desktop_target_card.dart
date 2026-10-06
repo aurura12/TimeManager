@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../models/target.dart';
 import '../providers/time_provider.dart';
-import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import 'target_progress_indicator.dart';
 
 enum _TargetAction { view, edit, delete }
 
@@ -193,88 +193,15 @@ class DesktopTargetCard extends StatelessWidget {
   }
 
   Widget _buildProgress(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final surface = AppSurfaces.of(context).card;
-    String label;
-    String valueText;
-    Color statusColor;
-    double? ratio;
-
-    if (target.type == TargetType.timePoint) {
-      final status = provider.getTimePointStatus(target, DateTime.now());
-      (label, statusColor) = switch (status) {
-        TimePointStatus.onTime => ('今日准时', AppSemanticColors.success),
-        TimePointStatus.late => ('今日未达标', AppSemanticColors.warning),
-        TimePointStatus.notDone => ('今日未记录', scheme.onSurfaceVariant),
-      };
-      valueText = '累计达标 ${provider.getTargetPersistenceDays(target)} 天';
-    } else {
-      final current = provider.calculateTargetProgress(target);
-      final goal = target.type == TargetType.duration
-          ? target.durationHours
-          : target.frequencyCount.toDouble();
-      final unit = target.type == TargetType.duration ? '小时' : '次';
-      final amount = target.type == TargetType.duration
-          ? _number(current)
-          : current.toInt().toString();
-      valueText = '$amount / ${_number(goal)} $unit';
-      ratio = goal > 0 ? (current / goal).clamp(0.0, 1.0) : 0;
-      if (goal <= 0) {
-        label = '请设置目标值';
-        statusColor = AppSemanticColors.warning;
-      } else if (target.compareType == '少于') {
-        valueText = '已用 $amount / 上限 ${_number(goal)} $unit';
-        final atLimit = (current - goal).abs() < 0.00000001;
-        label = atLimit ? '达到上限' : (current > goal ? '已超限' : '未超限');
-        statusColor = current >= goal
-            ? AppSemanticColors.warning
-            : AppSemanticColors.success;
-      } else {
-        final equal = (current - goal).abs() < 0.00000001;
-        final complete = target.compareType == '等于' ? equal : current > goal;
-        final excess = target.compareType == '等于' && current > goal && !equal;
-        label = complete ? '已达目标' : (excess ? '已超过目标' : '未达目标');
-        statusColor = complete
-            ? AppSemanticColors.success
-            : (excess ? AppSemanticColors.warning : scheme.onSurfaceVariant);
-      }
-    }
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Wrap(
-          spacing: AppSpacing.sm,
-          runSpacing: AppSpacing.xs,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Text(valueText, style: AppText.body),
-            Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
-              decoration: BoxDecoration(
-                color: context.wallpaperFill(
-                    AppSemanticColors.tint(statusColor, surface)),
-                borderRadius: AppRadius.badgeAll,
-              ),
-              child: Text(label,
-                  style: AppText.caption.copyWith(
-                      color: AppSemanticColors.onTint(statusColor, surface))),
-            ),
-          ],
-        ),
-        if (ratio != null) ...[
+        TargetProgressIndicator(
+            progress: provider.getTargetProgress(target), showTodayLabel: true),
+        if (target.type == TargetType.timePoint) ...[
           const SizedBox(height: AppSpacing.sm),
-          LinearProgressIndicator(
-            value: ratio,
-            color: context.wallpaperFill(
-                target.compareType == '少于' && label != '未超限'
-                    ? AppSemanticColors.warning
-                    : scheme.primary),
-            backgroundColor:
-                context.wallpaperFill(scheme.surfaceContainerHighest),
-            borderRadius: AppRadius.gridAll,
-          ),
+          Text('累计达标 ${provider.getTargetPersistenceDays(target)} 天',
+              style: AppText.caption),
         ],
       ],
     );

@@ -91,11 +91,13 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
             ],
           ),
           body: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(vertical: 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildTargetInfoCard(target, colorScheme),
+                Padding(
+                    padding: AppSpacing.page,
+                    child: _buildTargetInfoCard(target, colorScheme)),
                 const SizedBox(height: 16),
                 TargetStatsSection(
                   target: target,
@@ -103,7 +105,10 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                 ),
                 if (history.isNotEmpty) ...[
                   const SizedBox(height: 16),
-                  _buildHistorySection(history, target, colorScheme),
+                  Padding(
+                      padding: AppSpacing.page,
+                      child:
+                          _buildHistorySection(history, target, colorScheme)),
                 ],
               ],
             ),
@@ -222,8 +227,10 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
             borderRadius: const BorderRadius.vertical(top: AppRadius.rControl),
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              child: Wrap(
+                spacing: AppSpacing.lg,
+                runSpacing: AppSpacing.sm,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   Text(
                     '历史记录',
@@ -234,6 +241,7 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                     ),
                   ),
                   Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
                         '${history.length}天有记录',

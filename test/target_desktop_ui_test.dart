@@ -151,7 +151,12 @@ Future<void> _pump(
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   const previewFont = String.fromEnvironment('TARGET_UI_PREVIEW_FONT');
-  final baseTheme = theme ?? AppTheme.light();
+  final baseTheme = (theme ?? AppTheme.light()).copyWith(
+      platform: Platform.isWindows
+          ? TargetPlatform.windows
+          : Platform.isMacOS
+              ? TargetPlatform.macOS
+              : TargetPlatform.android);
   final appTheme = previewFont.isEmpty
       ? baseTheme
       : baseTheme.copyWith(
@@ -404,11 +409,19 @@ void main() {
   testWidgets('上限目标显示用量和超限状态，时间点显示当天状态', (tester) async {
     final provider = await _provider(tester);
     await _pump(tester, provider);
-    expect(find.text('未超限'), findsOneWidget);
+    final capCard = find.byKey(const ValueKey('cap'));
+    expect(find.descendant(of: capCard, matching: find.text('未记录')),
+        findsOneWidget);
     expect(find.text('已用 0 / 上限 0.5 小时'), findsOneWidget);
     final category = provider.categories
         .firstWhere((category) => category.id == 'entertainment');
-    provider.assignCategoryToSlots({60, 61, 62, 63}, category);
+    provider.assignCategoryToSlots({60}, category);
+    await tester.pumpAndSettle();
+    expect(find.text('暂未超限'), findsOneWidget);
+    provider.assignCategoryToSlots({61, 62}, category);
+    await tester.pumpAndSettle();
+    expect(find.text('达到上限'), findsOneWidget);
+    provider.assignCategoryToSlots({63}, category);
     await tester.pumpAndSettle();
     expect(find.text('已超限'), findsOneWidget);
     expect(find.text('今日未记录'), findsOneWidget);

@@ -133,6 +133,12 @@ abstract final class AppSizes {
   static const double desktopTargetRowBreakpoint = 720;
   static const double desktopTargetProgressWidth = 240;
 
+  /// 目标详情月历：窄屏一月、宽屏多月，日期格保留可点击面积。
+  static const double targetCalendarMonthMinWidth = 308;
+  static const double targetCalendarDaySize = 40;
+  static const double targetCalendarStatusIcon = 12;
+  static const double targetCalendarDetailMaxWidth = 480;
+
   /// 出行页表格与月历的桌面布局。
   static const double travelDateColumnWidth = 86;
   static const double travelMonthColumnWidth = 80;

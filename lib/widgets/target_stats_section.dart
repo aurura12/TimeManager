@@ -1,13 +1,21 @@
+import 'dart:math' as math;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import '../models/target.dart';
+import '../models/target_progress.dart';
+import '../services/target_progress_calculator.dart';
+import 'target_calendar_day.dart';
+import 'target_progress_indicator.dart';
+import 'target_day_refresh.dart';
 import '../providers/time_provider.dart';
 
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+
 class TargetStatsSection extends StatefulWidget {
   final Target target;
   final TimeProvider provider;
@@ -29,6 +37,7 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
   // 365 天循环计算结果的缓存：依赖目标数据（revision 递增时失效），
   // 避免每次 build/notify 都重跑遍历
   int _statsRevision = -1;
+  DateTime? _cachedToday;
   String? _cachedTargetId;
   DateTime? _cachedLatestMonth;
   List<_StreakData>? _cachedStreaks;
@@ -38,12 +47,14 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
   Map<int, List<int>>? _cachedFrequencyMatrix;
 
   bool get _statsStale =>
+      _cachedToday != TargetProgressCalculator.day(DateTime.now()) ||
       _cachedTargetId != widget.target.id ||
       provider.targetStatsCache.revision != _statsRevision;
 
   /// 数据变化时重算全部 365 天统计，否则复用缓存
   void _maybeRefreshStats() {
     if (!_statsStale) return;
+    _cachedToday = TargetProgressCalculator.day(DateTime.now());
     _statsRevision = provider.targetStatsCache.revision;
     _cachedTargetId = widget.target.id;
     _cachedLatestMonth = _computeLatestRecordMonth();
@@ -84,330 +95,138 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildGoalSection(colorScheme),
-        const SizedBox(height: 16),
-        _buildPerformanceChart(colorScheme),
-        const SizedBox(height: 16),
-        _buildHistoryChart(colorScheme),
-        const SizedBox(height: 16),
-        _buildCalendarHeatmap(context, colorScheme),
-        const SizedBox(height: 16),
-        _buildStreakSection(colorScheme),
-        const SizedBox(height: 16),
-        _buildFrequencyChart(colorScheme),
-      ],
-    );
+    return TargetDayRefresh(
+        builder: (context) => Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                    padding: AppSpacing.page,
+                    child: _buildGoalSection(colorScheme)),
+                const SizedBox(height: 16),
+                Padding(
+                    padding: AppSpacing.page,
+                    child: _buildPerformanceChart(colorScheme)),
+                const SizedBox(height: 16),
+                Padding(
+                    padding: AppSpacing.page,
+                    child: _buildHistoryChart(colorScheme)),
+                const SizedBox(height: 16),
+                _buildCalendarHeatmap(context, colorScheme),
+                const SizedBox(height: 16),
+                Padding(
+                    padding: AppSpacing.page,
+                    child: _buildStreakSection(colorScheme)),
+                const SizedBox(height: 16),
+                Padding(
+                    padding: AppSpacing.page,
+                    child: _buildFrequencyChart(colorScheme)),
+              ],
+            ));
   }
 
   // --- 通用方法 ---
 
-  String _dateKey(DateTime date) => "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
+  String _dateKey(DateTime date) =>
+      "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
 
   bool _isTargetCompletedOnDate(Target target, DateTime date) {
-    if (target.type == TargetType.timePoint) {
-      final dateKey = _dateKey(date);
-      // 检查缓存
-      final cached = provider.targetStatsCache.getCachedTimePointStatus(target.id, dateKey);
-      if (cached != null) {
-        return cached == TimePointStatus.onTime || cached == TimePointStatus.late;
-      }
-      final status = provider.getTimePointStatus(target, date);
-      provider.targetStatsCache.cacheTimePointStatus(target.id, dateKey, status);
-      return status == TimePointStatus.onTime || status == TimePointStatus.late;
-    }
-    final daySlots = provider.getSlotsForDate(_dateKey(date));
-    if (daySlots == null) return false;
-    return daySlots.any((s) => provider.slotMatchesTarget(s, target));
+    final progress = provider.getTargetDayProgress(target, date);
+    return progress.recordOnly ? progress.hasRecords : progress.isAchieved;
   }
 
-  /// 计算目标在某天的完成次数（频率目标按连续块计数，时长目标按小时计数）
-  double _getTargetCountOnDate(Target target, DateTime date) {
-    final dateKey = _dateKey(date);
+  double _getTargetCountOnDate(Target target, DateTime date) =>
+      provider.getTargetValueOnDate(target, date);
 
-    // 检查缓存
-    final cached = provider.targetStatsCache.getCachedCount(target.id, dateKey);
-    if (cached != null) return cached;
-
-    final daySlots = provider.getSlotsForDate(dateKey);
-    if (daySlots == null) {
-      provider.targetStatsCache.cacheCount(target.id, dateKey, 0);
-      return 0;
-    }
-
-    double result;
-    if (target.type == TargetType.frequency) {
-      int blocks = 0;
-      bool inBlock = false;
-      for (var slot in daySlots) {
-        if (provider.slotMatchesTarget(slot, target)) {
-          if (!inBlock) {
-            blocks++;
-            inBlock = true;
-          }
-        } else {
-          inBlock = false;
-        }
-      }
-      result = blocks.toDouble();
-    } else {
-      int count = daySlots.where((s) => provider.slotMatchesTarget(s, target)).length;
-      result = count * 10.0 / 60.0;
-    }
-
-    provider.targetStatsCache.cacheCount(target.id, dateKey, result);
-    return result;
-  }
-
-  /// 计算目标在日期范围内的总完成次数
-  double _getTargetCompletionCountInRange(Target target, DateTime start, DateTime end) {
-    double total = 0;
-    for (var d = start; d.isBefore(end); d = d.add(const Duration(days: 1))) {
-      total += _getTargetCountOnDate(target, d);
+  double _getTargetCompletionCountInRange(
+      Target target, DateTime start, DateTime end) {
+    var total = 0.0;
+    for (var date = start;
+        date.isBefore(end);
+        date = TargetProgressCalculator.nextDay(date)) {
+      total += _getTargetCountOnDate(target, date);
     }
     return total;
   }
 
-  // --- 时间点目标专用方法 ---
-
-  /// 获取时间点目标在日期范围内的准时率（0.0~1.0）
-  double _getTimePointOnTimeRate(Target target, DateTime start, DateTime end) {
-    int onTime = 0;
-    int total = 0;
-    for (var d = start; d.isBefore(end); d = d.add(const Duration(days: 1))) {
-      final dateKey = _dateKey(d);
-      final cached = provider.targetStatsCache.getCachedTimePointStatus(target.id, dateKey);
-      TimePointStatus status;
-      if (cached != null) {
-        status = cached;
-      } else {
-        status = provider.getTimePointStatus(target, d);
-        provider.targetStatsCache.cacheTimePointStatus(target.id, dateKey, status);
-      }
-      if (status == TimePointStatus.onTime || status == TimePointStatus.late) {
-        total++;
-        if (status == TimePointStatus.onTime) onTime++;
-      }
-    }
-    return total > 0 ? onTime / total : 0.0;
-  }
-
-  // --- 目标值计算 ---
-
-  /// 根据周期正确计算每日目标值
-  double _getDailyGoal() {
-    if (target.type == TargetType.frequency) {
-      final count = target.frequencyCount.toDouble();
-      if (target.period == "每天" || target.period == "今天") {
-        return count;
-      } else if (target.period == "每周" || target.period == "本周" || target.period == "一周内") {
-        return count / 7.0;
-      } else if (target.period == "每月" || target.period == "本月" || target.period == "一月内") {
-        return count / 30.0;
-      } else if (target.period == "每年" || target.period == "今年" || target.period == "一年内") {
-        return count / 365.0;
-      } else if (target.period.startsWith("每") && target.period.endsWith("天")) {
-        final match = RegExp(r'每(\d+)天').firstMatch(target.period);
-        if (match != null) {
-          final days = int.tryParse(match.group(1) ?? '');
-          if (days != null && days > 0) {
-            return count / days;
-          }
-        }
-      }
-      return count;
-    }
-    return 1;
-  }
-
-  // --- 目标进度条 ---
+  double _getTimePointOnTimeRate(Target target, DateTime start, DateTime end) =>
+      provider.getTargetAchievementRate(target, start, end);
 
   Widget _buildGoalSection(ColorScheme colorScheme) {
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-
-    final startOfWeek = today.subtract(Duration(days: today.weekday - 1));
-    final endOfWeek = startOfWeek.add(const Duration(days: 7));
-
-    final startOfMonth = DateTime(now.year, now.month, 1);
-    final endOfMonth = DateTime(now.year, now.month + 1, 1);
-
-    final quarter = (now.month - 1) ~/ 3;
-    final startOfQuarter = DateTime(now.year, quarter * 3 + 1, 1);
-    final endOfQuarter = DateTime(now.year, quarter * 3 + 4, 1);
-
-    final startOfYear = DateTime(now.year, 1, 1);
-    final endOfYear = DateTime(now.year + 1, 1, 1);
-
-    final dailyGoal = _getDailyGoal();
-    final weeklyGoal = dailyGoal * 7;
-    final monthlyGoal = dailyGoal * 30;
-    final quarterlyGoal = dailyGoal * 91;
-    final yearlyGoal = dailyGoal * 365;
-
-    if (target.type == TargetType.timePoint) {
-      final todayStatus = provider.getTimePointStatus(target, today);
-      final weekRate = _getTimePointOnTimeRate(target, startOfWeek, endOfWeek);
-      final monthRate = _getTimePointOnTimeRate(target, startOfMonth, endOfMonth);
-      final quarterRate = _getTimePointOnTimeRate(target, startOfQuarter, endOfQuarter);
-      final yearRate = _getTimePointOnTimeRate(target, startOfYear, endOfYear);
-
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('目标', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colorScheme.primary)),
-              const SizedBox(height: 12),
-              _buildTimePointTodayRow(todayStatus, colorScheme),
-              _buildProgressRow('周', weekRate, 1.0, colorScheme, isRate: true),
-              _buildProgressRow('月', monthRate, 1.0, colorScheme, isRate: true),
-              _buildProgressRow('季度', quarterRate, 1.0, colorScheme, isRate: true),
-              _buildProgressRow('年', yearRate, 1.0, colorScheme, isRate: true),
-            ],
-          ),
-        ),
-      );
-    }
-
-    final todayCount = _getTargetCountOnDate(target, today);
-    final weekCount = _getTargetCompletionCountInRange(target, startOfWeek, endOfWeek);
-    final monthCount = _getTargetCompletionCountInRange(target, startOfMonth, endOfMonth);
-    final quarterCount = _getTargetCompletionCountInRange(target, startOfQuarter, endOfQuarter);
-    final yearCount = _getTargetCompletionCountInRange(target, startOfYear, endOfYear);
-
+    final today = TargetProgressCalculator.day(now);
+    final startOfWeek =
+        DateTime(today.year, today.month, today.day - today.weekday + 1);
+    final startOfMonth = DateTime(today.year, today.month, 1);
+    final quarter = (today.month - 1) ~/ 3;
+    final startOfQuarter = DateTime(today.year, quarter * 3 + 1, 1);
+    final startOfYear = DateTime(today.year, 1, 1);
+    final progress = provider.getTargetProgress(target);
+    final end = TargetProgressCalculator.nextDay(today);
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: AppSpacing.cardComfortable,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('目标', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colorScheme.primary)),
-            const SizedBox(height: 12),
-            _buildProgressRow('今日', todayCount, dailyGoal, colorScheme),
-            _buildProgressRow('周', weekCount, weeklyGoal, colorScheme),
-            _buildProgressRow('月', monthCount, monthlyGoal, colorScheme),
-            _buildProgressRow('季度', quarterCount, quarterlyGoal, colorScheme),
-            _buildProgressRow('年', yearCount, yearlyGoal, colorScheme),
+            const Text('目标', style: AppText.sectionTitle),
+            const SizedBox(height: AppSpacing.md),
+            TargetProgressIndicator(progress: progress, showTodayLabel: true),
+            const SizedBox(height: AppSpacing.sm),
+            Text(progress.periodLabel, style: AppText.caption),
+            const SizedBox(height: AppSpacing.md),
+            if (target.type == TargetType.timePoint) ...[
+              const Text('准时率（仅统计有记录的日期）', style: AppText.caption),
+              _buildRateRow(
+                  '周', _getTimePointOnTimeRate(target, startOfWeek, end)),
+              _buildRateRow(
+                  '月', _getTimePointOnTimeRate(target, startOfMonth, end)),
+              _buildRateRow(
+                  '季度', _getTimePointOnTimeRate(target, startOfQuarter, end)),
+              _buildRateRow(
+                  '年', _getTimePointOnTimeRate(target, startOfYear, end)),
+            ] else ...[
+              _buildRecordSummary('今日记录', _getTargetCountOnDate(target, today)),
+              _buildRecordSummary('本周记录',
+                  _getTargetCompletionCountInRange(target, startOfWeek, end)),
+              _buildRecordSummary('本月记录',
+                  _getTargetCompletionCountInRange(target, startOfMonth, end)),
+              _buildRecordSummary('本年记录',
+                  _getTargetCompletionCountInRange(target, startOfYear, end)),
+              if (target.compareType == '少于' || target.compareType == '等于')
+                const Text('周期结束前显示当前状态，结束后判定最终是否达标。', style: AppText.caption),
+            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _buildTimePointTodayRow(TimePointStatus status, ColorScheme colorScheme) {
-    final surface = AppSurfaces.of(context).card;
-    String text;
-    Color color;
-    switch (status) {
-      case TimePointStatus.onTime:
-        text = '准时';
-        color = AppSemanticColors.success;
-        break;
-      case TimePointStatus.late:
-        text = '迟到';
-        color = AppSemanticColors.warning;
-        break;
-      case TimePointStatus.notDone:
-        text = '未做';
-        color = colorScheme.onSurfaceVariant;
-        break;
-    }
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 45,
-            child: Text('今日', style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant)),
-          ),
-          Expanded(
-            child: Container(
-              height: 24,
-              decoration: BoxDecoration(
-                color: AppSemanticColors.tint(color, surface),
-                borderRadius: AppRadius.gridAll,
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                text,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  // 同色系文字压在同色淡底上会糊，压深到可读
-                  color: AppSemanticColors.onTint(color, surface),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _buildRecordSummary(String label, double value) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+        child: Row(children: [
+          Expanded(child: Text(label, style: AppText.caption)),
+          Text(
+              '${TargetProgress.number(value)} ${target.type == TargetType.frequency ? '次' : '小时'}',
+              style: AppText.body),
+        ]),
+      );
 
-  Widget _buildProgressRow(String label, double current, double goal, ColorScheme colorScheme, {bool isRate = false}) {
-    final progress = goal > 0 ? (current / goal).clamp(0.0, 1.0) : 0.0;
-    String displayText;
-    if (isRate) {
-      displayText = '${(current * 100).toStringAsFixed(0)}%';
-    } else if (target.type == TargetType.duration) {
-      displayText = '${current.toStringAsFixed(1)}h';
-    } else {
-      displayText = current < 1 ? current.toStringAsFixed(1) : '${current.toInt()}';
-    }
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 45,
-            child: Text(label, style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant)),
-          ),
-          Expanded(
-            child: Stack(
-              children: [
-                Container(
-                  height: 24,
-                  decoration: BoxDecoration(
-                    color: context.wallpaperFill(colorScheme.surfaceContainerHighest),
-                    borderRadius: AppRadius.gridAll,
-                  ),
-                ),
-                FractionallySizedBox(
-                  widthFactor: progress,
-                  child: Container(
-                    height: 24,
-                    decoration: BoxDecoration(
-                      color: colorScheme.primary,
-                      borderRadius: AppRadius.gridAll,
-                    ),
-                  ),
-                ),
-                Positioned.fill(
-                  child: Center(
-                    child: Text(
-                      displayText,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: progress > 0.5
-                            ? AppSemanticColors.onColor(colorScheme.primary)
-                            : colorScheme.onSurface,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _buildRateRow(String label, double rate) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Expanded(child: Text(label, style: AppText.caption)),
+            Text('${(rate * 100).round()}%', style: AppText.caption),
+          ]),
+          const SizedBox(height: AppSpacing.xs),
+          LinearProgressIndicator(
+              value: rate,
+              color:
+                  context.wallpaperFill(Theme.of(context).colorScheme.primary),
+              backgroundColor: context.wallpaperFill(
+                  Theme.of(context).colorScheme.surfaceContainerHighest)),
+        ]),
+      );
 
   // --- 成绩折线图 ---
 
@@ -420,13 +239,8 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
       final nextMonth = DateTime(now.year, now.month - i + 1, 1);
       final key = "${month.year}-${month.month.toString().padLeft(2, '0')}";
 
-      if (target.type == TargetType.timePoint) {
-        monthlyStats[key] = _getTimePointOnTimeRate(target, month, nextMonth) * 100;
-      } else {
-        final count = _getTargetCompletionCountInRange(target, month, nextMonth);
-        final monthlyGoal = _getDailyGoal() * 30;
-        monthlyStats[key] = monthlyGoal > 0 ? (count / monthlyGoal * 100).clamp(0.0, 100.0) : 0.0;
-      }
+      monthlyStats[key] =
+          provider.getTargetAchievementRate(target, month, nextMonth) * 100;
     }
 
     final spots = <FlSpot>[];
@@ -445,11 +259,16 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              spacing: AppSpacing.md,
+              runSpacing: AppSpacing.xs,
               children: [
-                Text('成绩', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colorScheme.primary)),
-                Text('年', style: TextStyle(fontSize: 14, color: colorScheme.onSurfaceVariant)),
+                const Text('周期达标率', style: AppText.sectionTitle),
+                Text(
+                    target.compareType == '少于' || target.compareType == '等于'
+                        ? '已结束且有记录的周期'
+                        : '有记录的周期',
+                    style: AppText.caption),
               ],
             ),
             const SizedBox(height: 16),
@@ -472,7 +291,10 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                         showTitles: true,
                         reservedSize: 40,
                         getTitlesWidget: (value, meta) {
-                          return Text('${value.toInt()}%', style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant));
+                          return Text('${value.toInt()}%',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: colorScheme.onSurfaceVariant));
                         },
                       ),
                     ),
@@ -483,14 +305,19 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                         getTitlesWidget: (value, meta) {
                           final idx = value.toInt();
                           if (idx >= 0 && idx < labels.length) {
-                            return Text(labels[idx], style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant));
+                            return Text(labels[idx],
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: colorScheme.onSurfaceVariant));
                           }
                           return const SizedBox.shrink();
                         },
                       ),
                     ),
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    topTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false)),
+                    rightTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false)),
                   ),
                   borderData: FlBorderData(show: false),
                   lineTouchData: LineTouchData(
@@ -556,9 +383,11 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
       final key = "${month.year}-${month.month.toString().padLeft(2, '0')}";
 
       if (target.type == TargetType.timePoint) {
-        monthlyStats[key] = _getTimePointOnTimeRate(target, month, nextMonth) * 100;
+        monthlyStats[key] =
+            _getTimePointOnTimeRate(target, month, nextMonth) * 100;
       } else {
-        monthlyStats[key] = _getTargetCompletionCountInRange(target, month, nextMonth);
+        monthlyStats[key] =
+            _getTargetCompletionCountInRange(target, month, nextMonth);
       }
     }
 
@@ -593,8 +422,14 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('历史', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colorScheme.primary)),
-                Text('月', style: TextStyle(fontSize: 14, color: colorScheme.onSurfaceVariant)),
+                Text('历史',
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.primary)),
+                Text('月',
+                    style: TextStyle(
+                        fontSize: 14, color: colorScheme.onSurfaceVariant)),
               ],
             ),
             const SizedBox(height: 16),
@@ -630,15 +465,21 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                         getTitlesWidget: (value, meta) {
                           final idx = value.toInt();
                           if (idx >= 0 && idx < labels.length) {
-                            return Text(labels[idx], style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant));
+                            return Text(labels[idx],
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: colorScheme.onSurfaceVariant));
                           }
                           return const SizedBox.shrink();
                         },
                       ),
                     ),
-                    leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    leftTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false)),
+                    topTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false)),
+                    rightTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false)),
                   ),
                   borderData: FlBorderData(show: false),
                   gridData: const FlGridData(show: false),
@@ -654,19 +495,13 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
 
   // --- 日历热力图 ---
 
-  /// 查找目标最新完成记录所在月份
-  DateTime? _findLatestRecordMonth() {
-    _maybeRefreshStats();
-    return _cachedLatestMonth;
-  }
-
   DateTime? _computeLatestRecordMonth() {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
 
     for (int i = 0; i < 365; i++) {
       final date = today.subtract(Duration(days: i));
-      if (_isTargetCompletedOnDate(target, date)) {
+      if (provider.getTargetDayProgress(target, date).hasRecords) {
         return DateTime(date.year, date.month, 1);
       }
     }
@@ -675,186 +510,121 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
 
   Widget _buildCalendarHeatmap(BuildContext context, ColorScheme colorScheme) {
     final now = DateTime.now();
-    final latestRecordMonth = _findLatestRecordMonth();
-
-    DateTime startMonth;
-    if (latestRecordMonth != null) {
-      // 让最新记录月份作为 6 个月范围的最后一月（索引 5）
-      startMonth = DateTime(latestRecordMonth.year, latestRecordMonth.month - 5, 1);
-    } else {
-      startMonth = DateTime(now.year, now.month - 5, 1);
-    }
-
+    final startMonth = DateTime(now.year, now.month - 5, 1);
+    final progress = provider.getTargetProgress(target);
+    final legend = target.type == TargetType.timePoint
+        ? '勾号：符合条件；感叹号：未达标；空白：未记录。'
+        : !progress.period.isDaily
+            ? '高亮表示当天有记录；完整周期进度见目标卡片。'
+            : target.compareType == '少于'
+                ? '面积表示已用额度；达到上限或超限时显示警告。'
+                : '面积表示记录量占目标值；勾号表示达标。点击日期查看明细。';
     return Card(
+      margin: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
       child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('日历', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colorScheme.primary)),
-            const SizedBox(height: 16),
-            _buildRealCalendar(startMonth, now, colorScheme),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRealCalendar(DateTime startMonth, DateTime now, ColorScheme colorScheme) {
-    final today = DateTime(now.year, now.month, now.day);
-    final scrollBehavior = ScrollConfiguration.of(context);
-
-    return ScrollConfiguration(
-      behavior: scrollBehavior.copyWith(
-        dragDevices: {...scrollBehavior.dragDevices, PointerDeviceKind.mouse},
-      ),
-      child: MouseRegion(
-        cursor: SystemMouseCursors.grab,
-        child: SingleChildScrollView(
-          controller: _calendarScrollController,
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ...List.generate(6, (index) {
-                final month = DateTime(startMonth.year, startMonth.month + index, 1);
-                return _buildMonthCalendar(month, today, colorScheme);
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Padding(
+              padding: AppSpacing.page,
+              child: Text('日历', style: AppText.sectionTitle)),
+          const SizedBox(height: AppSpacing.md),
+          LayoutBuilder(builder: (context, constraints) {
+            final scale = math.max(
+                1.0,
+                MediaQuery.textScalerOf(context).scale(AppText.body.fontSize!) /
+                    AppText.body.fontSize!);
+            final minWidth = AppSizes.targetCalendarMonthMinWidth * scale;
+            final visibleMonths =
+                (constraints.maxWidth / (minWidth + AppSpacing.lg))
+                    .floor()
+                    .clamp(1, 3);
+            final monthWidth = math.max(
+                minWidth,
+                (constraints.maxWidth - AppSpacing.lg * (visibleMonths - 1)) /
+                    visibleMonths);
+            final today = TargetProgressCalculator.day(now);
+            final behavior = ScrollConfiguration.of(context);
+            return ScrollConfiguration(
+              behavior: behavior.copyWith(dragDevices: {
+                ...behavior.dragDevices,
+                PointerDeviceKind.mouse
               }),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMonthCalendar(DateTime month, DateTime today, ColorScheme colorScheme) {
-    final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
-    final firstDayWeekday = DateTime(month.year, month.month, 1).weekday;
-    final weeks = ['一', '二', '三', '四', '五', '六', '日'];
-
-    return Container(
-      width: 160,
-      margin: const EdgeInsets.only(right: 8),
-      child: Column(
-        children: [
-          Text(
-            '${month.year}年${month.month}月',
-            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: colorScheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 4),
-          Row(
-            children: weeks.map((w) => SizedBox(
-              width: 22,
-              child: Text(
-                w,
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 9, color: colorScheme.onSurfaceVariant),
+              child: MouseRegion(
+                cursor: SystemMouseCursors.grab,
+                child: SingleChildScrollView(
+                  controller: _calendarScrollController,
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (var index = 0; index < 6; index++) ...[
+                          if (index > 0) const SizedBox(width: AppSpacing.lg),
+                          _buildMonthCalendar(
+                              DateTime(
+                                  startMonth.year, startMonth.month + index, 1),
+                              today,
+                              monthWidth),
+                        ],
+                      ]),
+                ),
               ),
-            )).toList(),
-          ),
-          const SizedBox(height: 2),
-          ...List.generate(6, (weekIndex) {
-            return Row(
-              children: List.generate(7, (dayIndex) {
-                final dayOffset = weekIndex * 7 + dayIndex - firstDayWeekday + 1;
-                final day = dayOffset;
-
-                if (day < 1 || day > daysInMonth) {
-                  return Container(
-                    height: 18,
-                    width: 18,
-                    margin: const EdgeInsets.all(2),
-                  );
-                }
-
-                final date = DateTime(month.year, month.month, day);
-                final isToday = date.isAtSameMomentAs(today);
-
-                if (target.type == TargetType.timePoint) {
-                  final status = provider.getTimePointStatus(target, date);
-                  return _buildTimePointCalendarCell(day, status, isToday, colorScheme);
-                } else {
-                  final isCompleted = _isTargetCompletedOnDate(target, date);
-                  return _buildNormalCalendarCell(day, isCompleted, isToday, colorScheme);
-                }
-              }),
             );
           }),
-        ],
+          const SizedBox(height: AppSpacing.sm),
+          Padding(
+              padding: AppSpacing.page,
+              child: Text(legend, style: AppText.caption)),
+        ]),
       ),
     );
   }
 
-  Widget _buildTimePointCalendarCell(int day, TimePointStatus status, bool isToday, ColorScheme colorScheme) {
-    Color bgColor;
-    Color textColor;
-
-    switch (status) {
-      case TimePointStatus.onTime:
-        bgColor = AppSemanticColors.success;
-        textColor = AppSemanticColors.onColor(bgColor);
-        break;
-      case TimePointStatus.late:
-        bgColor = AppSemanticColors.warning;
-        textColor = AppSemanticColors.onColor(bgColor);
-        break;
-      case TimePointStatus.notDone:
-        bgColor = isToday ? colorScheme.primary.withValues(alpha: 0.2) : Colors.transparent;
-        textColor = isToday ? colorScheme.primary : colorScheme.onSurfaceVariant;
-        break;
-    }
-
-    return Container(
-      height: 18,
-      width: 18,
-      margin: const EdgeInsets.all(2),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: AppRadius.gridAll,
-        border: isToday && status == TimePointStatus.notDone
-            ? Border.all(color: colorScheme.primary, width: 1)
-            : null,
-      ),
-      alignment: Alignment.center,
-      child: Text(
-        '$day',
-        style: TextStyle(
-          fontSize: 10,
-          color: textColor,
-          fontWeight: isToday ? FontWeight.bold : FontWeight.normal,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNormalCalendarCell(int day, bool isCompleted, bool isToday, ColorScheme colorScheme) {
-    return Container(
-      height: 18,
-      width: 18,
-      margin: const EdgeInsets.all(2),
-      decoration: BoxDecoration(
-        color: isCompleted
-            ? colorScheme.primary
-            : isToday
-                ? colorScheme.primary.withValues(alpha: 0.2)
-                : Colors.transparent,
-        borderRadius: AppRadius.gridAll,
-        border: isToday && !isCompleted
-            ? Border.all(color: colorScheme.primary, width: 1)
-            : null,
-      ),
-      alignment: Alignment.center,
-      child: Text(
-        '$day',
-        style: TextStyle(
-          fontSize: 10,
-          color: isCompleted
-              ? AppSemanticColors.onColor(colorScheme.primary)
-              : colorScheme.onSurfaceVariant,
-          fontWeight: isToday ? FontWeight.bold : FontWeight.normal,
-        ),
-      ),
-    );
+  Widget _buildMonthCalendar(DateTime month, DateTime today, double width) {
+    final days = DateTime(month.year, month.month + 1, 0).day;
+    final firstWeekday = month.weekday;
+    final cellWidth = width / 7;
+    final scale =
+        MediaQuery.textScalerOf(context).scale(AppText.body.fontSize!) /
+            AppText.body.fontSize!;
+    final cellHeight = AppSizes.minTapTarget * math.max(1.0, scale);
+    const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
+    return SizedBox(
+        width: width,
+        child: Column(children: [
+          Text('${month.year}年${month.month}月', style: AppText.body),
+          const SizedBox(height: AppSpacing.sm),
+          Row(children: [
+            for (final weekday in weekdays)
+              SizedBox(
+                  width: cellWidth,
+                  child: Text(weekday,
+                      textAlign: TextAlign.center, style: AppText.caption))
+          ]),
+          const SizedBox(height: AppSpacing.xs),
+          for (var week = 0; week < 6; week++)
+            Row(children: [
+              for (var column = 0; column < 7; column++)
+                Builder(builder: (context) {
+                  final day = week * 7 + column - firstWeekday + 2;
+                  final date = DateTime(month.year, month.month, day);
+                  return SizedBox(
+                      width: cellWidth,
+                      height: cellHeight,
+                      child: day < 1 || day > days
+                          ? null
+                          : TargetCalendarDay(
+                              key: ValueKey(
+                                  'target-day-${target.id}-${_dateKey(date)}'),
+                              date: date,
+                              progress:
+                                  provider.getTargetDayProgress(target, date),
+                              isToday: date == today,
+                              onTap: () => showTargetDayDetails(
+                                  context, provider, target, date),
+                            ));
+                }),
+            ]),
+        ]));
   }
 
   // --- 连续记录 ---
@@ -868,10 +638,18 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('最佳连续完成次数', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colorScheme.primary)),
+            Text(
+                provider.getTargetProgress(target).period.isDaily
+                    ? '最佳连续达标天数'
+                    : '最佳连续记录天数',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.primary)),
             const SizedBox(height: 12),
             if (streaks.isEmpty)
-              Text('暂无连续记录', style: TextStyle(color: colorScheme.onSurfaceVariant))
+              Text('暂无连续记录',
+                  style: TextStyle(color: colorScheme.onSurfaceVariant))
             else
               ...streaks.take(5).map((streak) {
                 final maxDays = streaks.first.days;
@@ -887,7 +665,9 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                         width: 60,
                         child: Text(
                           DateFormat('M/d').format(streak.startDate),
-                          style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: colorScheme.onSurfaceVariant),
                         ),
                       ),
                       Expanded(
@@ -896,7 +676,8 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                             Container(
                               height: 24,
                               decoration: BoxDecoration(
-                                color: context.wallpaperFill(colorScheme.surfaceContainerHighest),
+                                color: context.wallpaperFill(
+                                    colorScheme.surfaceContainerHighest),
                                 borderRadius: AppRadius.gridAll,
                               ),
                             ),
@@ -918,8 +699,8 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                                     fontSize: 12,
                                     fontWeight: FontWeight.bold,
                                     color: progress > 0.3
-                                      ? AppSemanticColors.onColor(barColor)
-                                      : colorScheme.onSurface,
+                                        ? AppSemanticColors.onColor(barColor)
+                                        : colorScheme.onSurface,
                                   ),
                                 ),
                               ),
@@ -933,7 +714,9 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                         child: Text(
                           DateFormat('M/d').format(streak.endDate),
                           textAlign: TextAlign.right,
-                          style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: colorScheme.onSurfaceVariant),
                         ),
                       ),
                     ],
@@ -956,23 +739,16 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
     final completionDates = <DateTime>{};
 
     for (int i = 0; i < 365; i++) {
-      final date = now.subtract(Duration(days: i));
-
-      if (target.type == TargetType.timePoint) {
-        // 时间点目标：只统计准时（绿色）
-        if (provider.getTimePointStatus(target, date) == TimePointStatus.onTime) {
-          completionDates.add(DateTime(date.year, date.month, date.day));
-        }
-      } else {
-        if (_isTargetCompletedOnDate(target, date)) {
-          completionDates.add(DateTime(date.year, date.month, date.day));
-        }
+      final date = DateTime(now.year, now.month, now.day - i);
+      if (_isTargetCompletedOnDate(target, date)) {
+        completionDates.add(date);
       }
     }
 
     if (completionDates.isEmpty) return [];
 
-    final sortedDates = completionDates.toList()..sort((a, b) => a.compareTo(b));
+    final sortedDates = completionDates.toList()
+      ..sort((a, b) => a.compareTo(b));
     final streaks = <_StreakData>[];
 
     var streakStart = sortedDates[0];
@@ -980,8 +756,7 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
     var streakDays = 1;
 
     for (int i = 1; i < sortedDates.length; i++) {
-      final diff = sortedDates[i].difference(streakEnd).inDays;
-      if (diff == 1) {
+      if (sortedDates[i] == TargetProgressCalculator.nextDay(streakEnd)) {
         streakEnd = sortedDates[i];
         streakDays++;
       } else {
@@ -1017,17 +792,9 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
     final weekdayStats = <int, int>{1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0};
 
     for (int i = 0; i < 365; i++) {
-      final date = now.subtract(Duration(days: i));
-
-      if (target.type == TargetType.timePoint) {
-        // 时间点目标：统计周几准时次数
-        if (provider.getTimePointStatus(target, date) == TimePointStatus.onTime) {
-          weekdayStats[date.weekday] = (weekdayStats[date.weekday] ?? 0) + 1;
-        }
-      } else {
-        if (_isTargetCompletedOnDate(target, date)) {
-          weekdayStats[date.weekday] = (weekdayStats[date.weekday] ?? 0) + 1;
-        }
+      final date = DateTime(now.year, now.month, now.day - i);
+      if (_isTargetCompletedOnDate(target, date)) {
+        weekdayStats[date.weekday] = (weekdayStats[date.weekday] ?? 0) + 1;
       }
     }
     return weekdayStats;
@@ -1047,20 +814,14 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
       for (var monthIndex = 0; monthIndex < 12; monthIndex++) {
         final offset = 11 - monthIndex;
         final month = DateTime(endMonth.year, endMonth.month - offset, 1);
-        final monthEnd = DateTime(endMonth.year, endMonth.month - offset + 1, 0);
+        final monthEnd =
+            DateTime(endMonth.year, endMonth.month - offset + 1, 0);
         var count = 0;
         for (var d = month;
             !d.isAfter(monthEnd);
-            d = d.add(const Duration(days: 1))) {
+            d = TargetProgressCalculator.nextDay(d)) {
           if (d.weekday != weekday) continue;
-          if (target.type == TargetType.timePoint) {
-            if (provider.getTimePointStatus(target, d) ==
-                TimePointStatus.onTime) {
-              count++;
-            }
-          } else {
-            if (_isTargetCompletedOnDate(target, d)) count++;
-          }
+          if (_isTargetCompletedOnDate(target, d)) count++;
         }
         row.add(count);
       }
@@ -1090,19 +851,31 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('频率', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colorScheme.primary)),
+            Text(
+                provider.getTargetProgress(target).period.isDaily
+                    ? '达标日期分布'
+                    : '记录日期分布',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.primary)),
             const SizedBox(height: 12),
             Row(
               children: [
                 Column(
                   children: [
                     const SizedBox(height: 18),
-                    ...List.generate(7, (i) => Container(
-                      height: 24,
-                      width: 36,
-                      alignment: Alignment.centerRight,
-                      child: Text(dayNames[i + 1], style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
-                    )),
+                    ...List.generate(
+                        7,
+                        (i) => Container(
+                              height: 24,
+                              width: 36,
+                              alignment: Alignment.centerRight,
+                              child: Text(dayNames[i + 1],
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: colorScheme.onSurfaceVariant)),
+                            )),
                   ],
                 ),
                 Expanded(
@@ -1113,14 +886,18 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
-                          children: monthLabels.map((label) => SizedBox(
-                            width: 30,
-                            child: Text(
-                              label,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(fontSize: 9, color: colorScheme.onSurfaceVariant),
-                            ),
-                          )).toList(),
+                          children: monthLabels
+                              .map((label) => SizedBox(
+                                    width: 30,
+                                    child: Text(
+                                      label,
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                          fontSize: 9,
+                                          color: colorScheme.onSurfaceVariant),
+                                    ),
+                                  ))
+                              .toList(),
                         ),
                         const SizedBox(height: 4),
                         ...frequencyMatrix.entries.map((entry) {
@@ -1128,7 +905,9 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                             children: List.generate(12, (monthIndex) {
                               final monthWeekdayCount = entry.value[monthIndex];
 
-                              final monthProgress = monthWeekdayCount > 0 ? (monthWeekdayCount / 5).clamp(0.0, 1.0) : 0.0;
+                              final monthProgress = monthWeekdayCount > 0
+                                  ? (monthWeekdayCount / 5).clamp(0.0, 1.0)
+                                  : 0.0;
                               final size = 6.0 + (monthProgress * 14);
 
                               return SizedBox(
@@ -1140,7 +919,10 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                                           width: size,
                                           height: size,
                                           decoration: BoxDecoration(
-                                            color: colorScheme.primary.withValues(alpha: 0.3 + monthProgress * 0.7),
+                                            color: colorScheme.primary
+                                                .withValues(
+                                                    alpha: 0.3 +
+                                                        monthProgress * 0.7),
                                             shape: BoxShape.circle,
                                           ),
                                         )
