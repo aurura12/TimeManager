@@ -285,7 +285,11 @@ Future<http.Response> readLimitedContentsResponse(
 }
 
 bool _isRetryableError(Object e) {
-  return e is TimeoutException ||
+  if (e is http.RequestAbortedException) return false;
+  // IOClient 会将 HttpException（包括连接中断和响应流断开）包装成
+  // ClientException，包装后的异常不再属于 dart:io 的异常类型。
+  return e is http.ClientException ||
+      e is TimeoutException ||
       e is SocketException ||
       e is HttpException ||
       e is IOException ||

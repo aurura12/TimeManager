@@ -496,6 +496,42 @@ void main() {
     );
   });
 
+  test('手机端推送失败保留本地修改，回到前台后自动补推', () async {
+    final state = _RemoteState();
+    final provider = await _createProvider(
+      state,
+      mobile: true,
+      scheduleGiteeDebounce: const Duration(milliseconds: 10),
+    );
+    addTearDown(provider.dispose);
+
+    state.setRemote(
+      'g',
+      '2026-09-06',
+      '{"updated_at":2000,"slots":[{"i":60,"l":"远端当天","c":1,"ts":2000}]}',
+      'sha-06',
+    );
+    provider.goToDate(DateTime(2026, 9, 6));
+    await _waitUntil(
+      () => provider.getSlotsForDate('2026-09-06')?[60].label == '远端当天',
+    );
+
+    state.failPush = true;
+    provider.toggleSlot(60);
+    await _waitUntil(() => state.pushRequests.isNotEmpty);
+    await provider.onAppBackgrounded();
+    expect(provider.getSlotsForDate('2026-09-06')?[60].recorded, isFalse);
+    expect(provider.pendingGiteeSyncDates, contains('2026-09-06'));
+
+    state.failPush = false;
+    state.pushRequests.clear();
+    await provider.onAppResumed();
+
+    expect(state.pushRequests, ['g/2026-09-06']);
+    expect(provider.getSlotsForDate('2026-09-06')?[60].recorded, isFalse);
+    expect(provider.pendingGiteeSyncDates, isEmpty);
+  });
+
   test('推送期间又改了同一天时，基线不会误记为已对齐', () async {
     final state = _RemoteState();
     final provider = await _createProvider(
