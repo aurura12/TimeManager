@@ -39,6 +39,7 @@ enum _ProfileDrawerSection {
   account('身份与连接'),
   review('记录回顾'),
   appearance('外观设置'),
+  interaction('操作与布局'),
   reminders('提醒设置'),
   backup('数据备份'),
   app('关于应用');
@@ -207,6 +208,13 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     final reminderNeedsAttention = reminderStatus != null &&
         (reminderStatus.issue != DiaryReminderIssue.none ||
             reminderStatus.message != null);
+    final interactionSubtitle = [
+      if (isDesktop && context.read<DesktopLayoutProvider?>() != null)
+        '桌面布局',
+      if (isDesktop && context.read<DesktopShortcutProvider?>() != null)
+        '键盘快捷键',
+      '底部标签',
+    ].join(' · ');
 
     return ListView(
       key: _listKey,
@@ -265,6 +273,12 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               ThemeMode.light => '浅色模式',
               ThemeMode.dark => '深色模式',
             }} · ${AppThemeColorPreset.labelFor(themeModeProvider.themeColor)}',
+          ),
+          _buildGroup(
+            context,
+            section: _ProfileDrawerSection.interaction,
+            icon: Icons.dashboard_customize_outlined,
+            subtitle: interactionSubtitle,
           ),
           if (isAndroid)
             _buildGroup(
@@ -510,7 +524,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
             },
           ),
         ],
-      _ProfileDrawerSection.appearance => [
+      _ProfileDrawerSection.interaction => [
           if (isDesktop && context.read<DesktopLayoutProvider?>() != null)
             ListTile(
               leading: const Icon(Icons.view_sidebar_outlined),
@@ -540,6 +554,8 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               MainTabSettingsScreen(provider: context.read<MainTabProvider>()),
             ),
           ),
+        ],
+      _ProfileDrawerSection.appearance => [
           ListTile(
             leading: const Icon(Icons.palette_outlined),
             title: const Text('外观模式'),

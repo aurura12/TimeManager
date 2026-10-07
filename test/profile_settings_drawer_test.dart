@@ -129,7 +129,7 @@ void main() {
 
     await openDrawerWith(tester, provider, desktop: false, android: true);
 
-    for (final title in ['记录回顾', '外观设置', '提醒设置', '数据备份', '关于应用']) {
+    for (final title in ['记录回顾', '外观设置', '操作与布局', '提醒设置', '数据备份', '关于应用']) {
       expect(find.text(title), findsOneWidget);
     }
     expect(find.text('同步中心'), findsOneWidget);
@@ -319,12 +319,12 @@ void main() {
   });
 
   for (final desktop in [false, true]) {
-    testWidgets('${desktop ? '桌面' : '手机'}外观设置可打开底部标签设置', (tester) async {
+    testWidgets('${desktop ? '桌面' : '手机'}操作与布局可打开底部标签设置', (tester) async {
       final provider = await createIdentityProvider(tester);
       addTearDown(provider.dispose);
       await openDrawerWith(tester, provider,
           desktop: desktop, android: !desktop);
-      await tester.tap(find.text('外观设置'));
+      await tester.tap(find.text('操作与布局'));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('底部标签'));
       await tester.tap(find.text('底部标签'));

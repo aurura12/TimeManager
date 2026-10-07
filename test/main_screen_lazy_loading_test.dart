@@ -264,7 +264,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('左侧导航数字快捷键保持映射，桌面布局可从外观设置打开', (tester) async {
+  testWidgets('左侧导航数字快捷键保持映射，桌面布局可从操作与布局打开', (tester) async {
     if (!isDesktopPlatform) return;
     await _pumpMainScreen(tester,
         createProvider: _CountingProvider.new,
@@ -275,7 +275,7 @@ void main() {
     await shortcut(tester, LogicalKeyboardKey.digit6);
     expect(find.byType(ProfileScreen), findsOneWidget);
     await shortcut(tester, LogicalKeyboardKey.comma);
-    await tester.tap(find.text('外观设置'));
+    await tester.tap(find.text('操作与布局'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('桌面布局'));
     await tester.tap(find.text('桌面布局'));
@@ -720,7 +720,7 @@ void main() {
     ));
     profileScaffold.openDrawer();
     await tester.pumpAndSettle();
-    await tester.tap(find.text('外观设置'));
+    await tester.tap(find.text('操作与布局'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('底部标签'));
     await tester.pumpAndSettle();
