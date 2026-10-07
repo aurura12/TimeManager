@@ -276,6 +276,10 @@ void main() {
     for (final label in allMonths) {
       expect(find.text(label), findsOneWidget, reason: '缺少月份 $label');
     }
+    final recordDay = tester.widget<Material>(
+        find.byKey(const ValueKey('travel-calendar-day-2026-10-05')));
+    expect(recordDay.color, isNot(Colors.transparent),
+        reason: '有记录的日期要用高亮底色标记，而不是透明格');
     await _capture(tester, boundary, 'travel_calendar_multi_month');
     expect(tester.takeException(), isNull);
 

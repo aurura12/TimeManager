@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models/travel_record.dart';
-import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 
@@ -359,7 +358,9 @@ class TravelDesktopCalendar extends StatelessWidget {
         key: ValueKey('travel-calendar-day-${_dateKey(date)}'),
         color: selected
             ? context.wallpaperFill(scheme.primaryContainer)
-            : Colors.transparent,
+            : record != null
+                ? context.wallpaperFill(scheme.surfaceContainerHigh)
+                : Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: AppRadius.badgeAll,
           side: today
@@ -369,29 +370,14 @@ class TravelDesktopCalendar extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () => onSelectDate(date),
-          child: Stack(
-            alignment:
-                record == null ? Alignment.center : const Alignment(0, -0.3),
-            children: [
-              Text(
-                '${date.day}',
-                style: AppText.body.copyWith(
-                  color: foreground,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                ),
+          child: Center(
+            child: Text(
+              '${date.day}',
+              style: AppText.body.copyWith(
+                color: foreground,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
               ),
-              if (record != null)
-                const Positioned(
-                  bottom: 0,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: AppSemanticColors.success,
-                      shape: BoxShape.circle,
-                    ),
-                    child: SizedBox(width: 5, height: 5),
-                  ),
-                ),
-            ],
+            ),
           ),
         ),
       ),

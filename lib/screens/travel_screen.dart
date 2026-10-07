@@ -15,6 +15,7 @@ import '../services/travel_gitee_service.dart';
 import '../services/travel_local_store.dart';
 
 import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/travel_date_details.dart';
@@ -1160,36 +1161,28 @@ class _TravelScreenState extends State<TravelScreen> {
               child: Container(
                 margin: const EdgeInsets.all(2),
                 decoration: BoxDecoration(
-                  color: isSelected ? colorScheme.primaryContainer : null,
+                  color: isSelected
+                      ? context.wallpaperFill(colorScheme.primaryContainer)
+                      : hasEvent
+                          ? context.wallpaperFill(
+                              colorScheme.surfaceContainerHigh)
+                          : null,
                   border: isToday
                       ? Border.all(color: colorScheme.primary, width: 1.5)
                       : null,
                   borderRadius: AppRadius.badgeAll,
                 ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      '$day',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight:
-                            isSelected ? FontWeight.bold : FontWeight.normal,
-                        color:
-                            isSelected ? colorScheme.onPrimaryContainer : null,
-                      ),
+                child: Center(
+                  child: Text(
+                    '$day',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight:
+                          isSelected ? FontWeight.bold : FontWeight.normal,
+                      color:
+                          isSelected ? colorScheme.onPrimaryContainer : null,
                     ),
-                    if (hasEvent)
-                      Container(
-                        margin: const EdgeInsets.only(top: 2),
-                        width: 5,
-                        height: 5,
-                        decoration: const BoxDecoration(
-                          color: AppSemanticColors.success,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                  ],
+                  ),
                 ),
               ),
             );
