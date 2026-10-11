@@ -23,6 +23,14 @@ bool useImmediateDragFor({required bool windows, required bool macos}) =>
 bool get useImmediateDrag =>
     useImmediateDragFor(windows: Platform.isWindows, macos: Platform.isMacOS);
 
+/// Android 桌面小组件（`home_widget` 插件）只在 Android 上有实现。
+/// 注意 iOS 不是桌面端，会落进移动端分支，必须单独按 Android 判定，
+/// 否则会调用未配置的小组件插件并抛出 `AppGroupId not set`。
+bool supportsHomeWidgetFor({required bool android}) => android;
+
+bool get supportsHomeWidget =>
+    supportsHomeWidgetFor(android: Platform.isAndroid);
+
 String updateAssetSuffixFor({required bool windows, required bool macos}) {
   if (windows) return '.exe';
   if (macos) return '.dmg';

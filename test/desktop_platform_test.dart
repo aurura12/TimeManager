@@ -36,4 +36,10 @@ void main() {
     expect(useImmediateDragFor(windows: false, macos: true), isTrue);
     expect(useImmediateDragFor(windows: false, macos: false), isFalse);
   });
+
+  test('home widget is Android-only so iOS is skipped', () {
+    expect(supportsHomeWidgetFor(android: true), isTrue);
+    // iOS 不是桌面端，但仍不支持小组件，必须按 Android 判定而不是桌面端。
+    expect(supportsHomeWidgetFor(android: false), isFalse);
+  });
 }

@@ -8878,8 +8878,9 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> _refreshHomeWidget() async {
-    // 桌面小组件仅 Android 支持，Windows 无实现，直接跳过避免 MissingPluginException
-    if (isDesktopPlatform || !_isScheduleReady) return;
+    // 桌面小组件仅 Android 支持，桌面端与 iOS 都无实现，直接跳过避免报错。
+    // 注意 iOS 不是桌面端，必须按 Android 判定，不能用 isDesktopPlatform。
+    if (!supportsHomeWidget || !_isScheduleReady) return;
     try {
       await HomeWidgetService.updateFromDay(
         slots: slots,
