@@ -26,10 +26,10 @@ iOS（进行中）构建 / 真机调试**必须在 macOS + Xcode 上**进行，W
   - `target_stats_cache.dart` → `TargetStatsCache` (47 行) — 目标统计内存缓存，按日期失效
   - `wake_up_provider.dart` → `WakeUpProvider` — 目标页起床记录：每个自然日一条、精确到分钟，最近 7 天平均只计已记录日期。卡片「查看更多」进入 `WakeUpHistoryScreen`，可按最近 30 天 / 90 天 / 全部 / 自选日期查看平均、最早、最晚起床时间、趋势与每日明细；`recordsInRange` 按自然日含首尾筛选、日期倒序返回当前身份记录。应用入口全局创建，隐藏目标页也继续同步；本机经 `WakeUpLocalStore` 按身份保存数据与待上传标记，远端经 `WakeUpGiteeService` 双向同步。切身份清空旧视图，异步保存保留原身份归属、旧响应不能混入新身份；保存成功后才更新显示。目前不进 JSON 备份
   - `background_image_provider.dart` → `BackgroundImageProvider` — 背景图（壁纸）本机状态：图片路径 / 开关 / 照片不透明度 / 表面不透明度。**刻意独立于业务数据 Provider：本地图片路径绝不进同步或备份快照**（`lib/services/` 与 `lib/models/` 均不引用它）。契约见「数据流与关键模式」的背景图一节
-- **Models**: `lib/models/` (33 个文件)
+- **Models**: `lib/models/` (34 个文件)
   - 时间记录：`TimeSlot`, `Category`, `CalendarBlock`, `ScheduleTemplate`, `VoiceScheduleDraft`, `ScheduleSyncProgress`
   - 打卡系统：`CheckInGoal`, `CheckInRecord`, `CheckInDocument`, `CheckInViewFilter`
-  - 目标系统：`Target`
+  - 目标系统：`Target`、`TargetProgress` / `TargetPeriodRange`（`target_progress.dart`，统一进度计算的结果模型）
   - 起床记录：`WakeUpRecord`（起床时刻与 `updatedAt` 分开）、`WakeUpDocument`（按日期合并 + 删除墓碑，待上传标记仅写本机）
   - 出行：`TravelRecord`, `TravelRecordsDocument`（同一文件）
   - 日记：`DiaryKind`, `DiarySearchResult`
@@ -41,12 +41,12 @@ iOS（进行中）构建 / 真机调试**必须在 macOS + Xcode 上**进行，W
   - 分类生命周期：`DeletedEventRelation`（已删除事件的父子关系，仅本地持久化，见"数据流与关键模式"）
   - 工具：`CoordTransform`
 - **Screens**: `lib/screens/` (26 个) — `MainScreen`, `HomeScreen`, `DiaryScreen`, `TravelScreen`, `CheckInScreen`, `TargetScreen`, `ProfileScreen`, plus `DailyReviewScreen`, `WordCloudScreen`, `EventDetailScreen`, `TargetDetailScreen`, `AddTargetScreen`, `GlobalSearchScreen`, `GlobalSearchDetailScreen`, `DiarySearchScreen`, `AddCheckInGoalScreen`, `CheckInDetailScreen`, `CheckInArchiveScreen`, `CheckInMapScreen` (flutter_map 地图), `SyncCenterScreen`, `AppLogScreen`, `OnThisDayScreen`, `WakeUpHistoryScreen` (起床历史), `MainTabSettingsScreen` (底部标签设置), `DesktopLayoutSettingsScreen` (桌面布局设置), `DesktopShortcutSettingsScreen` (快捷键设置)
-- **Services**: `lib/services/` (65 个文件)，主要板块：
+- **Services**: `lib/services/` (66 个文件)，主要板块：
   - **Google 身份 & 日历**：`GoogleCalendarService` (OAuth 2.0 + 事件同步)、`GoogleCalendarEventParser`、`HomeWidgetService` (Android 桌面小组件)、`HomeWidgetActionRouter` (小组件深链接路由)、`AppIdentityService` (手动/Google 双身份)、`AppUserIdentityStore` (身份信息本地存储)、`GoogleSessionStore`
   - **Git 同步（Gitee/GitHub 双平台）**：`GitHubContentsApi`、`GiteeContentsApi`、`ContentsApiCommon`、`DiaryGitHubService`/`DiaryGiteeService`、`DiarySyncService` (列表/拉取/推送编排)、`TravelGitHubService`/`TravelGiteeService`、`CheckInGitHubService`/`CheckInGiteeService`、`PendingGoogleDaySyncService`（待同步状态）
   - **同步中心**：`SyncCenterOperations` + `SyncCenterController`（统一同步入口与重试）、`SyncStatusCoordinator` + `SharedPreferencesSyncStatusStore`/`InMemorySyncStatusStore`（跨页同步状态）、`SyncOperationLock`（互斥）、`RemoteSyncSettings`
   - **日程同步**：`ScheduleDayMergeService`、`ScheduleGiteeService`、`ScheduleOverwriteSnapshot`（覆盖拉取校验）、`ScheduleSyncDependencies`、`ScheduleSyncManifestStore`、`ScheduleJsonPatch`（`schedule_json_codec.dart`，后台 isolate 里的 JSON 合并）、日程坏格式防护相关服务
-  - **分类 / 目标同步**：`CategoryGiteeService` + `CategoryDocumentMerge`（分类文档合并）、`CategorySyncDependencies`（前台分类同步 + 请求限流）、`TargetGiteeService` + `TargetDocument`（目标文档合并 + 删除墓碑）、`TargetSyncDependencies`
+  - **分类 / 目标同步**：`CategoryGiteeService` + `CategoryDocumentMerge`（分类文档合并）、`CategorySyncDependencies`（前台分类同步 + 请求限流）、`TargetGiteeService` + `TargetDocument`（目标文档合并 + 删除墓碑）、`TargetSyncDependencies`、`TargetProgressCalculator`（目标进度的统一计算入口）
   - **起床记录同步**：`WakeUpGiteeService` + `WakeUpSyncDependencies`（复用内容 API 与 Gitee Token）、`WakeUpLocalStore`（数据 / 修改时间 / 删除墓碑 / 待上传标记在一个 JSON 中原子保存）
   - **打卡业务**：`CheckInSyncService` (合并编排)、`CheckInImageService` (图片压缩)、`CheckInLocationService` (GPS 定位 + `geocoding` 逆地理)、`CheckInPhotoCache`/`CheckInPhotoResource` (远端照片缓存与校验)
   - **搜索**：`UnifiedSearchService` (时间记录/日记/出行/打卡/目标/AI 复盘聚合搜索)、`DiarySearchService` (日记全文搜索)
@@ -56,7 +56,7 @@ iOS（进行中）构建 / 真机调试**必须在 macOS + Xcode 上**进行，W
   - **提醒（仅 Android）**：`ReminderPlatform`（插件全局只初始化一次 + 时区 + 按 payload 分发点击路由）、`ReminderBackend`（插件薄封装）、`DiaryReminderService`（每天固定时间提醒写日记，单一实例）、`CheckInReminderService`（每个打卡目标一份，多实例）、`DiaryReminderDiagnostics`（把原生触发事件导入运行日志）。原生埋点在本地 fork 里，见 `third_party/flutter_local_notifications/FORK.md`
   - **工具**：`DataBackupService` (JSON 导入导出)、`OnThisDayService` (当年今日回顾)、`UpdateService`、`calendar_slot_refresh.dart`（`shouldClearCalendarSlotForRefresh`）、`WindowsLegacyPreferencesMigration`
   - 各数据域有对应的 `*_local_store.dart` 本地存储封装
-- **Widgets**: `lib/widgets/` (29 个) — `DatePickerPanel`, `TemplateBar`, `TimeGrid`, `BrushModeCard` (刷子模式)、`CalendarSyncStatusBadge`, `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, `DesktopShortcutHost` (桌面快捷键)、`DailyReviewChatSheet`, `TargetStatsSection`, `TimeWheelSheet` (时/分滚轮面板，替代 `showTimePicker`)、`BackgroundImageLayer` / `BackgroundImagePreview` (背景图：全窗口壁纸层 + 设置预览)、OnThisDay 相关组件 (`OnThisDaySheet`, `OnThisDayYearCard`)、打卡照片与地图相关组件 (`CheckInPhotoSheet`, `CheckInPhotoThumb`, `CheckInPhotoViewer`, `CheckInMapPreview`)、导航组件 (`MainTabNavigation`, `MainTabActivity`)、桌面目标卡 (`DesktopTargetCard`)、出行桌面组件 (`TravelDesktopCalendar`, `TravelTables`, `TravelDateDetails`)、起床组件 (`WakeUpCard`, `WakeUpChart`)、颜色选择 (`ColorPickerPanel`, `ThemeColorSheet`)
+- **Widgets**: `lib/widgets/` (32 个) — `DatePickerPanel`, `TemplateBar`, `TimeGrid`, `BrushModeCard` (刷子模式)、`CalendarSyncStatusBadge`, `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, `DesktopShortcutHost` (桌面快捷键)、`DailyReviewChatSheet`, `TargetStatsSection`, `TimeWheelSheet` (时/分滚轮面板，替代 `showTimePicker`)、`BackgroundImageLayer` / `BackgroundImagePreview` (背景图：全窗口壁纸层 + 设置预览)、OnThisDay 相关组件 (`OnThisDaySheet`, `OnThisDayYearCard`)、打卡照片与地图相关组件 (`CheckInPhotoSheet`, `CheckInPhotoThumb`, `CheckInPhotoViewer`, `CheckInMapPreview`)、导航组件 (`MainTabNavigation`, `MainTabActivity`)、目标组件 (`DesktopTargetCard`, `TargetCalendarDay` 目标月历、`TargetDayRefresh`, `TargetProgressIndicator`)、出行桌面组件 (`TravelDesktopCalendar`, `TravelTables`, `TravelDateDetails`)、起床组件 (`WakeUpCard`, `WakeUpChart`)、颜色选择 (`ColorPickerPanel`, `ThemeColorSheet`)
 - **Utils**: `lib/utils/` (9 个) — `adaptive` (平台自适应)、`calendar_time_range`、`desktop_selection`、`local_day_range`、`platform_features` (按平台开关功能)、`schedule_view_dates`、`time_slot_segment`、`diary_remote_path_utils` (远端日记文件名里的日期解析与排序)、`map_tile_config` (地图瓦片配置)
 - **Theme**: `lib/theme/` — `app_tokens.dart` (间距/圆角/控件高度/文字层级)、`app_theme.dart` (`ColorScheme` + `AppSurfaces` 表面层级扩展 + `AppWallpaperTheme` 壁纸扩展 + `context.wallpaperFill()`/`adaptSemanticFill()` + 全套组件主题)、`app_semantic_colors.dart` (身份色/分类色/图表色/奖牌色/状态色白名单)、`background_image_contrast.dart` (`BackgroundImageContrast` 背景图对比度与 sRGB 逐通道合成)。规范见 `docs/design-system.md`
 - **Config**: `lib/config/` — API keys and service configs (`.gitignore`d，**无 .example.dart 模板**，结构需直接查看引用方代码)
@@ -239,7 +239,7 @@ Never commit them.
 
 ## Testing
 
-- `test/` 有 100 个 dart 测试文件（另有 `test/support/` 下 3 个共用 Fake）+ 3 个 bash 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`、`publish_android_release_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集）+ 1 个 PowerShell 测试（`publish_windows_release_script_test.ps1`，macOS/Linux 用 `pwsh` 运行；不联网、不构建、不发布），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
+- `test/` 有 103 个 dart 测试文件（另有 `test/support/` 下 3 个共用 Fake）+ 3 个 bash 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`、`publish_android_release_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集）+ 1 个 PowerShell 测试（`publish_windows_release_script_test.ps1`，macOS/Linux 用 `pwsh` 运行；不联网、不构建、不发布），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
 - `test/background_image_contrast_test.dart` / `background_image_provider_test.dart` — 背景图对比度契约与 Provider 状态（不透明度只在 commit 时落盘、启动清失效路径、超限/取消属正常结果）
 - `test/visual_system_test.dart` — 视觉系统守护测试：对比度计算、主题一致性、令牌使用约束（改 `lib/theme/` 或页面配色时必跑）
 - `test/widget_test.dart` — smoke test + platform channel mock 模板：`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道、`tester.runAsync` 真实 IO。新写 widget 测试可参照此文件搭建环境
