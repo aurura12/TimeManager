@@ -31,6 +31,13 @@ bool supportsHomeWidgetFor({required bool android}) => android;
 bool get supportsHomeWidget =>
     supportsHomeWidgetFor(android: Platform.isAndroid);
 
+/// 应用内自更新通道：Android（APK）、Windows（EXE）、macOS（DMG）都有安装包，
+/// **iOS 没有**——iOS 只能通过 Xcode / App Store 更新，无法下载安装包自更新。
+bool supportsInAppUpdateFor({required bool ios}) => !ios;
+
+bool get supportsInAppUpdate =>
+    supportsInAppUpdateFor(ios: Platform.isIOS);
+
 String updateAssetSuffixFor({required bool windows, required bool macos}) {
   if (windows) return '.exe';
   if (macos) return '.dmg';

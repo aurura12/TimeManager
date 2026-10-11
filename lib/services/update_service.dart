@@ -399,6 +399,12 @@ class UpdateService {
 
   /// Check whether Gitee has published a newer release.
   static Future<UpdateCheckResult> checkForUpdate() async {
+    // iOS 无自更新通道：发布资产是 APK，下载后也无法安装，直接拒绝。
+    if (!supportsInAppUpdate) {
+      return const UpdateCheckResult(
+        error: 'iOS 版不支持应用内更新，请通过 Xcode 重新安装',
+      );
+    }
     _lastCheckedUpdate = null;
     for (int i = 0; i <= _maxRetries; i++) {
       try {

@@ -52,6 +52,40 @@ void main() {
     expect(find.text('同步中心'), findsOneWidget);
   });
 
+  testWidgets('iOS settings hide the in-app update entry', (tester) async {
+    final provider = TimeProvider();
+    addTearDown(provider.dispose);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
+          ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
+          ChangeNotifierProvider(create: (_) => MainTabProvider()),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            drawer: ProfileSettingsDrawer(
+              onChanged: () {},
+              desktopPlatformOverride: false,
+              androidPlatformOverride: false,
+              iosPlatformOverride: true,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final scaffoldState = tester.state<ScaffoldState>(find.byType(Scaffold));
+    scaffoldState.openDrawer();
+    await tester.pump();
+
+    // iOS 无自更新通道：入口与「关于应用」副标题都不再出现「检查更新」。
+    expect(find.textContaining('检查更新'), findsNothing);
+    expect(find.text('运行日志'), findsOneWidget);
+  });
+
   /// 建一个已经选好「乖乖」身份的桌面 Provider，并等初始化完成
   /// （否则身份切换会被 _isScheduleIdentityReady 挡掉）。
   Future<TimeProvider> createIdentityProvider(WidgetTester tester) async {

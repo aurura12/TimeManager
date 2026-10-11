@@ -42,4 +42,10 @@ void main() {
     // iOS 不是桌面端，但仍不支持小组件，必须按 Android 判定而不是桌面端。
     expect(supportsHomeWidgetFor(android: false), isFalse);
   });
+
+  test('in-app update is unsupported on iOS', () {
+    expect(supportsInAppUpdateFor(ios: false), isTrue);
+    // iOS 不能下载安装包自更新，必须跳过检查更新。
+    expect(supportsInAppUpdateFor(ios: true), isFalse);
+  });
 }

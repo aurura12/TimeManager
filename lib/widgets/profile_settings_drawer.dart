@@ -53,12 +53,14 @@ class ProfileSettingsDrawer extends StatefulWidget {
   final VoidCallback onChanged;
   final bool? desktopPlatformOverride;
   final bool? androidPlatformOverride;
+  final bool? iosPlatformOverride;
 
   const ProfileSettingsDrawer({
     super.key,
     required this.onChanged,
     this.desktopPlatformOverride,
     this.androidPlatformOverride,
+    this.iosPlatformOverride,
   });
 
   @override
@@ -170,6 +172,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     final colorScheme = Theme.of(context).colorScheme;
     final isAndroid = widget.androidPlatformOverride ?? Platform.isAndroid;
     final isDesktop = widget.desktopPlatformOverride ?? isDesktopPlatform;
+    final isIOS = widget.iosPlatformOverride ?? Platform.isIOS;
 
     return Drawer(
       backgroundColor: Colors.transparent,
@@ -186,6 +189,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                   themeModeProvider,
                   isAndroid,
                   isDesktop,
+                  isIOS,
                 ),
               ),
               _buildVersionFooter(),
@@ -202,6 +206,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     ThemeModeProvider themeModeProvider,
     bool isAndroid,
     bool isDesktop,
+    bool isIOS,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
     final reminderStatus = _diaryReminderStatus;
@@ -300,7 +305,9 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
             context,
             section: _ProfileDrawerSection.app,
             icon: Icons.info_outline_rounded,
-            subtitle: '检查更新 · 运行日志',
+            subtitle: supportsInAppUpdateFor(ios: isIOS)
+                ? '检查更新 · 运行日志'
+                : '运行日志',
           ),
         ]),
         const SizedBox(height: AppSpacing.lg),
@@ -493,6 +500,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     final themeModeProvider = context.read<ThemeModeProvider>();
     final backgroundImage = context.read<BackgroundImageProvider>();
     final isDesktop = widget.desktopPlatformOverride ?? isDesktopPlatform;
+    final isIOS = widget.iosPlatformOverride ?? Platform.isIOS;
     return switch (section) {
       _ProfileDrawerSection.account => [
           if (isDesktop || provider.isManualIdentityMode)
@@ -636,12 +644,14 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           ),
         ],
       _ProfileDrawerSection.app => [
-          ListTile(
-            leading: const Icon(Icons.system_update_outlined),
-            title: const Text('检查更新'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => _checkForUpdate(context),
-          ),
+          // iOS 无自更新通道，隐藏入口，避免下载 APK 后装不上。
+          if (supportsInAppUpdateFor(ios: isIOS))
+            ListTile(
+              leading: const Icon(Icons.system_update_outlined),
+              title: const Text('检查更新'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _checkForUpdate(context),
+            ),
           ListTile(
             leading: const Icon(Icons.receipt_long_outlined),
             title: const Text('运行日志'),
