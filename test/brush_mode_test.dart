@@ -80,6 +80,25 @@ class _FakeGoogleSignInPlatform extends GoogleSignInPlatform {
   Future<void> disconnect(DisconnectParams params) async {}
 }
 
+/// 默认分类不再由 App 注入，测试需显式种入（偏好键 `categories`，
+/// 值为每个分类 `toJson()` 后的字符串列表）。
+List<String> _seedCategoriesJson() => [
+      jsonEncode(Category(
+        name: '学习',
+        color: Colors.amber,
+        subCategories: ['阅读', '编程'],
+        updatedAt: 100,
+      ).toJson()),
+      jsonEncode(Category(
+        name: '工作',
+        color: Colors.blue,
+        subCategories: ['会议', '文档'],
+        updatedAt: 100,
+      ).toJson()),
+      jsonEncode(Category(name: '运动', color: Colors.green, updatedAt: 100)
+          .toJson()),
+    ];
+
 void _installPluginMocks({Map<String, Object> prefs = const {}}) {
   SharedPreferences.setMockInitialValues(prefs);
   GoogleSignInPlatform.instance = _FakeGoogleSignInPlatform();
@@ -121,7 +140,10 @@ Future<TimeProvider> _pumpHome(
   ThemeData? theme,
   Map<String, Object> prefs = const {},
 }) async {
-  _installPluginMocks(prefs: prefs);
+  _installPluginMocks(prefs: {
+    'categories': _seedCategoriesJson(),
+    ...prefs,
+  });
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -609,6 +631,7 @@ void main() {
   testWidgets('离开「记录」Tab 会退出刷子模式', (tester) async {
     // 预置「那年今日已弹过」标记，避免 MainScreen 拉起日记索引轮询
     _installPluginMocks(prefs: {
+      'categories': _seedCategoriesJson(),
       'on_this_day_last_shown_date': OnThisDayService.dateKeyOf(DateTime.now()),
     });
     tester.view.physicalSize = const Size(420, 800);

@@ -56,11 +56,33 @@ class _FakeGoogleSignInPlatform extends GoogleSignInPlatform {
   Future<void> disconnect(DisconnectParams params) async {}
 }
 
+/// 默认分类不再由 App 注入，测试需显式种入（偏好键 `categories`，
+/// 值为每个分类 `toJson()` 后的字符串列表）。
+List<String> _seedCategoriesJson() => [
+      jsonEncode(Category(
+        name: '学习',
+        color: Colors.amber,
+        subCategories: ['阅读', '编程'],
+        updatedAt: 100,
+      ).toJson()),
+      jsonEncode(Category(
+        name: '工作',
+        color: Colors.blue,
+        subCategories: ['会议', '文档'],
+        updatedAt: 100,
+      ).toJson()),
+      jsonEncode(Category(name: '运动', color: Colors.green, updatedAt: 100)
+          .toJson()),
+    ];
+
 Future<TimeProvider> _createProvider({
   Duration? scheduleGiteeDebounce,
   Map<String, Object> initialPreferences = const {},
 }) async {
-  SharedPreferences.setMockInitialValues(initialPreferences);
+  SharedPreferences.setMockInitialValues({
+    'categories': _seedCategoriesJson(),
+    ...initialPreferences,
+  });
   GoogleSignInPlatform.instance = _FakeGoogleSignInPlatform();
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;

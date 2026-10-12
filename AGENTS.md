@@ -76,6 +76,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
   - `wake_up/{userCode}.json` — 起床文档（独立于目标文档，避免旧版目标上传抹掉起床记录）
   - `schedule/{userCode}/{dateKey}.json` — 日程，按天一份（覆盖拉取校验见 `ScheduleOverwriteSnapshot`）
   - 日记 / 出行 / 打卡 — `index.txt` 列表 + 逐条文件（日记文件名形如 `…YYYY年M月D日….md`，日期解析见 `lib/utils/diary_remote_path_utils.dart`）
+- **分类不带默认种子 + 「临时」仅本机**：新装**不再注入默认分类**（`_defaultCategories()` 已删除），本地分类初始为空，靠远端拉取或用户自建；解析失败也只回退为空列表，避免把默认数据推到远端覆盖真实分类。`temporaryCategoryName`（「临时」）是首页的快捷入口分类，**只在本机存在**：所有同步边界——合并、冲突判定、推送编码——都必须走 `_syncableCategories()` 把它剔除，不要直接用 `_categories`；`_applyMergedCategories()` 应用合并结果后要 `_ensureTempCategory()` 补回本机入口。分类同步在「本地没有可同步分类且无删除墓碑」时**只采纳远端、绝不推送**，避免新设备/新装把远端真实分类覆盖成空
 - **增量保存**：`TimeProvider` 追踪 `_categoriesDirty` / `_targetsDirty` / `_slotsDirty` 脏标记，只序列化变化部分。普通时间块编辑经 `_scheduleDataSave` 做 250ms 防抖；`_saveData` 直接取消防抖并等待落盘，供同步、切后台、切身份、导入等流程使用。`daily_slots` 格式保持单个 JSON blob，增量分支通过 `ScheduleJsonPatch` 在同一后台 isolate 中解码、合并和编码。保存成功清脏时同时核对保存请求版本与槽位编辑版本，避免后台编码期间的新编辑被清掉。统计缓存在内存修改时按日期区间立即失效，不能等防抖落盘再失效
 - **撤销系统**：`_undoStacks` / `_redoStacks` 深拷贝按日快照，最多 20 步，保留最近编辑的 7 个日期；桌面三列撤销以 `_lastEditedDateKey` 为准。新编辑清空重做分支，切身份 / 覆盖恢复 / 成功导入备份清空两种栈。撤销和重做本身是新修改，变化的槽位更新修改时间，恢复为空槽时写删除墓碑，并走既有缓存失效、待同步和防抖保存链路
 - **统计缓存**：分类区间、每日趋势与连续块次数各用独立缓存，修改日期只使相交区间失效。日期统计统一忽略时分秒并按自然日遍历，词云缓存键不能包含 `DateTime.now()` 的时分秒。`MainTabActivity` 给保活 Tab 传递可见状态；`ProfileScreen` 隐藏时复用已构建内容，返回时重新读取最新统计并保留滚动与筛选状态

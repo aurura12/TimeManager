@@ -448,4 +448,53 @@ void main() {
     expect(
         provider.getSlotsForDate('2026-09-06')![0].categoryId, 'new-category');
   });
+
+  test('新装不再注入默认分类：本地只剩「临时」', () async {
+    final state = _CategoryRemoteState();
+    final provider = await _createProvider(state);
+    addTearDown(provider.dispose);
+
+    expect(
+      provider.categories.map((category) => category.name).toList(),
+      ['临时'],
+    );
+    expect(state.pushRequests, isEmpty);
+  });
+
+  test('本地只有「临时」时采纳远端分类，绝不推送覆盖远端', () async {
+    final state = _CategoryRemoteState();
+    state.contents[DiaryKind.g.code] = encodeCategoryDocument(
+      _remoteDocument('remote-1', '学习'),
+      nowMs: 200,
+    );
+    final provider = await _createProvider(state);
+    addTearDown(provider.dispose);
+
+    final names = provider.categories.map((category) => category.name).toList();
+    // 远端真实分类被采纳，本机「临时」入口仍在
+    expect(names, contains('学习'));
+    expect(names, contains('临时'));
+    // 本地没有可同步的真实分类，等待防抖窗口后也不应产生任何推送
+    await Future<void>.delayed(const Duration(seconds: 4));
+    expect(state.pushRequests, isEmpty);
+  });
+
+  test('真实新增分类会推送，且推送内容不含「临时」', () async {
+    final state = _CategoryRemoteState();
+    state.contents[DiaryKind.g.code] = encodeCategoryDocument(
+      _remoteDocument('remote-1', '学习'),
+      nowMs: 200,
+    );
+    final provider = await _createProvider(state);
+    addTearDown(provider.dispose);
+
+    provider.addCategory(Category(name: '自定义', color: Colors.red));
+    await _waitUntil(() => state.pushRequests.isNotEmpty);
+
+    final pushed = parseCategoryDocument(state.pushedContents.last);
+    final names = pushed.categories.map((category) => category.name).toList();
+    expect(names, contains('自定义'));
+    expect(names, contains('学习'));
+    expect(names, isNot(contains('临时')));
+  });
 }

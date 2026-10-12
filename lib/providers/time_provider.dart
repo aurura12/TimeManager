@@ -4994,7 +4994,7 @@ class TimeProvider with ChangeNotifier {
       }
       final localDoc = CategoryDocument(
         updatedAt: _categoriesDocUpdatedAt,
-        categories: List.from(_categories),
+        categories: _syncableCategories(_categories),
         deletedCategories: Map.from(_deletedCategories),
       );
       final CategoryDocument remoteDoc;
@@ -5058,7 +5058,12 @@ class TimeProvider with ChangeNotifier {
           localIdRemap.isNotEmpty ||
           crossDocumentNameConflict;
 
-      if (categoryDocumentsEquivalent(merged, remoteDoc) && !repairNeeded) {
+      // 本地没有可同步的分类与墓碑（新设备 / 只剩本机「临时」占位）时，
+      // 只采纳远端结果、绝不推送，避免把远端真实分类覆盖成空。
+      final nothingLocalToPush =
+          localDoc.categories.isEmpty && localDoc.deletedCategories.isEmpty;
+      if (nothingLocalToPush ||
+          (categoryDocumentsEquivalent(merged, remoteDoc) && !repairNeeded)) {
         // 规范化后的业务内容已经等于远端时，重复重试无需再次 PUT。
         // 若本地只是旧副本，则仍应用合并结果。
         final applied = _applyMergedCategories(
@@ -5090,10 +5095,16 @@ class TimeProvider with ChangeNotifier {
       }
 
       final nowMs = DateTime.now().millisecondsSinceEpoch;
+      // 防御：远端旧文档里可能残留本机「临时」占位，推送前统一剥离。
+      final pushDocument = CategoryDocument(
+        updatedAt: merged.updatedAt,
+        categories: _syncableCategories(merged.categories),
+        deletedCategories: merged.deletedCategories,
+      );
       final pushResult = await _categorySyncDependencies.pushCategories(
         token: token,
         userCode: userCode,
-        content: encodeCategoryDocument(merged, nowMs: nowMs),
+        content: encodeCategoryDocument(pushDocument, nowMs: nowMs),
         commitMessage: 'categories($userCode): sync',
         // 用上面那次拉取拿到的版本做乐观并发校验，避免覆盖并发更新。
         expectedSha: pullResult.success ? pullResult.sha : null,
@@ -5258,7 +5269,7 @@ class TimeProvider with ChangeNotifier {
         );
       }
 
-      final localCategories = List<Category>.from(_categories);
+      final localCategories = _syncableCategories(_categories);
       final localCategoryNormalization =
           normalizeCategoriesForStorage(localCategories);
       final localDoc = CategoryDocument(
@@ -5347,6 +5358,8 @@ class TimeProvider with ChangeNotifier {
     );
     _remapCategoryReferences(idRemap);
     _categories = List<Category>.from(normalized.categories);
+    // 合并结果来自远端文档、不含本机「临时」占位，这里补回本机入口。
+    _ensureTempCategory();
     _deletedCategories
       ..clear()
       ..addAll(merged.deletedCategories);
@@ -9539,6 +9552,17 @@ class TimeProvider with ChangeNotifier {
     return result;
   }
 
+  /// 「临时」是首页的快捷入口分类，**只在本机存在**：不进入同步文档，
+  /// 避免新设备把本地默认/临时分类推到远端覆盖真实数据。
+  bool _isTemporaryCategory(Category category) =>
+      _categoryLabelKey(category.name) ==
+      _categoryLabelKey(temporaryCategoryName);
+
+  /// 可同步的分类（剔除「临时」）。所有同步边界——合并、冲突判定、推送编码
+  /// ——都必须用它，而不是直接用 `_categories`。
+  List<Category> _syncableCategories(Iterable<Category> categories) =>
+      categories.where((category) => !_isTemporaryCategory(category)).toList();
+
   bool _ensureTempCategory() {
     if (_categories.any(
       (c) =>
@@ -9552,27 +9576,6 @@ class TimeProvider with ChangeNotifier {
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     ));
     return true;
-  }
-
-  List<Category> _defaultCategories() {
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
-    return [
-      Category(
-          name: '学习',
-          color: AppSemanticColors.medalGold,
-          subCategories: ['阅读', '编程'],
-          updatedAt: nowMs),
-      Category(
-          name: '工作',
-          color: AppSemanticColors.brand,
-          subCategories: ['会议', '文档'],
-          updatedAt: nowMs),
-      Category(name: '运动', color: AppSemanticColors.info, updatedAt: nowMs),
-      Category(
-          name: temporaryCategoryName,
-          color: AppSemanticColors.neutral,
-          updatedAt: nowMs),
-    ];
   }
 
   /// 解析并载入每日时间块 JSON。
@@ -9696,11 +9699,11 @@ class TimeProvider with ChangeNotifier {
         }
       }
       if (parsedCategories.isEmpty) {
-        // 全部条目都无法解析：回退默认分类，避免进入"零分类"空状态被后续
-        // 保存固化。原始字符串仍留在磁盘上，必要时可人工恢复。
-        _categories = _defaultCategories();
+        // 全部条目都无法解析：回退为空列表，避免注入默认分类被同步推到远端。
+        // 原始字符串仍留在磁盘上，必要时可人工恢复。
+        _categories = <Category>[];
         _recordAppError(
-          '分类数据全部解析失败，已回退默认分类（共 ${catList.length} 条）',
+          '分类数据全部解析失败，已回退为空列表（共 ${catList.length} 条）',
           StateError('categories 全部解析失败'),
           StackTrace.current,
         );
@@ -9709,7 +9712,9 @@ class TimeProvider with ChangeNotifier {
         if (needMigration) _categoriesDirty = true;
       }
     } else {
-      _categories = _defaultCategories();
+      // 新装 / 无本地分类：保持为空，交给远端拉取或用户自行创建。
+      // 不再注入默认分类——它们会参与合并并覆盖远端同名分类。
+      _categories = <Category>[];
     }
 
     // 分类删除墓碑（id → 删除时间戳）与文档时间戳
