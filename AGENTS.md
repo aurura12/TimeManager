@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Flutter time management app (package name `time_manager`) with Google Calendar integration, daily diary, travel records, check-in tracking, target tracking, AI daily review, voice scheduling, app logging, global search, a unified sync center, and Android local reminders (daily diary + per check-in goal). Chinese-language UI with English fallback. Supports Android, Windows desktop, macOS, and iOS (port in progress — the `ios/` host project is committed, but iOS builds/真机调试 require macOS + Xcode; see root `iOS_移植计划.md`, local-only and gitignored).
+Flutter time management app (package name `time_manager`) with Google Calendar integration, daily diary, travel records, check-in tracking, target tracking, AI daily review, voice scheduling, app logging, global search, a unified sync center, and Android local reminders (daily diary + per check-in goal). Chinese-language UI with English fallback. Supports Android, Windows desktop, macOS, and iOS. iOS 的编译、真机安装 / 运行与调试连接均已验证可用，但构建 / 真机调试**必须在 macOS + Xcode 上**进行；平台差异与踩坑见「iOS 平台约束」。
 
 ## 首次本地开发前提
 
@@ -12,7 +12,7 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
 
 Android 构建必须用 JDK 17（详见「环境要求」），用系统默认的 JDK 25 会失败。
 
-iOS（进行中）构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只能完成工程生成与代码适配（计划与执行记录见根目录 `iOS_移植计划.md`，仅本地、被 gitignore）。`lib/utils/platform_features.dart` 只把 Windows / macOS 判定为桌面端，**iOS 会落进移动端分支**（`supportsCameraCapture` / `updateAssetSuffix` 等按移动端处理）。
+iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只能完成工程生成与代码适配。`lib/utils/platform_features.dart` 只把 Windows / macOS 判定为桌面端，**iOS 会落进移动端分支**（`supportsCameraCapture` / `updateAssetSuffix` 等按移动端处理）——因此凡是 Android / 桌面独占的能力都必须用该文件显式判定并加守卫，不能只在 UI 上按「移动端 / 桌面端」二分。已按此补的守卫：`supportsHomeWidget`（桌面小组件仅 Android）、`supportsInAppUpdate`（应用内更新仅 Android / Windows / macOS，iOS 无通道）。详见「iOS 平台约束」。
 
 ## Architecture
 
@@ -142,6 +142,15 @@ flutter run                        # 启动开发模式（移动端）
 flutter run -d windows             # Windows 桌面版启动
 flutter build apk --release        # 构建 Android release APK
 
+# iOS（需要 macOS + Xcode，见「环境要求」与「iOS 平台约束」）
+xcrun devicectl manage pair --device <id>          # 首次配对真机（触发手机上「信任此电脑」）
+flutter run -d <device-id>                         # 真机调试：debug、带 DEBUG 角标、支持热重载
+flutter run -d "iPhone 17"                         # iOS 模拟器（无需签名）
+flutter build ios --release                        # 真机 release：已签名、无 DEBUG 角标、无热重载
+xcrun devicectl device install app --device <id> build/ios/iphoneos/Runner.app   # 安装更早构建的 release 产物
+xcrun devicectl device process launch --device <id> com.zhoujiaqi1027.timeManager # 直接启动已安装的 App
+flutter devices                                    # 列出设备/模拟器（真机 id 形如 00008130-…）
+
 # 平台构建脚本
 scripts/build_android.sh           # Android arm64 构建：默认静态分析、不跑测试；成功后自动 bump/commit/push（见「构建与发布」）
 scripts/build_windows.bat          # Windows 构建（含自动下载 nuget.exe）
@@ -161,6 +170,23 @@ scripts/installer.iss              # Inno Setup 6.3+ 打 Windows 安装包（上
 - **Android 构建需要 JDK 17**（Temurin）。Gradle 版本在 `android/gradle/wrapper/gradle-wrapper.properties` 固定为 8.14，它无法在 JDK 25 下运行——用系统默认的 JDK 25 会构建失败
 - `flutter.sdk` / `sdk.dir` 写在 `android/local.properties`（本机绝对路径，勿提交改动）
 - 升级 Flutter 要在 SDK 目录里执行 `flutter upgrade`，在项目目录直接跑会刷新项目的 `pubspec.lock`
+- **iOS（仅 macOS + Xcode）**：
+  - Xcode 必须装 iOS 平台组件：`xcodebuild -downloadPlatform iOS`。缺了 xcodebuild 会报 `iOS xx is not installed`，**连「Any iOS Device」都解析不出来**，`flutter build ios` 直接失败——这与工程无关，别去改项目
+  - 真机三步：**配对电脑**（`xcrun devicectl manage pair --device <id>`，或 Xcode → Window → Devices）→ 手机开**开发者模式**（设置 → 隐私与安全性 → 开发者模式，需重启）→ **信任开发者证书**（设置 → 通用 → VPN 与设备管理；首次安装后必须手动信任）
+  - 签名已写入 `ios/Runner.xcodeproj/project.pbxproj`：自动签名 + 开发团队 + 唯一 Bundle ID。**免费个人证书 7 天有效期**，过期 App 打不开，重装一次续期
+  - Xcode 构建会自动把部署目标提升到 **iOS 15**（有依赖要求）
+
+## iOS 平台约束
+
+iOS 会落进「移动端」分支（见「首次本地开发前提」），因此 Android / 桌面独占能力**必须显式加平台守卫**。改动 iOS 相关代码前先读这一节：
+
+- **平台判定统一走 `lib/utils/platform_features.dart`**，不要用 `isDesktopPlatform` 反推「移动端」——iOS 既不是桌面端、也不该走 Android 分支。已加的守卫：
+  - `supportsHomeWidget` — 桌面小组件（`home_widget`）仅 Android。iOS 若照旧调用会抛 `AppGroupId not set` 并持续写错误日志（`TimeProvider._refreshHomeWidget` 曾漏守卫）
+  - `supportsInAppUpdate` — 应用内自更新仅 Android（APK）/ Windows（EXE）/ macOS（DMG）。iOS 无通道：`updateAssetSuffix` 在 iOS 返回 `.apk`，`UpdateService.checkForUpdate` / `downloadAndInstall` 会落到 Android 的 `install_apk` 分支。iOS 上「我的 → 关于应用」隐藏「检查更新」入口
+- **提醒（写日记 / 打卡）在 iOS 无实现**：UI 已按 `ReminderPlatform.isAndroid` 隐藏（见「提醒的硬约束」）。iOS 上没有这两类提醒，属平台能力差异，不是 bug
+- **地图瓦片必须 HTTPS**（`lib/utils/map_tile_config.dart` 已是 `https://`），否则被 iOS ATS 拦截
+- **相机 / 相册 / 定位**的 `Info.plist` 权限说明已配齐；新增权限时同步补 `NS*UsageDescription`
+- 验证 iOS 改动：`flutter run -d "iPhone 17"`（模拟器，免签名）或真机；桌面小组件、应用内更新这类 Android 专属路径在日志里应无相关错误
 
 ## 构建与发布
 
@@ -265,7 +291,7 @@ Never commit them.
 
 - Code and UI text are in Chinese
 - Config files with secrets are always `.gitignore`d — never commit
-- 平台差异化功能通过 `lib/utils/platform_features.dart` 控制（如拍照仅限移动端）
+- 平台差异化功能通过 `lib/utils/platform_features.dart` 控制（如拍照仅限移动端、桌面小组件仅 Android、应用内更新不支持 iOS，见「iOS 平台约束」）
 - 视觉规范：页面不得硬编码颜色/圆角/间距/字号字面量，统一引用 `lib/theme/` 三文件（`AppSpacing`/`AppRadius`/`AppSizes`/`AppText`、`AppSurfaces.of(context)`、`AppSemanticColors`）；照片浮层等主题无关的黑色 scrim 属于允许的例外。**启用背景图时，叠在壁纸上的填充必须走 `context.wallpaperFill()` / `adaptSemanticFill()`（见「背景图」一节）**。守卫测试 `test/visual_system_test.dart`
-- 设计文档在 `docs/superpowers/{plans,specs}/`、已完结问题归档在 `docs/archive/`——这些目录**仅本地存在、被 `docs/*` 规则 gitignore**（`.gitignore` 只放行 `docs/design-system.md` 与 `docs/release-notes.md`），按需创建，**不要在 git 里找它们**。视觉规范在 `docs/design-system.md`；`docs/release-notes.md` 是两个发布脚本默认的 Release 说明来源，发版前必须先更新（否则发布查重会拒绝）。根目录只保留 `AGENTS.md`、`README.md`、活跃的 `待修复问题.md` / `写日记提醒实施方案.md` 以及仅本地的 `iOS_移植计划.md`（gitignore）
+- 设计文档在 `docs/superpowers/{plans,specs}/`、已完结问题归档在 `docs/archive/`——这些目录**仅本地存在、被 `docs/*` 规则 gitignore**（`.gitignore` 只放行 `docs/design-system.md` 与 `docs/release-notes.md`），按需创建，**不要在 git 里找它们**。视觉规范在 `docs/design-system.md`；`docs/release-notes.md` 是两个发布脚本默认的 Release 说明来源，发版前必须先更新（否则发布查重会拒绝）。根目录只保留 `AGENTS.md`、`README.md` 与活跃的 `待修复问题.md` / `写日记提醒实施方案.md`
 - `third_party/` 下是 vendored 的第三方插件 fork，已在 `analysis_options.yaml` 里整体 exclude，不参与本项目的静态检查；升级上游时按该目录下 `FORK.md` 的步骤重做
