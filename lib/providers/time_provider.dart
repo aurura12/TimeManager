@@ -9558,10 +9558,48 @@ class TimeProvider with ChangeNotifier {
       _categoryLabelKey(category.name) ==
       _categoryLabelKey(temporaryCategoryName);
 
-  /// 可同步的分类（剔除「临时」）。所有同步边界——合并、冲突判定、推送编码
-  /// ——都必须用它，而不是直接用 `_categories`。
-  List<Category> _syncableCategories(Iterable<Category> categories) =>
-      categories.where((category) => !_isTemporaryCategory(category)).toList();
+  /// 旧版 App 新装时会一次性写入默认分类——`学习[阅读,编程]` / `工作[会议,文档]` /
+  /// `运动`——它们的 `updatedAt` 完全相同（同一次 `nowMs` 生成）。这批分类不是
+  /// 用户数据，参与同步会把远端同名的真实分类（及其子事件）覆盖掉，必须按空处理。
+  ///
+  /// 判定刻意收紧到「同一个 `updatedAt` 下同时出现种子版的『学习』与『工作』」，
+  /// 以免把用户自建的 `学习[阅读,编程]` 误判为种子；命中后连同同刻的「运动」一起剔除。
+  Set<String> _legacySeedCategoryIds() {
+    const seedSubCategories = <String, List<String>>{
+      '学习': ['阅读', '编程'],
+      '工作': ['会议', '文档'],
+      '运动': <String>[],
+    };
+    final byUpdatedAt = <int, List<Category>>{};
+    for (final category in _categories) {
+      final expected = seedSubCategories[_categoryLabelKey(category.name)];
+      if (expected == null) continue;
+      if (category.hiddenSubCategories.isNotEmpty) continue;
+      if (!listEquals(category.subCategories, expected)) continue;
+      byUpdatedAt
+          .putIfAbsent(category.updatedAt, () => <Category>[])
+          .add(category);
+    }
+    final ids = <String>{};
+    for (final group in byUpdatedAt.values) {
+      final names =
+          group.map((category) => _categoryLabelKey(category.name)).toSet();
+      if (names.contains('学习') && names.contains('工作')) {
+        ids.addAll(group.map((category) => category.id));
+      }
+    }
+    return ids;
+  }
+
+  /// 可同步的分类：剔除「临时」（仅本机入口）与历史默认种子（被污染设备需被远端治愈）。
+  /// 所有同步边界——合并、冲突判定、推送编码——都必须用它，而不是直接用 `_categories`。
+  List<Category> _syncableCategories(Iterable<Category> categories) {
+    final seedIds = _legacySeedCategoryIds();
+    return categories
+        .where((category) =>
+            !_isTemporaryCategory(category) && !seedIds.contains(category.id))
+        .toList();
+  }
 
   bool _ensureTempCategory() {
     if (_categories.any(

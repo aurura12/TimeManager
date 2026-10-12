@@ -497,4 +497,74 @@ void main() {
     expect(names, contains('学习'));
     expect(names, isNot(contains('临时')));
   });
+
+  test('被历史默认种子污染的设备会被远端治愈，且不再推送种子', () async {
+    // 旧版新装留下的种子：学习[阅读,编程]/工作[会议,文档]/运动，updatedAt 完全相同
+    const seedTs = 1791725249661;
+    final seedPrefs = {
+      AppIdentityResolver.dataKey(DiaryKind.g, 'categories'): [
+        jsonEncode(Category(
+          id: 'seed-study',
+          name: '学习',
+          color: Colors.amber,
+          subCategories: ['阅读', '编程'],
+          updatedAt: seedTs,
+        ).toJson()),
+        jsonEncode(Category(
+          id: 'seed-work',
+          name: '工作',
+          color: Colors.blue,
+          subCategories: ['会议', '文档'],
+          updatedAt: seedTs,
+        ).toJson()),
+        jsonEncode(Category(
+          id: 'seed-sport',
+          name: '运动',
+          color: Colors.green,
+          updatedAt: seedTs,
+        ).toJson()),
+      ],
+    };
+
+    final state = _CategoryRemoteState();
+    state.contents[DiaryKind.g.code] = encodeCategoryDocument(
+      CategoryDocument(
+        updatedAt: 100,
+        categories: [
+          Category(
+            id: 'real-study',
+            name: '学习',
+            color: Colors.amber,
+            subCategories: ['多邻国', '看书'],
+            updatedAt: 100,
+          ),
+          Category(
+            id: 'real-work',
+            name: '工作',
+            color: Colors.blue,
+            subCategories: ['投简历', '面试'],
+            updatedAt: 100,
+          ),
+        ],
+      ),
+      nowMs: 100,
+    );
+
+    final provider =
+        await _createProvider(state, initialPreferences: seedPrefs);
+    addTearDown(provider.dispose);
+
+    final byName = {
+      for (final category in provider.categories) category.name: category,
+    };
+    // 种子版的 学习/工作 被远端真实数据治愈
+    expect(byName['学习']!.subCategories, ['多邻国', '看书']);
+    expect(byName['工作']!.subCategories, ['投简历', '面试']);
+    // 种子多出来的「运动」被清掉，本机「临时」入口保留
+    expect(byName.containsKey('运动'), isFalse);
+    expect(byName.containsKey('临时'), isTrue);
+    // 不产生推送
+    await Future<void>.delayed(const Duration(seconds: 1));
+    expect(state.pushRequests, isEmpty);
+  });
 }
