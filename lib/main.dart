@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/background_image_provider.dart';
 import 'providers/main_tab_provider.dart';
+import 'providers/event_label_style_provider.dart';
 import 'providers/desktop_shortcut_provider.dart';
 import 'providers/desktop_layout_provider.dart';
 import 'package:time_manager/theme/app_semantic_colors.dart';
@@ -473,6 +474,11 @@ Future<void> _initializeAndRunApplication({
         ),
         ChangeNotifierProvider(create: (context) => ThemeModeProvider()),
         ChangeNotifierProvider(create: (_) => MainTabProvider()),
+        // 注册成可空泛型：没有注入该 Provider 的宿主（部分测试）读到 null 并回落默认两行，
+        // 不会因为缺 Provider 直接抛异常。
+        ChangeNotifierProvider<EventLabelStyleProvider?>(
+          create: (_) => EventLabelStyleProvider(),
+        ),
         ChangeNotifierProvider(create: (_) => DesktopShortcutProvider()),
         ChangeNotifierProvider(create: (_) => DesktopLayoutProvider()),
         ChangeNotifierProvider<BackgroundImageProvider>(

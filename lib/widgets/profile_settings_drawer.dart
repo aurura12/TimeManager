@@ -6,12 +6,15 @@ import '../utils/platform_features.dart';
 import 'package:flutter/material.dart';
 import '../models/diary_reminder.dart';
 import '../models/google_calendar_user.dart';
+import '../models/event_label_style.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../providers/theme_mode_provider.dart';
 import '../providers/background_image_provider.dart';
 import '../providers/time_provider.dart';
 import '../providers/main_tab_provider.dart';
+import '../providers/event_label_style_provider.dart';
+import '../screens/event_label_settings_screen.dart';
 import '../screens/desktop_shortcut_settings_screen.dart';
 import '../providers/desktop_shortcut_provider.dart';
 import '../providers/desktop_layout_provider.dart';
@@ -562,6 +565,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               MainTabSettingsScreen(provider: context.read<MainTabProvider>()),
             ),
           ),
+          ..._buildEventLabelStyleItem(context),
         ],
       _ProfileDrawerSection.appearance => [
           ListTile(
@@ -661,6 +665,27 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           ),
         ],
     };
+  }
+
+  /// 事件名显示入口。没有注册 Provider 的宿主（例如部分测试）直接不显示。
+  List<Widget> _buildEventLabelStyleItem(BuildContext context) {
+    // 用 watch 让副标题跟随设置页的选择更新
+    final labelProvider = context.watch<EventLabelStyleProvider?>();
+    if (labelProvider == null) return const [];
+    return [
+      ListTile(
+        leading: const Icon(Icons.wrap_text_outlined),
+        title: const Text('事件名显示'),
+        subtitle: Text(
+          '${labelProvider.style == EventLabelStyle.twoLines ? '分两行' : '只显示一行'}'
+          ' · 长按可看全名',
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => _openScreen(
+          EventLabelSettingsScreen(provider: labelProvider),
+        ),
+      ),
+    ];
   }
 
   Future<void> _openBackgroundImageSettings(

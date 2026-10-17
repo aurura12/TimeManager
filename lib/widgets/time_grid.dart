@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/event_label_style.dart';
 import '../models/time_slot.dart';
+import '../providers/event_label_style_provider.dart';
 import '../providers/time_provider.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/time_slot_segment.dart';
+import 'event_label_text.dart';
 
 /// 时间网格的渲染与手势层。
 ///
@@ -76,6 +79,14 @@ class TimeGrid extends StatelessWidget {
   }
 
   bool _isBrushPreview(int index) => brushPreviewIndices.contains(index);
+
+  /// 把「0 点起的分钟数」格式化成 HH:mm，用于长按气泡里的时间段。
+  String _clockOf(int minutes) {
+    final normalized = minutes % (24 * 60);
+    final hour = (normalized ~/ 60).toString().padLeft(2, '0');
+    final minute = (normalized % 60).toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -152,6 +163,13 @@ class TimeGrid extends StatelessWidget {
     final brushPreviewBorder = colorScheme.primary;
     final daySlots =
         date == null ? provider.slots : provider.slotsForDate(date!);
+    // 事件名显示方式：本机偏好，未注册 Provider 时按默认两行
+    final labelStyle = context.watch<EventLabelStyleProvider?>()?.style ??
+        EventLabelStyle.twoLines;
+    // 气泡里要带分类名，先按 id 建一次索引，避免每块都线性查找
+    final categoryNames = <String, String>{
+      for (final category in provider.categories) category.id: category.name,
+    };
 
     return Container(
       height: AppSizes.gridRow,
@@ -181,6 +199,15 @@ class TimeGrid extends StatelessWidget {
                 if (_isBrushPreview(hour * 6 + minute + k)) preview = true;
               }
 
+              final startMinutes = hour * 60 + minute * 10;
+              final categoryName = slot.categoryId == null
+                  ? null
+                  : categoryNames[slot.categoryId];
+              final detail = categoryName == null
+                  ? '${_clockOf(startMinutes)}–${_clockOf(startMinutes + span * 10)}'
+                  : '${_clockOf(startMinutes)}–${_clockOf(startMinutes + span * 10)}'
+                      ' · $categoryName';
+
               segments.add(Expanded(
                 flex: span,
                 child: Container(
@@ -200,14 +227,16 @@ class TimeGrid extends StatelessWidget {
                     borderRadius: _computeSegmentBorderRadius(
                         daySlots, hour, minute, span, highlighted),
                   ),
+                  // 极端字体放大时两行也放不下，裁掉而不是盖到相邻块
+                  clipBehavior: Clip.hardEdge,
                   child: Center(
-                    child: Text(
-                      label,
-                      // 一格只有 10 分钟宽（手机约 55px，桌面三列视图更窄），
-                      // 单行 11px 只能放下 4～5 个字。块高 45px 还有富余，
-                      // 所以放宽到两行换行，把纵向空间用起来。
-                      maxLines: 2,
-                      textAlign: TextAlign.center,
+                    child: EventLabelText(
+                      text: label,
+                      maxLines: labelStyle.maxLines,
+                      // 气泡补上时间段和分类：长按看到的信息比"两行"更多
+                      detail: detail,
+                      // 刷子模式下整列由外层 Listener 接管指针
+                      enableTooltip: !brushMode,
                       style: AppText.gridLabel.copyWith(
                         // 高亮时底色是主色半透明，未高亮时是分类实色。
                         // 分类色理论上已被 opaque() 收成不透明，这里仍传底面：
@@ -217,7 +246,6 @@ class TimeGrid extends StatelessWidget {
                             : AppSemanticColors.onColor(slot.color!,
                                 over: surfaces.page),
                       ),
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ),

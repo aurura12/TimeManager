@@ -9,7 +9,9 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:provider/provider.dart';
 import 'package:reorderables/reorderables.dart';
 import '../models/category.dart';
+import '../models/event_label_style.dart';
 import '../models/schedule_template.dart';
+import '../providers/event_label_style_provider.dart';
 import '../providers/time_provider.dart';
 import '../providers/desktop_layout_provider.dart';
 import '../theme/app_semantic_colors.dart';
@@ -18,6 +20,7 @@ import '../theme/app_tokens.dart';
 import '../widgets/brush_mode_card.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/desktop_shortcut_host.dart';
+import '../widgets/event_label_text.dart';
 import '../widgets/template_bar.dart';
 import '../widgets/time_grid.dart';
 import '../widgets/voice_schedule_sheet.dart';
@@ -975,6 +978,9 @@ class HomeScreenState extends State<HomeScreen> {
   Widget _buildCategoryItem(int catIndex, Category cat, TimeProvider provider) {
     bool isExpanded = provider.getCategoryExpandState(cat.id);
     bool isTemporary = cat.name == TimeProvider.temporaryCategoryName;
+    // 事件名显示方式：本机偏好，未注册 Provider 时按默认两行
+    final labelStyle = context.watch<EventLabelStyleProvider?>()?.style ??
+        EventLabelStyle.twoLines;
     // 侧栏底下是 surfaces.subtle：半透明分类色要先合成，对比度才算得对
     final sidebarSurface = AppSurfaces.of(context).subtle;
     final subBg = AppSemanticColors.tint(cat.color, sidebarSurface, 0.6);
@@ -1041,15 +1047,18 @@ class HomeScreenState extends State<HomeScreen> {
                           const SizedBox(width: AppSpacing.xs),
                         ],
                         Flexible(
-                          child: Text(
-                            cat.name,
+                          child: EventLabelText(
+                            text: cat.name,
                             textAlign: TextAlign.center,
+                            maxLines: labelStyle.maxLines,
+                            detail: cat.subCategories.isEmpty
+                                ? null
+                                : '${cat.subCategories.length} 个子事件',
                             style: TextStyle(
                               color: AppSemanticColors.onColor(cat.color),
                               fontSize: 12,
                               fontWeight: FontWeight.w500,
                             ),
-                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ],
@@ -1094,13 +1103,14 @@ class HomeScreenState extends State<HomeScreen> {
                           ] else
                             const SizedBox(width: 4),
                           Expanded(
-                            child: Text(
-                              subCat,
+                            child: EventLabelText(
+                              text: subCat,
+                              textAlign: TextAlign.left,
+                              maxLines: labelStyle.maxLines,
                               style: TextStyle(
                                 color: onSubBg,
                                 fontSize: 11,
                               ),
-                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         ],
