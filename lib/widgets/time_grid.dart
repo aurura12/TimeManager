@@ -203,6 +203,11 @@ class TimeGrid extends StatelessWidget {
                   child: Center(
                     child: Text(
                       label,
+                      // 一格只有 10 分钟宽（手机约 55px，桌面三列视图更窄），
+                      // 单行 11px 只能放下 4～5 个字。块高 45px 还有富余，
+                      // 所以放宽到两行换行，把纵向空间用起来。
+                      maxLines: 2,
+                      textAlign: TextAlign.center,
                       style: AppText.gridLabel.copyWith(
                         // 高亮时底色是主色半透明，未高亮时是分类实色。
                         // 分类色理论上已被 opaque() 收成不透明，这里仍传底面：
