@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' hide Category;
 import '../models/time_slot.dart'; // 确保导入了模型
+import '../models/time_slot_resize.dart';
 import '../models/category.dart';
 import 'dart:convert';
 import '../services/google_calendar_service.dart';
@@ -41,6 +42,7 @@ import '../services/sync_status_coordinator.dart';
 import 'target_stats_cache.dart';
 import '../utils/schedule_view_dates.dart';
 import '../utils/calendar_time_range.dart';
+import '../utils/time_block_resize.dart';
 
 import '../theme/app_semantic_colors.dart';
 
@@ -2481,6 +2483,84 @@ class TimeProvider with ChangeNotifier {
     }
     _scheduleDataSave();
     notifyListeners();
+  }
+
+  /// 把已记录时间块的起点或终点拖到新的槽位，从而拉长 / 缩短这个块。
+  ///
+  /// 与涂色一致，目标范围内已有的相邻记录会被直接覆盖；被裁掉的一端写
+  /// 删除墓碑，避免远端旧条目按 `ts` 合并复活。一次调用只产生一条撤销快照。
+  ///
+  /// 提交前会重新定位块并核对事件身份：拖拽期间若被后台同步 / 撤销改写，
+  /// 直接放弃写入而不是把别的块拉长。
+  bool resizeTimeBlock(TimeSlotResizeRequest request) {
+    if (!_allowScheduleMutation() || _remoteViewEnabled) return false;
+    if (request.expectedLabel.trim().isEmpty) return false;
+
+    final dateKey = _getDateKey(request.date);
+    final daySlots = slotsForDate(request.date);
+    if (daySlots.length != kDaySlotCount) return false;
+
+    final anchorIndex = request.anchorIndex;
+    if (anchorIndex < 0 || anchorIndex >= daySlots.length) return false;
+    final range = findTimeBlockRange(daySlots, anchorIndex);
+    if (range == null) return false;
+
+    final first = daySlots[range.start];
+    if (first.isFromCalendar) return false;
+    // UI 传回的范围和身份只用来校验，真正的位置以当前数据为准
+    if (range.start != request.expectedStart ||
+        range.end != request.expectedEnd ||
+        first.label != request.expectedLabel ||
+        first.categoryId != request.expectedCategoryId ||
+        first.color != request.expectedColor) {
+      return false;
+    }
+
+    final target = clampTimeBlockResizeTarget(
+      edge: request.edge,
+      originalStart: range.start,
+      originalEnd: range.end,
+      targetIndex: request.targetIndex,
+      slotCount: daySlots.length,
+    );
+    final newStart =
+        request.edge == TimeSlotResizeEdge.start ? target : range.start;
+    final newEnd =
+        request.edge == TimeSlotResizeEdge.end ? target : range.end;
+    if (newStart == range.start && newEnd == range.end) return false;
+
+    _saveSnapshot(dateKey);
+
+    final now = DateTime.now();
+    // 先给被裁掉的那一端写墓碑
+    for (var index = range.start; index <= range.end; index++) {
+      if (index < newStart || index > newEnd) {
+        _clearSlotAt(daySlots, index, markDeleted: true);
+      }
+    }
+    // 再按新范围写入（含被覆盖的相邻记录）
+    for (var index = newStart; index <= newEnd; index++) {
+      daySlots[index].recorded = true;
+      daySlots[index].label = request.expectedLabel;
+      daySlots[index].categoryId = request.expectedCategoryId;
+      daySlots[index].color = request.expectedColor;
+      daySlots[index].isFromCalendar = false;
+      daySlots[index].calendarEventId = null;
+      daySlots[index].modifiedAt = now;
+      daySlots[index].deletedAt = null;
+    }
+
+    _markSlotsDirty(dateKey);
+    _targetStatsCache.invalidateDate(dateKey);
+    if (dateKey == _getDateKey(_currentDate)) {
+      _markPendingSync();
+      _scheduleCalendarSync();
+    } else {
+      _markPendingSync(dateKey);
+    }
+    _scheduleDataSave();
+    notifyListeners();
+    return true;
   }
 
   /// 应用语音解析出的日程草稿。

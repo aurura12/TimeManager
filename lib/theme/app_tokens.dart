@@ -118,6 +118,16 @@ abstract final class AppSizes {
   /// 时间网格左侧时间轴宽度
   static const double gridTimeAxis = 55;
 
+  /// 时间块边缘拖拽热区（桌面鼠标）
+  static const double gridResizeMouseEdge = 8;
+
+  /// 时间块边缘拖拽热区（触摸把手，实际还会被格宽收敛）
+  static const double gridResizeTouchEdge = 32;
+
+  /// 时间块边缘可见竖条宽 / 高
+  static const double gridResizeBarWidth = 3;
+  static const double gridResizeBarHeight = 18;
+
   /// 描边宽度
   static const double border = 1;
 

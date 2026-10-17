@@ -89,6 +89,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
 - **分类不带默认种子 + 「临时」仅本机**：新装**不再注入默认分类**（`_defaultCategories()` 已删除），本地分类初始为空，靠远端拉取或用户自建；解析失败也只回退为空列表，避免把默认数据推到远端覆盖真实分类。`temporaryCategoryName`（「临时」）是首页的快捷入口分类，**只在本机存在**：所有同步边界——合并、冲突判定、推送编码——都必须走 `_syncableCategories()` 把它剔除，不要直接用 `_categories`；`_applyMergedCategories()` 应用合并结果后要 `_ensureTempCategory()` 补回本机入口。分类同步在「本地没有可同步分类且无删除墓碑」时**只采纳远端、绝不推送**，避免新设备/新装把远端真实分类覆盖成空
 - **增量保存**：`TimeProvider` 追踪 `_categoriesDirty` / `_targetsDirty` / `_slotsDirty` 脏标记，只序列化变化部分。普通时间块编辑经 `_scheduleDataSave` 做 250ms 防抖；`_saveData` 直接取消防抖并等待落盘，供同步、切后台、切身份、导入等流程使用。`daily_slots` 格式保持单个 JSON blob，增量分支通过 `ScheduleJsonPatch` 在同一后台 isolate 中解码、合并和编码。保存成功清脏时同时核对保存请求版本与槽位编辑版本，避免后台编码期间的新编辑被清掉。统计缓存在内存修改时按日期区间立即失效，不能等防抖落盘再失效
 - **撤销系统**：`_undoStacks` / `_redoStacks` 深拷贝按日快照，最多 20 步，保留最近编辑的 7 个日期；桌面三列撤销以 `_lastEditedDateKey` 为准。新编辑清空重做分支，切身份 / 覆盖恢复 / 成功导入备份清空两种栈。撤销和重做本身是新修改，变化的槽位更新修改时间，恢复为空槽时写删除墓碑，并走既有缓存失效、待同步和防抖保存链路
+- **拖动时间块边界调时长**：网格里「块」= 连续且 `canJoinTimeSlots` 的槽位集合，可跨小时；改时长 = 改首尾槽位，由 `TimeProvider.resizeTimeBlock(TimeSlotResizeRequest)`（`lib/models/time_slot_resize.dart`）完成，纯函数在 `lib/utils/time_block_resize.dart`。约束：**一次手势只调一次 `_saveSnapshot`**（拖拽期间 `TimeGrid` 只做 `applyTimeBlockResizePreview` 预览，松手才提交）；缩短必须用 `_clearSlotAt(markDeleted: true)` 给被裁掉的一端写墓碑；与相邻记录重叠按既有语义**直接覆盖**；`isFromCalendar` 的日历块不显示把手、Provider 二次拒绝。**边缘手势必须用外层 `Listener` + `_ResizeSession`，不能挂子 `GestureDetector`**——预览会改变 `Row` 的 children 数量，段的 Element 被销毁重建后识别器会丢指针。提交时用 `expectedStart/expectedEnd` + label/categoryId/color 做 stale 校验，拖拽期间被后台同步改写就放弃写入
 - **统计缓存**：分类区间、每日趋势与连续块次数各用独立缓存，修改日期只使相交区间失效。日期统计统一忽略时分秒并按自然日遍历，词云缓存键不能包含 `DateTime.now()` 的时分秒。`MainTabActivity` 给保活 Tab 传递可见状态；`ProfileScreen` 隐藏时复用已构建内容，返回时重新读取最新统计并保留滚动与筛选状态
 - **Google 日历同步**：3 秒防抖 + `_isSyncing` 锁防并发。事件以 "乖乖爱心晶晶" 为识别签名，区分本 App 创建和外部事件
 - **打卡合并策略**：`CheckInDocument.merge(local, remote)` 按 ID 去重，同 ID 保留较新记录
@@ -284,6 +285,7 @@ Never commit them.
 - `test/support/fake_reminder_backend.dart` — 两类提醒共用的后端 Fake（刻意不实现删除通道的方法，作为「绝不删通道」的编译期保证）
 - `test/support/fake_main_tab_preferences_store.dart` — 可注入的导航偏好存储 Fake（配合 `main_tab_provider_test.dart`）
 - `test/time_provider_save_test.dart` / `test/schedule_json_codec_test.dart` — 普通编辑保存合并、切后台/身份即时落盘、保存期间新编辑与待同步归属不丢、统计缓存按日期失效、后台 JSON 合并及旧哈希兼容
+- `test/time_block_resize_test.dart` / `test/time_provider_resize_test.dart` / `test/time_grid_resize_test.dart` — 时间块拖拽调时长：块范围扫描与边界夹取、预览覆盖、覆盖相邻记录、缩短写墓碑、单次快照、stale 拒绝、日历块拒绝、鼠标 / 触摸手势与把手可见性
 - `test/target_desktop_ui_test.dart` — 桌面目标编辑表单、键盘保存/取消、数值与时间校验、子事件关联、周期天数与时长独立、右键删除、鼠标拖拽及浅深主题/窄窗口布局；桌面编辑入口统一走 `showTargetEditor`，移动端保留整页编辑
 - `test/wake_up_provider_test.dart` / `test/wake_up_card_test.dart` — 起床记录持久化、补填/修改/删除、未来时间校验、跨日与近 7 天平均、身份切换及保存失败保护；卡片每分钟重新计算经过时长，隐藏 Tab 或切后台停表，返回立即刷新
 - `test/wake_up_history_screen_test.dart` — 起床历史入口、30 / 90 天边界、跨年全部记录、自选日期含首尾、单日与空时段、身份隔离、实时更新、窄屏大字与浅深壁纸主题

@@ -11,6 +11,7 @@ import 'package:reorderables/reorderables.dart';
 import '../models/category.dart';
 import '../models/event_label_style.dart';
 import '../models/schedule_template.dart';
+import '../models/time_slot_resize.dart';
 import '../providers/event_label_style_provider.dart';
 import '../providers/time_provider.dart';
 import '../providers/desktop_layout_provider.dart';
@@ -193,6 +194,29 @@ class HomeScreenState extends State<HomeScreen> {
         _selectionDate = date;
       }
     });
+  }
+
+  /// 拖拽时间块边界后提交：一次手势只写一次，撤销栈也只多一条。
+  void _handleResizeTimeBlock(TimeSlotResizeRequest request) {
+    final provider = context.read<TimeProvider>();
+    if (!provider.resizeTimeBlock(request)) return;
+    if (!mounted) return;
+
+    // 缩短可能把当前单选的那一格裁掉，别留下一个空白高亮格
+    final index = _selectionStart;
+    final selectionDate = _selectionDate;
+    if (index == null ||
+        index != _selectionEnd ||
+        selectionDate == null ||
+        !_isSameDay(selectionDate, request.date)) {
+      return;
+    }
+    final slots = provider.slotsForDate(request.date);
+    final stillRecorded = index >= 0 &&
+        index < slots.length &&
+        slots[index].recorded &&
+        slots[index].label != null;
+    if (!stillRecorded) _clearSelection();
   }
 
   // --- 刷子模式：进入 / 切换 / 退出与手势记录 ---
@@ -462,6 +486,9 @@ class HomeScreenState extends State<HomeScreen> {
                                               },
                                               onSelectionCleared:
                                                   _clearSelection,
+                                              readOnly: isRemoteViewEnabled,
+                                              onResizeTimeBlock:
+                                                  _handleResizeTimeBlock,
                                               onRemoveSlot: (date, index) =>
                                                   timeProvider
                                                       .removeEventFromSlot(
@@ -501,6 +528,9 @@ class HomeScreenState extends State<HomeScreen> {
                                               },
                                               onSelectionCleared:
                                                   _clearSelection,
+                                              readOnly: isRemoteViewEnabled,
+                                              onResizeTimeBlock:
+                                                  _handleResizeTimeBlock,
                                               onRemoveSlot: (date, index) =>
                                                   timeProvider
                                                       .removeEventFromSlot(
@@ -540,6 +570,9 @@ class HomeScreenState extends State<HomeScreen> {
                                               },
                                               onSelectionCleared:
                                                   _clearSelection,
+                                              readOnly: isRemoteViewEnabled,
+                                              onResizeTimeBlock:
+                                                  _handleResizeTimeBlock,
                                               onRemoveSlot: (date, index) =>
                                                   timeProvider
                                                       .removeEventFromSlot(
@@ -582,6 +615,8 @@ class HomeScreenState extends State<HomeScreen> {
                                       isStart: true),
                                   onPanUpdate: (position) =>
                                       _handleSelect(position, currentDate),
+                                  readOnly: isRemoteViewEnabled,
+                                  onResizeTimeBlock: _handleResizeTimeBlock,
                                   onRemoveSlot: (index) =>
                                       timeProvider.removeEventFromSlot(index),
                                 ),
@@ -2620,6 +2655,12 @@ class _DayGrid extends StatefulWidget {
   final VoidCallback onSelectionCleared;
   final void Function(DateTime date, int index) onRemoveSlot;
 
+  /// 远程视图等只读态：不提供拖拽把手
+  final bool readOnly;
+
+  /// 拖拽时间块边界调整时长
+  final ValueChanged<TimeSlotResizeRequest> onResizeTimeBlock;
+
   /// 刷子模式：本列自己把触摸位置换算成「日期 + 槽位索引」再上报，
   /// 所以昨天/今天/明天不会串数据。
   final bool brushMode;
@@ -2638,6 +2679,8 @@ class _DayGrid extends StatefulWidget {
     required this.onSelectionChanged,
     required this.onSelectionCleared,
     required this.onRemoveSlot,
+    required this.onResizeTimeBlock,
+    this.readOnly = false,
     this.brushMode = false,
     this.brushPreviewIndices = const <int>{},
     required this.onBrushIndexDown,
@@ -2794,6 +2837,8 @@ class _DayGridState extends State<_DayGrid> {
           widget.onSelectionCleared();
           widget.onRemoveSlot(widget.date, index);
         },
+        readOnly: widget.readOnly,
+        onResizeTimeBlock: widget.onResizeTimeBlock,
       ),
     );
   }
