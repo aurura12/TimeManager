@@ -4,6 +4,16 @@
 
 Flutter time management app (package name `time_manager`) with Google Calendar integration, daily diary, travel records, check-in tracking, target tracking, AI daily review, voice scheduling, app logging, global search, a unified sync center, and Android local reminders (daily diary + per check-in goal). Chinese-language UI with English fallback. Supports Android, Windows desktop, macOS, and iOS. iOS 的编译、真机安装 / 运行与调试连接均已验证可用，但构建 / 真机调试**必须在 macOS + Xcode 上**进行；平台差异与踩坑见「iOS 平台约束」。
 
+## 改动前必读（高风险区域索引）
+
+本文件很长，核心约束分散在各节。**改动以下区域前，先读对应小节再动手，不要只看代码：**
+
+- **本机提醒（写日记 / 打卡）** → 见「提醒的硬约束」，并先读根目录 `写日记提醒实施方案.md`（历史上两次实现都因静默失效被删）
+- **日程自动同步（无感）** → 见「日程自动同步（无感）」，轮询 / 基线记账 / 并发互斥 / **待同步队列的身份归属** 全在里面
+- **背景图（壁纸）** → 见「背景图（壁纸，仅本机）」，本地图片路径绝不进同步或备份
+- **同步 / 身份分片 / 跨身份数据** → 见「远端文档布局」与「分类不带默认种子 + 「临时」仅本机」；切身份文案差异见「待同步队列的身份归属」
+- **视觉（配色 / 间距 / 字号 / 圆角）** → 见「Conventions」，规范在 `docs/design-system.md`，改后必跑 `test/visual_system_test.dart`
+
 ## 首次本地开发前提
 
 1. 在 `lib/config/` 下创建 6 个密钥文件（无 `.example.dart` 模板，字段结构参考引用方 service，见「Config Files」）——**缺少任一文件项目无法编译**
@@ -37,26 +47,26 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
   - 提醒：`DiaryReminderSettings` / `DiaryReminderIssue` / `DiaryReminderStatus`（`diary_reminder.dart`）、`CheckInReminderSettings` / `CheckInReminderResult`（`check_in_reminder.dart`）
   - 用户/身份：`GoogleCalendarUser`, `KnownGoogleUsers`（手动/Google 双身份模式，见 `AppIdentityService`）
   - 导航/桌面偏好：`MainTabId`（`main_tab_id.dart`）、`DesktopShortcutActionType` / `DesktopKeyBinding`（`desktop_shortcut.dart`）
-  - 搜索/同步/日志：`SearchResult`, `GlobalSearchResult`（含 `GlobalSearchContentType` / `GlobalSearchIdentityFilter`）, `RemoteSyncPlatform`, `PendingSyncState`, `SyncCenterState`（含 `SyncModule` / `SyncModuleStatus`）, `AppLogEntry`, `OnThisDayEntry`
+  - 搜索/同步/日志：`SearchRecordEntry` / `SearchRecordGroup`, `GlobalSearchResult`（含 `GlobalSearchContentType` / `GlobalSearchIdentityFilter`）, `RemoteSyncPlatform`, `PendingSyncState`, `SyncModuleState`（含 `SyncModule` / `SyncModuleStatus`）, `AppLogEntry`, `OnThisDayEntry`
   - 分类生命周期：`DeletedEventRelation`（已删除事件的父子关系，仅本地持久化，见"数据流与关键模式"）
   - 工具：`CoordTransform`
 - **Screens**: `lib/screens/` (26 个) — `MainScreen`, `HomeScreen`, `DiaryScreen`, `TravelScreen`, `CheckInScreen`, `TargetScreen`, `ProfileScreen`, plus `DailyReviewScreen`, `WordCloudScreen`, `EventDetailScreen`, `TargetDetailScreen`, `AddTargetScreen`, `GlobalSearchScreen`, `GlobalSearchDetailScreen`, `DiarySearchScreen`, `AddCheckInGoalScreen`, `CheckInDetailScreen`, `CheckInArchiveScreen`, `CheckInMapScreen` (flutter_map 地图), `SyncCenterScreen`, `AppLogScreen`, `OnThisDayScreen`, `WakeUpHistoryScreen` (起床历史), `MainTabSettingsScreen` (底部标签设置), `DesktopLayoutSettingsScreen` (桌面布局设置), `DesktopShortcutSettingsScreen` (快捷键设置)
 - **Services**: `lib/services/` (66 个文件)，主要板块：
-  - **Google 身份 & 日历**：`GoogleCalendarService` (OAuth 2.0 + 事件同步)、`GoogleCalendarEventParser`、`HomeWidgetService` (Android 桌面小组件)、`HomeWidgetActionRouter` (小组件深链接路由)、`AppIdentityService` (手动/Google 双身份)、`AppUserIdentityStore` (身份信息本地存储)、`GoogleSessionStore`
-  - **Git 同步（Gitee/GitHub 双平台）**：`GitHubContentsApi`、`GiteeContentsApi`、`ContentsApiCommon`、`DiaryGitHubService`/`DiaryGiteeService`、`DiarySyncService` (列表/拉取/推送编排)、`TravelGitHubService`/`TravelGiteeService`、`CheckInGitHubService`/`CheckInGiteeService`、`PendingGoogleDaySyncService`（待同步状态）
-  - **同步中心**：`SyncCenterOperations` + `SyncCenterController`（统一同步入口与重试）、`SyncStatusCoordinator` + `SharedPreferencesSyncStatusStore`/`InMemorySyncStatusStore`（跨页同步状态）、`SyncOperationLock`（互斥）、`RemoteSyncSettings`
-  - **日程同步**：`ScheduleDayMergeService`、`ScheduleGiteeService`、`ScheduleOverwriteSnapshot`（覆盖拉取校验）、`ScheduleSyncDependencies`、`ScheduleSyncManifestStore`、`ScheduleJsonPatch`（`schedule_json_codec.dart`，后台 isolate 里的 JSON 合并）、日程坏格式防护相关服务
-  - **分类 / 目标同步**：`CategoryGiteeService` + `CategoryDocumentMerge`（分类文档合并）、`CategorySyncDependencies`（前台分类同步 + 请求限流）、`TargetGiteeService` + `TargetDocument`（目标文档合并 + 删除墓碑）、`TargetSyncDependencies`、`TargetProgressCalculator`（目标进度的统一计算入口）
+  - **Google 身份 & 日历**：`GoogleCalendarService` (OAuth 2.0 + 事件同步)、`calendarEventToBlock`（`google_calendar_event_parser.dart`）、`HomeWidgetService` (Android 桌面小组件)、`HomeWidgetActionRouter` (小组件深链接路由)、`AppIdentityService` (手动/Google 双身份)、`AppUserIdentityStore` (身份信息本地存储)、`GoogleSessionStore`
+  - **Git 同步（Gitee/GitHub 双平台）**：`GitHubContentsApi`、`GiteeContentsApi`、`contents_api_common.dart`（`ContentsTreeEntry` / `ContentsDirectoryResult` 等公共类型）、`DiaryGitHubService`/`DiaryGiteeService`、`DiarySyncService` (列表/拉取/推送编排)、`TravelGitHubService`/`TravelGiteeService`、`CheckInGitHubService`/`CheckInGiteeService`、`PendingGoogleDaySyncResult`（待同步状态）
+  - **同步中心**：`SyncCenterOperations` + `SyncCenterController`（`sync_center_service.dart`，统一同步入口与重试）、`SyncStatusCoordinator` + `SharedPreferencesSyncStatusStore`/`InMemorySyncStatusStore`（`sync_status_coordinator.dart`，跨页同步状态）、`SyncOperationLock`（互斥）、`RemoteSyncSettings`
+  - **日程同步**：`schedule_day_merge.dart`（`parseScheduleContent` / `mergeScheduleSlots`，单日日程解析与合并）、`ScheduleGiteeService`、`ScheduleOverwriteSnapshot`（`schedule_overwrite.dart`，覆盖拉取校验）、`ScheduleSyncDependencies`、`ScheduleSyncManifestStore`、`ScheduleJsonPatch`（`schedule_json_codec.dart`，后台 isolate 里的 JSON 合并）、日程坏格式防护相关服务
+  - **分类 / 目标同步**：`CategoryGiteeService` + `CategoryDocument`（分类文档合并）、`CategorySyncDependencies`（前台分类同步 + 请求限流）、`TargetGiteeService` + `TargetDocument`（目标文档合并 + 删除墓碑）、`TargetSyncDependencies`、`TargetProgressCalculator`（目标进度的统一计算入口）
   - **起床记录同步**：`WakeUpGiteeService` + `WakeUpSyncDependencies`（复用内容 API 与 Gitee Token）、`WakeUpLocalStore`（数据 / 修改时间 / 删除墓碑 / 待上传标记在一个 JSON 中原子保存）
   - **打卡业务**：`CheckInSyncService` (合并编排)、`CheckInImageService` (图片压缩)、`CheckInLocationService` (GPS 定位 + `geocoding` 逆地理)、`CheckInPhotoCache`/`CheckInPhotoResource` (远端照片缓存与校验)
   - **搜索**：`UnifiedSearchService` (时间记录/日记/出行/打卡/目标/AI 复盘聚合搜索)、`DiarySearchService` (日记全文搜索)
-  - **AI 板块**：`SiliconFlowAiService` (API 调用带重试 90s 超时)、`DailyReviewSummary` (复盘生成 + 数据哈希缓存)、`DailyReviewChatService` + `DailyReviewChatStore` (多轮对话，最多 20 轮)
+  - **AI 板块**：`SiliconFlowAiService` (API 调用带重试 90s 超时)、`DailyReviewSummaryBuilder` (复盘生成 + 数据哈希缓存)、`DailyReviewChatService` + `DailyReviewChatStore` (多轮对话，最多 20 轮)
   - **语音建日程**：`VoiceScheduleParser` (自然语言解析)、`VoiceScheduleSlotPlanner` (10 分钟槽位规划)，UI 在 `lib/widgets/voice_schedule_sheet.dart`
   - **应用日志**：`AppLogService` (全局错误捕获)、`AppLogStore` (持久化)、`AppLogExportService` (导出)
   - **提醒（仅 Android）**：`ReminderPlatform`（插件全局只初始化一次 + 时区 + 按 payload 分发点击路由）、`ReminderBackend`（插件薄封装）、`DiaryReminderService`（每天固定时间提醒写日记，单一实例）、`CheckInReminderService`（每个打卡目标一份，多实例）、`DiaryReminderDiagnostics`（把原生触发事件导入运行日志）。原生埋点在本地 fork 里，见 `third_party/flutter_local_notifications/FORK.md`
   - **工具**：`DataBackupService` (JSON 导入导出)、`OnThisDayService` (当年今日回顾)、`UpdateService`、`calendar_slot_refresh.dart`（`shouldClearCalendarSlotForRefresh`）、`WindowsLegacyPreferencesMigration`
   - 各数据域有对应的 `*_local_store.dart` 本地存储封装
-- **Widgets**: `lib/widgets/` (32 个) — `DatePickerPanel`, `TemplateBar`, `TimeGrid`, `BrushModeCard` (刷子模式)、`CalendarSyncStatusBadge`, `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, `DesktopShortcutHost` (桌面快捷键)、`DailyReviewChatSheet`, `TargetStatsSection`, `TimeWheelSheet` (时/分滚轮面板，替代 `showTimePicker`)、`BackgroundImageLayer` / `BackgroundImagePreview` (背景图：全窗口壁纸层 + 设置预览)、OnThisDay 相关组件 (`OnThisDaySheet`, `OnThisDayYearCard`)、打卡照片与地图相关组件 (`CheckInPhotoSheet`, `CheckInPhotoThumb`, `CheckInPhotoViewer`, `CheckInMapPreview`)、导航组件 (`MainTabNavigation`, `MainTabActivity`)、目标组件 (`DesktopTargetCard`, `TargetCalendarDay` 目标月历、`TargetDayRefresh`, `TargetProgressIndicator`)、出行桌面组件 (`TravelDesktopCalendar`, `TravelTables`, `TravelDateDetails`)、起床组件 (`WakeUpCard`, `WakeUpChart`)、颜色选择 (`ColorPickerPanel`, `ThemeColorSheet`)
+- **Widgets**: `lib/widgets/` (32 个) — `DatePickerPanel`, `TemplateBar`, `TimeGrid`, `BrushModeCard` (刷子模式)、`CalendarSyncStatusBadge`, `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, `DesktopShortcutHost` (桌面快捷键)、`DailyReviewChatSheet`, `TargetStatsSection`, `showTimeWheelSheet` (时/分滚轮面板，替代 `showTimePicker`)、`BackgroundImageLayer` / `BackgroundImagePreview` (背景图：全窗口壁纸层 + 设置预览)、OnThisDay 相关组件 (`showOnThisDaySheet`, `OnThisDayYearCard`)、打卡照片与地图相关组件 (`CheckInPhotoSheet`, `CheckInPhotoThumb`, `CheckInPhotoViewer`, `CheckInMapPreview`)、导航组件 (`MainTabNavigation`, `MainTabActivity`)、目标组件 (`DesktopTargetCard`, `TargetCalendarDay` 目标月历、`TargetDayRefresh`, `TargetProgressIndicator`)、出行桌面组件 (`TravelDesktopCalendar`, `TravelRecordTable` / `TravelMonthlyTable`, `TravelDateDetails`)、起床组件 (`WakeUpCard`, `WakeUpChart`)、颜色选择 (`ColorPickerPanel`, `showThemeColorSheet`)
 - **Utils**: `lib/utils/` (9 个) — `adaptive` (平台自适应)、`calendar_time_range`、`desktop_selection`、`local_day_range`、`platform_features` (按平台开关功能)、`schedule_view_dates`、`time_slot_segment`、`diary_remote_path_utils` (远端日记文件名里的日期解析与排序)、`map_tile_config` (地图瓦片配置)
 - **Theme**: `lib/theme/` — `app_tokens.dart` (间距/圆角/控件高度/文字层级)、`app_theme.dart` (`ColorScheme` + `AppSurfaces` 表面层级扩展 + `AppWallpaperTheme` 壁纸扩展 + `context.wallpaperFill()`/`adaptSemanticFill()` + 全套组件主题)、`app_semantic_colors.dart` (身份色/分类色/图表色/奖牌色/状态色白名单)、`background_image_contrast.dart` (`BackgroundImageContrast` 背景图对比度与 sRGB 逐通道合成)。规范见 `docs/design-system.md`
 - **Config**: `lib/config/` — API keys and service configs (`.gitignore`d，**无 .example.dart 模板**，结构需直接查看引用方代码)
@@ -71,7 +81,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
   - 打卡照片 → 本地文件缓存 + Git 仓库
   - 应用日志 → `AppLogStore` 本地持久化
 - **远端文档布局**：所有同步文档按**身份 code 分片**（`'g'` / `'j'`，即 `DiaryKind`），切换身份看到的是不同数据集，不存在跨身份合并
-  - `categories/{userCode}.json` — 分类文档（合并见 `CategoryDocumentMerge`）
+  - `categories/{userCode}.json` — 分类文档（合并见 `CategoryDocument`）
   - `targets/{userCode}.json` — 目标文档（合并 + 删除墓碑，见 `TargetDocument`）
   - `wake_up/{userCode}.json` — 起床文档（独立于目标文档，避免旧版目标上传抹掉起床记录）
   - `schedule/{userCode}/{dateKey}.json` — 日程，按天一份（覆盖拉取校验见 `ScheduleOverwriteSnapshot`）
