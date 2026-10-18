@@ -30,5 +30,10 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- 临时退回 Skia：Flutter 3.47 起 macOS 默认 Impeller + SDF 文字，
+	     偶发字体 / 图标字形缺失（显示成方框），重启应用才恢复。
+	     上游修复后删掉这两行。 -->
+	<key>FLTEnableImpeller</key>
+	<false/>
 </dict>
 </plist>
