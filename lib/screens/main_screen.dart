@@ -20,6 +20,7 @@ import '../services/on_this_day_service.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/adaptive.dart';
+import '../utils/app_lifecycle.dart';
 import '../utils/platform_features.dart';
 import '../widgets/data_failure_banner.dart';
 import '../widgets/main_tab_activity.dart';
@@ -34,16 +35,6 @@ import 'home_screen.dart';
 import 'global_search_screen.dart';
 import 'target_screen.dart';
 import 'travel_screen.dart';
-
-/// 哪些生命周期状态算"进入后台"，需要停掉前台轮询并立即落盘。
-///
-/// 桌面端最小化窗口走的是 [AppLifecycleState.hidden]（不是 `paused`），
-/// 漏掉它会让 Windows 最小化后定时器继续唤醒。
-bool isAppBackgroundedLifecycleState(AppLifecycleState state) {
-  return state == AppLifecycleState.paused ||
-      state == AppLifecycleState.hidden ||
-      state == AppLifecycleState.detached;
-}
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});

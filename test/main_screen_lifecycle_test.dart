@@ -1,6 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:time_manager/screens/main_screen.dart';
+import 'package:time_manager/utils/app_lifecycle.dart';
 
 void main() {
   test('桌面最小化（hidden）也算进入后台，必须停掉前台轮询', () {

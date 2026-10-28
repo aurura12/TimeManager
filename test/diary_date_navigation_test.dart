@@ -3,8 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:time_manager/models/diary_kind.dart';
 import 'package:time_manager/screens/diary_screen.dart';
 import 'package:time_manager/services/app_identity_service.dart';
+import 'package:time_manager/services/diary_local_store.dart';
 import 'package:time_manager/theme/app_theme.dart';
 
 String _dateLabel(DateTime date) => DateFormat('yyyy年M月d日').format(date);
@@ -101,6 +103,29 @@ void main() {
     }
 
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('切后台立即落盘，不必等 350ms 防抖', (tester) async {
+    await _pumpDiary(tester);
+    final today = DateTime.now();
+    const text = '切后台前输入的内容';
+
+    await tester.enterText(find.byType(TextField), text);
+    // 不推进 350ms 防抖，直接进入后台
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+
+    String? saved;
+    await tester.runAsync(() async {
+      saved = await DiaryLocalStore.loadDraftBody(DiaryKind.g, today);
+    });
+    expect(saved, text);
+
+    // 按合法的生命周期顺序回到前台（paused → hidden → inactive → resumed）
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
   });
 
   testWidgets('日期按钮仍可打开日历选择面板', (tester) async {

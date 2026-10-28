@@ -15,6 +15,7 @@ import '../services/diary_search_service.dart';
 import '../services/app_identity_service.dart';
 import '../services/sync_operation_lock.dart';
 import '../services/sync_status_coordinator.dart';
+import '../utils/app_lifecycle.dart';
 import '../utils/diary_remote_path_utils.dart';
 import '../utils/local_day_range.dart';
 import 'diary_search_screen.dart';
@@ -34,7 +35,7 @@ class DiaryScreen extends StatefulWidget {
   State<DiaryScreen> createState() => _DiaryScreenState();
 }
 
-class _DiaryScreenState extends State<DiaryScreen> {
+class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
   final TextEditingController _bodyController = TextEditingController();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
@@ -134,6 +135,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _statusCoordinator = context.read<SyncStatusCoordinator?>();
     _bodyController.addListener(_onBodyChanged);
     _identitySubscription = AppIdentityService.changes.listen((_) {
@@ -145,11 +147,25 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _saveDebounce?.cancel();
     _identitySubscription.cancel();
     _bodyController.removeListener(_onBodyChanged);
     _bodyController.dispose();
     super.dispose();
+  }
+
+  /// 进入后台时立即落盘，不再等 350ms 防抖。
+  ///
+  /// 桌面最小化走 hidden、移动端切后台走 paused；这里只做「有未保存修改」时
+  /// 的补写，避免每次失焦都多写一遍。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!isAppBackgroundedLifecycleState(state)) return;
+    if (!_dirtySinceContextLoaded) return;
+    _saveDebounce?.cancel();
+    _saveDebounce = null;
+    unawaited(_saveDraftNow());
   }
 
   Future<void> _loadInitial() async {
