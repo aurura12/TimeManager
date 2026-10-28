@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../models/check_in_record.dart';
 import '../services/check_in_sync_service.dart';
+import '../theme/app_tokens.dart';
 
 /// 全屏查看打卡照片
 class CheckInPhotoViewer extends StatelessWidget {
@@ -149,9 +150,8 @@ class CheckInPhotoViewer extends StatelessWidget {
                         Expanded(
                           child: Text(
                             record.locationName!,
-                            style: TextStyle(
+                            style: AppText.caption.copyWith(
                               color: Colors.white.withValues(alpha: 0.7),
-                              fontSize: 12,
                             ),
                           ),
                         ),

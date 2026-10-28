@@ -594,10 +594,9 @@ class _MapPin extends StatelessWidget {
           alignment: Alignment.center,
           child: Text(
             count > 1 ? '$count' : '',
-            style: TextStyle(
-              color: AppSemanticColors.onColor(color),
-              fontSize: 12,
+            style: AppText.caption.copyWith(
               fontWeight: FontWeight.bold,
+              color: AppSemanticColors.onColor(color),
             ),
           ),
         ),

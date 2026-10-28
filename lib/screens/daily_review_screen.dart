@@ -624,10 +624,9 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                       ),
                       child: Text(
                         'AI 生成',
-                        style: TextStyle(
-                          color: colorScheme.onPrimaryContainer,
-                          fontSize: 12,
+                        style: AppText.caption.copyWith(
                           fontWeight: FontWeight.w600,
+                          color: colorScheme.onPrimaryContainer,
                         ),
                       ),
                     ),
@@ -635,8 +634,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                       const SizedBox(width: 8),
                       Text(
                         '缓存',
-                        style: TextStyle(
-                          fontSize: 12,
+                        style: AppText.caption.copyWith(
                           color: colorScheme.onSurfaceVariant,
                         ),
                       ),
@@ -676,7 +674,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
           children: chips
               .map(
                 (text) => ActionChip(
-                  label: Text(text, style: const TextStyle(fontSize: 12)),
+                  label: Text(text, style: AppText.caption),
                   onPressed: () => DailyReviewChatSheet.open(
                     context,
                     date: entry.date,

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/schedule_sync_progress.dart';
 
 import '../theme/app_semantic_colors.dart';
+import '../theme/app_tokens.dart';
 class ScheduleSyncProgressBanner extends StatelessWidget {
   const ScheduleSyncProgressBanner({
     super.key,
@@ -63,10 +64,9 @@ class ScheduleSyncProgressBanner extends StatelessWidget {
                     const SizedBox(width: 8),
                     Text(
                       progressText,
-                      style: TextStyle(
-                        color: textColor,
-                        fontSize: 12,
+                      style: AppText.caption.copyWith(
                         fontWeight: FontWeight.w700,
+                        color: textColor,
                       ),
                     ),
                   ],

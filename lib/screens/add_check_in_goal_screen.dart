@@ -661,8 +661,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
         const SizedBox(width: 4),
         Text(
           label,
-          style: TextStyle(
-            fontSize: 12,
+          style: AppText.caption.copyWith(
             color: color.withValues(alpha: 0.9),
           ),
         ),

@@ -408,8 +408,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
       padding: const EdgeInsets.only(top: 4, bottom: 8),
       child: Text(
         label,
-        style: TextStyle(
-          fontSize: 14,
+        style: AppText.body.copyWith(
           fontWeight: FontWeight.w600,
           color: colorScheme.onSurfaceVariant,
         ),
@@ -476,8 +475,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
               Expanded(
                 child: Text(
                   '已归档的目标',
-                  style: TextStyle(
-                    fontSize: 14,
+                  style: AppText.body.copyWith(
                     color: colorScheme.onSurface,
                   ),
                 ),
@@ -492,8 +490,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
                 ),
                 child: Text(
                   '$_archivedCount',
-                  style: TextStyle(
-                    fontSize: 12,
+                  style: AppText.caption.copyWith(
                     color: AppSemanticColors.onTint(
                         colorScheme.onSurfaceVariant, pageSurface,
                         alpha: 0.1),
@@ -695,15 +692,15 @@ class _CheckInScreenState extends State<CheckInScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(goal.name,
-                              style: TextStyle(
-                                  fontSize: 16,
+                              style: AppText.sectionTitle.copyWith(
                                   fontWeight: FontWeight.bold,
-                                  color: onCardColor)),
+                                  color: onCardColor,
+                              )),
                           Text(
                             isMine
                                 ? goal.description
                                 : '${goal.ownerLabel} 的目标',
-                            style: TextStyle(fontSize: 12, color: mutedColor),
+                            style: AppText.caption.copyWith(color: mutedColor),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -758,7 +755,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
                         progressUserId,
                         email: progressUserEmail,
                       )} 天',
-                      style: TextStyle(fontSize: 12, color: mutedColor),
+                      style: AppText.caption.copyWith(color: mutedColor),
                     ),
                     const Spacer(),
                     // 补打卡 — 已开始的自己的目标始终显示，不受当天是否已打卡影响
@@ -772,7 +769,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
                           padding: const EdgeInsets.symmetric(horizontal: 10),
                         ),
                         child:
-                            const Text('补打卡', style: TextStyle(fontSize: 12)),
+                            const Text('补打卡', style: AppText.caption),
                       ),
                     ],
                     // 打卡 — 不做次数限制，自己的目标随时可打
@@ -826,8 +823,10 @@ class _CheckInScreenState extends State<CheckInScreen> {
           Icon(icon, size: 14, color: fg),
           const SizedBox(width: 4),
           Text(text,
-              style: TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w600, color: fg)),
+              style: AppText.caption.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: fg,
+              )),
         ],
       ),
     );
@@ -852,8 +851,9 @@ class _SummaryItem extends StatelessWidget {
     return Column(
       children: [
         Text(label,
-            style: TextStyle(
-                fontSize: 12, color: textColor.withValues(alpha: 0.8))),
+            style: AppText.caption.copyWith(
+                color: textColor.withValues(alpha: 0.8),
+            )),
         const SizedBox(height: 4),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -867,8 +867,9 @@ class _SummaryItem extends StatelessWidget {
                     color: textColor)),
             const SizedBox(width: 2),
             Text(unit,
-                style: TextStyle(
-                    fontSize: 12, color: textColor.withValues(alpha: 0.8))),
+                style: AppText.caption.copyWith(
+                    color: textColor.withValues(alpha: 0.8),
+                )),
           ],
         ),
       ],

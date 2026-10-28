@@ -327,10 +327,9 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                         return touchedSpots.map((spot) {
                           return LineTooltipItem(
                             '${spot.y.toStringAsFixed(2)}%',
-                            TextStyle(
-                              color: colorScheme.onInverseSurface,
+                            AppText.caption.copyWith(
                               fontWeight: FontWeight.bold,
-                              fontSize: 12,
+                              color: colorScheme.onInverseSurface,
                             ),
                           );
                         }).toList();
@@ -423,13 +422,14 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text('历史',
-                    style: TextStyle(
-                        fontSize: 16,
+                    style: AppText.sectionTitle.copyWith(
                         fontWeight: FontWeight.bold,
-                        color: colorScheme.primary)),
+                        color: colorScheme.primary,
+                    )),
                 Text('月',
-                    style: TextStyle(
-                        fontSize: 14, color: colorScheme.onSurfaceVariant)),
+                    style: AppText.body.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                    )),
               ],
             ),
             const SizedBox(height: 16),
@@ -642,10 +642,10 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                 provider.getTargetProgress(target).period.isDaily
                     ? '最佳连续达标天数'
                     : '最佳连续记录天数',
-                style: TextStyle(
-                    fontSize: 16,
+                style: AppText.sectionTitle.copyWith(
                     fontWeight: FontWeight.bold,
-                    color: colorScheme.primary)),
+                    color: colorScheme.primary,
+                )),
             const SizedBox(height: 12),
             if (streaks.isEmpty)
               Text('暂无连续记录',
@@ -665,9 +665,9 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                         width: 60,
                         child: Text(
                           DateFormat('M/d').format(streak.startDate),
-                          style: TextStyle(
-                              fontSize: 12,
-                              color: colorScheme.onSurfaceVariant),
+                          style: AppText.caption.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       ),
                       Expanded(
@@ -695,8 +695,7 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                               child: Center(
                                 child: Text(
                                   '${streak.days}',
-                                  style: TextStyle(
-                                    fontSize: 12,
+                                  style: AppText.caption.copyWith(
                                     fontWeight: FontWeight.bold,
                                     color: progress > 0.3
                                         ? AppSemanticColors.onColor(barColor)
@@ -714,9 +713,9 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                         child: Text(
                           DateFormat('M/d').format(streak.endDate),
                           textAlign: TextAlign.right,
-                          style: TextStyle(
-                              fontSize: 12,
-                              color: colorScheme.onSurfaceVariant),
+                          style: AppText.caption.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       ),
                     ],
@@ -855,10 +854,10 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                 provider.getTargetProgress(target).period.isDaily
                     ? '达标日期分布'
                     : '记录日期分布',
-                style: TextStyle(
-                    fontSize: 16,
+                style: AppText.sectionTitle.copyWith(
                     fontWeight: FontWeight.bold,
-                    color: colorScheme.primary)),
+                    color: colorScheme.primary,
+                )),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -872,9 +871,9 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                               width: 36,
                               alignment: Alignment.centerRight,
                               child: Text(dayNames[i + 1],
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color: colorScheme.onSurfaceVariant)),
+                                  style: AppText.caption.copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                  )),
                             )),
                   ],
                 ),

@@ -325,8 +325,7 @@ class _RecentCheckInTile extends StatelessWidget {
                 Text(
                   record.locationName ??
                       DateFormat('M月d日 HH:mm').format(record.timestamp),
-                  style: TextStyle(
-                    fontSize: 12,
+                  style: AppText.caption.copyWith(
                     color: colorScheme.onSurfaceVariant,
                   ),
                 ),
@@ -335,8 +334,7 @@ class _RecentCheckInTile extends StatelessWidget {
           ),
           Text(
             DateFormat('M/d').format(record.timestamp),
-            style: TextStyle(
-              fontSize: 12,
+            style: AppText.caption.copyWith(
               color: colorScheme.onSurfaceVariant,
             ),
           ),

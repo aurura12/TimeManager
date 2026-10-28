@@ -47,9 +47,9 @@ class _DiarySearchScreenState extends State<DiarySearchScreen> {
         title: TextField(
           controller: _controller,
           autofocus: true,
-          style: TextStyle(
+          style: AppText.sectionTitle.copyWith(
+            fontWeight: FontWeight.normal,
             color: colorScheme.onSurface,
-            fontSize: 16,
           ),
           decoration: InputDecoration(
             hintText: '搜索日记内容…',
@@ -112,8 +112,7 @@ class _DiarySearchScreenState extends State<DiarySearchScreen> {
                   const SizedBox(height: 8),
                   Text(
                     '${(value * 100).toInt()}%',
-                    style: TextStyle(
-                      fontSize: 12,
+                    style: AppText.caption.copyWith(
                       color: colorScheme.onSurfaceVariant,
                     ),
                   ),
@@ -221,9 +220,8 @@ class _DiarySearchScreenState extends State<DiarySearchScreen> {
                             const SizedBox(width: 10),
                             Text(
                               '${result.kindLabel}  ${DateFormat('yyyy年M月d日').format(result.date)}',
-                              style: TextStyle(
+                              style: AppText.body.copyWith(
                                 fontWeight: FontWeight.w600,
-                                fontSize: 14,
                                 color: colorScheme.onSurface,
                               ),
                             ),
@@ -241,8 +239,7 @@ class _DiarySearchScreenState extends State<DiarySearchScreen> {
                             result.snippet,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
+                            style: AppText.caption.copyWith(
                               color: colorScheme.onSurfaceVariant,
                             ),
                           ),

@@ -1265,9 +1265,8 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                       const SizedBox(height: 2),
                       Text(
                         googleUser.email,
-                        style: TextStyle(
+                        style: AppText.caption.copyWith(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          fontSize: 12,
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -1355,19 +1354,17 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       '未登录',
-                      style: TextStyle(
-                        fontSize: 16,
+                      style: AppText.sectionTitle.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       '连接 Google 日历以同步时间记录',
-                      style: TextStyle(
+                      style: AppText.caption.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontSize: 12,
                       ),
                     ),
                   ],

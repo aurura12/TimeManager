@@ -1119,10 +1119,7 @@ class _TravelScreenState extends State<TravelScreen> {
                   children: [
                     Text(
                       '$year年$month月',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
+                      style: AppText.sectionTitle,
                     ),
                     const SizedBox(width: 4),
                     const Icon(Icons.unfold_more, size: 16),
@@ -1144,8 +1141,7 @@ class _TravelScreenState extends State<TravelScreen> {
                   child: Center(
                     child: Text(
                       d,
-                      style: TextStyle(
-                        fontSize: 12,
+                      style: AppText.caption.copyWith(
                         color: colorScheme.onSurfaceVariant,
                       ),
                     ),
@@ -1195,10 +1191,8 @@ class _TravelScreenState extends State<TravelScreen> {
                 child: Center(
                   child: Text(
                     '$day',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight:
-                          isSelected ? FontWeight.bold : FontWeight.normal,
+                    style: AppText.body.copyWith(
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                       color:
                           isSelected ? colorScheme.onPrimaryContainer : null,
                     ),
@@ -1385,8 +1379,7 @@ class _TravelScreenState extends State<TravelScreen> {
                         const SizedBox(width: 4),
                         Text(
                           entry.key,
-                          style: TextStyle(
-                            fontSize: 12,
+                          style: AppText.caption.copyWith(
                             color: colorScheme.onSurfaceVariant,
                           ),
                         ),

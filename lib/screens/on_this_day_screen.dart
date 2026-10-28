@@ -7,6 +7,7 @@ import '../providers/time_provider.dart';
 import '../services/diary_search_service.dart';
 import '../services/on_this_day_service.dart';
 import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/on_this_day_year_card.dart';
 
@@ -159,9 +160,7 @@ class _OnThisDayScreenState extends State<OnThisDayScreen> {
               const SizedBox(width: 8),
               Text(
                 _dateLabel,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
+                style: AppText.sectionTitle.copyWith(
                   color: colorScheme.onSurface,
                 ),
               ),
@@ -173,8 +172,7 @@ class _OnThisDayScreenState extends State<OnThisDayScreen> {
               const Spacer(),
               Text(
                 '点击切换日期',
-                style: TextStyle(
-                  fontSize: 12,
+                style: AppText.caption.copyWith(
                   color: colorScheme.onSurfaceVariant,
                 ),
               ),
@@ -201,9 +199,7 @@ class _OnThisDayScreenState extends State<OnThisDayScreen> {
             const SizedBox(height: 12),
             Text(
               '$_dateLabel 还没有往年记录',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
+              style: AppText.sectionTitle.copyWith(
                 color: colorScheme.onSurface,
               ),
             ),

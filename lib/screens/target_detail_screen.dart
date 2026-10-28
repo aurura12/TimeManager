@@ -172,8 +172,7 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                 children: [
                   Text(
                     target.name,
-                    style: TextStyle(
-                      fontSize: 16,
+                    style: AppText.sectionTitle.copyWith(
                       fontWeight: FontWeight.bold,
                       color: colorScheme.onSurface,
                     ),
@@ -197,8 +196,7 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
               ),
               child: Text(
                 target.period,
-                style: TextStyle(
-                  fontSize: 12,
+                style: AppText.caption.copyWith(
                   color: colorScheme.onPrimaryContainer,
                 ),
               ),
@@ -234,8 +232,7 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                 children: [
                   Text(
                     '历史记录',
-                    style: TextStyle(
-                      fontSize: 16,
+                    style: AppText.sectionTitle.copyWith(
                       fontWeight: FontWeight.bold,
                       color: colorScheme.primary,
                     ),
@@ -285,8 +282,7 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                           padding: const EdgeInsets.only(left: 8),
                           child: Text(
                             '$range ${target.name}',
-                            style: TextStyle(
-                              fontSize: 12,
+                            style: AppText.caption.copyWith(
                               color: colorScheme.onSurfaceVariant,
                             ),
                           ),
@@ -301,8 +297,7 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                 child: Center(
                   child: Text(
                     '仅显示最近30天记录',
-                    style: TextStyle(
-                      fontSize: 12,
+                    style: AppText.caption.copyWith(
                       color: colorScheme.onSurfaceVariant,
                     ),
                   ),

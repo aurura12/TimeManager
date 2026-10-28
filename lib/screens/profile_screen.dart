@@ -502,9 +502,8 @@ class ProfileScreenState extends State<ProfileScreen>
         children: [
           Text(
             "最近一月趋势",
-            style: TextStyle(
+            style: AppText.body.copyWith(
               fontWeight: FontWeight.bold,
-              fontSize: 14,
               color: colorScheme.onSurface,
             ),
           ),
@@ -705,10 +704,10 @@ class ProfileScreenState extends State<ProfileScreen>
                         BoxDecoration(color: color, shape: BoxShape.circle)),
                 const SizedBox(width: 6),
                 Text(label,
-                    style: TextStyle(
+                    style: AppText.caption.copyWith(
+                        fontWeight: FontWeight.w500,
                         color: colorScheme.onSurfaceVariant,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500)),
+                    )),
               ],
             ),
           ],
@@ -779,15 +778,14 @@ class ProfileScreenState extends State<ProfileScreen>
                       fontWeight: FontWeight.bold,
                       fontSize: 15)),
               subtitle: Text("占比 ${percent.toStringAsFixed(1)}%",
-                  style: TextStyle(
+                  style: AppText.caption.copyWith(
                     color: colorScheme.onSurfaceVariant,
-                    fontSize: 12,
                   )),
               trailing: Text("${val.toStringAsFixed(2)} h",
-                  style: TextStyle(
-                      color: colorScheme.onSurface,
+                  style: AppText.sectionTitle.copyWith(
                       fontWeight: FontWeight.w900,
-                      fontSize: 16)),
+                      color: colorScheme.onSurface,
+                  )),
             ),
           );
         },
@@ -903,8 +901,7 @@ class ProfileScreenState extends State<ProfileScreen>
                   ),
                   const SizedBox(width: 4),
                   Text(entry.key,
-                      style: TextStyle(
-                        fontSize: 12,
+                      style: AppText.caption.copyWith(
                         color: colorScheme.onSurfaceVariant,
                       )),
                 ],

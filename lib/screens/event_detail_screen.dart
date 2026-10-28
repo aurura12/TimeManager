@@ -4,6 +4,7 @@ import '../providers/time_provider.dart';
 
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 class EventDetailScreen extends StatelessWidget {
   final String eventName;
   final int tabIndex;
@@ -62,12 +63,12 @@ class EventDetailScreen extends StatelessWidget {
                       children: [
                         // 日期标题
                         Text(entry.key,
-                            style: TextStyle(
-                                fontSize: 16,
+                            style: AppText.sectionTitle.copyWith(
                                 fontWeight: FontWeight.bold,
                                 color: AppSemanticColors.readableOn(
                                     AppSemanticColors.brand,
-                                    AppSurfaces.of(context).card))),
+                                    AppSurfaces.of(context).card),
+                            )),
                         const SizedBox(height: 8),
                         if (showDeletedRelations)
                           ...groupedRelations.entries.map(
@@ -152,7 +153,7 @@ class EventDetailScreen extends StatelessWidget {
               label,
               overflow: TextOverflow.ellipsis,
               style:
-                  TextStyle(fontSize: 14, color: colorScheme.onSurfaceVariant),
+                  AppText.body.copyWith(color: colorScheme.onSurfaceVariant),
             ),
           ),
         ],

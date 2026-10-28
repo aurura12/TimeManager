@@ -532,10 +532,9 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                     const SizedBox(height: 2),
                     Text(
                       isMe ? '我' : record.userLabel,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colorScheme.primary,
+                      style: AppText.caption.copyWith(
                         fontWeight: FontWeight.w500,
+                        color: colorScheme.primary,
                       ),
                     ),
                     if (record.locationName != null) ...[
@@ -547,9 +546,9 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                           const SizedBox(width: 4),
                           Expanded(
                             child: Text(record.locationName!,
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    color: colorScheme.onSurfaceVariant),
+                                style: AppText.caption.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis),
                           ),

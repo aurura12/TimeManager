@@ -151,8 +151,7 @@ class _CheckInArchiveScreenState extends State<CheckInArchiveScreen> {
                     const SizedBox(height: 4),
                     Text(
                       '归档于 $archivedDate · ${goal.records.length} 次打卡',
-                      style: TextStyle(
-                        fontSize: 12,
+                      style: AppText.caption.copyWith(
                         color: colorScheme.onSurfaceVariant,
                       ),
                     ),

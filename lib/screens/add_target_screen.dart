@@ -333,8 +333,9 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                                 children: category.subCategories.map((sub) {
                                   return ActionChip(
                                     label: Text(sub,
-                                        style: TextStyle(
-                                            fontSize: 12, color: chipFg)),
+                                        style: AppText.caption.copyWith(
+                                            color: chipFg,
+                                        )),
                                     backgroundColor: chipBg,
                                     visualDensity: VisualDensity.compact,
                                     onPressed: () {
@@ -848,7 +849,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
           style: TextButton.styleFrom(
             foregroundColor: colorScheme.onSurface,
           ),
-          child: const Text("确定", style: TextStyle(fontSize: 16)),
+          child: Text("确定", style: AppText.sectionTitle.copyWith(fontWeight: FontWeight.normal)),
         ),
         title: Text(widget.target != null ? "编辑计划" : "制定计划"),
         centerTitle: true,
@@ -894,9 +895,8 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
               padding: const EdgeInsets.all(16),
               child: Text(
                 "点击下方按钮制定计划",
-                style: TextStyle(
+                style: AppText.caption.copyWith(
                   color: colorScheme.onSurfaceVariant,
-                  fontSize: 12,
                 ),
               ),
             ),
@@ -990,7 +990,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                 () => _pickTime(_targetTime, (v) => _targetTime = v)),
             const SizedBox(height: 10),
             // 现在这个 Text 会受到上面 crossAxisAlignment.start 的影响而居左
-            const Text("有效时间区间:", style: TextStyle(fontSize: 16)),
+            Text("有效时间区间:", style: AppText.sectionTitle.copyWith(fontWeight: FontWeight.normal)),
             const SizedBox(height: 10),
             Row(
               // 同时也确保这个 Row 内部的按钮也是从左开始

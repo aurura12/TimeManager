@@ -112,8 +112,7 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
                     children: [
                       Text(
                         '词云权重 = 70%时长 + 30%出现次数（按所有历史记录统计）',
-                        style: TextStyle(
-                          fontSize: 12,
+                        style: AppText.caption.copyWith(
                           color: colorScheme.onSurfaceVariant,
                         ),
                       ),
@@ -401,8 +400,7 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
             ),
             subtitle: Text(
               '时长 ${item.hours.toStringAsFixed(2)}h · 出现 ${item.occurrences}次',
-              style: TextStyle(
-                fontSize: 12,
+              style: AppText.caption.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
             ),

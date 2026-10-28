@@ -289,8 +289,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                                     ? '拍照或从相册选择，压缩后上传'
                                     : '从相册选择，压缩后上传'
                                 : '照片可选，也可直接打卡',
-                            style: TextStyle(
-                              fontSize: 12,
+                            style: AppText.caption.copyWith(
                               color: colorScheme.onSurfaceVariant,
                             ),
                           ),
@@ -353,8 +352,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                         const SizedBox(width: 6),
                         Text(
                           _dateLabel,
-                          style: TextStyle(
-                            fontSize: 14,
+                          style: AppText.body.copyWith(
                             fontWeight: FontWeight.w500,
                             color: colorScheme.onSurface,
                           ),

@@ -8,6 +8,7 @@ import '../models/app_log_entry.dart';
 import '../services/app_log_export_service.dart';
 import '../services/app_log_service.dart';
 import '../theme/app_semantic_colors.dart';
+import '../theme/app_tokens.dart';
 
 class AppLogScreen extends StatefulWidget {
   const AppLogScreen({super.key, this.service});
@@ -117,9 +118,8 @@ class _AppLogScreenState extends State<AppLogScreen> {
             _selectedLevel == null
                 ? '共 ${allEntries.length} 条，按时间倒序显示'
                 : '当前显示 $visibleCount 条（共 ${allEntries.length} 条）',
-            style: TextStyle(
+            style: AppText.caption.copyWith(
               color: colorScheme.onSurfaceVariant,
-              fontSize: 12,
             ),
           ),
         ],
@@ -276,17 +276,15 @@ class _AppLogScreenState extends State<AppLogScreen> {
                 children: [
                   Text(
                     '${entry.level.label} · ${entry.source}',
-                    style: TextStyle(
+                    style: AppText.caption.copyWith(
                       color: colorScheme.onSurfaceVariant,
-                      fontSize: 12,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     _dateFormat.format(entry.localTimestamp),
-                    style: TextStyle(
+                    style: AppText.caption.copyWith(
                       color: colorScheme.onSurfaceVariant,
-                      fontSize: 12,
                     ),
                   ),
                   const SizedBox(height: 16),

@@ -1102,10 +1102,9 @@ class HomeScreenState extends State<HomeScreen> {
                             detail: cat.subCategories.isEmpty
                                 ? null
                                 : '${cat.subCategories.length} 个子事件',
-                            style: TextStyle(
-                              color: AppSemanticColors.onColor(cat.color),
-                              fontSize: 12,
+                            style: AppText.caption.copyWith(
                               fontWeight: FontWeight.w500,
+                              color: AppSemanticColors.onColor(cat.color),
                             ),
                           ),
                         ),
@@ -1509,9 +1508,10 @@ class HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 20),
 
                     // 2. 颜色选择器
-                    const Text('选择颜色:',
-                        style: TextStyle(
-                            fontSize: 14, fontWeight: FontWeight.w500)),
+                    Text('选择颜色:',
+                        style: AppText.body.copyWith(
+                            fontWeight: FontWeight.w500,
+                        )),
                     _buildColorPalette(selectedColor, (color) {
                       setDialogState(() {
                         selectedColor = color;
@@ -1656,11 +1656,10 @@ class HomeScreenState extends State<HomeScreen> {
                               const SizedBox(width: 8),
                               Text(
                                 isHovering ? '释放以隐藏' : '拖动子事件到此处隐藏',
-                                style: TextStyle(
+                                style: AppText.caption.copyWith(
                                   color: isHovering
                                       ? hoverFg
                                       : colorScheme.onSurfaceVariant,
-                                  fontSize: 12,
                                 ),
                               ),
                             ],
@@ -1708,9 +1707,9 @@ class HomeScreenState extends State<HomeScreen> {
                             avatar: Icon(Icons.restore,
                                 size: 14, color: colorScheme.onSurfaceVariant),
                             label: Text(hiddenSubCat,
-                                style: TextStyle(
+                                style: AppText.caption.copyWith(
                                     color: colorScheme.onSurfaceVariant,
-                                    fontSize: 12)),
+                                )),
                             backgroundColor: surfaces.subtle,
                             onPressed: () {
                               setDialogState(() {
@@ -2979,8 +2978,9 @@ class _ReorderableChipWrapState extends State<_ReorderableChipWrap> {
         visualDensity: VisualDensity.compact,
         backgroundColor: chipBg,
         label: Text(item,
-            style: TextStyle(
-                color: AppSemanticColors.onColor(chipBg), fontSize: 12)),
+            style: AppText.caption.copyWith(
+                color: AppSemanticColors.onColor(chipBg),
+            )),
         shape: const RoundedRectangleBorder(borderRadius: AppRadius.badgeAll),
         side: BorderSide.none,
       ),
@@ -2995,8 +2995,9 @@ class _ReorderableChipWrapState extends State<_ReorderableChipWrap> {
         visualDensity: VisualDensity.compact,
         backgroundColor: widget.color,
         label: Text(item,
-            style: TextStyle(
-                color: AppSemanticColors.onColor(widget.color), fontSize: 12)),
+            style: AppText.caption.copyWith(
+                color: AppSemanticColors.onColor(widget.color),
+            )),
         shape: const RoundedRectangleBorder(borderRadius: AppRadius.badgeAll),
         side: BorderSide.none,
       ),

@@ -1213,8 +1213,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                 const SizedBox(height: 2),
                 Text(
                   detail,
-                  style: TextStyle(
-                    fontSize: 12,
+                  style: AppText.caption.copyWith(
                     color: colorScheme.onSurfaceVariant,
                   ),
                 ),
@@ -1438,8 +1437,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                           Expanded(
                             child: Text(
                               '正在查看${_kindDisplayName(_kind)}的日记分区（只读，不可提交到远端）',
-                              style: TextStyle(
-                                fontSize: 12,
+                              style: AppText.caption.copyWith(
                                 color: colorScheme.onSecondaryContainer,
                               ),
                             ),
@@ -1516,8 +1514,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                     const SizedBox(width: 8),
                     Text(
                       value > 0 ? '${(value * 100).toInt()}%' : '准备中...',
-                      style: TextStyle(
-                        fontSize: 12,
+                      style: AppText.caption.copyWith(
                         color: colorScheme.onSurfaceVariant,
                       ),
                     ),
@@ -1626,10 +1623,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
               ),
               Text(
                 '$year年$month月',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
+                style: AppText.sectionTitle,
               ),
               IconButton(
                 onPressed: () => _changeMonth(1),
@@ -1645,8 +1639,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
                     child: Center(
                       child: Text(
                         d,
-                        style: TextStyle(
-                          fontSize: 12,
+                        style: AppText.caption.copyWith(
                           color: colorScheme.onSurfaceVariant,
                         ),
                       ),
@@ -1691,10 +1684,8 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
                     children: [
                       Text(
                         '$day',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight:
-                              isSelected ? FontWeight.bold : FontWeight.normal,
+                        style: AppText.body.copyWith(
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                           color: isSelected
                               ? colorScheme.onPrimaryContainer
                               : null,
@@ -1745,7 +1736,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
                 ),
               ),
               const SizedBox(width: 4),
-              const Text('乖乖', style: TextStyle(fontSize: 12)),
+              const Text('乖乖', style: AppText.caption),
               const SizedBox(width: 16),
               Container(
                 width: 8,
@@ -1756,7 +1747,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
                 ),
               ),
               const SizedBox(width: 4),
-              const Text('晶晶', style: TextStyle(fontSize: 12)),
+              const Text('晶晶', style: AppText.caption),
             ],
           ),
         ],
