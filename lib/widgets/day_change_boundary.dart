@@ -53,7 +53,14 @@ class _DayChangeBoundaryState extends State<DayChangeBoundary>
     super.didChangeDependencies();
     _isActive = MainTabActivity.isActiveOf(context) &&
         TickerMode.valuesOf(context).enabled;
-    if (_isActive) _checkDayChanged();
+    if (_isActive) {
+      // 可见状态变化发生在构建期间；回调可能更新祖先页面或 Provider，
+      // 必须等当前帧结束，不能从 didChangeDependencies 同步通知。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_isActive) return;
+        _checkDayChanged();
+      });
+    }
     _scheduleRefresh();
   }
 

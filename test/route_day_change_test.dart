@@ -93,6 +93,33 @@ void main() {
     expect(_dateText(tester, yesterday).style?.fontWeight, FontWeight.w700);
   });
 
+  testWidgets('复盘页隐藏时跨日，重新可见后安全更新日期', (tester) async {
+    _installPluginMocks();
+    var clock = DateTime(2026, 10, 6, 23, 59, 59);
+    Widget page(bool active) => MaterialApp(
+          theme: AppTheme.light(),
+          home: TickerMode(
+            enabled: active,
+            child: DailyReviewScreen(
+              date: DateTime(2026, 10, 6),
+              clock: () => clock,
+            ),
+          ),
+        );
+
+    await tester.pumpWidget(page(true));
+    await tester.pump();
+    await tester.pumpWidget(page(false));
+    clock = DateTime(2026, 10, 7, 8);
+    await tester.pumpWidget(page(true));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(tester.takeException(), isNull);
+    expect(_dateText(tester, DateTime(2026, 10, 7)).style?.fontWeight,
+        FontWeight.w700);
+  });
+
   testWidgets('全局搜索的相对区间跨午夜后按新的一天重算', (tester) async {
     _installPluginMocks();
     var clock = DateTime(2026, 9, 15, 23, 59, 59);
