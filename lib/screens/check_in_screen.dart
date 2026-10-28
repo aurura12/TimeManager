@@ -14,6 +14,7 @@ import '../services/sync_status_coordinator.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/day_change_boundary.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../utils/platform_features.dart';
 import '../widgets/check_in_map_preview.dart';
@@ -249,11 +250,14 @@ class _CheckInScreenState extends State<CheckInScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => DesktopShortcutHost(
-        autofocus: true,
-        onNewItem: () => unawaited(_openAddGoal()),
-        isAvailable: (_) => !_sync.loading && !_sync.syncing,
-        child: _buildPage(context),
+  Widget build(BuildContext context) => DayChangeBoundary(
+        // 「今日打卡」按 build 时的自然日计算，跨日后重建即可。
+        builder: (_) => DesktopShortcutHost(
+          autofocus: true,
+          onNewItem: () => unawaited(_openAddGoal()),
+          isAvailable: (_) => !_sync.loading && !_sync.syncing,
+          child: _buildPage(context),
+        ),
       );
 
   Widget _buildPage(BuildContext context) {

@@ -19,6 +19,7 @@ import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/brush_mode_card.dart';
+import '../widgets/day_change_boundary.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/event_label_text.dart';
@@ -718,24 +719,36 @@ class HomeScreenState extends State<HomeScreen> {
       child: page,
     );
 
-    return DesktopShortcutHost(
-      autofocus: true,
-      onUndo: timeProvider.undo,
-      onRedo: timeProvider.redo,
-      isAvailable: (action) => switch (action) {
-        DesktopShortcutActionType.undo => timeProvider.canUndo,
-        DesktopShortcutActionType.redo => timeProvider.canRedo,
-        _ => true,
-      },
-      onPreviousDay: _goToPreviousDay,
-      onNextDay: _goToNextDay,
-      onToday: _goToToday,
-      onOpenSearch: _openGlobalSearch,
-      onSearchPage: () => _openGlobalSearch(
-          initialContentType: GlobalSearchContentType.timeRecord),
-      onEscape: handleDesktopEscape,
-      child: pageWithPopScope,
+    return DayChangeBoundary(
+      onDayChanged: _handleDayChanged,
+      builder: (_) => DesktopShortcutHost(
+        autofocus: true,
+        onUndo: timeProvider.undo,
+        onRedo: timeProvider.redo,
+        isAvailable: (action) => switch (action) {
+          DesktopShortcutActionType.undo => timeProvider.canUndo,
+          DesktopShortcutActionType.redo => timeProvider.canRedo,
+          _ => true,
+        },
+        onPreviousDay: _goToPreviousDay,
+        onNextDay: _goToNextDay,
+        onToday: _goToToday,
+        onOpenSearch: _openGlobalSearch,
+        onSearchPage: () => _openGlobalSearch(
+            initialContentType: GlobalSearchContentType.timeRecord),
+        onEscape: handleDesktopEscape,
+        child: pageWithPopScope,
+      ),
     );
+  }
+
+  /// 跨过午夜且用户仍停留在“今天”：推进到新的一天，并清掉属于旧日期的
+  /// 待分配选择 / 刷子状态，避免下一次点击把数据写进昨天。
+  void _handleDayChanged(DateTime previousDay, DateTime today) {
+    if (!mounted) return;
+    final advanced =
+        context.read<TimeProvider>().advanceToTodayIfNeeded(now: today);
+    if (advanced) _leaveBrushAndClearSelection();
   }
 
   Widget _buildTimeLabelRow(int h) {

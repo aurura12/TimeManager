@@ -17,6 +17,8 @@ import '../services/travel_local_store.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/local_day_range.dart';
+import '../widgets/day_change_boundary.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/travel_date_details.dart';
 import '../widgets/travel_desktop_calendar.dart';
@@ -1437,12 +1439,25 @@ class _TravelScreenState extends State<TravelScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => DesktopShortcutHost(
-        autofocus: true,
-        onNewItem: () => unawaited(_showAddRecordDialog()),
-        isAvailable: (_) => !_loading && !_processing,
-        child: _buildPage(context),
+  Widget build(BuildContext context) => DayChangeBoundary(
+        onDayChanged: _handleDayChanged,
+        builder: (_) => DesktopShortcutHost(
+          autofocus: true,
+          onNewItem: () => unawaited(_showAddRecordDialog()),
+          isAvailable: (_) => !_loading && !_processing,
+          child: _buildPage(context),
+        ),
       );
+
+  /// 跨过午夜且仍停在“今天”时，把选中日期和日历月份推进到新的一天。
+  void _handleDayChanged(DateTime previousDay, DateTime today) {
+    if (!mounted || _loading || _processing) return;
+    if (!isSameLocalDay(_selectedDate, previousDay)) return;
+    setState(() {
+      _selectedDate = today;
+      _calendarMonth = DateTime(today.year, today.month);
+    });
+  }
 
   Widget _buildPage(BuildContext context) {
     if (_loading) {

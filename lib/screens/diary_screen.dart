@@ -16,11 +16,13 @@ import '../services/app_identity_service.dart';
 import '../services/sync_operation_lock.dart';
 import '../services/sync_status_coordinator.dart';
 import '../utils/diary_remote_path_utils.dart';
+import '../utils/local_day_range.dart';
 import 'diary_search_screen.dart';
 
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/day_change_boundary.dart';
 import '../widgets/desktop_shortcut_host.dart';
 
 enum _DiarySyncAction { pull, push }
@@ -1204,24 +1206,35 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => DesktopShortcutHost(
-        autofocus: true,
-        onSearchPage: () => unawaited(_openSearch()),
-        onPreviousDay: () => unawaited(_changeDateByShortcut(
-            _selectedDate.subtract(const Duration(days: 1)))),
-        onNextDay: () => unawaited(
-            _changeDateByShortcut(_selectedDate.add(const Duration(days: 1)))),
-        onToday: () => unawaited(_changeDateByShortcut(DateTime.now())),
-        onEscape: () {
-          if (_scaffoldKey.currentState?.isDrawerOpen != true) return false;
-          _scaffoldKey.currentState!.closeDrawer();
-          return true;
-        },
-        isAvailable: (action) =>
-            action == DesktopShortcutActionType.escape ||
-            (!_loading && !_processing && !_shortcutDateChanging),
-        child: _buildPage(context),
+  Widget build(BuildContext context) => DayChangeBoundary(
+        onDayChanged: _handleDayChanged,
+        builder: (_) => DesktopShortcutHost(
+          autofocus: true,
+          onSearchPage: () => unawaited(_openSearch()),
+          onPreviousDay: () => unawaited(_changeDateByShortcut(
+              _selectedDate.subtract(const Duration(days: 1)))),
+          onNextDay: () => unawaited(_changeDateByShortcut(
+              _selectedDate.add(const Duration(days: 1)))),
+          onToday: () => unawaited(_changeDateByShortcut(DateTime.now())),
+          onEscape: () {
+            if (_scaffoldKey.currentState?.isDrawerOpen != true) return false;
+            _scaffoldKey.currentState!.closeDrawer();
+            return true;
+          },
+          isAvailable: (action) =>
+              action == DesktopShortcutActionType.escape ||
+              (!_loading && !_processing && !_shortcutDateChanging),
+          child: _buildPage(context),
+        ),
       );
+
+  /// 跨过午夜时，如果还在写“今天”的日记，就切到新的一天继续写；
+  /// 用户手动翻到别的日期时不打扰。
+  void _handleDayChanged(DateTime previousDay, DateTime today) {
+    if (!mounted) return;
+    if (!isSameLocalDay(_selectedDate, previousDay)) return;
+    unawaited(_changeDateByShortcut(today));
+  }
 
   Widget _buildPage(BuildContext context) {
     if (_loading) {

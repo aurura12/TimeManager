@@ -67,7 +67,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
   - **提醒（仅 Android）**：`ReminderPlatform`（插件全局只初始化一次 + 时区 + 按 payload 分发点击路由）、`ReminderBackend`（插件薄封装）、`DiaryReminderService`（每天固定时间提醒写日记，单一实例）、`CheckInReminderService`（每个打卡目标一份，多实例）、`DiaryReminderDiagnostics`（把原生触发事件导入运行日志）。原生埋点在本地 fork 里，见 `third_party/flutter_local_notifications/FORK.md`
   - **工具**：`DataBackupService` (JSON 导入导出)、`OnThisDayService` (当年今日回顾)、`UpdateService`、`calendar_slot_refresh.dart`（`shouldClearCalendarSlotForRefresh`）、`WindowsLegacyPreferencesMigration`
   - 各数据域有对应的 `*_local_store.dart` 本地存储封装
-- **Widgets**: `lib/widgets/` (34 个) — `DatePickerPanel`, `TemplateBar`, `TimeGrid`, `BrushModeCard` (刷子模式)、`DataFailureBanner` (数据故障横幅：初始化失败 / 本地保存失败，挂在 `MainScreen` 内容区顶部)、`CalendarSyncStatusBadge`, `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, `DesktopShortcutHost` (桌面快捷键)、`DailyReviewChatSheet`, `TargetStatsSection`, `showTimeWheelSheet` (时/分滚轮面板，替代 `showTimePicker`)、`BackgroundImageLayer` / `BackgroundImagePreview` (背景图：全窗口壁纸层 + 设置预览)、OnThisDay 相关组件 (`showOnThisDaySheet`, `OnThisDayYearCard`)、打卡照片与地图相关组件 (`CheckInPhotoSheet`, `CheckInPhotoThumb`, `CheckInPhotoViewer`, `CheckInMapPreview`)、导航组件 (`MainTabNavigation`, `MainTabActivity`)、目标组件 (`DesktopTargetCard`, `TargetCalendarDay` 目标月历、`TargetDayRefresh`, `TargetProgressIndicator`)、出行桌面组件 (`TravelDesktopCalendar`, `TravelRecordTable` / `TravelMonthlyTable`, `TravelDateDetails`)、起床组件 (`WakeUpCard`, `WakeUpChart`)、颜色选择 (`ColorPickerPanel`, `showThemeColorSheet`)、事件名文本 (`EventLabelText`：按 `EventLabelStyle` 渲染 1/2 行，只在真被省略时才挂 Tooltip，手机长按 / 桌面悬停看全名)
+- **Widgets**: `lib/widgets/` (35 个) — `DatePickerPanel`, `TemplateBar`, `TimeGrid`, `BrushModeCard` (刷子模式)、`DataFailureBanner` (数据故障横幅：初始化失败 / 本地保存失败，挂在 `MainScreen` 内容区顶部)、`CalendarSyncStatusBadge`, `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, `DesktopShortcutHost` (桌面快捷键)、`DailyReviewChatSheet`, `TargetStatsSection`, `showTimeWheelSheet` (时/分滚轮面板，替代 `showTimePicker`)、`BackgroundImageLayer` / `BackgroundImagePreview` (背景图：全窗口壁纸层 + 设置预览)、OnThisDay 相关组件 (`showOnThisDaySheet`, `OnThisDayYearCard`)、打卡照片与地图相关组件 (`CheckInPhotoSheet`, `CheckInPhotoThumb`, `CheckInPhotoViewer`, `CheckInMapPreview`)、导航组件 (`MainTabNavigation`, `MainTabActivity`)、目标组件 (`DesktopTargetCard`, `TargetCalendarDay` 目标月历、`TargetProgressIndicator`)、跨日 (`DayChangeBoundary` 可见时定到零点并在跨日 / 回前台 / 重新可见时回调，`TargetDayRefresh` 沿用同一计时方式)、出行桌面组件 (`TravelDesktopCalendar`, `TravelRecordTable` / `TravelMonthlyTable`, `TravelDateDetails`)、起床组件 (`WakeUpCard`, `WakeUpChart`)、颜色选择 (`ColorPickerPanel`, `showThemeColorSheet`)、事件名文本 (`EventLabelText`：按 `EventLabelStyle` 渲染 1/2 行，只在真被省略时才挂 Tooltip，手机长按 / 桌面悬停看全名)
 - **Utils**: `lib/utils/` (10 个) — `adaptive` (平台自适应)、`calendar_time_range`、`desktop_selection`、`local_day_range`、`platform_features` (按平台开关功能)、`schedule_view_dates`、`time_block_resize` (拖动时间块边界调时长的纯函数)、`time_slot_segment`、`diary_remote_path_utils` (远端日记文件名里的日期解析与排序)、`map_tile_config` (地图瓦片配置)
 - **Theme**: `lib/theme/` — `app_tokens.dart` (间距/圆角/控件高度/文字层级)、`app_theme.dart` (`ColorScheme` + `AppSurfaces` 表面层级扩展 + `AppWallpaperTheme` 壁纸扩展 + `context.wallpaperFill()`/`adaptSemanticFill()` + 全套组件主题)、`app_semantic_colors.dart` (身份色/分类色/图表色/奖牌色/状态色白名单)、`background_image_contrast.dart` (`BackgroundImageContrast` 背景图对比度与 sRGB 逐通道合成)。规范见 `docs/design-system.md`
 - **Config**: `lib/config/` — API keys and service configs (`.gitignore`d，**无 .example.dart 模板**，结构需直接查看引用方代码)
@@ -75,6 +75,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
 ## 数据流与关键模式
 
 - **时间粒度**：全天 144 个 10 分钟槽位 (`hour=0..23`, `minute10=0..5`)
+- **跨日自动推进**：`TimeProvider` 用构造时的「今天」基线判断是否跨日；`advanceToTodayIfNeeded()` **只在用户仍停留在此前那个今天时**才把 `_currentDate` 推进到新的一天，手动翻到历史日期时不抢视图（导航被身份切换 / 覆盖恢复挡住时返回 false，等下次检查重试）。触发点：回前台（`onAppResumed`）+ 记录 / 日记 / 出行 / 打卡页的 `DayChangeBoundary`（可见且前台时定到零点，跨日 / 回前台 / 重新可见时补检，隐藏页暂停）。日记和出行只在自己选中的正是旧「今天」时跟着翻页；记录页翻页时清掉旧日期的待分配选择与刷子状态，避免把数据写进昨天
 - **空槽位兜底**：`slotsForDate` 在初始化失败或身份 / 覆盖事务进行中会返回**空列表**（`time_provider.dart:1901-1903`），`TimeGrid` 遇到长度不足的列表只画空行、绝不下标取槽位；失败原因由壳层 `DataFailureBanner`（顶部横幅 + 查看日志）说明。删掉这条兜底，初始化失败会直接红屏而不是提示
 - **持久化分层**：
   - 时间块/分类/目标/模板 → `SharedPreferences`（JSON 序列化）
@@ -281,7 +282,7 @@ Never commit them.
 
 ## Testing
 
-- `test/` 有 109 个 dart 测试文件（另有 `test/support/` 下 3 个共用 Fake）+ 3 个 bash 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`、`publish_android_release_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集）+ 1 个 PowerShell 测试（`publish_windows_release_script_test.ps1`，macOS/Linux 用 `pwsh` 运行；不联网、不构建、不发布），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
+- `test/` 有 110 个 dart 测试文件（另有 `test/support/` 下 3 个共用 Fake）+ 3 个 bash 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`、`publish_android_release_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集）+ 1 个 PowerShell 测试（`publish_windows_release_script_test.ps1`，macOS/Linux 用 `pwsh` 运行；不联网、不构建、不发布），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
 - `test/background_image_contrast_test.dart` / `background_image_provider_test.dart` — 背景图对比度契约与 Provider 状态（不透明度只在 commit 时落盘、启动清失效路径、超限/取消属正常结果）
 - `test/visual_system_test.dart` — 视觉系统守护测试：对比度计算、主题一致性、令牌使用约束（改 `lib/theme/` 或页面配色时必跑）
 - `test/widget_test.dart` — smoke test + platform channel mock 模板：`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道、`tester.runAsync` 真实 IO。新写 widget 测试可参照此文件搭建环境
@@ -290,6 +291,7 @@ Never commit them.
 - `test/support/fake_main_tab_preferences_store.dart` — 可注入的导航偏好存储 Fake（配合 `main_tab_provider_test.dart`）
 - `test/time_provider_save_test.dart` / `test/schedule_json_codec_test.dart` — 普通编辑保存合并、切后台/身份即时落盘、保存期间新编辑与待同步归属不丢、统计缓存按日期失效、后台 JSON 合并及旧哈希兼容
 - `test/time_block_resize_test.dart` / `test/time_provider_resize_test.dart` / `test/time_grid_resize_test.dart` — 时间块拖拽调时长：块范围扫描与边界夹取、预览覆盖、覆盖相邻记录、缩短写墓碑、单次快照、stale 拒绝、日历块拒绝、鼠标 / 触摸手势与把手可见性
+- `test/day_change_boundary_test.dart` / `test/date_change_schedule_sync_test.dart` 的跨日用例 — 零点通知只发一次、隐藏页与后台暂停后补发、仅在仍停留在今天时推进日期、手动停在历史日期不被抢走
 - `test/target_desktop_ui_test.dart` — 桌面目标编辑表单、键盘保存/取消、数值与时间校验、子事件关联、周期天数与时长独立、右键删除、鼠标拖拽及浅深主题/窄窗口布局；桌面编辑入口统一走 `showTargetEditor`，移动端保留整页编辑
 - `test/wake_up_provider_test.dart` / `test/wake_up_card_test.dart` — 起床记录持久化、补填/修改/删除、未来时间校验、跨日与近 7 天平均、身份切换及保存失败保护；卡片每分钟重新计算经过时长，隐藏 Tab 或切后台停表，返回立即刷新
 - `test/wake_up_history_screen_test.dart` — 起床历史入口、30 / 90 天边界、跨年全部记录、自选日期含首尾、单日与空时段、身份隔离、实时更新、窄屏大字与浅深壁纸主题

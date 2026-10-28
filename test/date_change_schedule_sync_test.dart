@@ -142,4 +142,57 @@ void main() {
       'Windows日程',
     );
   });
+
+  test('跨日且仍停留在今天时自动推进到新的一天', () async {
+    final state = _RemoteState();
+    final provider = await _createProvider(state, mobile: true);
+    addTearDown(provider.dispose);
+    await provider.setScheduleUser(DiaryKind.g);
+
+    final now = DateTime.now();
+    final tomorrow = DateTime(now.year, now.month, now.day + 1, 8, 30);
+    var notifications = 0;
+    provider.addListener(() => notifications++);
+
+    expect(provider.advanceToTodayIfNeeded(now: tomorrow), isTrue);
+    expect(
+      provider.currentDate,
+      DateTime(now.year, now.month, now.day + 1),
+    );
+    expect(notifications, greaterThan(0));
+
+    // 同一天再次检查不会重复推进
+    expect(
+      provider.advanceToTodayIfNeeded(
+        now: tomorrow.add(const Duration(hours: 3)),
+      ),
+      isFalse,
+    );
+  });
+
+  test('用户手动停在历史日期时，跨日不抢视图', () async {
+    final state = _RemoteState();
+    final provider = await _createProvider(state, mobile: true);
+    addTearDown(provider.dispose);
+    await provider.setScheduleUser(DiaryKind.g);
+
+    final now = DateTime.now();
+    final yesterday = DateTime(now.year, now.month, now.day - 1);
+    provider.goToDate(yesterday);
+    final selected = provider.currentDate;
+    expect(selected, yesterday);
+
+    final tomorrow = DateTime(now.year, now.month, now.day + 1, 9);
+    expect(provider.advanceToTodayIfNeeded(now: tomorrow), isFalse);
+    expect(provider.currentDate, selected);
+
+    // 之后每天检查也不会把用户从历史日期拉走
+    expect(
+      provider.advanceToTodayIfNeeded(
+        now: tomorrow.add(const Duration(days: 2)),
+      ),
+      isFalse,
+    );
+    expect(provider.currentDate, selected);
+  });
 }

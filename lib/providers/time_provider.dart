@@ -41,6 +41,7 @@ import '../services/app_identity_service.dart';
 import '../services/sync_status_coordinator.dart';
 import 'target_stats_cache.dart';
 import '../utils/schedule_view_dates.dart';
+import '../utils/local_day_range.dart';
 import '../utils/calendar_time_range.dart';
 import '../utils/time_block_resize.dart';
 
@@ -587,6 +588,11 @@ class TimeProvider with ChangeNotifier {
   bool _isDisposed = false;
 
   DateTime _currentDate = DateTime.now();
+
+  /// 上次确认过的“今天”。用于跨日时判断用户是否还停留在今天。
+  /// 必须在构造函数第一时刻赋值：它是「跨日基线」，不能等第一次用到时
+  /// 才从可能已经被用户改过的 [_currentDate] 推导。
+  late DateTime _lastKnownToday;
   bool _isSyncing = false; // 添加同步锁标志，防止并发同步导致重复
   final Duration _scheduleGiteeDebounce;
 
@@ -1646,6 +1652,7 @@ class TimeProvider with ChangeNotifier {
             scheduleSnapshotJournalPhaseObserver,
         _scheduleSnapshotJournalRemoveOverride =
             scheduleSnapshotJournalRemoveOverride {
+    _lastKnownToday = localDayOf(_currentDate);
     if (_googleCalendarSyncPlatformOverride != null) {
       _googleCalendarSyncEnabled = _googleCalendarSyncPlatformOverride!;
     }
@@ -1978,6 +1985,28 @@ class TimeProvider with ChangeNotifier {
     _refreshHomeWidget();
     pullGoogleCalendarForCurrentDate();
     _pullOwnScheduleOnDateChange();
+  }
+
+  /// 跨到新的一天后，把仍停留在“今天”的视图推进到新日期。
+  ///
+  /// 只在用户没有主动翻到历史日期时跟随：如果 [_currentDate] 已经不等于上次
+  /// 确认的今天，说明用户正在看别的日期，不能把视图抢走。返回是否真的切换。
+  ///
+  /// 导航被身份切换 / 覆盖恢复挡住时返回 false 且不更新基线，下次检查会重试。
+  bool advanceToTodayIfNeeded({DateTime? now}) {
+    if (_isDisposed || _initializationFailed) return false;
+    final today = localDayOf(now ?? DateTime.now());
+    final previousToday = _lastKnownToday;
+    if (isSameLocalDay(today, previousToday)) return false;
+    if (!isSameLocalDay(_currentDate, previousToday)) {
+      // 用户停留在历史日期：只推进基线，避免之后每一轮都重复判断。
+      _lastKnownToday = today;
+      return false;
+    }
+    if (!_allowScheduleNavigation()) return false;
+    _lastKnownToday = today;
+    goToDate(today);
+    return true;
   }
 
   /// 各平台切日/初始化后的日程拉取：
@@ -6069,6 +6098,9 @@ class TimeProvider with ChangeNotifier {
         _isDisposed) {
       return;
     }
+    // 后台过夜后回到前台：仍停留在“今天”的话直接推进到新的一天，
+    // 后面的日程刷新才会落在正确的可见日期上。
+    advanceToTodayIfNeeded();
     _ensureScheduleAutoRefreshTimer();
     await refreshSchedulesFromRemoteInBackground();
     if (_isDisposed || _initializationFailed) return;
