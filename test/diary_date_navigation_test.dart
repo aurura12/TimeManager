@@ -1,8 +1,13 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/intl.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:time_manager/models/diary_kind.dart';
 import 'package:time_manager/screens/diary_screen.dart';
 import 'package:time_manager/services/app_identity_service.dart';
@@ -10,6 +15,22 @@ import 'package:time_manager/services/diary_local_store.dart';
 import 'package:time_manager/theme/app_theme.dart';
 
 String _dateLabel(DateTime date) => DateFormat('yyyy年M月d日').format(date);
+
+class _FailDiaryBodyStore extends InMemorySharedPreferencesStore {
+  _FailDiaryBodyStore(super.data) : super.withData();
+
+  bool failBody = false;
+  bool throwOnBody = false;
+
+  @override
+  Future<bool> setValue(String valueType, String key, Object value) async {
+    if (failBody && key.startsWith('flutter.diary_draft_g_')) {
+      if (throwOnBody) throw PlatformException(code: 'disk-full');
+      return false;
+    }
+    return super.setValue(valueType, key, value);
+  }
+}
 
 void _installPluginMocks() {
   SharedPreferences.setMockInitialValues({});
@@ -80,9 +101,11 @@ void main() {
 
     for (var i = 1; i <= 2; i++) {
       await tester.tap(find.byIcon(Icons.chevron_right));
-      await _pumpUntil(tester, find.text(_dateLabel(
-        today.add(Duration(days: i)),
-      )));
+      await _pumpUntil(
+          tester,
+          find.text(_dateLabel(
+            today.add(Duration(days: i)),
+          )));
       expect(
         find.text(_dateLabel(today.add(Duration(days: i)))),
         findsOneWidget,
@@ -92,9 +115,11 @@ void main() {
 
     for (var i = 1; i >= 0; i--) {
       await tester.tap(find.byIcon(Icons.chevron_left));
-      await _pumpUntil(tester, find.text(_dateLabel(
-        today.add(Duration(days: i)),
-      )));
+      await _pumpUntil(
+          tester,
+          find.text(_dateLabel(
+            today.add(Duration(days: i)),
+          )));
       expect(
         find.text(_dateLabel(today.add(Duration(days: i)))),
         findsOneWidget,
@@ -127,6 +152,92 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
   });
+
+  for (final throws in [false, true]) {
+    testWidgets('当前草稿保存${throws ? '抛异常' : '返回 false'}时不能从文件树覆盖编辑器',
+        (tester) async {
+      await http.runWithClient(() async {
+        _installPluginMocks();
+        final values = <String, Object>{
+          AppIdentityService.modeKey: 'manual',
+          AppIdentityService.legacyScheduleUserKey: DiaryKind.g.code,
+        };
+        SharedPreferences.setMockInitialValues(values);
+        final store = _FailDiaryBodyStore({
+          for (final entry in values.entries)
+            'flutter.${entry.key}': entry.value,
+        });
+        SharedPreferencesStorePlatform.instance = store;
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+          const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+          (call) async => call.method == 'read' ? 'fake-token' : null,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(theme: AppTheme.light(), home: const DiaryScreen()),
+        );
+        await _pumpUntil(tester, find.byIcon(Icons.chevron_left));
+        final today = DateTime.now();
+        final yesterday = DateTime(today.year, today.month, today.day - 1);
+        final fileName = 'G${_dateLabel(yesterday)}.md';
+
+        store
+          ..failBody = true
+          ..throwOnBody = throws;
+        await tester.enterText(find.byType(TextField), '还没有落盘的正文');
+        await tester.tap(find.byTooltip('浏览远程日记'));
+        await _pumpUntil(tester, find.text(fileName));
+        expect(find.text(fileName), findsOneWidget);
+        await tester.tap(find.text(fileName));
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump();
+
+        expect(
+            tester.widget<TextField>(find.byType(TextField)).controller!.text,
+            '还没有落盘的正文');
+        expect(find.text(_dateLabel(today)), findsOneWidget);
+        expect(find.textContaining('本地保存失败'), findsWidgets);
+
+        // 存储恢复后，重新打开同一文件可以正常切换。
+        store.failBody = false;
+        await tester.tap(find.byTooltip('浏览远程日记'));
+        await _pumpUntil(tester, find.text(fileName));
+        await tester.tap(find.text(fileName));
+        await _pumpUntil(tester, find.text(_dateLabel(yesterday)));
+        expect(find.text(_dateLabel(yesterday)), findsOneWidget);
+        expect(
+            tester.widget<TextField>(find.byType(TextField)).controller!.text,
+            contains('远端正文'));
+        expect(tester.takeException(), isNull);
+      }, () {
+        final today = DateTime.now();
+        final yesterday = DateTime(today.year, today.month, today.day - 1);
+        final fileName = 'G${_dateLabel(yesterday)}.md';
+        return MockClient((request) async {
+          if (request.url.path.contains('/git/trees/')) {
+            return http.Response(
+              jsonEncode({
+                'tree': [
+                  {'path': fileName, 'type': 'blob', 'sha': 'remote-sha'},
+                ],
+                'truncated': false,
+              }),
+              200,
+              headers: {'content-type': 'application/json; charset=utf-8'},
+            );
+          }
+          return http.Response(
+            jsonEncode({
+              'sha': 'remote-sha',
+              'content': base64Encode(utf8.encode('远端正文')),
+            }),
+            200,
+          );
+        });
+      });
+    });
+  }
 
   testWidgets('日期按钮仍可打开日历选择面板', (tester) async {
     tester.view.physicalSize = const Size(800, 1400);

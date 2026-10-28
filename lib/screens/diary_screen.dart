@@ -724,12 +724,20 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
 
   Future<void> _openPathFromTree(String path) async {
     Navigator.of(context).pop();
-    await _saveDraftNow();
-    if (!mounted) return;
     setState(() => _processing = true);
-    await _loadRemoteFileToEditor(path);
-    if (!mounted) return;
-    setState(() => _processing = false);
+    try {
+      // 文件树也会替换编辑器，必须和切日期一样先确认当前草稿落盘。
+      if (!await _saveDraftNow()) {
+        _showMessage('本地保存失败，暂时无法切换日记，请检查存储空间');
+        return;
+      }
+      _saveDebounce?.cancel();
+      _saveDebounce = null;
+      if (!mounted) return;
+      await _loadRemoteFileToEditor(path);
+    } finally {
+      if (mounted) setState(() => _processing = false);
+    }
   }
 
   List<_RemoteFileNode> _buildRemoteTree(List<String> paths) {
@@ -1395,11 +1403,13 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
                           ),
                         ],
                         selected: {_kind},
-                        onSelectionChanged: (selection) {
-                          if (selection.isNotEmpty) {
-                            unawaited(_changeKind(selection.first));
-                          }
-                        },
+                        onSelectionChanged: _processing || _shortcutDateChanging
+                            ? null
+                            : (selection) {
+                                if (selection.isNotEmpty) {
+                                  unawaited(_changeKind(selection.first));
+                                }
+                              },
                       ),
                       Row(
                         mainAxisSize: MainAxisSize.min,
@@ -1472,7 +1482,9 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
                           controller: _bodyController,
                           maxLines: null,
                           expands: true,
-                          readOnly: _isReadOnlyContext || _shortcutDateChanging,
+                          readOnly: _isReadOnlyContext ||
+                              _shortcutDateChanging ||
+                              _processing,
                           textAlignVertical: TextAlignVertical.top,
                           decoration: InputDecoration(
                             hintText:
@@ -1493,8 +1505,11 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
                           right: 0,
                           child: IconButton(
                             tooltip: '插入当前时间',
-                            onPressed:
-                                _isReadOnlyContext ? null : _insertCurrentTime,
+                            onPressed: _isReadOnlyContext ||
+                                    _shortcutDateChanging ||
+                                    _processing
+                                ? null
+                                : _insertCurrentTime,
                             icon: const Icon(Icons.access_time, size: 20),
                           ),
                         ),
