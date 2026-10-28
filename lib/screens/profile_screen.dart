@@ -936,7 +936,11 @@ class ProfileScreenState extends State<ProfileScreen>
           ? DateTime(now.year, now.month - 1, now.day)
           : lastMonthLastDay;
     } else {
-      start = DateTime(2025);
+      // 「总览」从最早有记录的自然日开始，不把年份写死；
+      // 没有任何记录时用今天，区间为空、统计自然为 0。
+      final earliest = provider.earliestRecordedDay;
+      final today = DateTime(now.year, now.month, now.day);
+      start = earliest != null && !earliest.isAfter(now) ? earliest : today;
     }
     return _showParentOnly
         ? provider.getParentStatistics(

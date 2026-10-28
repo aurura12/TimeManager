@@ -10749,6 +10749,44 @@ class TimeProvider with ChangeNotifier {
     return _dailyStatsCache = List<DailyStatistics>.unmodifiable(daily);
   }
 
+  /// 最早有「已记录且带事件名」槽位的自然日；没有任何记录时返回 null。
+  ///
+  /// 「总览」统计用它做区间起点，避免把某个年份写死成全部历史。
+  /// 口径与 [_addDayStatistics] 一致：删除墓碑（recorded=false）和空白天不算。
+  DateTime? get earliestRecordedDay => earliestRecordedDayOf(_dailySlots);
+
+  @visibleForTesting
+  static DateTime? earliestRecordedDayOf(
+    Map<String, List<TimeSlot>> dailySlots,
+  ) {
+    DateTime? earliest;
+    for (final entry in dailySlots.entries) {
+      var hasRecord = false;
+      for (final slot in entry.value) {
+        if (slot.recorded && slot.label != null) {
+          hasRecord = true;
+          break;
+        }
+      }
+      if (!hasRecord) continue;
+      final day = _dayFromDateKey(entry.key);
+      if (day == null) continue;
+      if (earliest == null || day.isBefore(earliest)) earliest = day;
+    }
+    return earliest;
+  }
+
+  /// 解析 yyyy-M-d / yyyy-MM-dd 形式的日期键，坏键返回 null。
+  static DateTime? _dayFromDateKey(String key) {
+    final parts = _normalizeDateKey(key).split('-');
+    if (parts.length != 3) return null;
+    final year = int.tryParse(parts[0]);
+    final month = int.tryParse(parts[1]);
+    final day = int.tryParse(parts[2]);
+    if (year == null || month == null || day == null) return null;
+    return DateTime(year, month, day);
+  }
+
   Map<String, double> getStatistics(DateTime start, DateTime end) {
     final cacheKey = '${_getDateKey(start)}_${_getDateKey(end)}';
     if (_statsCacheKey == cacheKey && _statsCache != null) {
