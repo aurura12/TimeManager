@@ -934,10 +934,10 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                 style: TextStyle(color: onCardColor.withValues(alpha: 0.75))),
           const SizedBox(height: 8),
           Text(_getPreviewText(),
-              style: TextStyle(
+              style: AppText.sectionTitle.copyWith(
+                  fontWeight: FontWeight.bold,
                   color: onCardColor,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold)),
+              )),
         ],
       ),
     );
@@ -1071,7 +1071,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
   Widget _buildSectionTitle(String title, {double padding = 16}) {
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: padding, vertical: 8),
-      child: Text(title, style: const TextStyle(fontSize: 16)),
+      child: Text(title, style: AppText.sectionTitle.copyWith(fontWeight: FontWeight.normal)),
     );
   }
 

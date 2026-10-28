@@ -898,6 +898,11 @@ void main() {
           except: literalColorAllowed);
     });
 
+    test('没有字号字面量（统一走 AppText 令牌）', () {
+      expectClean(r'fontSize:\s*[0-9]',
+          '请改用 AppText.display / pageTitle / sectionTitle / body / caption / badge');
+    });
+
     test('没有为纯颜色用途而写的 isDark 分支', () {
       expectClean(r'\bisDark\b',
           '请改用 AppSurfaces / colorScheme，或 context.adaptSemanticColor');

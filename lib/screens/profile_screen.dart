@@ -539,8 +539,8 @@ class ProfileScreenState extends State<ProfileScreen>
                         return Padding(
                           padding: const EdgeInsets.only(top: 8.0),
                           child: Text('${date.day}日',
-                              style: TextStyle(
-                                fontSize: 10,
+                              style: AppText.badge.copyWith(
+                                fontWeight: FontWeight.normal,
                                 color: colorScheme.onSurfaceVariant,
                               )),
                         );
@@ -603,7 +603,7 @@ class ProfileScreenState extends State<ProfileScreen>
         const SizedBox(width: 4),
         Text(
           text,
-          style: TextStyle(fontSize: 10, color: colorScheme.onSurfaceVariant),
+          style: AppText.badge.copyWith(fontWeight: FontWeight.normal, color: colorScheme.onSurfaceVariant),
         ),
       ],
     );
@@ -647,9 +647,8 @@ class ProfileScreenState extends State<ProfileScreen>
         labelColor: AppSemanticColors.readableOn(
             AppSemanticColors.brand, colorScheme.surfaceContainerHigh),
         unselectedLabelColor: colorScheme.onSurfaceVariant,
-        labelStyle: const TextStyle(
+        labelStyle: AppText.caption.copyWith(
           fontWeight: FontWeight.bold,
-          fontSize: 13,
           height: 1.1, // 微调行高，防止文字偏下
         ),
 
@@ -695,11 +694,11 @@ class ProfileScreenState extends State<ProfileScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(value,
-                style: TextStyle(
-                    color: colorScheme.onSurface,
-                    fontSize: 28,
+                style: AppText.display.copyWith(
                     fontWeight: FontWeight.bold,
-                    letterSpacing: -1)),
+                    color: colorScheme.onSurface,
+                    letterSpacing: -1,
+                )),
             const SizedBox(height: 4),
             Row(
               children: [
@@ -779,10 +778,10 @@ class ProfileScreenState extends State<ProfileScreen>
                     shape: BoxShape.circle),
               ),
               title: Text(key,
-                  style: TextStyle(
-                      color: colorScheme.onSurface,
+                  style: AppText.body.copyWith(
                       fontWeight: FontWeight.bold,
-                      fontSize: 15)),
+                      color: colorScheme.onSurface,
+                  )),
               subtitle: Text("占比 ${percent.toStringAsFixed(1)}%",
                   style: AppText.caption.copyWith(
                     color: colorScheme.onSurfaceVariant,

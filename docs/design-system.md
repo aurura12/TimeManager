@@ -288,6 +288,7 @@ Container(color: context.adaptSemanticFill(goal.color))
 
 | 层级 | 令牌 |
 |---|---|
+| 展示数字 | `AppText.display` |
 | 页面标题 | `AppText.pageTitle` |
 | 模块标题 | `AppText.sectionTitle` |
 | 正文 | `AppText.body` |

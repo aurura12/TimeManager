@@ -108,8 +108,7 @@ class CalendarSyncStatusBadge extends StatelessWidget {
                     const SizedBox(width: 4),
                     Text(
                       label,
-                      style: TextStyle(
-                        fontSize: 11,
+                      style: AppText.badge.copyWith(
                         fontWeight: FontWeight.w600,
                         color: onBadge,
                       ),

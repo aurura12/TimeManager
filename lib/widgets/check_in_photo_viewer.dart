@@ -127,18 +127,16 @@ class CheckInPhotoViewer extends StatelessWidget {
                 children: [
                   Text(
                     dateStr,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
+                    style: AppText.body.copyWith(
                       fontWeight: FontWeight.w600,
+                      color: Colors.white,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     record.userLabel,
-                    style: TextStyle(
+                    style: AppText.caption.copyWith(
                       color: Colors.white.withValues(alpha: 0.85),
-                      fontSize: 13,
                     ),
                   ),
                   if (record.locationName != null) ...[

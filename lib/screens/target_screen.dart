@@ -352,10 +352,9 @@ class _TargetScreenContent extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               title,
-              style: TextStyle(
-                color: onCardColor,
-                fontSize: 19,
+              style: AppText.sectionTitle.copyWith(
                 fontWeight: FontWeight.w500,
+                color: onCardColor,
               ),
             ),
             const SizedBox(height: 24),

@@ -53,10 +53,9 @@ class ScheduleSyncProgressBanner extends StatelessWidget {
                       progress.message,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: colorScheme.onSurface,
-                        fontSize: 13,
+                      style: AppText.caption.copyWith(
                         fontWeight: FontWeight.w600,
+                        color: colorScheme.onSurface,
                       ),
                     ),
                   ),

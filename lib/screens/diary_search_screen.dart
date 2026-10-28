@@ -176,9 +176,8 @@ class _DiarySearchScreenState extends State<DiarySearchScreen> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
           child: Text(
             '共 ${_results.length} 条结果',
-            style: TextStyle(
+            style: AppText.caption.copyWith(
               color: colorScheme.onSurfaceVariant,
-              fontSize: 13,
             ),
           ),
         ),

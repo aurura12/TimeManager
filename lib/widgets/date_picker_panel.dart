@@ -225,7 +225,6 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
                           textAlign: TextAlign.center,
                           style: AppText.caption.copyWith(
                             color: textColorSecondary,
-                            fontSize: 13,
                           ),
                         ),
                       ))
@@ -279,11 +278,9 @@ class _DatePickerPanelState extends State<DatePickerPanel> {
                         ),
                         child: Text(
                           '$day',
-                          style: TextStyle(
+                          style: AppText.body.copyWith(
+                            fontWeight: isCurrent ? FontWeight.w600 : FontWeight.normal,
                             color: cellTextColor,
-                            fontSize: 15,
-                            fontWeight:
-                                isCurrent ? FontWeight.w600 : FontWeight.normal,
                           ),
                         ),
                       ),

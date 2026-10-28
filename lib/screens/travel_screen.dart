@@ -1295,8 +1295,7 @@ class _TravelScreenState extends State<TravelScreen> {
           // 地点分布饼图
           Text(
             '地点分布',
-            style: TextStyle(
-              fontSize: 15,
+            style: AppText.body.copyWith(
               fontWeight: FontWeight.w600,
               color: colorScheme.onSurface,
             ),
@@ -1347,8 +1346,10 @@ class _TravelScreenState extends State<TravelScreen> {
                                   : '${percentage.toStringAsFixed(1)}%'),
                           radius: isTouched ? 56.0 : 48.0,
                           titlePositionPercentageOffset: isTouched ? 1.5 : 0.5,
-                          titleStyle: TextStyle(
-                            fontSize: isTouched ? 13.0 : 11.0,
+                          titleStyle: (isTouched
+                                  ? AppText.caption
+                                  : AppText.badge)
+                              .copyWith(
                             fontWeight: FontWeight.bold,
                             color: isTouched
                                 ? colorScheme.onSurface
@@ -1397,8 +1398,7 @@ class _TravelScreenState extends State<TravelScreen> {
           // 月度统计表格
           Text(
             '月度统计',
-            style: TextStyle(
-              fontSize: 15,
+            style: AppText.body.copyWith(
               fontWeight: FontWeight.w600,
               color: colorScheme.onSurface,
             ),
@@ -1431,8 +1431,7 @@ class _TravelScreenState extends State<TravelScreen> {
           children: [
             Text(
               value,
-              style: TextStyle(
-                fontSize: 28,
+              style: AppText.display.copyWith(
                 fontWeight: FontWeight.bold,
                 color: accentColor,
               ),
@@ -1440,8 +1439,7 @@ class _TravelScreenState extends State<TravelScreen> {
             const SizedBox(height: 4),
             Text(
               label,
-              style: TextStyle(
-                fontSize: 13,
+              style: AppText.caption.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
             ),

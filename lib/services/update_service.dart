@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config/diary_gitee_config.dart';
+import '../theme/app_tokens.dart';
 import '../config/remote_repo_config.dart';
 import 'app_log_service.dart';
 import '../utils/platform_features.dart';
@@ -1121,7 +1122,7 @@ class _DownloadingDialog extends StatelessWidget {
             builder: (context, status, child) {
               return Text(
                 status,
-                style: const TextStyle(fontSize: 14),
+                style: AppText.body,
               );
             },
           ),
@@ -1132,8 +1133,7 @@ class _DownloadingDialog extends StatelessWidget {
               if (progress <= 0) return const SizedBox.shrink();
               return Text(
                 '${(progress * 100).toStringAsFixed(1)}%',
-                style: TextStyle(
-                  fontSize: 12,
+                style: AppText.caption.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
               );

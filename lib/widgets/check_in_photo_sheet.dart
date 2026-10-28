@@ -278,8 +278,7 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                         children: [
                           Text(
                             widget.goal.name,
-                            style: const TextStyle(
-                              fontSize: 16,
+                            style: AppText.sectionTitle.copyWith(
                               fontWeight: FontWeight.bold,
                             ),
                           ),
@@ -376,11 +375,12 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                                 borderRadius: AppRadius.gridAll,
                               ),
                               child: Text('补',
-                                  style: TextStyle(
-                                      fontSize: 10,
+                                  style: AppText.badge.copyWith(
+                                      fontWeight: FontWeight.normal,
                                       color: AppSemanticColors.onTint(
                                           AppSemanticColors.warning, badgeBg,
-                                          alpha: 0.2))),
+                                          alpha: 0.2),
+                                  )),
                             );
                           }),
                         ],
@@ -419,9 +419,8 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                                 const SizedBox(height: 8),
                                 Text(
                                   supportsCameraCapture ? '拍照或从相册选择' : '从相册选择',
-                                  style: TextStyle(
+                                  style: AppText.caption.copyWith(
                                     color: Colors.white.withValues(alpha: 0.6),
-                                    fontSize: 13,
                                   ),
                                 ),
                               ],
@@ -471,9 +470,8 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
                                 Expanded(
                                   child: Text(
                                     _locationText,
-                                    style: const TextStyle(
+                                    style: AppText.caption.copyWith(
                                       color: Colors.white,
-                                      fontSize: 12,
                                     ),
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,

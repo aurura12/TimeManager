@@ -543,8 +543,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
             const SizedBox(height: 12),
             Text(
               '结束日期：${DateFormat('yyyy-MM-dd').format(_endDate!)}',
-              style: TextStyle(
-                fontSize: 13,
+              style: AppText.caption.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
@@ -558,7 +557,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
   Widget _sectionTitle(String text) {
     return Text(
       text,
-      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+      style: AppText.body.copyWith(fontWeight: FontWeight.bold),
     );
   }
 
@@ -601,8 +600,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
               children: [
                 Text(
                   name,
-                  style: TextStyle(
-                    fontSize: 18,
+                  style: AppText.sectionTitle.copyWith(
                     fontWeight: FontWeight.bold,
                     color: onColor,
                   ),
@@ -610,8 +608,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
                 const SizedBox(height: 4),
                 Text(
                   '${_period.label} $count 次',
-                  style: TextStyle(
-                    fontSize: 13,
+                  style: AppText.caption.copyWith(
                     color: onColor.withValues(alpha: 0.85),
                   ),
                 ),
@@ -620,8 +617,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
                   description.isEmpty ? '暂无描述' : description,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
+                  style: AppText.caption.copyWith(
                     color: onColor.withValues(alpha: 0.85),
                   ),
                 ),

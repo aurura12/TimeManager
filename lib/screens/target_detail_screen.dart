@@ -181,8 +181,7 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                   const SizedBox(height: 4),
                   Text(
                     previewText,
-                    style: TextStyle(
-                      fontSize: 13,
+                    style: AppText.caption.copyWith(
                       color: colorScheme.onSurfaceVariant,
                     ),
                   ),
@@ -243,8 +242,7 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                     children: [
                       Text(
                         '${history.length}天有记录',
-                        style: TextStyle(
-                          fontSize: 13,
+                        style: AppText.caption.copyWith(
                           color: colorScheme.onSurfaceVariant,
                         ),
                       ),
@@ -272,8 +270,7 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                   children: [
                     Text(
                       entry.key,
-                      style: TextStyle(
-                        fontSize: 13,
+                      style: AppText.caption.copyWith(
                         fontWeight: FontWeight.w500,
                         color: colorScheme.onSurface,
                       ),

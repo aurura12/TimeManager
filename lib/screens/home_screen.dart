@@ -1154,9 +1154,9 @@ class HomeScreenState extends State<HomeScreen> {
                               text: subCat,
                               textAlign: TextAlign.left,
                               maxLines: labelStyle.maxLines,
-                              style: TextStyle(
+                              style: AppText.badge.copyWith(
+                                fontWeight: FontWeight.normal,
                                 color: onSubBg,
-                                fontSize: 11,
                               ),
                             ),
                           ),
@@ -1186,7 +1186,7 @@ class HomeScreenState extends State<HomeScreen> {
                         Icon(Icons.edit, color: onEditBg, size: 14),
                         const SizedBox(width: 4),
                         Text('编辑',
-                            style: TextStyle(color: onEditBg, fontSize: 11)),
+                            style: AppText.badge.copyWith(fontWeight: FontWeight.normal, color: onEditBg)),
                       ],
                     ),
                   ),
@@ -1560,8 +1560,10 @@ class HomeScreenState extends State<HomeScreen> {
 
                     // 4. 子事件区域
                     Text('编辑子事件 (点击删除，拖动到下方隐藏)',
-                        style: TextStyle(
-                            color: colorScheme.onSurfaceVariant, fontSize: 11)),
+                        style: AppText.badge.copyWith(
+                            fontWeight: FontWeight.normal,
+                            color: colorScheme.onSurfaceVariant,
+                        )),
                     const SizedBox(height: 10),
 
                     // 子事件列表
@@ -1696,9 +1698,10 @@ class HomeScreenState extends State<HomeScreen> {
                       const Divider(height: 1, thickness: 1),
                       const SizedBox(height: 10),
                       Text('已隐藏的子事件 (点击恢复)',
-                          style: TextStyle(
+                          style: AppText.badge.copyWith(
+                              fontWeight: FontWeight.normal,
                               color: colorScheme.onSurfaceVariant,
-                              fontSize: 11)),
+                          )),
                       const SizedBox(height: 10),
                       Wrap(
                         spacing: 8.0,
@@ -2252,10 +2255,9 @@ class HomeScreenState extends State<HomeScreen> {
                       padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
                       child: Row(
                         children: [
-                          const Text(
+                          Text(
                             '模板管理',
-                            style: TextStyle(
-                              fontSize: 18,
+                            style: AppText.pageTitle.copyWith(
                               fontWeight: FontWeight.bold,
                             ),
                           ),
@@ -2650,8 +2652,7 @@ class _DayHeader extends StatelessWidget {
         ),
         child: Text(
           '${date.month}月${date.day}日 ${_kWeekdayLabels[date.weekday - 1]}',
-          style: TextStyle(
-            fontSize: 13,
+          style: AppText.caption.copyWith(
             fontWeight: today ? FontWeight.bold : FontWeight.w500,
             color: today ? onTodayBg : colorScheme.onSurfaceVariant,
           ),

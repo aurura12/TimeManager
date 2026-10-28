@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/voice_schedule_draft.dart';
+import '../theme/app_tokens.dart';
 import '../providers/time_provider.dart';
 import '../services/voice_schedule_parser.dart';
 import '../services/voice_schedule_slot_planner.dart';
@@ -134,10 +135,10 @@ class _VoiceScheduleSheetState extends State<VoiceScheduleSheet> {
               children: [
                 const Icon(Icons.mic_none),
                 const SizedBox(width: 8),
-                const Expanded(
+                Expanded(
                   child: Text(
                     '语音添加日程',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    style: AppText.pageTitle.copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
                 IconButton(
@@ -150,9 +151,9 @@ class _VoiceScheduleSheetState extends State<VoiceScheduleSheet> {
             const SizedBox(height: 4),
             Text(
               '请点击系统键盘上的麦克风输入语音，识别结果会自动填入这里。没有匹配到的事项会作为临时事件。',
-              style: TextStyle(
+              style: AppText.caption.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  fontSize: 13),
+              ),
             ),
             const SizedBox(height: 12),
             TextField(

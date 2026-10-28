@@ -220,8 +220,7 @@ class _OnThisDayScreenState extends State<OnThisDayScreen> {
           padding: const EdgeInsets.only(left: 4, bottom: 8),
           child: Text(
             '$_dateLabel 往年的这一天',
-            style: TextStyle(
-              fontSize: 13,
+            style: AppText.caption.copyWith(
               color: colorScheme.onSurfaceVariant,
             ),
           ),

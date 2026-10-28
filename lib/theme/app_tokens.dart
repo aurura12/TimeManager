@@ -189,6 +189,13 @@ abstract final class AppSizes {
 /// 这些 TextStyle 不带颜色，颜色由 Theme / colorScheme 决定；
 /// 叠在实色块上的文字（如时间块标签）才显式给 [onColor]。
 abstract final class AppText {
+  /// 展示数字（统计卡片里的大数字）
+  static const TextStyle display = TextStyle(
+    fontSize: 24,
+    fontWeight: FontWeight.w700,
+    height: 1.1,
+  );
+
   /// 页面标题（AppBar / 大标题）
   static const TextStyle pageTitle = TextStyle(
     fontSize: 20,

@@ -109,16 +109,14 @@ class _CheckInMapScreenState extends State<CheckInMapScreen> {
                   children: [
                     Text(
                       '打卡地点排行',
-                      style: TextStyle(
-                        fontSize: 17,
+                      style: AppText.sectionTitle.copyWith(
                         fontWeight: FontWeight.bold,
                         color: colorScheme.onSurface,
                       ),
                     ),
                     Text(
                       '${records.length} 次打卡',
-                      style: TextStyle(
-                        fontSize: 13,
+                      style: AppText.caption.copyWith(
                         color: colorScheme.onSurfaceVariant,
                       ),
                     ),
@@ -149,8 +147,7 @@ class _CheckInMapScreenState extends State<CheckInMapScreen> {
                 const SizedBox(height: 16),
                 Text(
                   '最近打卡',
-                  style: TextStyle(
-                    fontSize: 17,
+                  style: AppText.sectionTitle.copyWith(
                     fontWeight: FontWeight.bold,
                     color: colorScheme.onSurface,
                   ),
@@ -273,8 +270,7 @@ class _LocationRankTile extends StatelessWidget {
           ),
           child: Text(
             '$count 次',
-            style: TextStyle(
-              fontSize: 13,
+            style: AppText.caption.copyWith(
               fontWeight: FontWeight.w600,
               color: AppSemanticColors.onTint(colorScheme.primary, surface,
                   alpha: 0.12),
@@ -317,9 +313,8 @@ class _RecentCheckInTile extends StatelessWidget {
               children: [
                 Text(
                   '$goalName · ${record.userLabel}',
-                  style: const TextStyle(
+                  style: AppText.body.copyWith(
                     fontWeight: FontWeight.w500,
-                    fontSize: 14,
                   ),
                 ),
                 Text(

@@ -32,8 +32,8 @@ class EventDetailScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text("时间分布详情",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text("时间分布详情",
+                  style: AppText.pageTitle.copyWith(fontWeight: FontWeight.bold)),
               const SizedBox(height: 16),
               if (history.isEmpty)
                 Padding(
@@ -87,8 +87,7 @@ class EventDetailScreen extends StatelessWidget {
                                         child: Text(
                                           group.key,
                                           overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            fontSize: 15,
+                                          style: AppText.body.copyWith(
                                             fontWeight: FontWeight.bold,
                                             color: colorScheme.onSurface,
                                           ),
@@ -146,7 +145,7 @@ class EventDetailScreen extends StatelessWidget {
               size: 14, color: colorScheme.onSurfaceVariant),
           const SizedBox(width: 8),
           Text(item.range,
-              style: TextStyle(fontSize: 15, color: colorScheme.onSurface)),
+              style: AppText.body.copyWith(color: colorScheme.onSurface)),
           const SizedBox(width: 8),
           Flexible(
             child: Text(

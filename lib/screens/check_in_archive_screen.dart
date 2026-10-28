@@ -63,7 +63,7 @@ class _CheckInArchiveScreenState extends State<CheckInArchiveScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('已归档的目标', style: TextStyle(fontSize: 18)),
+        title: const Text('已归档的目标', style: AppText.pageTitle),
         centerTitle: true,
       ),
       body: _archivedGoals.isEmpty
@@ -143,8 +143,7 @@ class _CheckInArchiveScreenState extends State<CheckInArchiveScreen> {
                   children: [
                     Text(
                       goal.name,
-                      style: const TextStyle(
-                        fontSize: 15,
+                      style: AppText.body.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
                     ),

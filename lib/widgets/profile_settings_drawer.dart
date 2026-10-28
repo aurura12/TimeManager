@@ -1257,8 +1257,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                     children: [
                       Text(
                         googleUser.label,
-                        style: const TextStyle(
-                          fontSize: 16,
+                        style: AppText.sectionTitle.copyWith(
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -1288,8 +1287,8 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                             GoogleCalendarService.isSignedIn
                                 ? '日历已连接'
                                 : '已识别身份，日历未连接',
-                            style: TextStyle(
-                              fontSize: 11,
+                            style: AppText.badge.copyWith(
+                              fontWeight: FontWeight.normal,
                               color: Theme.of(context)
                                   .colorScheme
                                   .onSurfaceVariant,

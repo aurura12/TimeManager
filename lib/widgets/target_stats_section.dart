@@ -292,9 +292,10 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                         reservedSize: 40,
                         getTitlesWidget: (value, meta) {
                           return Text('${value.toInt()}%',
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: colorScheme.onSurfaceVariant));
+                              style: AppText.badge.copyWith(
+                                  fontWeight: FontWeight.normal,
+                                  color: colorScheme.onSurfaceVariant,
+                              ));
                         },
                       ),
                     ),
@@ -306,9 +307,10 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                           final idx = value.toInt();
                           if (idx >= 0 && idx < labels.length) {
                             return Text(labels[idx],
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: colorScheme.onSurfaceVariant));
+                                style: AppText.badge.copyWith(
+                                    fontWeight: FontWeight.normal,
+                                    color: colorScheme.onSurfaceVariant,
+                                ));
                           }
                           return const SizedBox.shrink();
                         },
@@ -466,9 +468,10 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                           final idx = value.toInt();
                           if (idx >= 0 && idx < labels.length) {
                             return Text(labels[idx],
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: colorScheme.onSurfaceVariant));
+                                style: AppText.badge.copyWith(
+                                    fontWeight: FontWeight.normal,
+                                    color: colorScheme.onSurfaceVariant,
+                                ));
                           }
                           return const SizedBox.shrink();
                         },
@@ -891,9 +894,10 @@ class _TargetStatsSectionState extends State<TargetStatsSection> {
                                     child: Text(
                                       label,
                                       textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                          fontSize: 9,
-                                          color: colorScheme.onSurfaceVariant),
+                                      style: AppText.badge.copyWith(
+                                          fontWeight: FontWeight.normal,
+                                          color: colorScheme.onSurfaceVariant,
+                                      ),
                                     ),
                                   ))
                               .toList(),

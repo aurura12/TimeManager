@@ -387,10 +387,9 @@ class _WordCloudScreenState extends State<WordCloudScreen> {
               backgroundColor: context.wallpaperFill(colorScheme.primaryContainer),
               child: Text(
                 '${index + 1}',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: colorScheme.onPrimaryContainer,
+                style: AppText.badge.copyWith(
                   fontWeight: FontWeight.w700,
+                  color: colorScheme.onPrimaryContainer,
                 ),
               ),
             ),

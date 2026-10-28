@@ -444,10 +444,8 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                   children: [
                     Text(
                       '${date.month}/${date.day}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight:
-                            selected ? FontWeight.w700 : FontWeight.w500,
+                      style: AppText.caption.copyWith(
+                        fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                         color: selected
                             ? colorScheme.onPrimaryContainer
                             : colorScheme.onSurface,
@@ -456,8 +454,8 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                     const SizedBox(height: 2),
                     Text(
                       isToday ? '今天' : _weekdayLabel(date),
-                      style: TextStyle(
-                        fontSize: 11,
+                      style: AppText.badge.copyWith(
+                        fontWeight: FontWeight.normal,
                         color: selected
                             ? colorScheme.onPrimaryContainer
                             : colorScheme.onSurfaceVariant,
@@ -632,7 +630,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
         children: [
           Text(
             title,
-            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+            style: AppText.sectionTitle.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 10),
           if (entry.loading)
@@ -711,8 +709,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                 const SizedBox(height: 12),
                 Text(
                   result.body!,
-                  style: const TextStyle(
-                    fontSize: 15.5,
+                  style: AppText.body.copyWith(
                     height: 1.7,
                   ),
                 ),

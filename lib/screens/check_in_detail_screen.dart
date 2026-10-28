@@ -310,8 +310,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                     const SizedBox(height: 8),
                     Text(
                       _isMine ? _goal.description : '${_goal.ownerLabel} 的目标',
-                      style: TextStyle(
-                        fontSize: 13,
+                      style: AppText.caption.copyWith(
                         color: onColor.withValues(alpha: 0.8),
                       ),
                     ),
@@ -393,10 +392,10 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                   ),
                   const SizedBox(height: 20),
                   Text('打卡地图',
-                      style: TextStyle(
-                          fontSize: 17,
+                      style: AppText.sectionTitle.copyWith(
                           fontWeight: FontWeight.bold,
-                          color: colorScheme.onSurface)),
+                          color: colorScheme.onSurface,
+                      )),
                   const SizedBox(height: 8),
                   CheckInMapPreview(records: _goal.records, height: 200),
                   const SizedBox(height: 20),
@@ -404,14 +403,14 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text('打卡记录',
-                          style: TextStyle(
-                              fontSize: 17,
+                          style: AppText.sectionTitle.copyWith(
                               fontWeight: FontWeight.bold,
-                              color: colorScheme.onSurface)),
+                              color: colorScheme.onSurface,
+                          )),
                       Text('共 ${sortedRecords.length} 条',
-                          style: TextStyle(
-                              fontSize: 13,
-                              color: colorScheme.onSurfaceVariant)),
+                          style: AppText.caption.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                          )),
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -505,8 +504,9 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                     Row(
                       children: [
                         Text(dateStr,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w600, fontSize: 14)),
+                            style: AppText.body.copyWith(
+                                fontWeight: FontWeight.w600,
+                            )),
                         if (record.isBackfill) ...[
                           const SizedBox(width: 6),
                           Container(
@@ -522,12 +522,13 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                               borderRadius: AppRadius.gridAll,
                             ),
                             child: Text('补',
-                                style: TextStyle(
-                                    fontSize: 10,
+                                style: AppText.badge.copyWith(
+                                    fontWeight: FontWeight.normal,
                                     color: AppSemanticColors.onTint(
                                         AppSemanticColors.warning,
                                         colorScheme.surfaceContainerLow,
-                                        alpha: 0.2))),
+                                        alpha: 0.2),
+                                )),
                           ),
                         ],
                         const SizedBox(width: 8),
@@ -565,8 +566,8 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                       const SizedBox(height: 6),
                       Text(
                         '点击查看大图',
-                        style: TextStyle(
-                          fontSize: 11,
+                        style: AppText.badge.copyWith(
+                          fontWeight: FontWeight.normal,
                           color: colorScheme.onSurfaceVariant
                               .withValues(alpha: 0.8),
                         ),
@@ -637,9 +638,11 @@ class _StatCard extends StatelessWidget {
           Icon(icon, color: onTinted, size: 22),
           const SizedBox(height: 6),
           Text(value,
-              style: TextStyle(
-                  fontSize: 18, fontWeight: FontWeight.bold, color: onTinted)),
-          Text(label, style: TextStyle(fontSize: 11, color: onTinted)),
+              style: AppText.sectionTitle.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: onTinted,
+              )),
+          Text(label, style: AppText.badge.copyWith(fontWeight: FontWeight.normal, color: onTinted)),
         ],
       ),
     );

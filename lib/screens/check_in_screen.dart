@@ -359,8 +359,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
           children: [
             Text(
               '${_filter.label}的打卡目标',
-              style: TextStyle(
-                fontSize: 17,
+              style: AppText.sectionTitle.copyWith(
                 fontWeight: FontWeight.bold,
                 color: colorScheme.onSurface,
               ),
@@ -368,8 +367,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
             if (_filter != CheckInViewFilter.all)
               Text(
                 '今日 $_todaySelectedCheckedCount/$_selectedGoalCount',
-                style: TextStyle(
-                  fontSize: 13,
+                style: AppText.caption.copyWith(
                   color: colorScheme.onSurfaceVariant,
                 ),
               ),
@@ -586,8 +584,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
           children: [
             Text(
               '打卡地图',
-              style: TextStyle(
-                fontSize: 17,
+              style: AppText.sectionTitle.copyWith(
                 fontWeight: FontWeight.bold,
                 color: colorScheme.onSurface,
               ),
@@ -737,10 +734,10 @@ class _CheckInScreenState extends State<CheckInScreen> {
                         progressUserId,
                         email: progressUserEmail,
                       )}/${goal.targetCount}',
-                      style: TextStyle(
-                          fontSize: 13,
+                      style: AppText.caption.copyWith(
                           fontWeight: FontWeight.w600,
-                          color: onCardColor),
+                          color: onCardColor,
+                      ),
                     ),
                   ],
                 ),
@@ -790,7 +787,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
                               : Icons.photo_library_outlined,
                           size: 16,
                         ),
-                        label: const Text('打卡', style: TextStyle(fontSize: 13)),
+                        label: const Text('打卡', style: AppText.caption),
                       ),
                     ],
                   ],
@@ -861,10 +858,10 @@ class _SummaryItem extends StatelessWidget {
           textBaseline: TextBaseline.alphabetic,
           children: [
             Text(value,
-                style: TextStyle(
-                    fontSize: 24,
+                style: AppText.display.copyWith(
                     fontWeight: FontWeight.bold,
-                    color: textColor)),
+                    color: textColor,
+                )),
             const SizedBox(width: 2),
             Text(unit,
                 style: AppText.caption.copyWith(

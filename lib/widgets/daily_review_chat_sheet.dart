@@ -260,8 +260,7 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
                   Expanded(
                     child: Text(
                       '${widget.date.month}月${widget.date.day}日 对话',
-                      style: const TextStyle(
-                        fontSize: 17,
+                      style: AppText.sectionTitle.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -388,10 +387,9 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(
                   '今日复盘（打开对话时的摘要，若之后有补记请以最新回答为准）',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: fg.withValues(alpha: 0.7),
+                  style: AppText.badge.copyWith(
                     fontWeight: FontWeight.w600,
+                    color: fg.withValues(alpha: 0.7),
                   ),
                 ),
               ),
@@ -400,16 +398,15 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(
                   '记录已同步',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: fg.withValues(alpha: 0.8),
+                  style: AppText.badge.copyWith(
                     fontWeight: FontWeight.w600,
+                    color: fg.withValues(alpha: 0.8),
                   ),
                 ),
               ),
             Text(
               message.content,
-              style: TextStyle(color: fg, height: 1.5, fontSize: 15),
+              style: AppText.body.copyWith(color: fg, height: 1.5),
             ),
           ],
         ),
