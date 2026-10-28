@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -17,6 +18,7 @@ import 'package:time_manager/screens/main_screen.dart';
 import 'package:time_manager/models/check_in_document.dart';
 import 'package:time_manager/models/check_in_goal.dart';
 import 'package:time_manager/models/diary_kind.dart';
+import 'package:time_manager/models/travel_record.dart';
 import 'package:time_manager/services/app_identity_service.dart';
 import 'package:time_manager/services/check_in_local_store.dart';
 import 'package:time_manager/services/check_in_sync_service.dart';
@@ -95,6 +97,25 @@ class _FailingWritesStore extends InMemorySharedPreferencesStore {
       throw PlatformException(code: 'disk-full', message: 'No space left on device');
     }
     return false;
+  }
+}
+
+class _DelayedTravelFailureStore extends InMemorySharedPreferencesStore {
+  _DelayedTravelFailureStore(super.data) : super.withData();
+
+  final started = Completer<void>();
+  final release = Completer<void>();
+  bool _firstWrite = true;
+
+  @override
+  Future<bool> setValue(String valueType, String key, Object value) async {
+    if (key.endsWith('travel_records_draft') && _firstWrite) {
+      _firstWrite = false;
+      started.complete();
+      await release.future;
+      return false;
+    }
+    return super.setValue(valueType, key, value);
   }
 }
 
@@ -232,6 +253,56 @@ Future<void> _pumpMainScreen(WidgetTester tester, TimeProvider provider) async {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  for (final throws in [false, true]) {
+    test('出行删除写盘${throws ? '抛异常' : '返回 false'}后同步读取原文档', () async {
+      final original = TravelRecordsDocument(records: [
+        TravelRecord(date: DateTime(2026, 10, 1), location: '杭州', event: '散步'),
+      ]);
+      final originalText = original.toMarkdown();
+      SharedPreferences.setMockInitialValues({
+        'travel_records_draft': originalText,
+      });
+      final store = _FailingWritesStore({
+        'flutter.travel_records_draft': originalText,
+      })..throwOnWrite = throws;
+      SharedPreferencesStorePlatform.instance = store;
+
+      final deleted = original.deleteByDate(DateTime(2026, 10, 1));
+      expect(await TravelLocalStore.saveDraft(deleted.toMarkdown()), isFalse);
+      final readBack = TravelRecordsDocument.fromMarkdown(
+        (await TravelLocalStore.loadDraft())!,
+      );
+      expect(readBack.records.single.location, '杭州');
+      expect(readBack.deletedDateKeys, isEmpty);
+    });
+  }
+
+  test('首次保存出行记录失败后不留下缓存草稿', () async {
+    SharedPreferences.setMockInitialValues({});
+    SharedPreferencesStorePlatform.instance = _FailingWritesStore({});
+    expect(await TravelLocalStore.saveDraft('未落盘'), isFalse);
+    expect(await TravelLocalStore.loadDraft(), isNull);
+  });
+
+  test('出行失败回滚不会覆盖排队中的新保存', () async {
+    SharedPreferences.setMockInitialValues({'travel_records_draft': '旧记录'});
+    final store = _DelayedTravelFailureStore({
+      'flutter.travel_records_draft': '旧记录',
+    });
+    SharedPreferencesStorePlatform.instance = store;
+    expect(await TravelLocalStore.loadDraft(), '旧记录');
+
+    final failed = TravelLocalStore.saveDraft('失败的删除');
+    await store.started.future;
+    final next = TravelLocalStore.saveDraft('新记录');
+    final read = TravelLocalStore.loadDraft();
+    store.release.complete();
+
+    expect(await failed, isFalse);
+    expect(await next, isTrue);
+    expect(await read, '新记录');
+  });
 
   test('写盘返回 false：置位保存失败，重试成功后墓碑真正落盘', () async {
     final (provider, store) = await _createProvider();
