@@ -75,7 +75,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
 ## 数据流与关键模式
 
 - **时间粒度**：全天 144 个 10 分钟槽位 (`hour=0..23`, `minute10=0..5`)
-- **跨日自动推进**：`TimeProvider` 用构造时的「今天」基线判断是否跨日；`advanceToTodayIfNeeded()` **只在用户仍停留在此前那个今天时**才把 `_currentDate` 推进到新的一天，手动翻到历史日期时不抢视图（导航被身份切换 / 覆盖恢复挡住时返回 false，等下次检查重试）。触发点：回前台（`onAppResumed`）+ 记录 / 日记 / 出行 / 打卡 / 我的页的 `DayChangeBoundary`（可见且前台时定到零点，跨日 / 回前台 / 重新可见时补检，隐藏页暂停）。日记和出行只在自己选中的正是旧「今天」时跟着翻页；记录页翻页时清掉旧日期的待分配选择与刷子状态，避免把数据写进昨天
+- **跨日自动推进**：`TimeProvider` 用构造时的「今天」基线判断是否跨日；`advanceToTodayIfNeeded()` **只在用户仍停留在此前那个今天时**才把 `_currentDate` 推进到新的一天，手动翻到历史日期时不抢视图（导航被身份切换 / 覆盖恢复挡住时返回 false，等下次检查重试）。触发点：回前台（`onAppResumed`）+ 记录 / 日记 / 出行 / 打卡 / 我的页的 `DayChangeBoundary`（可见且前台时定到零点，跨日 / 回前台 / 重新可见时补检，隐藏页暂停）。日记和出行只在自己选中的正是旧「今天」时跟着翻页；记录页翻页时清掉旧日期的待分配选择与刷子状态，避免把数据写进昨天。路由页同样接 `DayChangeBoundary`：每日复盘把新的一天补到日期条顶部（用户停在历史日期时不抢视图；程序化滚动期间按 `_anchoringSelection` 屏蔽滚动反推选中日期），全局搜索的相对区间（近 7 天 / 30 天 / 一年）在跨日后重算，全部与自定义区间不动
 - **空槽位兜底**：`slotsForDate` 在初始化失败或身份 / 覆盖事务进行中会返回**空列表**（`time_provider.dart:1901-1903`），`TimeGrid` 遇到长度不足的列表只画空行、绝不下标取槽位；失败原因由壳层 `DataFailureBanner`（顶部横幅 + 查看日志）说明。删掉这条兜底，初始化失败会直接红屏而不是提示
 - **持久化分层**：
   - 时间块/分类/目标/模板 → `SharedPreferences`（JSON 序列化）
@@ -283,7 +283,7 @@ Never commit them.
 
 ## Testing
 
-- `test/` 有 111 个 dart 测试文件（另有 `test/support/` 下 3 个共用 Fake）+ 3 个 bash 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`、`publish_android_release_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集）+ 1 个 PowerShell 测试（`publish_windows_release_script_test.ps1`，macOS/Linux 用 `pwsh` 运行；不联网、不构建、不发布），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
+- `test/` 有 112 个 dart 测试文件（另有 `test/support/` 下 3 个共用 Fake）+ 3 个 bash 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`、`publish_android_release_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集）+ 1 个 PowerShell 测试（`publish_windows_release_script_test.ps1`，macOS/Linux 用 `pwsh` 运行；不联网、不构建、不发布），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
 - `test/background_image_contrast_test.dart` / `background_image_provider_test.dart` — 背景图对比度契约与 Provider 状态（不透明度只在 commit 时落盘、启动清失效路径、超限/取消属正常结果）
 - `test/visual_system_test.dart` — 视觉系统守护测试：对比度计算、主题一致性、令牌使用约束（改 `lib/theme/` 或页面配色时必跑）
 - `test/widget_test.dart` — smoke test + platform channel mock 模板：`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道、`tester.runAsync` 真实 IO。新写 widget 测试可参照此文件搭建环境
@@ -292,6 +292,7 @@ Never commit them.
 - `test/support/fake_main_tab_preferences_store.dart` — 可注入的导航偏好存储 Fake（配合 `main_tab_provider_test.dart`）
 - `test/time_provider_save_test.dart` / `test/schedule_json_codec_test.dart` — 普通编辑保存合并、切后台/身份即时落盘、保存期间新编辑与待同步归属不丢、统计缓存按日期失效、后台 JSON 合并及旧哈希兼容
 - `test/time_block_resize_test.dart` / `test/time_provider_resize_test.dart` / `test/time_grid_resize_test.dart` — 时间块拖拽调时长：块范围扫描与边界夹取、预览覆盖、覆盖相邻记录、缩短写墓碑、单次快照、stale 拒绝、日历块拒绝、鼠标 / 触摸手势与把手可见性
+- `test/route_day_change_test.dart` — 路由页跨午夜：复盘日期条补新的一天并跟随 / 不抢视图、全局搜索相对区间重算（时钟注入）
 - `test/earliest_recorded_day_test.dart` — 最早记录日期：空白天 / 墓碑 / 无事件名不计入，兼容旧的不补零日期键与坏键
 - `test/diary_date_navigation_test.dart` — 日期前后切换、跨天连续前进、切后台时立即落盘（不等 350ms 防抖）与生命周期状态恢复
 - `test/day_change_boundary_test.dart` / `test/date_change_schedule_sync_test.dart` 的跨日用例 — 零点通知只发一次、隐藏页与后台暂停后补发、仅在仍停留在今天时推进日期、手动停在历史日期不被抢走

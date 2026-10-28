@@ -9,6 +9,7 @@ import '../services/unified_search_service.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../widgets/day_change_boundary.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import 'event_detail_screen.dart';
 import 'global_search_detail_screen.dart';
@@ -26,7 +27,11 @@ class GlobalSearchScreen extends StatefulWidget {
     this.searchService,
     this.initialIndex,
     this.initialContentType = GlobalSearchContentType.all,
+    this.clock,
   });
+
+  /// 时钟注入（测试用）：相对日期区间与跨午夜刷新都以它为准。
+  final DateTime Function()? clock;
 
   final UnifiedSearchService? searchService;
   final GlobalSearchIndex? initialIndex;
@@ -171,7 +176,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
   }
 
   DateTime _today() {
-    final now = DateTime.now();
+    final now = (widget.clock ?? DateTime.now)();
     return DateTime(now.year, now.month, now.day);
   }
 
@@ -340,11 +345,26 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => DesktopShortcutHost(
-        onOpenSearch: _focusSearch,
-        onSearchPage: _focusSearch,
-        child: _buildPage(context),
+  Widget build(BuildContext context) => DayChangeBoundary(
+        clock: widget.clock,
+        onDayChanged: _handleDayChanged,
+        builder: (_) => DesktopShortcutHost(
+          onOpenSearch: _focusSearch,
+          onSearchPage: _focusSearch,
+          child: _buildPage(context),
+        ),
       );
+
+  /// 跨午夜：最近一周 / 一月 / 一年这类相对区间会随新的一天平移，重新搜一次。
+  /// 「全部」与「自定义」区间不依赖「今天」，不用刷新。
+  void _handleDayChanged(DateTime previousDay, DateTime today) {
+    if (_dateRange == _SearchDateRange.all ||
+        _dateRange == _SearchDateRange.custom) {
+      return;
+    }
+    if (_query.trim().isEmpty) return;
+    unawaited(_runSearch());
+  }
 
   Widget _buildPage(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;

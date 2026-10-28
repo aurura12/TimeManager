@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../services/daily_review_summary.dart';
 import '../widgets/daily_review_chat_sheet.dart';
+import '../widgets/day_change_boundary.dart';
 
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
@@ -8,9 +11,13 @@ import '../theme/app_tokens.dart';
 class DailyReviewScreen extends StatefulWidget {
   final DateTime date;
 
+  /// 时钟注入（测试用）：日期条的「今天」与跨午夜刷新都以它为准。
+  final DateTime Function()? clock;
+
   const DailyReviewScreen({
     super.key,
     required this.date,
+    this.clock,
   });
 
   static Future<void> open(
@@ -49,6 +56,10 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
   bool _aiSettingsReady = false;
   bool _aiConsentDialogShowing = false;
 
+  /// 程序化滚动（跨日重锚定 / 切日期）期间不按滚动位置反推选中日期：
+  /// 卡片高度是估算值，反推会把选中日期改到相邻的那天。
+  bool _anchoringSelection = false;
+
   @override
   void initState() {
     super.initState();
@@ -73,6 +84,8 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
   DateTime _normalizeDate(DateTime date) =>
       DateTime(date.year, date.month, date.day);
 
+  DateTime _now() => (widget.clock ?? DateTime.now)();
+
   bool _sameDate(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
@@ -81,7 +94,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
 
   void _appendRecentDays(int count) {
     if (_entries.isNotEmpty) return;
-    final today = _normalizeDate(DateTime.now());
+    final today = _normalizeDate(_now());
     var cursor = today;
     for (var i = 0; i < count && !cursor.isBefore(_earliestDate); i++) {
       _entries.add(_ReviewEntry(date: cursor));
@@ -102,7 +115,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
 
   void _ensureDateLoaded(DateTime date) {
     final target = _normalizeDate(date);
-    final today = _normalizeDate(DateTime.now());
+    final today = _normalizeDate(_now());
     if (target.isAfter(today) || target.isBefore(_earliestDate)) return;
     while (_indexOfDate(target) < 0) {
       final before = _entries.length;
@@ -340,7 +353,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
       context: context,
       initialDate: _selectedDate,
       firstDate: _earliestDate,
-      lastDate: DateTime.now(),
+      lastDate: _now(),
       locale: const Locale('zh', 'CN'),
     );
     if (picked == null) return;
@@ -355,7 +368,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
     final approxIndex = (offset / _estimatedCardHeight).round();
     if (approxIndex >= 0 && approxIndex < _entries.length) {
       final date = _entries[approxIndex].date;
-      if (!_sameDate(date, _selectedDate)) {
+      if (!_anchoringSelection && !_sameDate(date, _selectedDate)) {
         setState(() {
           _selectedDate = date;
         });
@@ -399,7 +412,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
   }
 
   Widget _buildDateRail() {
-    final today = _normalizeDate(DateTime.now());
+    final today = _normalizeDate(_now());
     final colorScheme = Theme.of(context).colorScheme;
     return Container(
       width: 90,
@@ -461,7 +474,61 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => DayChangeBoundary(
+        clock: widget.clock,
+        onDayChanged: _handleDayChanged,
+        builder: (_) => _buildPage(context),
+      );
+
+  /// 跨午夜：把新的一天补到日期条顶部，用户停在旧「今天」时跟着翻页。
+  ///
+  /// 停在更早日期时不打扰，只让新的一天出现在顶部；插入后重新锚定当前
+  /// 选中日期，避免左右两条列表都往上跳一格。
+  void _handleDayChanged(DateTime previousDay, DateTime today) {
+    if (_entries.isEmpty) return;
+    final top = _entries.first.date;
+    if (!today.isAfter(top)) return;
+
+    final missing = <DateTime>[];
+    for (var day = today;
+        day.isAfter(top) && missing.length <= 31;
+        day = day.subtract(const Duration(days: 1))) {
+      missing.add(_normalizeDate(day));
+    }
+
+    final followToday = _sameDate(_selectedDate, previousDay);
+    if (missing.length > 31) {
+      // 时钟大幅跳变：直接从新的一天重建日期条，不再逐天补。
+      setState(() {
+        _entries.clear();
+        _cardKeys.clear();
+        _appendRecentDays(_initialDays);
+        if (_indexOfDate(_selectedDate) < 0) {
+          _selectedDate = _normalizeDate(today);
+        }
+      });
+    } else {
+      setState(() {
+        _entries.insertAll(
+          0,
+          [for (final day in missing) _ReviewEntry(date: day)],
+        );
+        _cardKeys.insertAll(0, [for (final _ in missing) GlobalKey()]);
+        if (followToday) _selectedDate = _normalizeDate(today);
+      });
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _anchoringSelection = true;
+      _scrollLeftToSelected(jump: true);
+      _jumpRightToDate(_selectedDate, jump: true).whenComplete(() {
+        _anchoringSelection = false;
+      });
+    });
+  }
+
+  Widget _buildPage(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final wallpaperTheme = AppWallpaperTheme.of(context);
     return Scaffold(
