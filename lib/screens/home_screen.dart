@@ -53,6 +53,8 @@ class HomeScreenState extends State<HomeScreen> {
   double? _categoryDragWidth;
   int _categoryResizeVersion = 0;
   StreamSubscription? _syncSubscription;
+  late final TimeProvider _timeProvider;
+  late DateTime _observedDate;
 
   // 当前选中待分配的范围（跨平台统一）。
   // Windows 双列下由各 _DayGrid 上报其日期，安卓恒为当前日期。
@@ -103,6 +105,9 @@ class HomeScreenState extends State<HomeScreen> {
     super.initState();
     // 初始滚动到配置的开始时间
     final timeProvider = Provider.of<TimeProvider>(context, listen: false);
+    _timeProvider = timeProvider;
+    _observedDate = timeProvider.currentDate;
+    timeProvider.addListener(_handleProviderDateChanged);
     _scrollController.addListener(_syncGridScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final offset = timeProvider.startHour * 45.0;
@@ -133,11 +138,27 @@ class HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _syncSubscription?.cancel();
+    _timeProvider.removeListener(_handleProviderDateChanged);
     _scrollController.removeListener(_syncGridScroll);
     _scrollController.dispose();
     _gridScrollController.dispose();
     _categoryScrollController.dispose();
     super.dispose();
+  }
+
+  /// 日期也可能由壳层的回前台检查推进，而不是由记录页自己切换。
+  /// 所有日期变化都先清理旧选择，避免后续事件分配写进原来的日期。
+  void _handleProviderDateChanged() {
+    final currentDate = _timeProvider.currentDate;
+    if (_isSameDay(_observedDate, currentDate)) return;
+    _observedDate = currentDate;
+    if (_selectionStart != null ||
+        _selectionEnd != null ||
+        _selectionDate != null ||
+        _isBrushMode ||
+        _isBrushPointerDown) {
+      _leaveBrushAndClearSelection();
+    }
   }
 
   void _syncGridScroll() {
@@ -746,9 +767,7 @@ class HomeScreenState extends State<HomeScreen> {
   /// 待分配选择 / 刷子状态，避免下一次点击把数据写进昨天。
   void _handleDayChanged(DateTime previousDay, DateTime today) {
     if (!mounted) return;
-    final advanced =
-        context.read<TimeProvider>().advanceToTodayIfNeeded(now: today);
-    if (advanced) _leaveBrushAndClearSelection();
+    context.read<TimeProvider>().advanceToTodayIfNeeded(now: today);
   }
 
   Widget _buildTimeLabelRow(int h) {

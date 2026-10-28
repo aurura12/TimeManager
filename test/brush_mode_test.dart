@@ -628,6 +628,42 @@ void main() {
     await _drainPendingSync(tester);
   });
 
+  testWidgets('后台回前台自动翻日会清掉旧日期的时间选择', (tester) async {
+    final provider = await _pumpHome(tester);
+    final oldDay = provider.currentDate;
+    final newDay = DateTime(oldDay.year, oldDay.month, oldDay.day + 1);
+    final geometry = _gridGeometry(tester, provider, _todayColumn);
+    await _selectCell(tester, _visiblePoint(geometry, 54));
+
+    // 与 MainScreen 回前台时一致，由 Provider 先推进日期。
+    expect(provider.advanceToTodayIfNeeded(now: newDay), isTrue);
+    await tester.pump();
+    await _tapCategory(tester, '学习');
+
+    expect(provider.slotsForDate(oldDay)[54].label, isNull);
+    expect(provider.slotsForDate(newDay)[54].label, isNull);
+    expect(find.byType(BrushModeCard), findsOneWidget);
+    await _drainPendingSync(tester);
+  });
+
+  testWidgets('Provider 自动翻日会退出刷子模式', (tester) async {
+    final provider = await _pumpHome(tester);
+    await _tapCategory(tester, '学习');
+    expect(find.byType(BrushModeCard), findsOneWidget);
+
+    final oldDay = provider.currentDate;
+    expect(
+      provider.advanceToTodayIfNeeded(
+        now: DateTime(oldDay.year, oldDay.month, oldDay.day + 1),
+      ),
+      isTrue,
+    );
+    await tester.pump();
+
+    expect(find.byType(BrushModeCard), findsNothing);
+    await _drainPendingSync(tester);
+  });
+
   testWidgets('离开「记录」Tab 会退出刷子模式', (tester) async {
     // 预置「那年今日已弹过」标记，避免 MainScreen 拉起日记索引轮询
     _installPluginMocks(prefs: {
