@@ -1681,6 +1681,7 @@ class HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         IconButton(
+                          tooltip: '添加子事件',
                           icon: Icon(Icons.add_circle,
                               color: Theme.of(context).colorScheme.primary),
                           onPressed: () =>
@@ -1850,6 +1851,7 @@ class HomeScreenState extends State<HomeScreen> {
       children: [
         _appBarIconButton(
           icon: Icons.arrow_back_ios,
+          tooltip: '前一天',
           compact: true,
           onPressed: () {
             _leaveBrushAndClearSelection();
@@ -1877,6 +1879,7 @@ class HomeScreenState extends State<HomeScreen> {
         ),
         _appBarIconButton(
           icon: Icons.arrow_forward_ios,
+          tooltip: '后一天',
           compact: true,
           onPressed: () {
             _leaveBrushAndClearSelection();
@@ -2258,6 +2261,7 @@ class HomeScreenState extends State<HomeScreen> {
                           ),
                           const Spacer(),
                           IconButton(
+                            tooltip: '关闭',
                             icon: const Icon(Icons.close),
                             onPressed: () => Navigator.pop(context),
                           ),
@@ -2290,6 +2294,7 @@ class HomeScreenState extends State<HomeScreen> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   IconButton(
+                                    tooltip: '重命名模板',
                                     icon: const Icon(Icons.edit_outlined,
                                         size: 20),
                                     onPressed: () {
@@ -2301,6 +2306,7 @@ class HomeScreenState extends State<HomeScreen> {
                                     },
                                   ),
                                   IconButton(
+                                    tooltip: '删除模板',
                                     icon: Icon(Icons.delete_outline,
                                         size: 20,
                                         color: AppSemanticColors.readableOn(

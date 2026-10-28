@@ -61,6 +61,7 @@ class CheckInPhotoViewer extends StatelessWidget {
               children: [
                 if (isMine && onDelete != null)
                   IconButton(
+                    tooltip: '删除照片',
                     icon: const Icon(Icons.delete_outline, color: Colors.white),
                     onPressed: () {
                       Navigator.pop(context);
@@ -68,6 +69,7 @@ class CheckInPhotoViewer extends StatelessWidget {
                     },
                   ),
                 IconButton(
+                  tooltip: '关闭',
                   icon: const Icon(Icons.close, color: Colors.white),
                   onPressed: () => Navigator.pop(context),
                 ),

@@ -1618,6 +1618,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               IconButton(
+                tooltip: '上个月',
                 onPressed: () => _changeMonth(-1),
                 icon: const Icon(Icons.chevron_left),
               ),
@@ -1626,6 +1627,7 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
                 style: AppText.sectionTitle,
               ),
               IconButton(
+                tooltip: '下个月',
                 onPressed: () => _changeMonth(1),
                 icon: const Icon(Icons.chevron_right),
               ),

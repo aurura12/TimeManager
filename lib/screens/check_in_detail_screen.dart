@@ -331,12 +331,18 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                 )
               else if (_isMine) ...[
                 if (!_goal.isArchived)
-                  IconButton(icon: const Icon(Icons.edit), onPressed: _edit),
+                  IconButton(
+                    tooltip: '编辑目标',
+                    icon: const Icon(Icons.edit),
+                    onPressed: _edit,
+                  ),
                 IconButton(
+                  tooltip: '归档目标',
                   icon: const Icon(Icons.archive_outlined),
                   onPressed: _archive,
                 ),
                 IconButton(
+                  tooltip: '删除目标',
                   icon: const Icon(Icons.delete_outline),
                   onPressed: _confirmDelete,
                 ),

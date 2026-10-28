@@ -59,6 +59,7 @@ class _DiarySearchScreenState extends State<DiarySearchScreen> {
             border: InputBorder.none,
             suffixIcon: query.isNotEmpty
                 ? IconButton(
+                    tooltip: '清除搜索',
                     icon: Icon(
                       Icons.clear,
                       color: colorScheme.onSurfaceVariant,

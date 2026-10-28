@@ -498,6 +498,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
                 border: const OutlineInputBorder(),
                 suffixIcon: _startDate != null
                     ? IconButton(
+                        tooltip: '清除开始日期',
                         icon: const Icon(Icons.close, size: 18),
                         onPressed: () => _onStartDateChanged(null),
                       )

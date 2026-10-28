@@ -141,6 +141,7 @@ class _VoiceScheduleSheetState extends State<VoiceScheduleSheet> {
                   ),
                 ),
                 IconButton(
+                  tooltip: '关闭',
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.close),
                 ),

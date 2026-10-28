@@ -40,6 +40,7 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
             title: Text(target.name),
             centerTitle: true,
             leading: IconButton(
+              tooltip: '返回',
               icon: const Icon(Icons.chevron_left, size: 30),
               onPressed: () => Navigator.pop(context),
             ),

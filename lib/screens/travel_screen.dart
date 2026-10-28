@@ -1107,6 +1107,7 @@ class _TravelScreenState extends State<TravelScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             IconButton(
+              tooltip: '上个月',
               onPressed: () => _changeCalendarMonth(-1),
               icon: const Icon(Icons.chevron_left),
             ),
@@ -1128,6 +1129,7 @@ class _TravelScreenState extends State<TravelScreen> {
               ),
             ),
             IconButton(
+              tooltip: '下个月',
               onPressed: () => _changeCalendarMonth(1),
               icon: const Icon(Icons.chevron_right),
             ),
