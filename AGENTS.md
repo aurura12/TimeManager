@@ -75,7 +75,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
 ## 数据流与关键模式
 
 - **时间粒度**：全天 144 个 10 分钟槽位 (`hour=0..23`, `minute10=0..5`)
-- **跨日自动推进**：`TimeProvider` 用构造时的「今天」基线判断是否跨日；`advanceToTodayIfNeeded()` **只在用户仍停留在此前那个今天时**才把 `_currentDate` 推进到新的一天，手动翻到历史日期时不抢视图（导航被身份切换 / 覆盖恢复挡住时返回 false，等下次检查重试）。触发点：回前台（`onAppResumed`）+ 记录 / 日记 / 出行 / 打卡页的 `DayChangeBoundary`（可见且前台时定到零点，跨日 / 回前台 / 重新可见时补检，隐藏页暂停）。日记和出行只在自己选中的正是旧「今天」时跟着翻页；记录页翻页时清掉旧日期的待分配选择与刷子状态，避免把数据写进昨天
+- **跨日自动推进**：`TimeProvider` 用构造时的「今天」基线判断是否跨日；`advanceToTodayIfNeeded()` **只在用户仍停留在此前那个今天时**才把 `_currentDate` 推进到新的一天，手动翻到历史日期时不抢视图（导航被身份切换 / 覆盖恢复挡住时返回 false，等下次检查重试）。触发点：回前台（`onAppResumed`）+ 记录 / 日记 / 出行 / 打卡 / 我的页的 `DayChangeBoundary`（可见且前台时定到零点，跨日 / 回前台 / 重新可见时补检，隐藏页暂停）。日记和出行只在自己选中的正是旧「今天」时跟着翻页；记录页翻页时清掉旧日期的待分配选择与刷子状态，避免把数据写进昨天
 - **空槽位兜底**：`slotsForDate` 在初始化失败或身份 / 覆盖事务进行中会返回**空列表**（`time_provider.dart:1901-1903`），`TimeGrid` 遇到长度不足的列表只画空行、绝不下标取槽位；失败原因由壳层 `DataFailureBanner`（顶部横幅 + 查看日志）说明。删掉这条兜底，初始化失败会直接红屏而不是提示
 - **持久化分层**：
   - 时间块/分类/目标/模板 → `SharedPreferences`（JSON 序列化）
@@ -94,7 +94,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
 - **撤销系统**：`_undoStacks` / `_redoStacks` 深拷贝按日快照，最多 20 步，保留最近编辑的 7 个日期；桌面三列撤销以 `_lastEditedDateKey` 为准。新编辑清空重做分支，切身份 / 覆盖恢复 / 成功导入备份清空两种栈。撤销和重做本身是新修改，变化的槽位更新修改时间，恢复为空槽时写删除墓碑，并走既有缓存失效、待同步和防抖保存链路
 - **拖动时间块边界调时长**：网格里「块」= 连续且 `canJoinTimeSlots` 的槽位集合，可跨小时；改时长 = 改首尾槽位，由 `TimeProvider.resizeTimeBlock(TimeSlotResizeRequest)`（`lib/models/time_slot_resize.dart`）完成，纯函数在 `lib/utils/time_block_resize.dart`。约束：**一次手势只调一次 `_saveSnapshot`**（拖拽期间 `TimeGrid` 只做 `applyTimeBlockResizePreview` 预览，松手才提交）；缩短必须用 `_clearSlotAt(markDeleted: true)` 给被裁掉的一端写墓碑；与相邻记录重叠按既有语义**直接覆盖**；`isFromCalendar` 的日历块不显示把手、Provider 二次拒绝。**边缘手势必须用外层 `Listener` + `_ResizeSession`，不能挂子 `GestureDetector`**——预览会改变 `Row` 的 children 数量，段的 Element 被销毁重建后识别器会丢指针。提交时用 `expectedStart/expectedEnd` + label/categoryId/color 做 stale 校验，拖拽期间被后台同步改写就放弃写入
 - **数据故障提示**：`MainScreen` 内容区顶部按优先级显示 `DataFailureBanner`——初始化失败（编辑已暂停 + 查看日志）优先于本地保存失败（`hasLocalSaveFailure` + 重试保存）。**必须挂在壳层而不是记录页**：底部标签允许隐藏「记录」，挂在页面里用户可能永远看不到。保存失败只在「真的写盘失败」时置位（`_shouldReportLocalSaveFailure` 排除初始化失败、身份切换、覆盖事务这些既定阻塞），脏标记保留、下次编辑或 `retryLocalSave()` 重试，成功后自动清除横幅
-- **其它模块的本地保存失败也不静默**：出行 / 打卡 / 日记的 `*_local_store.save*` 返回 `bool`，调用方必须处理。出行删除失败会回滚内存且不推送远端；日记保存失败会显示「本地保存失败」并拒绝切换日期（否则会丢掉编辑框里未落盘的文字）；打卡落盘失败直接返回失败结果，不报「同步成功」。新增本地写入时不要忽略 `prefs.setString` 的返回值
+- **其它模块的本地保存失败也不静默**：出行 / 打卡 / 日记的 `*_local_store.save*` 返回 `bool`，调用方必须处理。出行删除失败会回滚内存且不推送远端；日记保存失败会显示「本地保存失败」并拒绝切换日期（否则会丢掉编辑框里未落盘的文字）；打卡落盘失败直接返回失败结果，不报「同步成功」。store 内已把平台通道异常统一折算成 `false`；新增本地写入时不要忽略 `prefs.setString` 的返回值，也不要让异常冒到 UI
 - **统计缓存**：分类区间、每日趋势与连续块次数各用独立缓存，修改日期只使相交区间失效。日期统计统一忽略时分秒并按自然日遍历，词云缓存键不能包含 `DateTime.now()` 的时分秒。`MainTabActivity` 给保活 Tab 传递可见状态；`ProfileScreen` 隐藏时复用已构建内容，返回时重新读取最新统计并保留滚动与筛选状态
 - **Google 日历同步**：3 秒防抖 + `_isSyncing` 锁防并发。事件以 "乖乖爱心晶晶" 为识别签名，区分本 App 创建和外部事件
 - **打卡合并策略**：`CheckInDocument.merge(local, remote)` 按 ID 去重，同 ID 保留较新记录

@@ -5,6 +5,7 @@ import '../models/main_tab_id.dart';
 import '../providers/main_tab_provider.dart';
 import '../widgets/profile_settings_drawer.dart';
 import '../widgets/calendar_sync_status_badge.dart';
+import '../widgets/day_change_boundary.dart';
 import '../widgets/main_tab_activity.dart';
 import '../widgets/main_tab_navigation.dart';
 import '../providers/time_provider.dart';
@@ -69,7 +70,12 @@ class ProfileScreenState extends State<ProfileScreen>
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => DayChangeBoundary(
+        // 「今天 / 最近一月」与趋势都按 build 时的自然日计算，跨日后重建即可。
+        builder: (_) => _buildPage(context),
+      );
+
+  Widget _buildPage(BuildContext context) {
     // IndexedStack 保留页面状态；隐藏时复用上次内容，回来再读取最新统计。
     if (!MainTabActivity.isActiveOf(context)) {
       return _lastBuiltPage ?? const SizedBox.shrink();
@@ -920,7 +926,8 @@ class ProfileScreenState extends State<ProfileScreen>
     if (index == 0) {
       start = DateTime(now.year, now.month, now.day);
     } else if (index == 1) {
-      start = now.subtract(const Duration(days: 7));
+      // 与「最近一月」的 30 天口径一致：含今天共 7 个自然日。
+      start = now.subtract(const Duration(days: 6));
     } else if (index == 2) {
       // 近一月：取上个月的同一天；若该日不存在（如 3/31 → 2 月只有 28/29 天），
       // 取上个月最后一天，避免 DateTime 归一化导致窗口错位
