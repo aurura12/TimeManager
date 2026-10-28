@@ -18,6 +18,7 @@ import 'package:time_manager/screens/main_screen.dart';
 import 'package:time_manager/models/check_in_document.dart';
 import 'package:time_manager/models/check_in_goal.dart';
 import 'package:time_manager/models/diary_kind.dart';
+import 'package:time_manager/models/known_google_users.dart';
 import 'package:time_manager/models/travel_record.dart';
 import 'package:time_manager/services/app_identity_service.dart';
 import 'package:time_manager/services/check_in_local_store.dart';
@@ -452,7 +453,47 @@ void main() {
 
     expect(result.success, isFalse);
     expect(result.error, contains('本地保存失败'));
+    expect(service.goalsWithRecords, isEmpty);
+    expect(await CheckInLocalStore.loadDraft(), isNull);
   });
+
+  for (final throws in [false, true]) {
+    test('打卡写盘${throws ? '抛异常' : '返回 false'}后重试不留下重复记录', () async {
+      final goal = CheckInGoal(
+        id: 'goal-1',
+        ownerId: 'manual-g',
+        ownerEmail: KnownGoogleUsers.guaiGuaiEmail,
+        name: '运动',
+        description: '',
+        color: const Color(0xFF000000),
+        icon: Icons.flag,
+        period: CheckInPeriod.daily,
+        targetCount: 1,
+        requirePhoto: false,
+        requireLocation: false,
+      );
+      final original = CheckInDocument(goals: [goal], records: []);
+      final values = <String, Object>{
+        AppIdentityService.modeKey: 'manual',
+        AppIdentityService.legacyScheduleUserKey: DiaryKind.g.code,
+        'check_in_data_draft': original.toMarkdown(),
+      };
+      SharedPreferences.setMockInitialValues(values);
+      SharedPreferencesStorePlatform.instance = _FailingWritesStore({
+        for (final entry in values.entries) 'flutter.${entry.key}': entry.value,
+      })..throwOnWrite = throws;
+
+      final service = CheckInSyncService(tokenLoader: () async => null);
+      await service.initialize(silent: true);
+      for (var attempt = 0; attempt < 2; attempt++) {
+        final result = await service.submitCheckIn(goal: goal);
+        expect(result.success, isFalse);
+        expect(result.error, contains('本地保存失败'));
+        expect(service.document.records, isEmpty);
+        expect((await CheckInLocalStore.loadDraft())!.records, isEmpty);
+      }
+    });
+  }
 
   testWidgets('真实写盘失败时壳层显示横幅，恢复后重试自动消失', (tester) async {
     late TimeProvider provider;

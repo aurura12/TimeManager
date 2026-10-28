@@ -87,8 +87,11 @@ class CheckInSyncService {
   }
 
   /// 本地落盘失败时返回统一的失败结果；成功返回 null。
-  Future<CheckInSyncResult?> _saveLocalOrFail() async {
+  Future<CheckInSyncResult?> _saveLocalOrFail({
+    CheckInDocument? rollbackOnFailure,
+  }) async {
     if (await CheckInLocalStore.saveDraft(_document)) return null;
+    if (rollbackOnFailure != null) _document = rollbackOnFailure;
     return CheckInSyncResult.fail('本地保存失败，请检查存储空间后重试');
   }
 
@@ -226,6 +229,8 @@ class CheckInSyncService {
           _document = await _migrateLegacyGoalTimestamps(merged);
           if (!await CheckInLocalStore.saveDraft(_document)) {
             _lastError = '本地保存失败，打卡数据可能无法在重启后保留';
+          } else {
+            _lastError = null;
           }
         } catch (e) {
           _lastError = '解析远端打卡数据失败: $e';
@@ -253,7 +258,10 @@ class CheckInSyncService {
     final migrated =
         doc.withLegacyGoalTimestamps(DateTime.now().millisecondsSinceEpoch);
     if (identical(migrated, doc)) return doc;
-    await CheckInLocalStore.saveDraft(migrated);
+    if (!await CheckInLocalStore.saveDraft(migrated)) {
+      _lastError = '本地保存失败，打卡数据可能无法在重启后保留';
+      return doc;
+    }
     return migrated;
   }
 
@@ -298,8 +306,9 @@ class CheckInSyncService {
         }
 
         final remote = CheckInDocument.fromMarkdown(pull.content!);
+        final previous = _document;
         _document = CheckInDocument.merge(_document, remote);
-        final saveFailure = await _saveLocalOrFail();
+        final saveFailure = await _saveLocalOrFail(rollbackOnFailure: previous);
         if (saveFailure != null) return saveFailure;
         return CheckInSyncResult.ok(_document);
       } catch (e) {
@@ -524,8 +533,9 @@ class CheckInSyncService {
           updatedAt: DateTime.now().millisecondsSinceEpoch,
         );
 
+        final previous = _document;
         _document = _document.upsertGoal(meta);
-        final saveFailure = await _saveLocalOrFail();
+        final saveFailure = await _saveLocalOrFail(rollbackOnFailure: previous);
         if (saveFailure != null) return saveFailure;
         return await _pushToGitHubInternal();
       } catch (e) {
@@ -577,8 +587,9 @@ class CheckInSyncService {
             .where((path) => path.isNotEmpty)
             .toSet();
 
+        final previous = _document;
         _document = _document.tombstoneGoal(goal.id);
-        final saveFailure = await _saveLocalOrFail();
+        final saveFailure = await _saveLocalOrFail(rollbackOnFailure: previous);
         if (saveFailure != null) return saveFailure;
 
         final push = await CheckInGiteeService.pushText(
@@ -657,10 +668,11 @@ class CheckInSyncService {
         }
 
         // Step 2: Remove record from document
+        final previous = _document;
         _document = _document.tombstoneRecord(record.id);
 
         // Step 3: Save locally
-        final saveFailure = await _saveLocalOrFail();
+        final saveFailure = await _saveLocalOrFail(rollbackOnFailure: previous);
         if (saveFailure != null) return saveFailure;
 
         // Step 4: Push updated document to Gitee. The document version check must
@@ -807,8 +819,9 @@ class CheckInSyncService {
           isBackfill: isBackfill,
         );
 
+        final previous = _document;
         _document = _document.upsertRecord(record);
-        final saveFailure = await _saveLocalOrFail();
+        final saveFailure = await _saveLocalOrFail(rollbackOnFailure: previous);
         if (saveFailure != null) return saveFailure;
 
         final metaResult = await _pushToGitHubInternal();

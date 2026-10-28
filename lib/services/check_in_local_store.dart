@@ -1,23 +1,20 @@
-import 'package:shared_preferences/shared_preferences.dart';
-
 import '../models/check_in_document.dart';
+import 'transactional_preference_string.dart';
 
 class CheckInLocalStore {
-  static const _draftKey = 'check_in_data_draft';
+  static final _draft = TransactionalPreferenceString('check_in_data_draft');
 
   /// 保存成功返回 true；写入失败（磁盘、权限等）返回 false，调用方必须提示用户。
   static Future<bool> saveDraft(CheckInDocument document) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      return await prefs.setString(_draftKey, document.toMarkdown());
+      return await _draft.save(document.toMarkdown());
     } catch (_) {
       return false;
     }
   }
 
   static Future<CheckInDocument?> loadDraft() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_draftKey);
+    final raw = await _draft.load();
     if (raw == null || raw.trim().isEmpty) return null;
     try {
       return CheckInDocument.fromMarkdown(raw);
@@ -26,8 +23,5 @@ class CheckInLocalStore {
     }
   }
 
-  static Future<void> clearDraft() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_draftKey);
-  }
+  static Future<void> clearDraft() => _draft.remove();
 }
