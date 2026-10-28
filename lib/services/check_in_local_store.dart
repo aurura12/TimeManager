@@ -7,8 +7,12 @@ class CheckInLocalStore {
 
   /// 保存成功返回 true；写入失败（磁盘、权限等）返回 false，调用方必须提示用户。
   static Future<bool> saveDraft(CheckInDocument document) async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.setString(_draftKey, document.toMarkdown());
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return await prefs.setString(_draftKey, document.toMarkdown());
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<CheckInDocument?> loadDraft() async {

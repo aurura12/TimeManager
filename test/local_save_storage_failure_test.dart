@@ -87,8 +87,13 @@ class _FailingWritesStore extends InMemorySharedPreferencesStore {
   // ignore: use_super_parameters
   _FailingWritesStore(Map<String, Object> data) : super.withData(data);
 
+  bool throwOnWrite = false;
+
   @override
   Future<bool> setValue(String valueType, String key, Object value) async {
+    if (throwOnWrite) {
+      throw PlatformException(code: 'disk-full', message: 'No space left on device');
+    }
     return false;
   }
 }
@@ -304,7 +309,8 @@ void main() {
 
   test('出行 / 打卡 / 日记的本地写入失败会返回 false', () async {
     SharedPreferences.setMockInitialValues(const {});
-    SharedPreferencesStorePlatform.instance = _FailingWritesStore(const {});
+    final store = _FailingWritesStore(const {});
+    SharedPreferencesStorePlatform.instance = store;
     addTearDown(() => SharedPreferences.setMockInitialValues(const {}));
 
     expect(await TravelLocalStore.saveDraft('出行记录'), isFalse);
@@ -322,6 +328,19 @@ void main() {
         DiaryKind.g,
         DateTime(2026, 10, 28),
         DateTime(2026, 10, 28, 9),
+      ),
+      isFalse,
+    );
+
+    // 平台通道抛异常时同样按失败返回，不能让异常冒到 UI 层
+    store.throwOnWrite = true;
+    expect(await TravelLocalStore.saveDraft('出行记录'), isFalse);
+    expect(await CheckInLocalStore.saveDraft(CheckInDocument.empty), isFalse);
+    expect(
+      await DiaryLocalStore.saveDraftBody(
+        DiaryKind.g,
+        DateTime(2026, 10, 28),
+        '正文',
       ),
       isFalse,
     );

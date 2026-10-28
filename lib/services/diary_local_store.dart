@@ -134,8 +134,12 @@ class DiaryLocalStore {
   /// 保存成功返回 true；写入失败（磁盘、权限等）返回 false，调用方必须提示用户。
   static Future<bool> saveDraftBody(
       DiaryKind kind, DateTime date, String body) async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.setString(_draftBodyKey(kind, date), body);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return await prefs.setString(_draftBodyKey(kind, date), body);
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<DateTime?> loadDraftStartedAt(
@@ -148,11 +152,15 @@ class DiaryLocalStore {
 
   static Future<bool> saveDraftStartedAt(
       DiaryKind kind, DateTime date, DateTime startedAt) async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.setString(
-      _draftStartKey(kind, date),
-      startedAt.toIso8601String(),
-    );
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return await prefs.setString(
+        _draftStartKey(kind, date),
+        startedAt.toIso8601String(),
+      );
+    } catch (_) {
+      return false;
+    }
   }
 
   /// 标记一篇日记有本地修改，供同步中心执行真正的批量推送。
