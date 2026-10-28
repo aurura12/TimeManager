@@ -1252,6 +1252,8 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) => DayChangeBoundary(
         onDayChanged: _handleDayChanged,
+        canHandleDayChange: () =>
+            !_loading && !_processing && !_shortcutDateChanging,
         builder: (_) => DesktopShortcutHost(
           autofocus: true,
           onSearchPage: () => unawaited(_openSearch()),

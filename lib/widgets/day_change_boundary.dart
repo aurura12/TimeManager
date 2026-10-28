@@ -16,6 +16,7 @@ class DayChangeBoundary extends StatefulWidget {
     super.key,
     required this.builder,
     this.onDayChanged,
+    this.canHandleDayChange,
     this.clock,
   });
 
@@ -26,6 +27,9 @@ class DayChangeBoundary extends StatefulWidget {
   /// 即使不传回调，组件本身也会在跨日时重建 [builder]，
   /// 供那些只在 build 里读取 `DateTime.now()` 的页面刷新「今日」状态。
   final void Function(DateTime previousDay, DateTime today)? onDayChanged;
+
+  /// 页面暂时不能切日时保留通知；页面状态更新后会再次检查。
+  final bool Function()? canHandleDayChange;
 
   final DateTime Function()? clock;
 
@@ -38,8 +42,14 @@ class _DayChangeBoundaryState extends State<DayChangeBoundary>
   Timer? _timer;
   bool _isActive = false;
   late DateTime _day;
+  DateTime? _pendingPreviousDay;
+  bool _checkScheduled = false;
 
   DateTime get _now => (widget.clock ?? DateTime.now)();
+  bool get _isForeground {
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    return lifecycle == null || lifecycle == AppLifecycleState.resumed;
+  }
 
   @override
   void initState() {
@@ -53,24 +63,40 @@ class _DayChangeBoundaryState extends State<DayChangeBoundary>
     super.didChangeDependencies();
     _isActive = MainTabActivity.isActiveOf(context) &&
         TickerMode.valuesOf(context).enabled;
-    if (_isActive) {
-      // 可见状态变化发生在构建期间；回调可能更新祖先页面或 Provider，
-      // 必须等当前帧结束，不能从 didChangeDependencies 同步通知。
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_isActive) return;
-        _checkDayChanged();
-      });
-    }
+    if (_isActive) _scheduleDayCheck();
     _scheduleRefresh();
   }
 
+  @override
+  void didUpdateWidget(DayChangeBoundary oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_pendingPreviousDay != null && _isActive) _scheduleDayCheck();
+  }
+
+  void _scheduleDayCheck() {
+    if (_checkScheduled) return;
+    _checkScheduled = true;
+    // 回调可能更新祖先页面或 Provider，必须等当前构建帧结束。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkScheduled = false;
+      if (!mounted || !_isActive) return;
+      _checkDayChanged();
+    });
+  }
+
   void _checkDayChanged() {
-    if (!_isActive || !mounted) return;
+    if (!_isActive || !_isForeground || !mounted) return;
     final today = localDayOf(_now);
-    if (isSameLocalDay(today, _day)) return;
-    final previousDay = _day;
-    _day = today;
-    setState(() {});
+    if (!isSameLocalDay(today, _day)) {
+      if (widget.onDayChanged != null) _pendingPreviousDay ??= _day;
+      _day = today;
+      setState(() {});
+    }
+    final previousDay = _pendingPreviousDay;
+    if (previousDay == null || !(widget.canHandleDayChange?.call() ?? true)) {
+      return;
+    }
+    _pendingPreviousDay = null;
     widget.onDayChanged?.call(previousDay, today);
   }
 

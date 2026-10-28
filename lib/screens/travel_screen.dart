@@ -1452,6 +1452,7 @@ class _TravelScreenState extends State<TravelScreen> {
   @override
   Widget build(BuildContext context) => DayChangeBoundary(
         onDayChanged: _handleDayChanged,
+        canHandleDayChange: () => !_loading && !_processing,
         builder: (_) => DesktopShortcutHost(
           autofocus: true,
           onNewItem: () => unawaited(_showAddRecordDialog()),
