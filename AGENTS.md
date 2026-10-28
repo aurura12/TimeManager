@@ -29,14 +29,15 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
 - **Entry**: `lib/main.dart` → `MainScreen` (默认 6-tab bottom nav: 记录/日记/出行/打卡/目标/我的，Android / Windows / macOS 均支持自定义显示与排序)。启动时初始化 `AppLogService` 全局错误捕获，并对 MIUI 设备应用 SSL 修复的 `HttpOverrides`。
 - **State**: `lib/providers/`
   - `main_tab_provider.dart` → `MainTabProvider` — 本机导航偏好（`app_main_tabs_v1`），与身份无关、不进同步/备份。入口「我的 → 设置 → 操作与布局 → 底部标签」，至少显示两个标签且保留「我的」；`MainTabId` 的稳定身份与显示顺序分离，排序/隐藏不能交换或销毁已构建页面的状态。启动先读偏好，再按可见顺序懒构建首个页面
-  - `time_provider.dart` → `TimeProvider` (~10000 行) — 核心业务状态：时间块、分类、目标、模板、撤销栈、统计缓存、增量保存、Google 日历同步、日程(schedule)同步、已删除事件关系
+  - `time_provider.dart` → `TimeProvider` (~11000 行) — 核心业务状态：时间块、分类、目标、模板、撤销栈、统计缓存、增量保存、Google 日历同步、日程(schedule)同步、已删除事件关系
   - `theme_mode_provider.dart` → `ThemeModeProvider` (52 行) — 主题模式 (light/dark/system)
   - `desktop_shortcut_provider.dart` → `DesktopShortcutProvider` — 本机快捷键偏好（`desktop_shortcuts_v1`），不依赖身份、不进同步或备份；保存成功后更新绑定。稳定命令与键位定义在 `models/desktop_shortcut.dart`，设置在「我的 → 设置 → 操作与布局 → 键盘快捷键」。`DesktopShortcutHost` 分层注册全局 / 主导航 / 当前页 / 表单命令，不能把记录页撤销和切日动作放到 Navigator 外；隐藏 Tab 用 `MainTabActivity` + `ExcludeFocus` 禁用，弹层显示时检查宿主路由 `isCurrent`，输入焦点保留文字编辑并避让 IME composing。数字键按可见标签顺序，表单保存只调用既有校验和保存入口
   - `desktop_layout_provider.dart` → `DesktopLayoutProvider` — 本机桌面导航与事件栏宽度（`desktop_layout_v1`），独立于身份、不进同步/备份，落盘成功后才更新偏好。默认底部导航，可在「我的 → 设置 → 操作与布局 → 桌面布局」选宽屏左侧导航；1000 宽度断点以下回到底部。`MainScreen` 跨导航模式/宽度保持相同 `Row → Expanded → IndexedStack` 结构，不能重建 Tab 状态；排序、隐藏与快捷键仍统一使用 `MainTabProvider.visibleTabs`。`HomeScreen` 分隔条拖动时仅预览、松手保存，窗口变窄只限制显示宽度，不能覆盖用户偏好；桌面事件区用可拖排的多列布局，移动端仍保留列表
   - `target_stats_cache.dart` → `TargetStatsCache` (47 行) — 目标统计内存缓存，按日期失效
   - `wake_up_provider.dart` → `WakeUpProvider` — 目标页起床记录：每个自然日一条、精确到分钟，最近 7 天平均只计已记录日期。卡片「查看更多」进入 `WakeUpHistoryScreen`，可按最近 30 天 / 90 天 / 全部 / 自选日期查看平均、最早、最晚起床时间、趋势与每日明细；`recordsInRange` 按自然日含首尾筛选、日期倒序返回当前身份记录。应用入口全局创建，隐藏目标页也继续同步；本机经 `WakeUpLocalStore` 按身份保存数据与待上传标记，远端经 `WakeUpGiteeService` 双向同步。切身份清空旧视图，异步保存保留原身份归属、旧响应不能混入新身份；保存成功后才更新显示。目前不进 JSON 备份
   - `background_image_provider.dart` → `BackgroundImageProvider` — 背景图（壁纸）本机状态：图片路径 / 开关 / 照片不透明度 / 表面不透明度。**刻意独立于业务数据 Provider：本地图片路径绝不进同步或备份快照**（`lib/services/` 与 `lib/models/` 均不引用它）。契约见「数据流与关键模式」的背景图一节
-- **Models**: `lib/models/` (34 个文件)
+  - `event_label_style_provider.dart` → `EventLabelStyleProvider` — 事件名显示偏好（`app_event_label_style_v1`，默认两行），**本机设置、独立于身份、不进同步或备份**；只决定 `EventLabelText` 渲染 1 行还是 2 行，名字被截断时靠长按（手机）/ 悬停（桌面）看全名。设置入口是 `EventLabelSettingsScreen`
+- **Models**: `lib/models/` (36 个文件)
   - 时间记录：`TimeSlot`, `Category`, `CalendarBlock`, `ScheduleTemplate`, `VoiceScheduleDraft`, `ScheduleSyncProgress`
   - 打卡系统：`CheckInGoal`, `CheckInRecord`, `CheckInDocument`, `CheckInViewFilter`
   - 目标系统：`Target`、`TargetProgress` / `TargetPeriodRange`（`target_progress.dart`，统一进度计算的结果模型）
@@ -46,11 +47,11 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
   - AI 复盘：`DailyReviewChatMessage`, `DailyReviewChatSession`
   - 提醒：`DiaryReminderSettings` / `DiaryReminderIssue` / `DiaryReminderStatus`（`diary_reminder.dart`）、`CheckInReminderSettings` / `CheckInReminderResult`（`check_in_reminder.dart`）
   - 用户/身份：`GoogleCalendarUser`, `KnownGoogleUsers`（手动/Google 双身份模式，见 `AppIdentityService`）
-  - 导航/桌面偏好：`MainTabId`（`main_tab_id.dart`）、`DesktopShortcutActionType` / `DesktopKeyBinding`（`desktop_shortcut.dart`）
+  - 导航/桌面偏好：`MainTabId`（`main_tab_id.dart`）、`DesktopShortcutActionType` / `DesktopKeyBinding`（`desktop_shortcut.dart`）、`EventLabelStyle`（`event_label_style.dart`，事件名两行/单行，带稳定 `id` 与 `maxLines`）
   - 搜索/同步/日志：`SearchRecordEntry` / `SearchRecordGroup`, `GlobalSearchResult`（含 `GlobalSearchContentType` / `GlobalSearchIdentityFilter`）, `RemoteSyncPlatform`, `PendingSyncState`, `SyncModuleState`（含 `SyncModule` / `SyncModuleStatus`）, `AppLogEntry`, `OnThisDayEntry`
   - 分类生命周期：`DeletedEventRelation`（已删除事件的父子关系，仅本地持久化，见"数据流与关键模式"）
   - 工具：`CoordTransform`
-- **Screens**: `lib/screens/` (26 个) — `MainScreen`, `HomeScreen`, `DiaryScreen`, `TravelScreen`, `CheckInScreen`, `TargetScreen`, `ProfileScreen`, plus `DailyReviewScreen`, `WordCloudScreen`, `EventDetailScreen`, `TargetDetailScreen`, `AddTargetScreen`, `GlobalSearchScreen`, `GlobalSearchDetailScreen`, `DiarySearchScreen`, `AddCheckInGoalScreen`, `CheckInDetailScreen`, `CheckInArchiveScreen`, `CheckInMapScreen` (flutter_map 地图), `SyncCenterScreen`, `AppLogScreen`, `OnThisDayScreen`, `WakeUpHistoryScreen` (起床历史), `MainTabSettingsScreen` (底部标签设置), `DesktopLayoutSettingsScreen` (桌面布局设置), `DesktopShortcutSettingsScreen` (快捷键设置)
+- **Screens**: `lib/screens/` (27 个) — `MainScreen`, `HomeScreen`, `DiaryScreen`, `TravelScreen`, `CheckInScreen`, `TargetScreen`, `ProfileScreen`, plus `DailyReviewScreen`, `WordCloudScreen`, `EventDetailScreen`, `TargetDetailScreen`, `AddTargetScreen`, `GlobalSearchScreen`, `GlobalSearchDetailScreen`, `DiarySearchScreen`, `AddCheckInGoalScreen`, `CheckInDetailScreen`, `CheckInArchiveScreen`, `CheckInMapScreen` (flutter_map 地图), `SyncCenterScreen`, `AppLogScreen`, `OnThisDayScreen`, `WakeUpHistoryScreen` (起床历史), `MainTabSettingsScreen` (底部标签设置), `DesktopLayoutSettingsScreen` (桌面布局设置), `DesktopShortcutSettingsScreen` (快捷键设置), `EventLabelSettingsScreen` (事件名显示设置，从「我的 → 设置」进入)
 - **Services**: `lib/services/` (66 个文件)，主要板块：
   - **Google 身份 & 日历**：`GoogleCalendarService` (OAuth 2.0 + 事件同步)、`calendarEventToBlock`（`google_calendar_event_parser.dart`）、`HomeWidgetService` (Android 桌面小组件)、`HomeWidgetActionRouter` (小组件深链接路由)、`AppIdentityService` (手动/Google 双身份)、`AppUserIdentityStore` (身份信息本地存储)、`GoogleSessionStore`
   - **Git 同步（Gitee/GitHub 双平台）**：`GitHubContentsApi`、`GiteeContentsApi`、`contents_api_common.dart`（`ContentsTreeEntry` / `ContentsDirectoryResult` 等公共类型）、`DiaryGitHubService`/`DiaryGiteeService`、`DiarySyncService` (列表/拉取/推送编排)、`TravelGitHubService`/`TravelGiteeService`、`CheckInGitHubService`/`CheckInGiteeService`、`PendingGoogleDaySyncResult`（待同步状态）
@@ -66,14 +67,15 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
   - **提醒（仅 Android）**：`ReminderPlatform`（插件全局只初始化一次 + 时区 + 按 payload 分发点击路由）、`ReminderBackend`（插件薄封装）、`DiaryReminderService`（每天固定时间提醒写日记，单一实例）、`CheckInReminderService`（每个打卡目标一份，多实例）、`DiaryReminderDiagnostics`（把原生触发事件导入运行日志）。原生埋点在本地 fork 里，见 `third_party/flutter_local_notifications/FORK.md`
   - **工具**：`DataBackupService` (JSON 导入导出)、`OnThisDayService` (当年今日回顾)、`UpdateService`、`calendar_slot_refresh.dart`（`shouldClearCalendarSlotForRefresh`）、`WindowsLegacyPreferencesMigration`
   - 各数据域有对应的 `*_local_store.dart` 本地存储封装
-- **Widgets**: `lib/widgets/` (32 个) — `DatePickerPanel`, `TemplateBar`, `TimeGrid`, `BrushModeCard` (刷子模式)、`CalendarSyncStatusBadge`, `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, `DesktopShortcutHost` (桌面快捷键)、`DailyReviewChatSheet`, `TargetStatsSection`, `showTimeWheelSheet` (时/分滚轮面板，替代 `showTimePicker`)、`BackgroundImageLayer` / `BackgroundImagePreview` (背景图：全窗口壁纸层 + 设置预览)、OnThisDay 相关组件 (`showOnThisDaySheet`, `OnThisDayYearCard`)、打卡照片与地图相关组件 (`CheckInPhotoSheet`, `CheckInPhotoThumb`, `CheckInPhotoViewer`, `CheckInMapPreview`)、导航组件 (`MainTabNavigation`, `MainTabActivity`)、目标组件 (`DesktopTargetCard`, `TargetCalendarDay` 目标月历、`TargetDayRefresh`, `TargetProgressIndicator`)、出行桌面组件 (`TravelDesktopCalendar`, `TravelRecordTable` / `TravelMonthlyTable`, `TravelDateDetails`)、起床组件 (`WakeUpCard`, `WakeUpChart`)、颜色选择 (`ColorPickerPanel`, `showThemeColorSheet`)
-- **Utils**: `lib/utils/` (9 个) — `adaptive` (平台自适应)、`calendar_time_range`、`desktop_selection`、`local_day_range`、`platform_features` (按平台开关功能)、`schedule_view_dates`、`time_slot_segment`、`diary_remote_path_utils` (远端日记文件名里的日期解析与排序)、`map_tile_config` (地图瓦片配置)
+- **Widgets**: `lib/widgets/` (34 个) — `DatePickerPanel`, `TemplateBar`, `TimeGrid`, `BrushModeCard` (刷子模式)、`InitializationFailureBanner` (本地数据初始化失败时置顶的横幅)、`CalendarSyncStatusBadge`, `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, `DesktopShortcutHost` (桌面快捷键)、`DailyReviewChatSheet`, `TargetStatsSection`, `showTimeWheelSheet` (时/分滚轮面板，替代 `showTimePicker`)、`BackgroundImageLayer` / `BackgroundImagePreview` (背景图：全窗口壁纸层 + 设置预览)、OnThisDay 相关组件 (`showOnThisDaySheet`, `OnThisDayYearCard`)、打卡照片与地图相关组件 (`CheckInPhotoSheet`, `CheckInPhotoThumb`, `CheckInPhotoViewer`, `CheckInMapPreview`)、导航组件 (`MainTabNavigation`, `MainTabActivity`)、目标组件 (`DesktopTargetCard`, `TargetCalendarDay` 目标月历、`TargetDayRefresh`, `TargetProgressIndicator`)、出行桌面组件 (`TravelDesktopCalendar`, `TravelRecordTable` / `TravelMonthlyTable`, `TravelDateDetails`)、起床组件 (`WakeUpCard`, `WakeUpChart`)、颜色选择 (`ColorPickerPanel`, `showThemeColorSheet`)、事件名文本 (`EventLabelText`：按 `EventLabelStyle` 渲染 1/2 行，只在真被省略时才挂 Tooltip，手机长按 / 桌面悬停看全名)
+- **Utils**: `lib/utils/` (10 个) — `adaptive` (平台自适应)、`calendar_time_range`、`desktop_selection`、`local_day_range`、`platform_features` (按平台开关功能)、`schedule_view_dates`、`time_block_resize` (拖动时间块边界调时长的纯函数)、`time_slot_segment`、`diary_remote_path_utils` (远端日记文件名里的日期解析与排序)、`map_tile_config` (地图瓦片配置)
 - **Theme**: `lib/theme/` — `app_tokens.dart` (间距/圆角/控件高度/文字层级)、`app_theme.dart` (`ColorScheme` + `AppSurfaces` 表面层级扩展 + `AppWallpaperTheme` 壁纸扩展 + `context.wallpaperFill()`/`adaptSemanticFill()` + 全套组件主题)、`app_semantic_colors.dart` (身份色/分类色/图表色/奖牌色/状态色白名单)、`background_image_contrast.dart` (`BackgroundImageContrast` 背景图对比度与 sRGB 逐通道合成)。规范见 `docs/design-system.md`
 - **Config**: `lib/config/` — API keys and service configs (`.gitignore`d，**无 .example.dart 模板**，结构需直接查看引用方代码)
 
 ## 数据流与关键模式
 
 - **时间粒度**：全天 144 个 10 分钟槽位 (`hour=0..23`, `minute10=0..5`)
+- **空槽位兜底**：`slotsForDate` 在初始化失败或身份 / 覆盖事务进行中会返回**空列表**（`time_provider.dart:1901-1903`），`TimeGrid` 遇到长度不足的列表只画空行、绝不下标取槽位；失败原因由首页 `InitializationFailureBanner`（顶部横幅 + 查看日志）说明。删掉这条兜底，初始化失败会直接红屏而不是提示
 - **持久化分层**：
   - 时间块/分类/目标/模板 → `SharedPreferences`（JSON 序列化）
   - 敏感 Token → `FlutterSecureStorage`
@@ -182,6 +184,7 @@ scripts/installer.iss              # Inno Setup 6.3+ 打 Windows 安装包（上
 - **Android 构建需要 JDK 17**（Temurin）。Gradle 版本在 `android/gradle/wrapper/gradle-wrapper.properties` 固定为 8.14，它无法在 JDK 25 下运行——用系统默认的 JDK 25 会构建失败
 - `flutter.sdk` / `sdk.dir` 写在 `android/local.properties`（本机绝对路径，勿提交改动）
 - 升级 Flutter 要在 SDK 目录里执行 `flutter upgrade`，在项目目录直接跑会刷新项目的 `pubspec.lock`
+- **macOS 端刻意关掉了 Impeller**：`macos/Runner/Info.plist` 里 `FLTEnableImpeller=false`，退回 Skia。原因是 Flutter 3.47 起 macOS 默认 Impeller + SDF 文字，会偶发字体 / 图标缺字形（显示成方框，重启才恢复）。这是临时规避，**不要当成遗留调试开关清掉**，等上游修复后再删
 - **iOS（仅 macOS + Xcode）**：
   - Xcode 必须装 iOS 平台组件：`xcodebuild -downloadPlatform iOS`。缺了 xcodebuild 会报 `iOS xx is not installed`，**连「Any iOS Device」都解析不出来**，`flutter build ios` 直接失败——这与工程无关，别去改项目
   - 真机三步：**配对电脑**（`xcrun devicectl manage pair --device <id>`，或 Xcode → Window → Devices）→ 手机开**开发者模式**（设置 → 隐私与安全性 → 开发者模式，需重启）→ **信任开发者证书**（设置 → 通用 → VPN 与设备管理；首次安装后必须手动信任）
@@ -277,7 +280,7 @@ Never commit them.
 
 ## Testing
 
-- `test/` 有 103 个 dart 测试文件（另有 `test/support/` 下 3 个共用 Fake）+ 3 个 bash 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`、`publish_android_release_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集）+ 1 个 PowerShell 测试（`publish_windows_release_script_test.ps1`，macOS/Linux 用 `pwsh` 运行；不联网、不构建、不发布），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
+- `test/` 有 108 个 dart 测试文件（另有 `test/support/` 下 3 个共用 Fake）+ 3 个 bash 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`、`publish_android_release_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集）+ 1 个 PowerShell 测试（`publish_windows_release_script_test.ps1`，macOS/Linux 用 `pwsh` 运行；不联网、不构建、不发布），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
 - `test/background_image_contrast_test.dart` / `background_image_provider_test.dart` — 背景图对比度契约与 Provider 状态（不透明度只在 commit 时落盘、启动清失效路径、超限/取消属正常结果）
 - `test/visual_system_test.dart` — 视觉系统守护测试：对比度计算、主题一致性、令牌使用约束（改 `lib/theme/` 或页面配色时必跑）
 - `test/widget_test.dart` — smoke test + platform channel mock 模板：`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道、`tester.runAsync` 真实 IO。新写 widget 测试可参照此文件搭建环境
@@ -295,7 +298,7 @@ Never commit them.
 - `test/desktop_layout_provider_test.dart` / `test/desktop_layout_settings_test.dart` — 桌面布局与宽度持久化、损坏恢复、保存失败与并发不丢设置；`main_screen_lazy_loading_test.dart` 覆盖两种导航切换/跨断点保活、快捷键和设置入口，`brush_mode_test.dart` 覆盖事件栏拖宽/自动分列/跨列排序、调宽后的刷子归属与方向键微调
 - `test/diary_reminder_service_test.dart` / `diary_reminder_diagnostics_test.dart` / `diary_reminder_drawer_test.dart` / `time_wheel_sheet_test.dart` — 写日记提醒的排程、原生事件导入、抽屉 UI 与滚轮时间面板
 - `test/check_in_reminder_service_test.dart` / `check_in_reminder_ui_test.dart` — 打卡提醒的多实例排程与编辑页入口
-- 其他按模块覆盖的测试文件：`desktop_shortcut_provider_test.dart` / `desktop_shortcut_settings_test.dart` / `desktop_shortcuts_test.dart` / `desktop_platform_test.dart`（桌面快捷键与平台适配）、`main_screen_lifecycle_test.dart`（应用生命周期）、`schedule_overwrite_test.dart` / `schedule_background_refresh_test.dart` / `schedule_bad_data_guard_test.dart` / `schedule_merge_test.dart`（日程覆盖、后台刷新、坏格式与合并）、`travel_desktop_ui_test.dart`（出行桌面 UI）、`diary_sync_service_test.dart`（日记同步编排）、`category_document_merge_test.dart` / `target_document_merge_test.dart`（分类/目标文档合并）、`check_in_photo_security_test.dart` / `privacy_boundary_test.dart`（照片与隐私边界）、`deserialization_tolerance_test.dart` / `windows_legacy_preferences_migration_test.dart`（反序列化容错与旧偏好迁移）
+- 其他按模块覆盖的测试文件：`desktop_shortcut_provider_test.dart` / `desktop_shortcut_settings_test.dart` / `desktop_shortcuts_test.dart` / `desktop_platform_test.dart`（桌面快捷键与平台适配）、`event_label_style_test.dart`（默认两行、切换后落盘、脏数据回落、`EventLabelText` 截断才挂 Tooltip、时间网格接入偏好）、`initialization_failure_banner_test.dart`（初始化失败的首页横幅：原因文案、壁纸不透明度、窄屏大字、点进日志页、成功时不渲染）、`main_screen_lifecycle_test.dart`（应用生命周期）、`schedule_overwrite_test.dart` / `schedule_background_refresh_test.dart` / `schedule_bad_data_guard_test.dart` / `schedule_merge_test.dart`（日程覆盖、后台刷新、坏格式与合并）、`travel_desktop_ui_test.dart`（出行桌面 UI）、`diary_sync_service_test.dart`（日记同步编排）、`category_document_merge_test.dart` / `target_document_merge_test.dart`（分类/目标文档合并）、`check_in_photo_security_test.dart` / `privacy_boundary_test.dart`（照片与隐私边界）、`deserialization_tolerance_test.dart` / `windows_legacy_preferences_migration_test.dart`（反序列化容错与旧偏好迁移）
 - 写提醒相关的 widget 测试要注意：抽屉是长 `ListView`，懒构建会让折叠线以下的条目根本不挂载，需要把测试视口调高；另外 `AppIdentityService.load()` 每次都会重读偏好，测试里的身份必须放在偏好键 `schedule_user_kind` 里，靠 `adoptManualKind` 设进去会被覆盖
 - 测滚轮用 `tester.drag(finder, Offset(0, -44))` 拖动一格；换主题重跑时**必须先把面板关掉**，否则 `pumpWidget` 会复用 Navigator 状态，上一轮的弹层还在、下一次点击落不到按钮上
 - 无 CI 流程配置

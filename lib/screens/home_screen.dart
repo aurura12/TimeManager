@@ -22,9 +22,11 @@ import '../widgets/brush_mode_card.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/event_label_text.dart';
+import '../widgets/initialization_failure_banner.dart';
 import '../widgets/template_bar.dart';
 import '../widgets/time_grid.dart';
 import '../widgets/voice_schedule_sheet.dart';
+import 'app_log_screen.dart';
 import 'global_search_screen.dart';
 import 'desktop_shortcut_settings_screen.dart';
 import '../models/global_search_result.dart';
@@ -362,6 +364,14 @@ class HomeScreenState extends State<HomeScreen> {
         context.select<TimeProvider, bool>((p) => p.hasPendingSync);
     final hasDetailedScheduleProgress = context
         .select<TimeProvider, bool>((p) => p.scheduleSyncProgress != null);
+    // 初始化失败后所有编辑都会静默变成 no-op，必须在首页明说
+    final initFailure =
+        context.select<TimeProvider, ({bool failed, String? message})>(
+      (p) => (
+        failed: p.hasInitializationFailure,
+        message: p.initializationFailureMessage,
+      ),
+    );
     final colorScheme = Theme.of(context).colorScheme;
     final surfaces = AppSurfaces.of(context);
     final desktopLayout = context.watch<DesktopLayoutProvider?>();
@@ -385,6 +395,15 @@ class HomeScreenState extends State<HomeScreen> {
         children: [
           Column(
             children: [
+              if (initFailure.failed)
+                InitializationFailureBanner(
+                  message: initFailure.message,
+                  onViewLogs: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const AppLogScreen(),
+                    ),
+                  ),
+                ),
               Expanded(
                 child: LayoutBuilder(builder: (context, constraints) {
                   final resizable = isDesktopPlatform && desktopLayout != null;

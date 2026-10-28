@@ -485,6 +485,29 @@ class _TimeGridState extends State<TimeGrid> {
     final columnWidth = rowWidth / 6;
     final session = _resize;
 
+    // 数据未就绪时（初始化失败、身份/覆盖事务进行中）Provider 会给出空列表，
+    // 这里只画空行：按下标取槽位会越界崩成红屏，而"为什么是空的"由首页横幅说明。
+    if (daySlots.length < hour * 6 + 6) {
+      return Container(
+        height: AppSizes.gridRow,
+        padding: const EdgeInsets.symmetric(vertical: 1),
+        child: Row(
+          children: List.generate(
+            6,
+            (_) => Expanded(
+              child: Container(
+                margin: const EdgeInsets.all(1),
+                decoration: BoxDecoration(
+                  color: emptyCellColor,
+                  borderRadius: AppRadius.gridAll,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Container(
       height: AppSizes.gridRow,
       padding: const EdgeInsets.symmetric(vertical: 1),
