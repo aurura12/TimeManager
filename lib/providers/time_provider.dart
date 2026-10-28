@@ -1503,6 +1503,16 @@ class TimeProvider with ChangeNotifier {
   bool get hasInitializationFailure => _initializationFailed;
   String? get initializationFailureMessage => _initializationFailureMessage;
 
+  /// 最近一次落盘是否失败（只在会有界面反馈的状态下置位，见
+  /// [_shouldReportLocalSaveFailure]）。失败时脏标记仍然保留，下一次编辑会重试；
+  /// 但用户如果就此退出，最后几次修改会丢，所以要主动提示。
+  static const String _localSaveFailureText = '本地数据保存失败，最近的修改可能丢失';
+
+  bool _localSaveFailed = false;
+  String? _localSaveFailureMessage;
+  bool get hasLocalSaveFailure => _localSaveFailed;
+  String? get localSaveFailureMessage => _localSaveFailureMessage;
+
   /// 用户在 App 内删除的 Google 日历导入（按日期），不再自动拉回
   final Map<String, Set<String>> _ignoredCalendarImports = {};
 
@@ -8248,6 +8258,35 @@ class TimeProvider with ChangeNotifier {
     );
   }
 
+  /// 只有本地存储真的不可写时才值得打扰用户：初始化失败、身份切换、覆盖事务
+  /// 都会让保存返回 false，但那是既定状态，不是写盘失败。
+  bool _shouldReportLocalSaveFailure() =>
+      !_isDisposed &&
+      _isScheduleReady &&
+      !_initializationFailed &&
+      !_isSchedulePersistenceBlocked &&
+      !_scheduleOverwriteInProgress;
+
+  void _markLocalSaveFailed(String message) {
+    if (_isDisposed) return;
+    final wasFailed = _localSaveFailed;
+    _localSaveFailed = true;
+    _localSaveFailureMessage = message;
+    if (!wasFailed) notifyListeners();
+  }
+
+  void _clearLocalSaveFailure() {
+    if (_isDisposed || !_localSaveFailed) return;
+    _localSaveFailed = false;
+    _localSaveFailureMessage = null;
+    notifyListeners();
+  }
+
+  /// 「重试保存」入口：立刻把还欠着的改动再写一次。
+  ///
+  /// 失败时脏标记保留，成功后会广播并让横幅消失。
+  Future<bool> retryLocalSave() => _saveData();
+
   Future<bool> _saveData({
     _ScheduleSaveSnapshot? snapshot,
     _ScheduleSaveMode mode = _ScheduleSaveMode.normal,
@@ -8281,6 +8320,11 @@ class TimeProvider with ChangeNotifier {
     if (!canPersist()) return false;
     if (_saveDataOverride != null) {
       final saved = await _saveDataOverride!();
+      if (saved) {
+        _clearLocalSaveFailure();
+      } else if (_shouldReportLocalSaveFailure()) {
+        _markLocalSaveFailed(_localSaveFailureText);
+      }
       return saved && canPersist();
     }
     final previous = _ongoingSave;
@@ -8299,9 +8343,18 @@ class TimeProvider with ChangeNotifier {
         );
     _ongoingSave = save;
     try {
-      return await save;
+      final saved = await save;
+      if (saved) {
+        _clearLocalSaveFailure();
+      } else if (_shouldReportLocalSaveFailure()) {
+        _markLocalSaveFailed(_localSaveFailureText);
+      }
+      return saved;
     } catch (e, stackTrace) {
       _recordAppError('本地数据保存失败', e, stackTrace);
+      if (_shouldReportLocalSaveFailure()) {
+        _markLocalSaveFailed(_localSaveFailureText);
+      }
       return false;
     } finally {
       if (_ongoingSave == save) _ongoingSave = null;

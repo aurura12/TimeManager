@@ -21,11 +21,13 @@ import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/adaptive.dart';
 import '../utils/platform_features.dart';
+import '../widgets/data_failure_banner.dart';
 import '../widgets/main_tab_activity.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/main_tab_navigation.dart';
 import '../widgets/on_this_day_sheet.dart';
 import '../widgets/schedule_sync_progress_banner.dart';
+import 'app_log_screen.dart';
 import 'check_in_screen.dart';
 import 'diary_screen.dart';
 import 'home_screen.dart';
@@ -384,6 +386,16 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final scheduleSyncProgress =
         context.select<TimeProvider, ScheduleSyncProgress?>(
             (p) => p.scheduleSyncProgress);
+    // 数据层故障统一挂在壳层：底部标签允许隐藏「记录」页，横幅放在记录页里会看不到
+    final failure = context.select<TimeProvider,
+        ({bool initFailed, String? initMessage, bool saveFailed, String? saveMessage})>(
+      (p) => (
+        initFailed: p.hasInitializationFailure,
+        initMessage: p.initializationFailureMessage,
+        saveFailed: p.hasLocalSaveFailure,
+        saveMessage: p.localSaveFailureMessage,
+      ),
+    );
     return LayoutBuilder(builder: (context, constraints) {
       final useSideNavigation = isWideTablet(context) ||
           (isDesktopPlatform &&
@@ -436,10 +448,37 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   : null,
             ),
             Expanded(
-              child: _buildContentStack(
-                options: options,
-                safeIndex: selectedTab.index,
-                progress: scheduleSyncProgress,
+              // 故障横幅放在壳层内容区顶部：底部标签可以不显示「记录」页，
+              // 挂在记录页里用户可能永远看不到。
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (failure.initFailed)
+                    DataFailureBanner(
+                      title: '本地数据未能加载，编辑已暂停',
+                      message: failure.initMessage,
+                      actionLabel: '查看日志',
+                      onAction: () => Navigator.of(context).push<void>(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const AppLogScreen(),
+                        ),
+                      ),
+                    )
+                  else if (failure.saveFailed)
+                    DataFailureBanner(
+                      title: '本地保存失败，最近的修改可能丢失',
+                      message: failure.saveMessage,
+                      actionLabel: '重试保存',
+                      onAction: () => _retryLocalSave(_timeProvider),
+                    ),
+                  Expanded(
+                    child: _buildContentStack(
+                      options: options,
+                      safeIndex: selectedTab.index,
+                      progress: scheduleSyncProgress,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -470,6 +509,15 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             : null,
       );
     });
+  }
+
+  /// 「重试保存」：失败时给一次明确反馈，成功则由 Provider 广播让横幅消失。
+  Future<void> _retryLocalSave(TimeProvider provider) async {
+    final saved = await provider.retryLocalSave();
+    if (saved || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('仍然无法保存，请检查存储空间后重试')),
+    );
   }
 
   Widget _buildContentStack({

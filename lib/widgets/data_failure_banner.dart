@@ -4,24 +4,26 @@ import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 
-/// 本地数据初始化失败时置顶显示的横幅。
+/// 数据层故障的置顶横幅（初始化失败 / 本地保存失败）。
 ///
-/// 失败后 `TimeProvider` 会把所有编辑变成 no-op，界面却和「这一天还空着」
-/// 完全一样，用户只会觉得应用坏了。这条横幅把失败原因和日志入口直接摆在首页，
-/// 并且**不提供关闭**——状态没恢复之前关掉，等于继续让用户白点。
-class InitializationFailureBanner extends StatelessWidget {
-  const InitializationFailureBanner({
+/// 这两类故障在界面上都表现为「怎么点都没反应」或「改完就没了」，如果不主动说出来，
+/// 用户只会以为应用坏了。横幅**不提供关闭**——状态没恢复之前关掉，等于继续让用户白点。
+class DataFailureBanner extends StatelessWidget {
+  const DataFailureBanner({
     super.key,
-    this.message,
-    this.onViewLogs,
+    required this.title,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
   });
 
-  /// Provider 给出的失败原因；为空时用通用文案。
+  final String title;
+
+  /// 具体原因；为空时用通用文案。
   final String? message;
 
-  final VoidCallback? onViewLogs;
-
-  static const String title = '本地数据未能加载，编辑已暂停';
+  final String? actionLabel;
+  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -35,6 +37,7 @@ class InitializationFailureBanner extends StatelessWidget {
     final detail = (message?.trim().isNotEmpty ?? false)
         ? message!.trim()
         : '请重启应用后再试；若反复出现，请查看运行日志';
+    final showAction = actionLabel != null && onAction != null;
 
     return Semantics(
       container: true,
@@ -81,11 +84,11 @@ class InitializationFailureBanner extends StatelessWidget {
                 ],
               ),
             ),
-            if (onViewLogs != null)
+            if (showAction)
               TextButton(
-                onPressed: onViewLogs,
+                onPressed: onAction,
                 style: TextButton.styleFrom(foregroundColor: accent),
-                child: const Text('查看日志'),
+                child: Text(actionLabel!),
               ),
           ],
         ),
