@@ -14,7 +14,15 @@ import 'package:time_manager/providers/main_tab_provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/screens/main_screen.dart';
+import 'package:time_manager/models/check_in_document.dart';
+import 'package:time_manager/models/check_in_goal.dart';
+import 'package:time_manager/models/diary_kind.dart';
+import 'package:time_manager/services/app_identity_service.dart';
+import 'package:time_manager/services/check_in_local_store.dart';
+import 'package:time_manager/services/check_in_sync_service.dart';
+import 'package:time_manager/services/diary_local_store.dart';
 import 'package:time_manager/services/on_this_day_service.dart';
+import 'package:time_manager/services/travel_local_store.dart';
 import 'package:time_manager/services/schedule_gitee_service.dart';
 import 'package:time_manager/services/schedule_sync_dependencies.dart';
 import 'package:time_manager/theme/app_theme.dart';
@@ -74,6 +82,17 @@ class _FakeGoogleSignInPlatform extends GoogleSignInPlatform {
 }
 
 /// 只让 `daily_slots` 写失败，其余偏好正常——模拟"磁盘满"时最先写丢的是时间块。
+/// 所有写入都失败，但读取正常——模拟「磁盘满」时各模块的本地保存结果。
+class _FailingWritesStore extends InMemorySharedPreferencesStore {
+  // ignore: use_super_parameters
+  _FailingWritesStore(Map<String, Object> data) : super.withData(data);
+
+  @override
+  Future<bool> setValue(String valueType, String key, Object value) async {
+    return false;
+  }
+}
+
 class _FailingSlotWriteStore extends InMemorySharedPreferencesStore {
   // ignore: use_super_parameters
   _FailingSlotWriteStore(Map<String, Object> data) : super.withData(data);
@@ -281,6 +300,68 @@ void main() {
 
     expect(provider.hasLocalSaveFailure, isTrue);
     expect(store.slotWriteAttempts, greaterThan(0));
+  });
+
+  test('出行 / 打卡 / 日记的本地写入失败会返回 false', () async {
+    SharedPreferences.setMockInitialValues(const {});
+    SharedPreferencesStorePlatform.instance = _FailingWritesStore(const {});
+    addTearDown(() => SharedPreferences.setMockInitialValues(const {}));
+
+    expect(await TravelLocalStore.saveDraft('出行记录'), isFalse);
+    expect(await CheckInLocalStore.saveDraft(CheckInDocument.empty), isFalse);
+    expect(
+      await DiaryLocalStore.saveDraftBody(
+        DiaryKind.g,
+        DateTime(2026, 10, 28),
+        '正文',
+      ),
+      isFalse,
+    );
+    expect(
+      await DiaryLocalStore.saveDraftStartedAt(
+        DiaryKind.g,
+        DateTime(2026, 10, 28),
+        DateTime(2026, 10, 28, 9),
+      ),
+      isFalse,
+    );
+  });
+
+  test('打卡目标本地保存失败时返回失败结果，不报告同步成功', () async {
+    _installPluginMocks();
+    AppIdentityService.resetForTesting();
+    addTearDown(AppIdentityService.resetForTesting);
+    addTearDown(() => SharedPreferences.setMockInitialValues(const {}));
+
+    final values = <String, Object>{
+      AppIdentityService.modeKey: 'manual',
+      AppIdentityService.legacyScheduleUserKey: DiaryKind.g.code,
+    };
+    SharedPreferences.setMockInitialValues(values);
+    SharedPreferencesStorePlatform.instance = _FailingWritesStore({
+      for (final entry in values.entries) 'flutter.${entry.key}': entry.value,
+    });
+
+    final service = CheckInSyncService(tokenLoader: () async => null);
+    await service.initialize(silent: true);
+    final result = await service.saveGoal(
+      CheckInGoal(
+        id: 'goal-1',
+        ownerId: '',
+        ownerEmail: '',
+        name: '运动',
+        description: '',
+        color: const Color(0xFF000000),
+        icon: Icons.flag,
+        period: CheckInPeriod.daily,
+        targetCount: 1,
+        requirePhoto: false,
+        requireLocation: false,
+      ),
+    );
+
+    expect(result.success, isFalse);
+    expect(result.error, contains('本地保存失败'));
   });
 
   testWidgets('真实写盘失败时壳层显示横幅，恢复后重试自动消失', (tester) async {

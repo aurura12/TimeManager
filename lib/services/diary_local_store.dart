@@ -131,10 +131,11 @@ class DiaryLocalStore {
     return prefs.getString(_draftBodyKey(kind, date));
   }
 
-  static Future<void> saveDraftBody(
+  /// 保存成功返回 true；写入失败（磁盘、权限等）返回 false，调用方必须提示用户。
+  static Future<bool> saveDraftBody(
       DiaryKind kind, DateTime date, String body) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_draftBodyKey(kind, date), body);
+    return prefs.setString(_draftBodyKey(kind, date), body);
   }
 
   static Future<DateTime?> loadDraftStartedAt(
@@ -145,10 +146,10 @@ class DiaryLocalStore {
     return DateTime.tryParse(raw);
   }
 
-  static Future<void> saveDraftStartedAt(
+  static Future<bool> saveDraftStartedAt(
       DiaryKind kind, DateTime date, DateTime startedAt) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
+    return prefs.setString(
       _draftStartKey(kind, date),
       startedAt.toIso8601String(),
     );

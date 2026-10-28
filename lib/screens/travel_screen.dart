@@ -191,8 +191,13 @@ class _TravelScreenState extends State<TravelScreen> {
     return confirmed == true;
   }
 
-  Future<void> _saveDraft() async {
-    await TravelLocalStore.saveDraft(_document.toMarkdown());
+  /// 落盘成功返回 true；失败时提示用户，避免「界面已改、重启回滚」。
+  Future<bool> _saveDraft() async {
+    final saved = await TravelLocalStore.saveDraft(_document.toMarkdown());
+    if (!saved && mounted) {
+      _showMessage('本地保存失败，请检查存储空间后重试');
+    }
+    return saved;
   }
 
   void _reportTravel(SyncOperationResult result, {String source = '出行页'}) {
@@ -272,7 +277,7 @@ class _TravelScreenState extends State<TravelScreen> {
       _selectedDate = normalizedDate;
       _calendarMonth = DateTime(normalizedDate.year, normalizedDate.month);
     });
-    await _saveDraft();
+    if (!await _saveDraft()) return false;
     _markTravelPending();
     return true;
   }
@@ -307,6 +312,10 @@ class _TravelScreenState extends State<TravelScreen> {
     );
     if (confirmed != true) return;
 
+    // 删除先只改内存，落盘失败时回滚，避免界面显示已删除、重启后又出现。
+    final previousDocument = _document;
+    final previousSelectedDate = _selectedDate;
+    final previousCalendarMonth = _calendarMonth;
     setState(() {
       _document = _document.deleteByDate(record.date);
       if (_selectedDateText() == record.dateKey) {
@@ -319,7 +328,16 @@ class _TravelScreenState extends State<TravelScreen> {
       }
     });
 
-    await _saveDraft();
+    if (!await _saveDraft()) {
+      if (mounted) {
+        setState(() {
+          _document = previousDocument;
+          _selectedDate = previousSelectedDate;
+          _calendarMonth = previousCalendarMonth;
+        });
+      }
+      return;
+    }
     _markTravelPending();
     await _pushToGitHub();
   }

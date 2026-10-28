@@ -8,8 +8,9 @@ class TravelLocalStore {
     return prefs.getString(_draftKey);
   }
 
-  static Future<void> saveDraft(String markdown) async {
+  /// 保存成功返回 true；写入失败（磁盘、权限等）返回 false，调用方必须提示用户。
+  static Future<bool> saveDraft(String markdown) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_draftKey, markdown);
+    return prefs.setString(_draftKey, markdown);
   }
 }

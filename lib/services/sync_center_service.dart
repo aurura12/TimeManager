@@ -177,7 +177,11 @@ class SyncCenterOperations {
 
     final outgoing = local.preparePush(remote);
     if (outgoing.toSyncPayload() == remote.toSyncPayload()) {
-      await TravelLocalStore.saveDraft(outgoing.toMarkdown());
+      if (!await TravelLocalStore.saveDraft(outgoing.toMarkdown())) {
+        return const SyncOperationResult.failed(
+          '出行记录已与远端一致，但本地保存失败，请检查存储空间后重试',
+        );
+      }
       return const SyncOperationResult.success(message: '出行记录已确认同步');
     }
     final push = await TravelGiteeService.pushFile(
@@ -192,7 +196,11 @@ class SyncCenterOperations {
         '出行同步失败：${push.error ?? '远端写入失败'}',
       );
     }
-    await TravelLocalStore.saveDraft(outgoing.toMarkdown());
+    if (!await TravelLocalStore.saveDraft(outgoing.toMarkdown())) {
+      return const SyncOperationResult.failed(
+        '远端已同步，但本地保存失败，请检查存储空间后重试',
+      );
+    }
     return const SyncOperationResult.success(message: '出行记录已同步');
   }
 

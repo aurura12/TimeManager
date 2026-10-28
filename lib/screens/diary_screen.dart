@@ -85,6 +85,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
   bool _lastContextPathAmbiguous = false;
   int _contextRequestId = 0;
   bool _dirtySinceContextLoaded = false;
+  bool _localSaveFailed = false;
   static const Duration _remotePathsTtl = Duration(minutes: 3);
   Set<String> _gDiaryDateKeys = {};
   Set<String> _jDiaryDateKeys = {};
@@ -396,16 +397,27 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return pending;
   }
 
-  Future<void> _saveDraftNow() async {
-    await DiaryLocalStore.saveDraftBody(
+  /// 落盘成功返回 true；失败时界面显示「本地保存失败」，切日期也会被拦下。
+  Future<bool> _saveDraftNow() async {
+    final bodySaved = await DiaryLocalStore.saveDraftBody(
       _kind,
       _selectedDate,
       _bodyController.text,
     );
+    var startedSaved = true;
     if (_startedAt != null) {
-      await DiaryLocalStore.saveDraftStartedAt(
+      startedSaved = await DiaryLocalStore.saveDraftStartedAt(
           _kind, _selectedDate, _startedAt!);
     }
+    final saved = bodySaved && startedSaved;
+    if (_localSaveFailed != !saved) {
+      if (mounted) {
+        setState(() => _localSaveFailed = !saved);
+      } else {
+        _localSaveFailed = !saved;
+      }
+    }
+    return saved;
   }
 
   void _onBodyChanged() {
@@ -443,7 +455,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
     DiaryKind? kind,
     DateTime? date,
   }) async {
-    await _saveDraftNow();
+    // 保存失败时不能切换：切走会把编辑框内容换成另一天的草稿，未落盘的文字就丢了。
+    if (!await _saveDraftNow()) {
+      _showMessage('本地保存失败，暂时无法切换日记，请检查存储空间');
+      return;
+    }
     _contextRequestId++;
     final requestId = _contextRequestId;
 
@@ -1134,6 +1150,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
   String get _diaryStatusText {
     if (_processing) return '正在同步…';
     if (_isReadOnlyContext) return '只读查看模式';
+    if (_localSaveFailed) return '本地保存失败，请重试';
     if (_bodyController.text.trim().isEmpty) return '今天还没有内容';
     if ((_token ?? '').trim().isEmpty) return '仅保存在本机';
     if (_dirtySinceContextLoaded) return '本地有未同步修改';
@@ -1143,6 +1160,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
   IconData get _diaryStatusIcon {
     if (_processing) return Icons.sync;
     if (_isReadOnlyContext) return Icons.visibility_outlined;
+    if (_localSaveFailed) return Icons.error_outline;
     if (_bodyController.text.trim().isEmpty) return Icons.edit_note_outlined;
     if ((_token ?? '').trim().isEmpty) return Icons.save_outlined;
     if (_dirtySinceContextLoaded) return Icons.edit_note_outlined;
@@ -1164,8 +1182,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   Widget _buildDiaryStatus(ColorScheme colorScheme) {
-    final detail =
-        _isReadOnlyContext ? '可刷新远端内容；切换回自己的分区后才能提交' : '输入内容会自动保存到本机';
+    final detail = _isReadOnlyContext
+        ? '可刷新远端内容；切换回自己的分区后才能提交'
+        : _localSaveFailed
+            ? '内容仍在编辑框里，确认存储空间后继续输入会自动重试'
+            : '输入内容会自动保存到本机';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
@@ -1178,7 +1199,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
           Icon(
             _diaryStatusIcon,
             size: 18,
-            color: colorScheme.primary,
+            color: _localSaveFailed ? colorScheme.error : colorScheme.primary,
           ),
           const SizedBox(width: 10),
           Expanded(

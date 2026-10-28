@@ -58,8 +58,14 @@ class CheckInSyncResult {
 class CheckInSyncService {
   static const _pendingPhotoCleanupKey = 'check_in_pending_photo_cleanup_v1';
 
-  CheckInSyncService({SyncStatusCoordinator? statusCoordinator})
-      : _statusCoordinator = statusCoordinator;
+  CheckInSyncService({
+    SyncStatusCoordinator? statusCoordinator,
+    Future<String?> Function()? tokenLoader,
+  })  : _statusCoordinator = statusCoordinator,
+        _tokenLoader = tokenLoader ?? DiaryLocalStore.loadToken;
+
+  /// 同步 Token 读取入口；测试可注入固定值，避免真实网络请求。
+  final Future<String?> Function() _tokenLoader;
 
   /// 全局同步状态中心。为空时只跳过状态上报（页面级测试等场景）。
   final SyncStatusCoordinator? _statusCoordinator;
@@ -78,6 +84,12 @@ class CheckInSyncService {
       onStarted?.call();
       return action();
     });
+  }
+
+  /// 本地落盘失败时返回统一的失败结果；成功返回 null。
+  Future<CheckInSyncResult?> _saveLocalOrFail() async {
+    if (await CheckInLocalStore.saveDraft(_document)) return null;
+    return CheckInSyncResult.fail('本地保存失败，请检查存储空间后重试');
   }
 
   CheckInDocument get document => _document;
@@ -193,7 +205,7 @@ class CheckInSyncService {
       final local = await CheckInLocalStore.loadDraft();
       if (local != null) _document = local;
 
-      final token = await DiaryLocalStore.loadToken();
+      final token = await _tokenLoader();
       if (token == null || token.isEmpty) {
         // 没有远端可比较时不要补时间戳；之后用户配置 token 后，远端可能已有
         // 比旧本地数据更新的目标，必须保留 updatedAt=0 让合并策略安全处理。
@@ -212,7 +224,9 @@ class CheckInSyncService {
               local == null ? remote : CheckInDocument.merge(local, remote);
           // 先合并，再给最终选中的旧目标补时间戳，避免陈旧本地目标覆盖远端新版本。
           _document = await _migrateLegacyGoalTimestamps(merged);
-          await CheckInLocalStore.saveDraft(_document);
+          if (!await CheckInLocalStore.saveDraft(_document)) {
+            _lastError = '本地保存失败，打卡数据可能无法在重启后保留';
+          }
         } catch (e) {
           _lastError = '解析远端打卡数据失败: $e';
         }
@@ -285,7 +299,8 @@ class CheckInSyncService {
 
         final remote = CheckInDocument.fromMarkdown(pull.content!);
         _document = CheckInDocument.merge(_document, remote);
-        await CheckInLocalStore.saveDraft(_document);
+        final saveFailure = await _saveLocalOrFail();
+        if (saveFailure != null) return saveFailure;
         return CheckInSyncResult.ok(_document);
       } catch (e) {
         return CheckInSyncResult.fail('拉取失败: $e');
@@ -448,7 +463,8 @@ class CheckInSyncService {
     // 变化而重复提交。远端不存在且本地为空时也无需创建空文件。
     if (pull.remoteDocument != null &&
         _document.toSyncPayload() == pull.remoteDocument!.toSyncPayload()) {
-      await CheckInLocalStore.saveDraft(_document);
+      final saveFailure = await _saveLocalOrFail();
+      if (saveFailure != null) return saveFailure;
       return CheckInSyncResult.ok(_document);
     }
 
@@ -465,7 +481,8 @@ class CheckInSyncService {
       return CheckInSyncResult.fail(push.error ?? '推送失败');
     }
 
-    await CheckInLocalStore.saveDraft(_document);
+    final saveFailure = await _saveLocalOrFail();
+    if (saveFailure != null) return saveFailure;
     return CheckInSyncResult.ok(_document);
   }
 
@@ -508,7 +525,8 @@ class CheckInSyncService {
         );
 
         _document = _document.upsertGoal(meta);
-        await CheckInLocalStore.saveDraft(_document);
+        final saveFailure = await _saveLocalOrFail();
+        if (saveFailure != null) return saveFailure;
         return await _pushToGitHubInternal();
       } catch (e) {
         return CheckInSyncResult.fail('保存失败: $e');
@@ -560,7 +578,8 @@ class CheckInSyncService {
             .toSet();
 
         _document = _document.tombstoneGoal(goal.id);
-        await CheckInLocalStore.saveDraft(_document);
+        final saveFailure = await _saveLocalOrFail();
+        if (saveFailure != null) return saveFailure;
 
         final push = await CheckInGiteeService.pushText(
           token: token,
@@ -641,7 +660,8 @@ class CheckInSyncService {
         _document = _document.tombstoneRecord(record.id);
 
         // Step 3: Save locally
-        await CheckInLocalStore.saveDraft(_document);
+        final saveFailure = await _saveLocalOrFail();
+        if (saveFailure != null) return saveFailure;
 
         // Step 4: Push updated document to Gitee. The document version check must
         // succeed before deleting the photo; otherwise a concurrent write could
@@ -788,7 +808,8 @@ class CheckInSyncService {
         );
 
         _document = _document.upsertRecord(record);
-        await CheckInLocalStore.saveDraft(_document);
+        final saveFailure = await _saveLocalOrFail();
+        if (saveFailure != null) return saveFailure;
 
         final metaResult = await _pushToGitHubInternal();
         return metaResult;
@@ -848,7 +869,7 @@ class CheckInSyncService {
   }
 
   Future<String?> _requireToken() async {
-    final token = await DiaryLocalStore.loadToken();
+    final token = await _tokenLoader();
     if (token == null || token.isEmpty) return null;
     return token;
   }

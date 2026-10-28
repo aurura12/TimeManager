@@ -5,9 +5,10 @@ import '../models/check_in_document.dart';
 class CheckInLocalStore {
   static const _draftKey = 'check_in_data_draft';
 
-  static Future<void> saveDraft(CheckInDocument document) async {
+  /// 保存成功返回 true；写入失败（磁盘、权限等）返回 false，调用方必须提示用户。
+  static Future<bool> saveDraft(CheckInDocument document) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_draftKey, document.toMarkdown());
+    return prefs.setString(_draftKey, document.toMarkdown());
   }
 
   static Future<CheckInDocument?> loadDraft() async {
