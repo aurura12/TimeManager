@@ -118,6 +118,9 @@ abstract final class AppSizes {
   /// 时间网格左侧时间轴宽度
   static const double gridTimeAxis = 55;
 
+  /// 「现在」小圆点标记的直径
+  static const double nowMarkerSize = 7;
+
   /// 时间块边缘拖拽热区（桌面鼠标）
   static const double gridResizeMouseEdge = 8;
 

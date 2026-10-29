@@ -15,6 +15,7 @@ import '../theme/app_tokens.dart';
 import '../utils/platform_features.dart';
 import '../utils/time_block_resize.dart';
 import '../utils/time_slot_segment.dart';
+import 'current_time_marker.dart';
 import 'event_label_text.dart';
 
 /// 时间网格的渲染与手势层。
@@ -48,6 +49,7 @@ class TimeGrid extends StatefulWidget {
     this.onBrushPointerCancel,
     this.readOnly = false,
     this.onResizeTimeBlock,
+    this.clock,
   });
 
   final GlobalKey gridKey;
@@ -80,6 +82,9 @@ class TimeGrid extends StatefulWidget {
 
   /// 拖拽边界提交回调；为 null 时不提供该能力
   final ValueChanged<TimeSlotResizeRequest>? onResizeTimeBlock;
+
+  /// 测试注入的时钟，用于「现在」标记。
+  final DateTime Function()? clock;
 
   bool get _handlesBrushGestures =>
       onBrushPointerDown != null ||
@@ -360,10 +365,6 @@ class _TimeGridState extends State<TimeGrid> {
           ),
         );
 
-        if (!widget._handlesBrushGestures && !widget.resizeEnabled) {
-          return grid;
-        }
-
         Widget result = grid;
         if (widget._handlesBrushGestures) {
           // 整列装一个 Listener：拖动跨越不同小时行不会丢手势，
@@ -395,7 +396,20 @@ class _TimeGridState extends State<TimeGrid> {
             child: result,
           );
         }
-        return result;
+        // 「现在」的标记叠在最上层，内部自己 IgnorePointer，不参与任何手势。
+        return Stack(
+          clipBehavior: Clip.hardEdge,
+          children: [
+            Positioned.fill(child: result),
+            Positioned.fill(
+              child: CurrentTimeMarker(
+                controller: widget.controller,
+                date: resolvedDate,
+                clock: widget.clock,
+              ),
+            ),
+          ],
+        );
       },
     );
   }

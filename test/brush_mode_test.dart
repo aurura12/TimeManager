@@ -157,7 +157,8 @@ Future<TimeProvider> _pumpHome(
       ],
       child: MaterialApp(
         theme: theme ?? AppTheme.light(),
-        home: const HomeScreen(),
+        // 固定到 00:10，让"滚到现在"落在顶部，测试里的 0/2/6 号槽位仍在视口内。
+        home: HomeScreen(clock: () => DateTime(2026, 1, 1, 0, 10)),
       ),
     ),
   );
@@ -205,12 +206,11 @@ _GridGeometry _gridGeometry(
   TimeProvider provider,
   int column,
 ) {
+  final grid = tester.widget<TimeGrid>(find.byType(TimeGrid).at(column));
   final rect = tester.getRect(find.byType(TimeGrid).at(column));
-  return _GridGeometry(
-    rect,
-    rect.width / 6,
-    provider.startHour * AppSizes.gridRow,
-  );
+  final offset =
+      grid.controller.hasClients ? grid.controller.offset : 0.0;
+  return _GridGeometry(rect, rect.width / 6, offset);
 }
 
 Offset _visiblePoint(_GridGeometry geometry, int index) {

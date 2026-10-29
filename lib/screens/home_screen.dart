@@ -30,6 +30,8 @@ import 'global_search_screen.dart';
 import 'desktop_shortcut_settings_screen.dart';
 import '../models/global_search_result.dart';
 import '../utils/desktop_selection.dart';
+import '../utils/local_day_range.dart';
+import '../utils/timeline_geometry.dart';
 
 /// Windows 三列视图下列头高度，与左侧时间标签占位共用，保证对齐。
 const double _kDayHeaderHeight = 40;
@@ -38,7 +40,10 @@ const List<String> _kWeekdayLabels = ['周一', '周二', '周三', '周四', '�
 enum _HomeToolbarAction { keyboardHelp, undo, redo, remoteView, sync }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, this.clock});
+
+  /// 测试注入的时钟；生产不传。
+  final DateTime Function()? clock;
 
   @override
   State<HomeScreen> createState() => HomeScreenState();
@@ -109,13 +114,8 @@ class HomeScreenState extends State<HomeScreen> {
     _observedDate = timeProvider.currentDate;
     timeProvider.addListener(_handleProviderDateChanged);
     _scrollController.addListener(_syncGridScroll);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final offset = timeProvider.startHour * 45.0;
-      _scrollController.jumpTo(offset);
-      if (_gridScrollController.hasClients) {
-        _gridScrollController.jumpTo(offset);
-      }
-    });
+    // 首帧先滚到「现在」，晚上打开不用再手动找位置。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToCurrentTime());
 
     // 监听同步状态并显示提示
     _syncSubscription = timeProvider.syncStatusStream.listen((message) {
@@ -151,6 +151,7 @@ class HomeScreenState extends State<HomeScreen> {
   void _handleProviderDateChanged() {
     final currentDate = _timeProvider.currentDate;
     if (_isSameDay(_observedDate, currentDate)) return;
+    final wasToday = isSameLocalDay(_observedDate, _now);
     _observedDate = currentDate;
     if (_selectionStart != null ||
         _selectionEnd != null ||
@@ -159,6 +160,39 @@ class HomeScreenState extends State<HomeScreen> {
         _isBrushPointerDown) {
       _leaveBrushAndClearSelection();
     }
+    // 从别的日期切回今天时补一次定位；切 Tab 不改日期，不会触发这里。
+    if (!wasToday && isSameLocalDay(currentDate, _now)) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _scrollToCurrentTime(animate: true));
+    }
+  }
+
+  DateTime get _now => (widget.clock ?? DateTime.now)();
+
+  /// 让「现在」落在大约视口上 1/3 处；时间轴跳转后网格由
+  /// [_syncGridScroll] 自动跟随，不要重复 jump 网格。
+  void _scrollToCurrentTime({bool animate = false}) {
+    if (!mounted || !_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    if (!position.hasViewportDimension || position.viewportDimension <= 0) {
+      return;
+    }
+    final target = timelineScrollOffsetForNow(
+      minutesOfDay: minutesOfDayOf(_now),
+      rowExtent: AppSizes.gridRow,
+      topPadding: AppSpacing.sm,
+      viewportExtent: position.viewportDimension,
+      maxScrollExtent: position.maxScrollExtent,
+    );
+    if (animate && (position.pixels - target).abs() > 1) {
+      unawaited(_scrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+      ));
+      return;
+    }
+    _scrollController.jumpTo(target);
   }
 
   void _syncGridScroll() {
@@ -179,8 +213,11 @@ class HomeScreenState extends State<HomeScreen> {
     // 注意：这里的 adjustedDy 需要根据整个滚动视图的偏移来计算
     double adjustedDy = localOffset.dy + _scrollController.offset;
 
-    double topPadding = 8.0;
-    int row = ((adjustedDy - topPadding) / 45).floor().clamp(0, 23);
+    final row = timelineRowAt(
+      adjustedDy,
+      rowExtent: AppSizes.gridRow,
+      topPadding: AppSpacing.sm,
+    );
 
     double gridWidth = box.size.width;
     int col = (localOffset.dx / (gridWidth / 6)).floor().clamp(0, 5);
@@ -437,11 +474,12 @@ class HomeScreenState extends State<HomeScreen> {
                                     const SizedBox(height: _kDayHeaderHeight),
                                   Expanded(
                                     child: ListView.builder(
+                                      key: const ValueKey('home-time-axis'),
                                       controller: _scrollController,
                                       padding: const EdgeInsets.symmetric(
-                                          vertical: 8),
+                                          vertical: AppSpacing.sm),
                                       itemCount: 24,
-                                      itemExtent: 45,
+                                      itemExtent: AppSizes.gridRow,
                                       itemBuilder: (context, h) =>
                                           _buildTimeLabelRow(h),
                                     ),
@@ -484,6 +522,7 @@ class HomeScreenState extends State<HomeScreen> {
                                           Expanded(
                                             child: _DayGrid(
                                               date: prevDate,
+                                              clock: widget.clock,
                                               brushMode: _isBrushMode,
                                               brushPreviewIndices:
                                                   _brushPreviewFor(prevDate),
@@ -526,6 +565,7 @@ class HomeScreenState extends State<HomeScreen> {
                                           Expanded(
                                             child: _DayGrid(
                                               date: currentDate,
+                                              clock: widget.clock,
                                               brushMode: _isBrushMode,
                                               brushPreviewIndices:
                                                   _brushPreviewFor(currentDate),
@@ -568,6 +608,7 @@ class HomeScreenState extends State<HomeScreen> {
                                           Expanded(
                                             child: _DayGrid(
                                               date: nextDate,
+                                              clock: widget.clock,
                                               brushMode: _isBrushMode,
                                               brushPreviewIndices:
                                                   _brushPreviewFor(nextDate),
@@ -612,6 +653,7 @@ class HomeScreenState extends State<HomeScreen> {
                               Expanded(
                                 child: TimeGrid(
                                   gridKey: _gridKey,
+                                  clock: widget.clock,
                                   controller: _gridScrollController,
                                   dragStartIndex: _selectionStart,
                                   dragEndIndex: _selectionEnd,
@@ -2703,6 +2745,9 @@ class _DayGrid extends StatefulWidget {
   /// 所以昨天/今天/明天不会串数据。
   final bool brushMode;
   final Set<int> brushPreviewIndices;
+
+  /// 测试注入的时钟，继续往下透传给「现在」标记。
+  final DateTime Function()? clock;
   final void Function(DateTime date, int index) onBrushIndexDown;
   final void Function(DateTime date, int index) onBrushIndexMove;
   final void Function(DateTime date) onBrushEnd;
@@ -2721,6 +2766,7 @@ class _DayGrid extends StatefulWidget {
     this.readOnly = false,
     this.brushMode = false,
     this.brushPreviewIndices = const <int>{},
+    this.clock,
     required this.onBrushIndexDown,
     required this.onBrushIndexMove,
     required this.onBrushEnd,
@@ -2788,8 +2834,11 @@ class _DayGridState extends State<_DayGrid> {
     final Offset localOffset = box.globalToLocal(globalPosition);
     final double adjustedDy = localOffset.dy + widget.timeAxisController.offset;
 
-    double topPadding = 8.0;
-    int row = ((adjustedDy - topPadding) / 45).floor().clamp(0, 23);
+    final row = timelineRowAt(
+      adjustedDy,
+      rowExtent: AppSizes.gridRow,
+      topPadding: AppSpacing.sm,
+    );
 
     double gridWidth = box.size.width;
     int col = (localOffset.dx / (gridWidth / 6)).floor().clamp(0, 5);
@@ -2839,6 +2888,7 @@ class _DayGridState extends State<_DayGrid> {
       child: TimeGrid(
         gridKey: _gridKey,
         date: widget.date,
+        clock: widget.clock,
         controller: _gridScrollController,
         dragStartIndex: widget.selectionDate != null &&
                 DesktopSelection(
