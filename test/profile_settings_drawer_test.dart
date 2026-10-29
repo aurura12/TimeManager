@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/diary_kind.dart';
 import 'package:time_manager/providers/background_image_provider.dart';
 import 'package:time_manager/providers/main_tab_provider.dart';
+import 'package:time_manager/providers/now_marker_provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/screens/app_log_screen.dart';
@@ -50,6 +51,53 @@ void main() {
 
     expect(find.text('覆盖拉取日程'), findsNothing);
     expect(find.text('同步中心'), findsOneWidget);
+  });
+
+  testWidgets('「当前时刻标记」开关可关闭并落盘', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final provider = TimeProvider();
+    addTearDown(provider.dispose);
+    final nowMarker = NowMarkerProvider();
+    await nowMarker.ready;
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => ThemeModeProvider()),
+          ChangeNotifierProvider(create: (_) => BackgroundImageProvider()),
+          ChangeNotifierProvider(create: (_) => MainTabProvider()),
+          ChangeNotifierProvider<NowMarkerProvider?>.value(value: nowMarker),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            drawer: ProfileSettingsDrawer(
+              onChanged: () {},
+              desktopPlatformOverride: false,
+              androidPlatformOverride: true,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final scaffoldState = tester.state<ScaffoldState>(find.byType(Scaffold));
+    scaffoldState.openDrawer();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('操作与布局'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('当前时刻标记'), findsOneWidget);
+    expect(nowMarker.enabled, isTrue);
+
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+
+    expect(nowMarker.enabled, isFalse);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool(NowMarkerProvider.storageKey), isFalse,
+        reason: '开关要落盘，下次启动仍然生效');
   });
 
   testWidgets('iOS settings hide the in-app update entry', (tester) async {

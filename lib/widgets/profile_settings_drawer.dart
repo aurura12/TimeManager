@@ -14,6 +14,7 @@ import '../providers/background_image_provider.dart';
 import '../providers/time_provider.dart';
 import '../providers/main_tab_provider.dart';
 import '../providers/event_label_style_provider.dart';
+import '../providers/now_marker_provider.dart';
 import '../screens/event_label_settings_screen.dart';
 import '../screens/desktop_shortcut_settings_screen.dart';
 import '../providers/desktop_shortcut_provider.dart';
@@ -566,6 +567,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
             ),
           ),
           ..._buildEventLabelStyleItem(context),
+          ..._buildNowMarkerItem(context),
         ],
       _ProfileDrawerSection.appearance => [
           ListTile(
@@ -684,6 +686,30 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
         onTap: () => _openScreen(
           EventLabelSettingsScreen(provider: labelProvider),
         ),
+      ),
+    ];
+  }
+
+  /// 「现在」小圆点开关。没有注册 Provider 的宿主（部分测试）直接不显示。
+  List<Widget> _buildNowMarkerItem(BuildContext context) {
+    final nowMarker = context.watch<NowMarkerProvider?>();
+    if (nowMarker == null) return const [];
+    return [
+      SwitchListTile(
+        secondary: const Icon(Icons.adjust_outlined),
+        title: const Text('当前时刻标记'),
+        subtitle: const Text('记录页用一个小圆点标出此刻的位置'),
+        value: nowMarker.enabled,
+        onChanged: (value) async {
+          final messenger = ScaffoldMessenger.maybeOf(context);
+          try {
+            await nowMarker.setEnabled(value);
+          } on Object {
+            messenger?.showSnackBar(
+              const SnackBar(content: Text('保存设置失败，请检查存储空间后重试')),
+            );
+          }
+        },
       ),
     ];
   }

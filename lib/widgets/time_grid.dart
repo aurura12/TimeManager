@@ -8,6 +8,7 @@ import '../models/event_label_style.dart';
 import '../models/time_slot.dart';
 import '../models/time_slot_resize.dart';
 import '../providers/event_label_style_provider.dart';
+import '../providers/now_marker_provider.dart';
 import '../providers/time_provider.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
@@ -401,17 +402,21 @@ class _TimeGridState extends State<TimeGrid> {
           );
         }
         // 「现在」的标记叠在最上层，内部自己 IgnorePointer，不参与任何手势。
+        // 是否显示由本机偏好决定（设置 → 操作与布局 → 当前时刻标记）。
+        final showNowMarker =
+            context.watch<NowMarkerProvider?>()?.enabled ?? true;
         return Stack(
           clipBehavior: Clip.hardEdge,
           children: [
             Positioned.fill(child: result),
-            Positioned.fill(
-              child: CurrentTimeMarker(
-                controller: widget.controller,
-                date: resolvedDate,
-                clock: widget.clock,
+            if (showNowMarker)
+              Positioned.fill(
+                child: CurrentTimeMarker(
+                  controller: widget.controller,
+                  date: resolvedDate,
+                  clock: widget.clock,
+                ),
               ),
-            ),
           ],
         );
       },

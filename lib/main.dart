@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/background_image_provider.dart';
 import 'providers/main_tab_provider.dart';
+import 'providers/now_marker_provider.dart';
 import 'providers/event_label_style_provider.dart';
 import 'providers/desktop_shortcut_provider.dart';
 import 'providers/desktop_layout_provider.dart';
@@ -479,6 +480,10 @@ Future<void> _initializeAndRunApplication({
         // 不会因为缺 Provider 直接抛异常。
         ChangeNotifierProvider<EventLabelStyleProvider?>(
           create: (_) => EventLabelStyleProvider(),
+        ),
+        // 同样用可空泛型：没有注册的宿主（部分测试）按默认显示处理。
+        ChangeNotifierProvider<NowMarkerProvider?>(
+          create: (_) => NowMarkerProvider(),
         ),
         ChangeNotifierProvider(create: (_) => DesktopShortcutProvider()),
         ChangeNotifierProvider(create: (_) => DesktopLayoutProvider()),
