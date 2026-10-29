@@ -15,6 +15,7 @@ import 'providers/event_label_style_provider.dart';
 import 'providers/desktop_shortcut_provider.dart';
 import 'providers/desktop_layout_provider.dart';
 import 'package:time_manager/theme/app_semantic_colors.dart';
+import 'package:time_manager/theme/app_scroll_behavior.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'providers/time_provider.dart';
 import 'providers/wake_up_provider.dart';
@@ -738,6 +739,8 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
     final backgroundImage = context.watch<BackgroundImageProvider>();
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
+      // 桌面端给所有纵向列表挂常显滚动条；移动端不受影响。
+      scrollBehavior: const AppScrollBehavior(),
       navigatorObservers: <NavigatorObserver>[_rootRouteTracker],
       theme: AppTheme.light(
         seedColor: themeSettings.themeColor,

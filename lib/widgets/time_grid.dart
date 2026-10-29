@@ -348,20 +348,24 @@ class _TimeGridState extends State<TimeGrid> {
         final displaySlots = _previewSlots(resolvedDate, sourceSlots);
         final activeRange = _activeBlockRange(sourceSlots);
 
-        final grid = ListView.builder(
-          key: widget.gridKey,
-          controller: widget.controller,
-          physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-          itemCount: 24,
-          itemExtent: AppSizes.gridRow,
-          itemBuilder: (context, hour) => _buildGridRow(
-            context,
-            hour,
-            provider,
-            resolvedDate,
-            displaySlots,
-            activeRange,
+        // 网格自身不可滚动（时间轴驱动），不要给它画常显滚动条。
+        final grid = ScrollConfiguration(
+          behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+          child: ListView.builder(
+            key: widget.gridKey,
+            controller: widget.controller,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+            itemCount: 24,
+            itemExtent: AppSizes.gridRow,
+            itemBuilder: (context, hour) => _buildGridRow(
+              context,
+              hour,
+              provider,
+              resolvedDate,
+              displaySlots,
+              activeRange,
+            ),
           ),
         );
 

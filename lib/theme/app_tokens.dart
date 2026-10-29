@@ -121,6 +121,9 @@ abstract final class AppSizes {
   /// 「现在」小圆点标记的直径
   static const double nowMarkerSize = 7;
 
+  /// 桌面端常显滚动条的粗细
+  static const double scrollbarThickness = 8;
+
   /// 时间块边缘拖拽热区（桌面鼠标）
   static const double gridResizeMouseEdge = 8;
 

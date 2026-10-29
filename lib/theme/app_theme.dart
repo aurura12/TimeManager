@@ -443,6 +443,19 @@ abstract final class AppTheme {
       canvasColor: surfaces.page,
       extensions: <ThemeExtension<dynamic>>[surfaces, wallpaperTheme],
 
+      // 桌面端常显滚动条的外观（常显由 AppScrollBehavior 打开）
+      scrollbarTheme: ScrollbarThemeData(
+        thickness: WidgetStatePropertyAll(AppSizes.scrollbarThickness),
+        radius: AppRadius.rGrid,
+        crossAxisMargin: 0,
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          final highlighted = states.contains(WidgetState.hovered) ||
+              states.contains(WidgetState.dragged);
+          return scheme.onSurfaceVariant
+              .withValues(alpha: highlighted ? 0.65 : 0.45);
+        }),
+      ),
+
       // ---------- 顶部 ----------
       appBarTheme: AppBarThemeData(
         backgroundColor: surfaces.panel,
