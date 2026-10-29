@@ -1,7 +1,9 @@
 import 'dart:async';
 import '../utils/platform_features.dart';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -18,6 +20,7 @@ import '../services/sync_status_coordinator.dart';
 import '../utils/app_lifecycle.dart';
 import '../utils/diary_remote_path_utils.dart';
 import '../utils/local_day_range.dart';
+import '../utils/swipe_navigation.dart';
 import 'diary_search_screen.dart';
 
 import '../theme/app_semantic_colors.dart';
@@ -51,6 +54,77 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
   bool _suppressBodyListener = false;
   Timer? _saveDebounce;
   bool _shortcutDateChanging = false;
+
+  /// 编辑框区域：滑动切日要避开它，否则会抢走文字选择。
+  final GlobalKey _editorAreaKey = GlobalKey();
+  int? _swipePointer;
+  Offset? _swipeStart;
+  Duration? _swipeStartStamp;
+  double _swipeDx = 0;
+  double _swipeDy = 0;
+
+  bool _isInsideEditor(Offset globalPosition) {
+    final box = _editorAreaKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.attached || !box.hasSize) return false;
+    return (box.localToGlobal(Offset.zero) & box.size)
+        .contains(globalPosition);
+  }
+
+  void _resetSwipe() {
+    _swipePointer = null;
+    _swipeStart = null;
+    _swipeStartStamp = null;
+    _swipeDx = 0;
+    _swipeDy = 0;
+  }
+
+  void _onSwipePointerDown(PointerDownEvent event) {
+    if (!_dateNavigationEnabled || _loading) return;
+    // 只认触屏与触控笔：鼠标拖拽和触控板双指都不该翻日记。
+    if (event.kind != PointerDeviceKind.touch &&
+        event.kind != PointerDeviceKind.stylus &&
+        event.kind != PointerDeviceKind.invertedStylus) {
+      return;
+    }
+    if (_isInsideEditor(event.position)) return;
+    _swipePointer = event.pointer;
+    _swipeStart = event.position;
+    _swipeStartStamp = event.timeStamp;
+    _swipeDx = 0;
+    _swipeDy = 0;
+  }
+
+  void _onSwipePointerMove(PointerMoveEvent event) {
+    if (event.pointer != _swipePointer) return;
+    final start = _swipeStart;
+    if (start == null) return;
+    _swipeDx = event.position.dx - start.dx;
+    _swipeDy = event.position.dy - start.dy;
+  }
+
+  void _onSwipePointerUp(PointerUpEvent event) {
+    if (event.pointer != _swipePointer) return;
+    final startedAt = _swipeStartStamp;
+    final elapsedMs = startedAt == null
+        ? 0
+        : (event.timeStamp - startedAt).inMilliseconds;
+    final direction = resolveSwipeNavigation(
+      dx: _swipeDx,
+      dy: _swipeDy,
+      velocityX: elapsedMs > 0 ? _swipeDx / elapsedMs * 1000 : 0.0,
+    );
+    _resetSwipe();
+    if (direction == null || !_dateNavigationEnabled) return;
+    unawaited(HapticFeedback.selectionClick());
+    _changeDateByShortcut(direction == SwipeNavigationDirection.next
+        ? _selectedDate.add(const Duration(days: 1))
+        : _selectedDate.subtract(const Duration(days: 1)));
+  }
+
+  void _onSwipePointerCancel(PointerCancelEvent event) {
+    if (event.pointer != _swipePointer) return;
+    _resetSwipe();
+  }
 
   Future<void> _changeDateByShortcut(DateTime date) async {
     if (_shortcutDateChanging || _loading || _processing) return;
@@ -1270,7 +1344,15 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
           isAvailable: (action) =>
               action == DesktopShortcutActionType.escape ||
               (!_loading && !_processing && !_shortcutDateChanging),
-          child: _buildPage(context),
+          // Listener 不参与手势竞技场，不会抢编辑框内的文字选择；
+          // 只负责旁听指针，用于左右滑动切日（编辑区内部自行排除）。
+          child: Listener(
+            onPointerDown: _onSwipePointerDown,
+            onPointerMove: _onSwipePointerMove,
+            onPointerUp: _onSwipePointerUp,
+            onPointerCancel: _onSwipePointerCancel,
+            child: _buildPage(context),
+          ),
         ),
       );
 
@@ -1479,6 +1561,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
                   const SizedBox(height: 12),
                   Expanded(
                     child: Stack(
+                      key: _editorAreaKey,
                       children: [
                         TextField(
                           controller: _bodyController,
