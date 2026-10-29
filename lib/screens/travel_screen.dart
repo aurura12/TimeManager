@@ -347,10 +347,12 @@ class _TravelScreenState extends State<TravelScreen> {
     final locationController = TextEditingController();
     final eventController = TextEditingController();
     String? locationError;
+    ModalRoute<bool>? dialogRoute;
 
     final shouldSave = await showDialog<bool>(
       context: context,
       builder: (context) {
+        dialogRoute = ModalRoute.of<bool>(context);
         return StatefulBuilder(
           builder: (context, setDialogState) {
             void submit() {
@@ -433,6 +435,8 @@ class _TravelScreenState extends State<TravelScreen> {
       );
       if (saved) await _pushToGitHub();
     }
+    // pop 的结果早于退出动画结束，控件仍挂载时不能销毁它们的 controller。
+    await dialogRoute?.completed;
     locationController.dispose();
     eventController.dispose();
   }
@@ -445,10 +449,12 @@ class _TravelScreenState extends State<TravelScreen> {
         TextEditingController(text: existing?.location ?? '');
     final eventController = TextEditingController(text: existing?.event ?? '');
     String? locationError;
+    ModalRoute<bool>? dialogRoute;
 
     final shouldSave = await showDialog<bool>(
       context: context,
       builder: (context) {
+        dialogRoute = ModalRoute.of<bool>(context);
         return StatefulBuilder(
           builder: (context, setDialogState) {
             void submit() {
@@ -532,6 +538,7 @@ class _TravelScreenState extends State<TravelScreen> {
       );
       if (saved) await _pushToGitHub();
     }
+    await dialogRoute?.completed;
     locationController.dispose();
     eventController.dispose();
   }
@@ -599,8 +606,17 @@ class _TravelScreenState extends State<TravelScreen> {
           if (!mounted) return;
         }
         final merged = _document.mergeRemotePreservingLocalDeletions(doc);
+        final previous = _document;
         _document = merged;
-        await _saveDraft();
+        if (!await _saveDraft()) {
+          _document = previous;
+          _reportTravel(const SyncOperationResult.failed(
+            '出行拉取失败：本地保存失败，请检查存储空间后重试',
+            pendingDownloadCount: 1,
+          ));
+          if (mounted) setState(() => _processing = false);
+          return;
+        }
         final stillPending = merged.toSyncPayload() != doc.toSyncPayload();
         _reportTravel(
           stillPending
@@ -670,9 +686,17 @@ class _TravelScreenState extends State<TravelScreen> {
       );
       return;
     }
-    await _saveDraft();
     if (!mounted) return;
     setState(() => _processing = true);
+    if (!await _saveDraft()) {
+      _reportTravel(const SyncOperationResult.failed(
+        '出行同步未开始：本地保存失败，请检查存储空间后重试',
+        pendingUploadCount: 1,
+      ));
+      if (mounted) setState(() => _processing = false);
+      return;
+    }
+    if (!mounted) return;
 
     // 先读远端：读不到就中止，绝不用本地内容覆盖一个未知状态的远端。
     final pull = await TravelGiteeService.pullFile(
@@ -754,13 +778,18 @@ class _TravelScreenState extends State<TravelScreen> {
     final content = outgoing.toMarkdown();
     if (remoteDocument != null &&
         outgoing.toSyncPayload() == remoteDocument.toSyncPayload()) {
-      if (mounted) {
-        setState(() {
-          _document = outgoing;
-          _processing = false;
-        });
+      final previous = _document;
+      _document = outgoing;
+      final saved = await _saveDraft();
+      if (!saved) _document = previous;
+      if (mounted) setState(() => _processing = false);
+      if (!saved) {
+        _reportTravel(const SyncOperationResult.failed(
+          '出行记录已与远端一致，但本地保存失败，请检查存储空间后重试',
+          pendingDownloadCount: 1,
+        ));
+        return;
       }
-      await _saveDraft();
       _showMessage('已确认与远端一致，无需重复提交');
       _reportTravel(
         const SyncOperationResult.success(message: '出行记录已确认同步'),
@@ -778,29 +807,19 @@ class _TravelScreenState extends State<TravelScreen> {
       expectedSha: remoteSha,
       expectNotFound: remoteWasNotFound,
     );
-    if (!mounted) {
-      if (result.success) {
-        _reportTravel(
-          SyncOperationResult.success(
-            message: result.created ? '出行记录已同步（新建远端文件）' : '出行记录已同步',
-          ),
-        );
-      } else {
-        _reportTravel(
-          SyncOperationResult.failed(
-            '出行同步失败：${result.error ?? '远端写入失败'}',
-            pendingUploadCount: 1,
-          ),
-        );
-      }
-      return;
-    }
-    setState(() => _processing = false);
     if (result.success) {
-      if (mounted) {
-        setState(() => _document = outgoing);
+      final previous = _document;
+      _document = outgoing;
+      final saved = await _saveDraft();
+      if (!saved) _document = previous;
+      if (mounted) setState(() => _processing = false);
+      if (!saved) {
+        _reportTravel(const SyncOperationResult.failed(
+          '远端已同步，但本地保存失败，请检查存储空间后重试',
+          pendingDownloadCount: 1,
+        ));
+        return;
       }
-      await _saveDraft();
       _showMessage(result.created ? '同步成功（已新建远端文件）' : '同步成功');
       _reportTravel(
         SyncOperationResult.success(
@@ -809,6 +828,7 @@ class _TravelScreenState extends State<TravelScreen> {
       );
       return;
     }
+    if (mounted) setState(() => _processing = false);
     _showMessage(result.error ?? '同步失败');
     _reportTravel(
       SyncOperationResult.failed(

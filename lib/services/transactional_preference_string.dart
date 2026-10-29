@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 单个字符串偏好键的串行读写；失败时恢复 SharedPreferences 的进程内缓存。
@@ -5,13 +7,20 @@ class TransactionalPreferenceString {
   TransactionalPreferenceString(this.key);
 
   final String key;
-  Future<void> _operationTail = Future<void>.value();
+  Future<void>? _operationTail;
 
-  Future<T> _serialized<T>(Future<T> Function() operation) {
-    final result = _operationTail.then((_) => operation());
-    _operationTail =
-        result.then<void>((_) {}, onError: (Object _, StackTrace __) {});
-    return result;
+  Future<T> _serialized<T>(Future<T> Function() operation) async {
+    final previous = _operationTail;
+    final done = Completer<void>();
+    final tail = done.future;
+    _operationTail = tail;
+    try {
+      if (previous != null) await previous;
+      return await operation();
+    } finally {
+      done.complete();
+      if (identical(_operationTail, tail)) _operationTail = null;
+    }
   }
 
   Future<String?> load() => _serialized(() async {
