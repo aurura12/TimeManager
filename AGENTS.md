@@ -285,7 +285,7 @@ Never commit them.
 
 - `test/` 有 112 个 dart 测试文件（另有 `test/support/` 下 3 个共用 Fake）+ 3 个 bash 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`、`publish_android_release_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集）+ 1 个 PowerShell 测试（`publish_windows_release_script_test.ps1`，macOS/Linux 用 `pwsh` 运行；不联网、不构建、不发布），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
 - `test/background_image_contrast_test.dart` / `background_image_provider_test.dart` — 背景图对比度契约与 Provider 状态（不透明度只在 commit 时落盘、启动清失效路径、超限/取消属正常结果）
-- `test/visual_system_test.dart` — 视觉系统守护测试：对比度计算、主题一致性、令牌使用约束（改 `lib/theme/` 或页面配色时必跑）
+- `test/visual_system_test.dart` — 视觉系统守护测试：对比度计算、主题一致性、令牌使用约束与源码守卫（页面无颜色 / 圆角 / 字号字面量，字号一律走 `AppText.*`；改 `lib/theme/` 或页面配色时必跑）
 - `test/widget_test.dart` — smoke test + platform channel mock 模板：`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道、`tester.runAsync` 真实 IO。新写 widget 测试可参照此文件搭建环境
 - `test/support/fake_app_log_store.dart` — 可注入失败的 Fake store
 - `test/support/fake_reminder_backend.dart` — 两类提醒共用的后端 Fake（刻意不实现删除通道的方法，作为「绝不删通道」的编译期保证）
