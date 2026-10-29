@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,15 +9,16 @@ import 'package:time_manager/models/global_search_result.dart';
 import 'package:time_manager/screens/daily_review_screen.dart';
 import 'package:time_manager/screens/global_search_screen.dart';
 import 'package:time_manager/services/app_identity_service.dart';
+import 'package:time_manager/services/daily_review_summary.dart';
 import 'package:time_manager/services/unified_search_service.dart';
 import 'package:time_manager/theme/app_theme.dart';
 
-void _installPluginMocks() {
+void _installPluginMocks({bool aiEnabled = false}) {
   SharedPreferences.setMockInitialValues({
     AppIdentityService.modeKey: 'manual',
     AppIdentityService.legacyScheduleUserKey: 'j',
     // 关掉 AI：复盘页只渲染本地条目，不发起任何请求
-    'identity_j_daily_review_ai_enabled': false,
+    'identity_j_daily_review_ai_enabled': aiEnabled,
     'identity_j_daily_review_ai_consent': true,
   });
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -41,8 +44,7 @@ Future<void> _pumpReview(WidgetTester tester, DateTime Function() clock) async {
   await tester.pump(const Duration(milliseconds: 100));
 }
 
-Text _dateText(WidgetTester tester, DateTime date) =>
-    tester.widget<Text>(
+Text _dateText(WidgetTester tester, DateTime date) => tester.widget<Text>(
       find.text('${date.month}/${date.day}', skipOffstage: false),
     );
 
@@ -118,6 +120,59 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(_dateText(tester, DateTime(2026, 10, 7)).style?.fontWeight,
         FontWeight.w700);
+  });
+
+  testWidgets('跨日后 AI 请求未完成时，滚动仍能更新选中日期', (tester) async {
+    _installPluginMocks(aiEnabled: true);
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    var clock = DateTime.now();
+    final today = DateTime(clock.year, clock.month, clock.day);
+    final tomorrow = DateTime(today.year, today.month, today.day + 1);
+    clock = DateTime(today.year, today.month, today.day, 23, 59, 59);
+    final pending = Completer<DailyReviewAiResult>();
+    var tomorrowRequested = false;
+
+    await tester.pumpWidget(MaterialApp(
+      theme: AppTheme.light(),
+      home: DailyReviewScreen(
+        date: today,
+        clock: () => clock,
+        reviewLoader: (date) {
+          if (date == tomorrow) {
+            tomorrowRequested = true;
+            return pending.future;
+          }
+          return Future.value(DailyReviewAiResult(
+            date: date,
+            title: '复盘',
+            body: '已有复盘',
+          ));
+        },
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    clock = tomorrow.add(const Duration(seconds: 5));
+    await tester.pump(const Duration(seconds: 2));
+    for (var i = 0; i < 30 && !tomorrowRequested; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(tomorrowRequested, isTrue);
+    expect(pending.isCompleted, isFalse);
+
+    await tester.drag(find.byType(ListView).last, const Offset(0, -560));
+    await tester.pumpAndSettle();
+    expect(_dateText(tester, tomorrow).style?.fontWeight, FontWeight.w500);
+
+    pending.complete(DailyReviewAiResult(
+      date: tomorrow,
+      title: '复盘',
+      body: '新的复盘',
+    ));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('全局搜索的相对区间跨午夜后按新的一天重算', (tester) async {

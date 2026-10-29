@@ -14,10 +14,15 @@ class DailyReviewScreen extends StatefulWidget {
   /// 时钟注入（测试用）：日期条的「今天」与跨午夜刷新都以它为准。
   final DateTime Function()? clock;
 
+  /// 复盘生成入口（测试用），未提供时使用正常的 AI 服务。
+  @visibleForTesting
+  final Future<DailyReviewAiResult> Function(DateTime date)? reviewLoader;
+
   const DailyReviewScreen({
     super.key,
     required this.date,
     this.clock,
+    this.reviewLoader,
   });
 
   static Future<void> open(
@@ -59,6 +64,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
   /// 程序化滚动（跨日重锚定 / 切日期）期间不按滚动位置反推选中日期：
   /// 卡片高度是估算值，反推会把选中日期改到相邻的那天。
   bool _anchoringSelection = false;
+  int _anchorRevision = 0;
 
   @override
   void initState() {
@@ -157,6 +163,15 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
 
   Future<void> _jumpRightToDate(DateTime date, {bool jump = false}) async {
     if (!_rightController.hasClients) return;
+    await _scrollRightToDate(date, jump: jump);
+    if (!mounted) return;
+    // 滚动期间可能跨日并插入日期，按日期重新查索引。
+    final index = _indexOfDate(date);
+    if (index >= 0) await _loadEntry(index);
+  }
+
+  Future<void> _scrollRightToDate(DateTime date, {bool jump = false}) async {
+    if (!_rightController.hasClients) return;
     final index = _indexOfDate(date);
     if (index < 0) return;
 
@@ -185,7 +200,20 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
       }
     }
 
-    await _loadEntry(index);
+  }
+
+  Future<void> _anchorAfterDayChange(DateTime date) async {
+    final revision = ++_anchorRevision;
+    _anchoringSelection = true;
+    try {
+      _scrollLeftToSelected(jump: true);
+      await _scrollRightToDate(date, jump: true);
+    } finally {
+      if (revision == _anchorRevision) _anchoringSelection = false;
+    }
+    if (!mounted) return;
+    final index = _indexOfDate(date);
+    if (index >= 0) await _loadEntry(index);
   }
 
   Future<void> _preloadInitialCards() async {
@@ -338,7 +366,9 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
       result = await DailyReviewSummaryBuilder.loadCachedAi(entry.date);
     }
     if (!cachedOnly && result == null) {
-      result = await DailyReviewSummaryBuilder.fetchAiForDate(entry.date);
+      final loadReview =
+          widget.reviewLoader ?? DailyReviewSummaryBuilder.fetchAiForDate;
+      result = await loadReview(entry.date);
     }
 
     if (!mounted) return;
@@ -518,11 +548,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _anchoringSelection = true;
-      _scrollLeftToSelected(jump: true);
-      _jumpRightToDate(_selectedDate, jump: true).whenComplete(() {
-        _anchoringSelection = false;
-      });
+      unawaited(_anchorAfterDayChange(_selectedDate));
     });
   }
 
