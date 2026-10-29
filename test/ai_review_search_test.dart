@@ -219,7 +219,8 @@ void main() {
   });
 
   test('统一搜索纳入摘要和对话，带 AI 复盘模块与日期且不触发网络', () async {
-    final date = DateTime(2026, 9, 14);
+    final now = DateTime.now();
+    final date = DateTime(now.year, now.month, now.day);
     final prefs = await SharedPreferences.getInstance();
     final hash = await DailyReviewSummaryBuilder.computeDayDataHash(date);
     await prefs.setString(
@@ -244,7 +245,7 @@ void main() {
           createdAt: 11,
         ),
       ],
-      now: DateTime(2026, 9, 15, 12),
+      now: now,
     );
 
     final service = UnifiedSearchService(

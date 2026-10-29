@@ -72,8 +72,8 @@ void main() {
 
   test('DailyReviewChatStore limits messages per day and persists the trim',
       () async {
-    final date = DateTime(2026, 9, 15);
-    final now = DateTime(2026, 9, 15, 12);
+    final now = DateTime.now();
+    final date = DateTime(now.year, now.month, now.day);
     final messages = List<DailyReviewChatMessage>.generate(
       DailyReviewChatStore.maxMessagesPerDay + 5,
       (index) => DailyReviewChatMessage(

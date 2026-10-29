@@ -168,7 +168,9 @@ void main() {
   });
 
   test('daily review chat uses only the selected identity namespace', () async {
-    const date = '2026-09-08';
+    final now = DateTime.now();
+    final day = DateTime(now.year, now.month, now.day);
+    final date = DailyReviewSummaryBuilder.dateKey(day);
     SharedPreferences.setMockInitialValues({
       AppIdentityService.modeKey: 'manual',
       AppIdentityService.legacyScheduleUserKey: 'j',
@@ -189,7 +191,7 @@ void main() {
     });
 
     final session = await DailyReviewChatStore.loadSession(
-      DateTime(2026, 9, 8),
+      day,
     );
 
     expect(session.messages.single.content, '晶晶的对话');
