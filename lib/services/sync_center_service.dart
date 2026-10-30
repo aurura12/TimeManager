@@ -36,12 +36,18 @@ class SyncCenterOperations {
   SyncCenterOperations(
       {required Map<SyncModule, SyncCenterOperation> operations,
       Map<SyncModule, SyncCenterOperation> checks = const {},
+      Map<SyncModule, SyncCenterOperation> pulls = const {},
       this.recoverScheduleOverwrite})
       : _operations = Map.unmodifiable(operations),
-        _checks = Map.unmodifiable(checks);
+        _checks = Map.unmodifiable(checks),
+        _pulls = Map.unmodifiable(pulls);
 
   final Map<SyncModule, SyncCenterOperation> _operations;
   final Map<SyncModule, SyncCenterOperation> _checks;
+
+  /// 「拉取远端」：把远端改动取回本地。只有确实需要用户手动触发的模块
+  /// 才提供——日程 / 分类 / 目标 / 起床已经在自动拉取，不需要额外入口。
+  final Map<SyncModule, SyncCenterOperation> _pulls;
 
   /// 破坏性的「覆盖拉取日程」恢复入口：以远端为准覆盖本地、不合并。
   final SyncCenterOperation? recoverScheduleOverwrite;
@@ -50,10 +56,20 @@ class SyncCenterOperations {
 
   SyncCenterOperation? checkFor(SyncModule module) => _checks[module];
 
+  SyncCenterOperation? pullFor(SyncModule module) => _pulls[module];
+
   Future<SyncOperationResult> run(SyncModule module) async {
     final operation = _operations[module];
     if (operation == null) {
       return SyncOperationResult.failed('${module.label}暂不支持同步');
+    }
+    return operation();
+  }
+
+  Future<SyncOperationResult> pull(SyncModule module) async {
+    final operation = _pulls[module];
+    if (operation == null) {
+      return SyncOperationResult.skipped('${module.label}暂不支持拉取远端');
     }
     return operation();
   }
@@ -90,6 +106,10 @@ class SyncCenterOperations {
       },
       checks: {
         SyncModule.schedule: provider.checkScheduleSyncState,
+      },
+      pulls: {
+        SyncModule.travel: _pullTravel,
+        SyncModule.checkIn: () => _pullCheckIn(checkIn),
       },
       recoverScheduleOverwrite: () async {
         final ok = await provider.overwriteAllSchedulesFromGitee();
@@ -162,14 +182,14 @@ class SyncCenterOperations {
     final conflicts = local.conflictingDateKeys(remote);
     if (remoteOnly.isNotEmpty) {
       return SyncOperationResult.conflict(
-        '远端有本地没有的出行记录，请先在出行页面拉取确认',
+        '远端有本地没有的出行记录，请点「拉取远端」确认后再上传',
         conflictCount: remoteOnly.length,
         details: remoteOnly.take(10).toList(growable: false),
       );
     }
     if (conflicts.isNotEmpty) {
       return SyncOperationResult.conflict(
-        '本地与远端出行记录存在内容冲突，请先在出行页面确认',
+        '本地与远端出行记录存在内容冲突，请点「拉取远端」确认',
         conflictCount: conflicts.length,
         details: conflicts.take(10).toList(growable: false),
       );
@@ -234,6 +254,96 @@ class SyncCenterOperations {
       );
     }
     return const SyncOperationResult.success(message: '打卡数据已同步');
+  }
+
+  static Future<SyncOperationResult> _pullCheckIn(
+    CheckInSyncService sync,
+  ) async {
+    await sync.initialize(silent: true, retryPhotoCleanup: false);
+    final result = await sync.pullFromGitHub();
+    if (result.success) {
+      return SyncOperationResult.success(
+        message: result.warning ?? '打卡数据已拉取',
+      );
+    }
+    final message = result.error ?? '打卡数据拉取失败';
+    if (message.contains('未配置') ||
+        message.contains('身份') ||
+        message.contains('Token')) {
+      return SyncOperationResult.offline(message, pendingDownloadCount: 1);
+    }
+    return SyncOperationResult.failed(message, pendingDownloadCount: 1);
+  }
+
+  static Future<SyncOperationResult> _pullTravel() {
+    return SyncOperationLock.instance.run(
+      SyncModule.travel,
+      _pullTravelInternal,
+    );
+  }
+
+  /// 以远端为准更新本地出行记录。
+  ///
+  /// **调用方必须先让用户确认**：合并以远端记录为底，本地有、远端没有的
+  /// 日期会被丢弃（`TravelRecordsDocument.mergeRemotePreservingLocalDeletions`），
+  /// 出行页的手动拉取也是同样的确认语义。
+  static Future<SyncOperationResult> _pullTravelInternal() async {
+    final token = await DiaryLocalStore.loadToken();
+    if (token == null || token.trim().isEmpty) {
+      return const SyncOperationResult.offline('出行远端未连接，本地记录会保留');
+    }
+
+    final localRaw = await TravelLocalStore.loadDraft();
+    TravelRecordsDocument local;
+    if (localRaw == null || localRaw.trim().isEmpty) {
+      local = const TravelRecordsDocument(records: []);
+    } else {
+      try {
+        local = TravelRecordsDocument.fromMarkdown(localRaw);
+      } catch (error) {
+        return SyncOperationResult.failed('本地出行记录格式异常：$error');
+      }
+    }
+
+    final pull = await TravelGiteeService.pullFile(
+      token: token,
+      path: TravelRecordsDocument.filePath,
+    );
+    if (!pull.success && !pull.notFound) {
+      return SyncOperationResult.failed(
+        '拉取出行记录失败：${pull.error ?? '远端记录不可用'}',
+      );
+    }
+    if (pull.notFound) {
+      return local.records.isEmpty && local.deletedDateKeys.isEmpty
+          ? const SyncOperationResult.success(message: '远端暂无出行记录')
+          : const SyncOperationResult.pending(
+              '远端暂无出行记录，本地记录仍保留',
+              pendingUploadCount: 1,
+            );
+    }
+
+    final remote = TravelRecordsDocument.fromMarkdown(pull.content!);
+    // 先统计会被覆盖掉的本地内容，只用于结果文案（用户已经确认过）。
+    final localOnly = local.recordDateKeys
+        .difference(remote.recordDateKeys)
+        .difference(remote.deletedDateKeys);
+    final conflicting = local.conflictingDateKeys(remote);
+    final merged = local.mergeRemotePreservingLocalDeletions(remote);
+    if (!await TravelLocalStore.saveDraft(merged.toMarkdown())) {
+      return const SyncOperationResult.failed(
+        '已拉取远端记录，但本地保存失败，请检查存储空间后重试',
+        pendingDownloadCount: 1,
+      );
+    }
+
+    final replaced = localOnly.length;
+    final conflicts = conflicting.length;
+    return SyncOperationResult.success(
+      message: replaced == 0 && conflicts == 0
+          ? '出行记录已按远端更新'
+          : '出行记录已按远端更新（覆盖本地 $replaced 天未上传记录、$conflicts 天冲突）',
+    );
   }
 }
 
@@ -360,6 +470,21 @@ class SyncCenterController extends ChangeNotifier {
     await initialize();
     if (_disposed || _allRetrying || _runningModules.contains(module)) return;
     await _runOne(module);
+  }
+
+  /// 该模块是否提供「拉取远端」。只对确实需要手动拉取的模块为 true。
+  bool supportsPull(SyncModule module) => _operations.pullFor(module) != null;
+
+  /// 把远端改动取回本地（方向与 [retry] 相反）。
+  ///
+  /// 出行这类会覆盖本地内容的模块，调用方必须先让用户确认；控制器只负责
+  /// 并发互斥与状态上报。
+  Future<void> pull(SyncModule module) async {
+    await initialize();
+    if (_disposed || _allRetrying || _runningModules.contains(module)) return;
+    final operation = _operations.pullFor(module);
+    if (operation == null) return;
+    await _runOne(module, operation: operation);
   }
 
   /// 覆盖拉取日程（破坏性恢复入口）。

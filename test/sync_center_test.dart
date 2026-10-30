@@ -634,4 +634,143 @@ void main() {
     expect(refreshed.status, SyncModuleStatus.success);
     expect(refreshed.lastSuccessAt, successAt);
   });
+
+  test('拉取远端走独立入口，不会触发上传操作', () async {
+    final uploaded = <SyncModule>[];
+    final pulled = <SyncModule>[];
+    final controller = SyncCenterController(
+      operations: SyncCenterOperations(
+        operations: {
+          for (final module in SyncModule.values)
+            module: () async {
+              uploaded.add(module);
+              return const SyncOperationResult.success();
+            },
+        },
+        pulls: {
+          SyncModule.travel: () async {
+            pulled.add(SyncModule.travel);
+            return const SyncOperationResult.success(message: '出行记录已按远端更新');
+          },
+        },
+      ),
+      store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
+    );
+    addTearDown(controller.dispose);
+
+    expect(controller.supportsPull(SyncModule.travel), isTrue);
+    expect(controller.supportsPull(SyncModule.schedule), isFalse);
+
+    await controller.pull(SyncModule.travel);
+
+    expect(pulled, [SyncModule.travel]);
+    expect(uploaded, isEmpty);
+    expect(
+      controller.stateFor(SyncModule.travel).message,
+      '出行记录已按远端更新',
+    );
+  });
+
+  testWidgets('出行模块提供「拉取远端」，确认后才执行', (tester) async {
+    var pulls = 0;
+    final controller = SyncCenterController(
+      operations: SyncCenterOperations(
+        operations: {
+          for (final module in SyncModule.values)
+            module: () async => const SyncOperationResult.success(),
+        },
+        pulls: {
+          SyncModule.travel: () async {
+            pulls++;
+            return const SyncOperationResult.success(
+              message: '出行记录已按远端更新',
+            );
+          },
+        },
+      ),
+      store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: SyncCenterScreen(controller: controller),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 只有声明支持拉取的模块才显示按钮
+    expect(
+      find.byKey(const ValueKey('sync-center-pull-travel')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('sync-center-pull-schedule')),
+      findsNothing,
+    );
+
+    final pullButton =
+        find.byKey(const ValueKey('sync-center-pull-travel'));
+    await tester.ensureVisible(pullButton);
+    await tester.pumpAndSettle();
+    await tester.tap(pullButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('确认拉取远端'), findsOneWidget);
+    await tester.tap(find.text('拉取'));
+    await tester.pumpAndSettle();
+
+    expect(pulls, 1);
+    expect(
+      find.descendant(
+        of: find.byType(SnackBar),
+        matching: find.text('出行记录已按远端更新'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('取消拉取远端时不会执行', (tester) async {
+    var pulls = 0;
+    final controller = SyncCenterController(
+      operations: SyncCenterOperations(
+        operations: {
+          for (final module in SyncModule.values)
+            module: () async => const SyncOperationResult.success(),
+        },
+        pulls: {
+          SyncModule.travel: () async {
+            pulls++;
+            return const SyncOperationResult.success();
+          },
+        },
+      ),
+      store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: SyncCenterScreen(controller: controller),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final pullButton =
+        find.byKey(const ValueKey('sync-center-pull-travel'));
+    await tester.ensureVisible(pullButton);
+    await tester.pumpAndSettle();
+    await tester.tap(pullButton);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    expect(pulls, 0);
+  });
 }

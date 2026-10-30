@@ -264,14 +264,31 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
             const SizedBox(height: AppSpacing.sm),
             Align(
               alignment: Alignment.centerRight,
-              child: OutlinedButton.icon(
-                key: ValueKey('sync-center-retry-${state.module.name}'),
-                onPressed:
-                    !state.enabled || _controller.isRetryingModule(state.module)
+              child: Wrap(
+                spacing: AppSpacing.sm,
+                runSpacing: AppSpacing.sm,
+                alignment: WrapAlignment.end,
+                children: [
+                  if (_controller.supportsPull(state.module))
+                    OutlinedButton.icon(
+                      key: ValueKey('sync-center-pull-${state.module.name}'),
+                      onPressed: _controller.isRetrying ||
+                              _controller.isRetryingModule(state.module)
+                          ? null
+                          : () => _pull(state.module),
+                      icon: const Icon(Icons.cloud_download_outlined),
+                      label: const Text('拉取远端'),
+                    ),
+                  OutlinedButton.icon(
+                    key: ValueKey('sync-center-retry-${state.module.name}'),
+                    onPressed: !state.enabled ||
+                            _controller.isRetryingModule(state.module)
                         ? null
                         : () => _retry(state.module),
-                icon: const Icon(Icons.refresh),
-                label: const Text('重试此模块'),
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('重试此模块'),
+                  ),
+                ],
               ),
             ),
           ],
@@ -293,6 +310,40 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
         SnackBar(content: Text(state.message ?? '${module.label}同步未完成')),
       );
     }
+  }
+
+  /// 「拉取远端」：把远端改动取回本地。出行会覆盖本地尚未上传的日期，
+  /// 必须先确认，避免手动点一下就丢记录。
+  Future<void> _pull(SyncModule module) async {
+    if (module == SyncModule.travel) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('确认拉取远端'),
+          content: const Text(
+            '将以远端记录为准更新本地出行记录：\n\n'
+            '本地有、远端没有的日期会被覆盖，且不可撤销。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('拉取'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+    await _controller.pull(module);
+    if (!mounted) return;
+    final state = _controller.stateFor(module);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(state.message ?? '${module.label}拉取未完成')),
+    );
   }
 
   /// 覆盖拉取是破坏性操作，必须先二次确认再执行。
