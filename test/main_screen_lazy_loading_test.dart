@@ -488,7 +488,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text('撤销'), findsOneWidget);
         expect(find.text('查看对方日程'), findsOneWidget);
-        expect(find.text('同步日程'), findsOneWidget);
+        expect(find.text('同步日程'), findsNothing);
         await tester.binding.handlePopRoute();
         await tester.pumpAndSettle();
         expect(find.byType(HomeScreen), findsOneWidget);

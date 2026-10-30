@@ -7,6 +7,7 @@ import '../models/check_in_goal.dart';
 import '../models/check_in_record.dart';
 import '../models/check_in_view_filter.dart';
 import '../models/known_google_users.dart';
+import '../models/sync_center_state.dart';
 import '../services/app_identity_service.dart';
 import '../services/check_in_reminder_service.dart';
 import '../services/check_in_sync_service.dart';
@@ -19,10 +20,12 @@ import '../widgets/desktop_shortcut_host.dart';
 import '../utils/platform_features.dart';
 import '../widgets/check_in_map_preview.dart';
 import '../widgets/check_in_photo_sheet.dart';
+import '../widgets/sync_status_button.dart';
 import 'add_check_in_goal_screen.dart';
 import 'check_in_archive_screen.dart';
 import 'check_in_detail_screen.dart';
 import 'check_in_map_screen.dart';
+import 'sync_center_screen.dart';
 
 class CheckInScreen extends StatefulWidget {
   const CheckInScreen({super.key});
@@ -130,11 +133,12 @@ class _CheckInScreenState extends State<CheckInScreen> {
     );
   }
 
-  Future<void> _pull() async {
-    final result = await _sync.pullFromGitHub();
-    if (!mounted) return;
-    setState(() {});
-    _showMessage(result.success ? '已同步最新打卡' : (result.error ?? '同步失败'));
+  void _openSyncCenter() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const SyncCenterScreen(initialModule: SyncModule.checkIn),
+      ),
+    );
   }
 
   Future<void> _openAddGoal() async {
@@ -268,21 +272,10 @@ class _CheckInScreenState extends State<CheckInScreen> {
         title: const Text('打卡'),
         centerTitle: true,
         actions: [
-          if (_sync.syncing)
-            const Padding(
-              padding: EdgeInsets.all(14),
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            )
-          else
-            IconButton(
-              icon: const Icon(Icons.sync),
-              tooltip: '同步远程数据',
-              onPressed: _pull,
-            ),
+          SyncStatusButton(
+            modules: const [SyncModule.checkIn],
+            onPressed: _openSyncCenter,
+          ),
           IconButton(
             icon: const Icon(Icons.add),
             tooltip: desktopShortcutTooltip(

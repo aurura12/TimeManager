@@ -30,6 +30,7 @@ import '../screens/sync_center_screen.dart';
 import '../screens/word_cloud_screen.dart';
 import '../screens/on_this_day_screen.dart';
 import '../services/google_calendar_service.dart';
+import '../services/sync_center_service.dart';
 import '../services/app_identity_service.dart';
 import '../models/diary_kind.dart';
 import '../theme/app_semantic_colors.dart';
@@ -224,6 +225,20 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
         '键盘快捷键',
       '底部标签',
     ].join(' · ');
+    // 同步入口的副标题统一看全局模块状态，不再只显示日程待同步天数。
+    final syncCenter = context.watch<SyncCenterController?>();
+    final syncIssueCount = syncCenter == null
+        ? 0
+        : syncCenter.states
+            .where((state) => state.hasIssue || state.hasPending)
+            .length;
+    final syncSubtitle = syncCenter == null
+        ? (provider.hasPendingSync
+            ? '有 ${provider.pendingSyncDates.length} 天待同步'
+            : '查看各模块同步状态')
+        : syncIssueCount > 0
+            ? '有 $syncIssueCount 个模块待处理'
+            : '查看各模块同步状态';
 
     return ListView(
       key: _listKey,
@@ -248,9 +263,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
                 style: AppText.sectionTitle
                     .copyWith(color: colorScheme.onPrimaryContainer)),
             subtitle: Text(
-              provider.hasPendingSync
-                  ? '有 ${provider.pendingSyncDates.length} 天待同步'
-                  : '查看各模块同步状态',
+              syncSubtitle,
               style: AppText.caption
                   .copyWith(color: colorScheme.onPrimaryContainer),
             ),

@@ -15,10 +15,14 @@ class SyncCenterScreen extends StatefulWidget {
   const SyncCenterScreen({
     super.key,
     this.controller,
+    this.initialModule,
   });
 
   /// 仅供测试注入；生产环境从当前 [TimeProvider] 创建控制器。
   final SyncCenterController? controller;
+
+  /// 从页面状态灯进入时定位到的模块卡片（滚动到可见位置并高亮）。
+  final SyncModule? initialModule;
 
   @override
   State<SyncCenterScreen> createState() => _SyncCenterScreenState();
@@ -26,6 +30,8 @@ class SyncCenterScreen extends StatefulWidget {
 
 class _SyncCenterScreenState extends State<SyncCenterScreen> {
   late final SyncCenterController _controller;
+  final Map<SyncModule, GlobalKey> _moduleKeys = {};
+  bool _pendingScroll = false;
 
   @override
   void initState() {
@@ -33,6 +39,7 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
     // 生产环境使用全局控制器：日程页/出行页/后台同步上报的状态与这里
     // 共享同一份数据，因此重新打开页面不会退回“尚未检查”。
     _controller = widget.controller ?? context.read<SyncCenterController>();
+    _pendingScroll = widget.initialModule != null;
     // 打开页面时先完成本地状态初始化，再在后台做轻量远端检查；页面本身
     // 不等待远端历史日程逐天读取，避免进入同步中心被网络延迟卡住。
     unawaited(_controller.refresh());
@@ -179,13 +186,35 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
     final surfaces = AppSurfaces.of(context);
     final color = _statusColor(state.status, colorScheme);
     final onTint = AppSemanticColors.onTint(color, surfaces.card, alpha: 0.12);
+    final isTarget = widget.initialModule == state.module;
+    final key = _moduleKeys.putIfAbsent(state.module, GlobalKey.new);
+    if (_pendingScroll && isTarget) {
+      _pendingScroll = false;
+      // 卡片刚挂载时还没有 RenderObject，等这一帧布局完成再滚动。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final targetContext = _moduleKeys[state.module]?.currentContext;
+        if (targetContext == null) return;
+        Scrollable.ensureVisible(
+          targetContext,
+          alignment: 0.1,
+          duration: const Duration(milliseconds: 300),
+        );
+      });
+    }
     final issue = <String>[
       if (state.failureCount > 0) '失败 ${state.failureCount}',
       if (state.conflictCount > 0) '冲突 ${state.conflictCount}',
     ];
 
     return Card(
+      key: key,
       color: surfaces.card,
+      shape: isTarget
+          ? RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadius.card),
+              side: BorderSide(color: colorScheme.primary),
+            )
+          : null,
       child: Padding(
         padding: AppSpacing.card,
         child: Column(

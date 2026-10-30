@@ -773,4 +773,39 @@ void main() {
 
     expect(pulls, 0);
   });
+
+  testWidgets('从页面状态灯进入时能定位到指定模块', (tester) async {
+    final controller = SyncCenterController(
+      operations: SyncCenterOperations(
+        operations: {
+          for (final module in SyncModule.values)
+            module: () async => const SyncOperationResult.success(),
+        },
+        pulls: {
+          SyncModule.checkIn: () async => const SyncOperationResult.success(),
+        },
+      ),
+      store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: SyncCenterScreen(
+          controller: controller,
+          initialModule: SyncModule.checkIn,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('打卡'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('sync-center-pull-checkIn')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }

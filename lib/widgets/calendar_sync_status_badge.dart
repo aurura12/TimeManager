@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/sync_center_state.dart';
 import '../providers/time_provider.dart';
+import '../screens/sync_center_screen.dart';
 import '../services/google_calendar_service.dart';
 
 import '../theme/app_semantic_colors.dart';
@@ -25,7 +27,6 @@ class CalendarSyncStatusBadge extends StatelessWidget {
       builder: (context, snapshot) {
         final syncing = snapshot.data == 'SYNCING';
         final pendingCount = provider.pendingSyncDates.length;
-        final hasPending = pendingCount > 0;
 
         late final String label;
         late final Color color;
@@ -58,12 +59,12 @@ class CalendarSyncStatusBadge extends StatelessWidget {
           label = pendingCount > 1 ? '待同步 $pendingCount' : '待同步';
           color = AppSemanticColors.warning;
           icon = Icons.cloud_upload_outlined;
-          tooltip = '有 $pendingCount 天本地记录尚未同步，点击立即同步';
+          tooltip = '有 $pendingCount 天本地记录尚未同步，点击查看同步中心';
         } else {
           label = '已连接';
           color = AppSemanticColors.brand;
           icon = Icons.cloud_done_outlined;
-          tooltip = 'Google 日历已连接，点击手动同步';
+          tooltip = 'Google 日历已连接，点击查看同步中心';
         }
 
         final surface = AppSurfaces.of(context).card;
@@ -80,7 +81,6 @@ class CalendarSyncStatusBadge extends StatelessWidget {
                 enabled,
                 loggedIn,
                 needsReconnect,
-                hasPending,
               ),
               borderRadius: AppRadius.cardAll,
               child: Container(
@@ -129,7 +129,6 @@ class CalendarSyncStatusBadge extends StatelessWidget {
     bool enabled,
     bool loggedIn,
     bool needsReconnect,
-    bool hasPending,
   ) async {
     if (!enabled) {
       onNotLoggedIn?.call();
@@ -142,10 +141,14 @@ class CalendarSyncStatusBadge extends StatelessWidget {
       } else {
         onNotLoggedIn?.call();
       }
-    } else if (hasPending) {
-      provider.syncAll();
     } else {
-      provider.synchronizeCalendar();
+      // 同步动作统一进同步中心，徽章只保留状态与账号重连。
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              const SyncCenterScreen(initialModule: SyncModule.googleCalendar),
+        ),
+      );
     }
   }
 

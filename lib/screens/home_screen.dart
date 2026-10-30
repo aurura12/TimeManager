@@ -11,6 +11,7 @@ import 'package:reorderables/reorderables.dart';
 import '../models/category.dart';
 import '../models/event_label_style.dart';
 import '../models/schedule_template.dart';
+import '../models/sync_center_state.dart';
 import '../models/time_slot_resize.dart';
 import '../providers/event_label_style_provider.dart';
 import '../providers/time_provider.dart';
@@ -23,11 +24,13 @@ import '../widgets/day_change_boundary.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/event_label_text.dart';
+import '../widgets/sync_status_button.dart';
 import '../widgets/template_bar.dart';
 import '../widgets/time_grid.dart';
 import '../widgets/voice_schedule_sheet.dart';
 import 'global_search_screen.dart';
 import 'desktop_shortcut_settings_screen.dart';
+import 'sync_center_screen.dart';
 import '../models/global_search_result.dart';
 import '../utils/desktop_selection.dart';
 import '../utils/local_day_range.dart';
@@ -37,7 +40,7 @@ import '../utils/timeline_geometry.dart';
 const double _kDayHeaderHeight = 40;
 const List<String> _kWeekdayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
-enum _HomeToolbarAction { keyboardHelp, undo, redo, remoteView, sync }
+enum _HomeToolbarAction { keyboardHelp, undo, redo, remoteView }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, this.clock});
@@ -413,12 +416,8 @@ class HomeScreenState extends State<HomeScreen> {
     // Windows 三列视图：以选中日为中间，左右各一天
     final prevDate = currentDate.subtract(const Duration(days: 1));
     final nextDate = currentDate.add(const Duration(days: 1));
-    final googleSyncEnabled =
-        context.select<TimeProvider, bool>((p) => p.googleCalendarSyncEnabled);
     final isRemoteViewEnabled =
         context.select<TimeProvider, bool>((p) => p.isRemoteViewEnabled);
-    final hasPendingSync =
-        context.select<TimeProvider, bool>((p) => p.hasPendingSync);
     final hasDetailedScheduleProgress = context
         .select<TimeProvider, bool>((p) => p.scheduleSyncProgress != null);
     final colorScheme = Theme.of(context).colorScheme;
@@ -435,9 +434,7 @@ class HomeScreenState extends State<HomeScreen> {
         title: _buildAppBarDateNav(timeProvider, currentDate),
         actions: _buildAppBarActions(
           timeProvider,
-          googleSyncEnabled,
           isRemoteViewEnabled,
-          hasPendingSync,
         ),
       ),
       body: Stack(
@@ -1956,9 +1953,7 @@ class HomeScreenState extends State<HomeScreen> {
 
   List<Widget> _buildAppBarActions(
     TimeProvider provider,
-    bool googleSyncEnabled,
     bool remoteViewEnabled,
-    bool hasPendingSync,
   ) {
     // 临时打开隐藏页时多了返回键；窄窗口把工具收进菜单，为日期导航留出空间。
     if (ModalRoute.of(context)?.impliesAppBarDismissal == true &&
@@ -1983,8 +1978,6 @@ class HomeScreenState extends State<HomeScreen> {
               case _HomeToolbarAction.remoteView:
                 _leaveBrushAndClearSelection();
                 provider.toggleRemoteScheduleView();
-              case _HomeToolbarAction.sync:
-                provider.syncAll();
             }
           },
           itemBuilder: (context) => [
@@ -2008,20 +2001,10 @@ class HomeScreenState extends State<HomeScreen> {
               value: _HomeToolbarAction.remoteView,
               child: Text(remoteViewEnabled ? '关闭对方日程' : '查看对方日程'),
             ),
-            const PopupMenuItem(
-              value: _HomeToolbarAction.sync,
-              child: Text('同步日程'),
-            ),
           ],
         ),
       ];
     }
-    final surfaces = AppSurfaces.of(context);
-    final pendingSyncColor = AppSemanticColors.readableOn(
-      AppSemanticColors.warning,
-      surfaces.panel,
-      minRatio: 3.0,
-    );
     return [
       if (isDesktopPlatform)
         _appBarIconButton(
@@ -2093,35 +2076,24 @@ class HomeScreenState extends State<HomeScreen> {
           provider.toggleRemoteScheduleView();
         },
       ),
-      _appBarIconButton(
-        tooltip: hasPendingSync
-            ? (googleSyncEnabled
-                ? '同步所有待同步日期到 Gitee 和 Google 日历'
-                : '同步所有待同步日期到 Gitee')
-            : (googleSyncEnabled ? '同步到 Gitee 和 Google 日历' : '同步日程到 Gitee'),
-        icon: Icons.sync,
-        onPressed: () => provider.syncAll(),
-        iconWidget: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            const Icon(Icons.sync, size: 23),
-            if (hasPendingSync)
-              Positioned(
-                right: -1,
-                top: -1,
-                child: Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: pendingSyncColor,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-          ],
-        ),
+      // 记录页不再提供同步动作：异常才出现红点，点击进同步中心。
+      SyncStatusButton(
+        modules: const [
+          SyncModule.schedule,
+          SyncModule.categories,
+          SyncModule.googleCalendar,
+        ],
+        onPressed: _openSyncCenter,
       ),
     ];
+  }
+
+  void _openSyncCenter() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const SyncCenterScreen(initialModule: SyncModule.schedule),
+      ),
+    );
   }
 
   void _goToPreviousDay() {

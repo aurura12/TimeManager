@@ -23,6 +23,8 @@ import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/travel_date_details.dart';
 import '../widgets/travel_desktop_calendar.dart';
 import '../widgets/travel_tables.dart';
+import '../widgets/sync_status_button.dart';
+import 'sync_center_screen.dart';
 
 enum _TravelViewMode { table, calendar, stats }
 
@@ -79,7 +81,7 @@ class _TravelScreenState extends State<TravelScreen> {
     }
     if (!mounted) return;
     setState(() => _loading = false);
-    await _pullFromGitHub(silent: true);
+    await _pullFromGitHub();
   }
 
   String _selectedDateText() => DateFormat('yyyy-MM-dd').format(_selectedDate);
@@ -115,51 +117,6 @@ class _TravelScreenState extends State<TravelScreen> {
       remote.recordDateKeys
           .difference(_recordDateKeys)
           .difference(_document.deletedDateKeys);
-
-  Future<bool> _confirmOverwriteLocal({
-    required Set<String> localOnlyKeys,
-    required Set<String> conflictingKeys,
-    Set<String> tombstoneConflictKeys = const {},
-  }) async {
-    if (!mounted) return false;
-    final localPreview = localOnlyKeys.take(5).join('、');
-    final localSuffix = localOnlyKeys.length > 5 ? ' 等' : '';
-    final contentConflictKeys =
-        conflictingKeys.difference(tombstoneConflictKeys);
-    final contentConflictPreview = contentConflictKeys.take(5).join('、');
-    final contentConflictSuffix = contentConflictKeys.length > 5 ? ' 等' : '';
-    final details = <String>[
-      if (localOnlyKeys.isNotEmpty)
-        '本地有 ${localOnlyKeys.length} 天记录不在远端（$localPreview$localSuffix）',
-      if (tombstoneConflictKeys.isNotEmpty)
-        '本地重新记录与远端删除标记有 ${tombstoneConflictKeys.length} 天版本冲突（'
-            '${tombstoneConflictKeys.take(5).join('、')}'
-            '${tombstoneConflictKeys.length > 5 ? ' 等' : ''}）',
-      if (contentConflictKeys.isNotEmpty)
-        '本地与远端有 ${contentConflictKeys.length} 天内容不同（'
-            '$contentConflictPreview$contentConflictSuffix）',
-    ].join('；');
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('覆盖本地记录'),
-          content: Text('$details；继续拉取会覆盖本地内容。确认覆盖吗？'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('确认覆盖'),
-            ),
-          ],
-        );
-      },
-    );
-    return confirmed == true;
-  }
 
   Future<bool> _confirmReplaceExistingRecord({
     required TravelRecord existing,
@@ -550,19 +507,20 @@ class _TravelScreenState extends State<TravelScreen> {
     return false;
   }
 
-  Future<void> _pullFromGitHub({bool silent = false}) {
+  /// 自动拉取远端出行记录。
+  ///
+  /// 页面不再提供手动拉取：遇到本地独有日期 / 内容冲突时保持本地不变，
+  /// 由同步中心的「拉取远端」（带确认）处理。
+  Future<void> _pullFromGitHub() {
     return SyncOperationLock.instance.run(
       SyncModule.travel,
-      () => _pullFromGitHubInternal(silent: silent),
+      _pullFromGitHubInternal,
     );
   }
 
-  Future<void> _pullFromGitHubInternal({bool silent = false}) async {
+  Future<void> _pullFromGitHubInternal() async {
     final token = (_token ?? '').trim();
     if (token.isEmpty) {
-      if (!silent) {
-        _showMessage('未配置当前平台同步 Token，请先配置日记模块 token');
-      }
       _reportTravel(
         const SyncOperationResult.offline('出行远端未连接，本地记录会保留'),
       );
@@ -580,30 +538,13 @@ class _TravelScreenState extends State<TravelScreen> {
     if (result.success) {
       try {
         final doc = TravelRecordsDocument.fromMarkdown(result.content!);
-        final locallyDeletedRemoteLive =
-            _document.deletedDateKeys.intersection(doc.recordDateKeys);
-        // 远端缺了本地已有的日期时，覆盖会丢掉本地未同步的记录。
-        // 静默拉取（进页面自动触发）一律保留本地；手动拉取需用户确认。
+        // 远端缺了本地已有的日期、或同日期内容不同：保持本地不变，
+        // 交给同步中心的「拉取远端」让用户确认后再覆盖。
         final localOnly = _localOnlyDateKeys(doc);
         final conflicting = _document.conflictingDateKeys(doc);
-        final tombstoneConflicts = _document.tombstoneConflictDateKeys(doc);
         if (localOnly.isNotEmpty || conflicting.isNotEmpty) {
-          if (silent) {
-            setState(() => _processing = false);
-            return;
-          }
-          final confirmed = await _confirmOverwriteLocal(
-            localOnlyKeys: localOnly,
-            conflictingKeys: conflicting,
-            tombstoneConflictKeys: tombstoneConflicts,
-          );
-          if (!confirmed) {
-            if (!mounted) return;
-            setState(() => _processing = false);
-            _showMessage('已取消拉取，本地记录保持不变');
-            return;
-          }
-          if (!mounted) return;
+          setState(() => _processing = false);
+          return;
         }
         final merged = _document.mergeRemotePreservingLocalDeletions(doc);
         final previous = _document;
@@ -626,19 +567,7 @@ class _TravelScreenState extends State<TravelScreen> {
                 )
               : const SyncOperationResult.success(message: '出行记录已拉取'),
         );
-        if (!silent) {
-          _showMessage(
-            tombstoneConflicts.isNotEmpty
-                ? '拉取成功（已按版本处理删除与重新记录冲突）'
-                : locallyDeletedRemoteLive.isEmpty
-                    ? '拉取成功（已覆盖本地）'
-                    : '拉取成功（保留本地待同步删除）',
-          );
-        }
       } catch (e) {
-        if (!silent) {
-          _showMessage('解析远端记录失败: $e');
-        }
         _reportTravel(SyncOperationResult.failed('解析远端出行记录失败：$e'));
       }
       if (!mounted) return;
@@ -647,9 +576,6 @@ class _TravelScreenState extends State<TravelScreen> {
     }
     setState(() => _processing = false);
     if (result.notFound) {
-      if (!silent) {
-        _showMessage('远端暂无出行记录文件');
-      }
       _reportTravel(
         _document.records.isEmpty && _document.deletedDateKeys.isEmpty
             ? const SyncOperationResult.success(message: '远端暂无出行记录文件')
@@ -659,9 +585,6 @@ class _TravelScreenState extends State<TravelScreen> {
               ),
       );
       return;
-    }
-    if (!silent) {
-      _showMessage(result.error ?? '拉取失败');
     }
     _reportTravel(
       SyncOperationResult.failed('出行同步失败：${result.error ?? '拉取失败'}'),
@@ -1491,6 +1414,15 @@ class _TravelScreenState extends State<TravelScreen> {
     });
   }
 
+  void _openSyncCenter() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            const SyncCenterScreen(initialModule: SyncModule.travel),
+      ),
+    );
+  }
+
   Widget _buildPage(BuildContext context) {
     if (_loading) {
       return Scaffold(
@@ -1502,10 +1434,9 @@ class _TravelScreenState extends State<TravelScreen> {
       appBar: AppBar(
         title: const Text('出行'),
         actions: [
-          IconButton(
-            tooltip: '拉取出行记录',
-            onPressed: _processing ? null : _pullFromGitHub,
-            icon: const Icon(Icons.download_outlined),
+          SyncStatusButton(
+            modules: const [SyncModule.travel],
+            onPressed: _openSyncCenter,
           ),
           IconButton(
             tooltip: desktopShortcutTooltip(

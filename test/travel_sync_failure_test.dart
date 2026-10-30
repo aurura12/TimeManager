@@ -43,6 +43,18 @@ Future<void> _pumpUntil(
   expect(condition(), isTrue);
 }
 
+Future<void> _mountTravel(
+  WidgetTester tester,
+  SyncStatusCoordinator coordinator,
+) async {
+  await tester.pumpWidget(
+    ChangeNotifierProvider<SyncStatusCoordinator>.value(
+      value: coordinator,
+      child: MaterialApp(theme: AppTheme.light(), home: const TravelScreen()),
+    ),
+  );
+}
+
 Future<void> _pumpTravel(
   WidgetTester tester,
   SyncStatusCoordinator coordinator,
@@ -50,14 +62,34 @@ Future<void> _pumpTravel(
   tester.view.physicalSize = const Size(1000, 800);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  await tester.pumpWidget(
-    ChangeNotifierProvider<SyncStatusCoordinator>.value(
-      value: coordinator,
-      child: MaterialApp(theme: AppTheme.light(), home: const TravelScreen()),
-    ),
-  );
+  await _mountTravel(tester, coordinator);
   await _pumpUntil(
-      tester, () => find.byTooltip('拉取出行记录').evaluate().isNotEmpty);
+    tester,
+    () => find
+        .byWidgetPredicate((widget) =>
+            widget is Tooltip && (widget.message?.startsWith('新增记录') ?? false))
+        .evaluate()
+        .isNotEmpty,
+  );
+}
+
+/// 页面不再有手动拉取按钮：重新进入页面即触发一次自动拉取。
+Future<void> _reopenTravel(
+  WidgetTester tester,
+  SyncStatusCoordinator coordinator,
+) async {
+  await tester.pumpWidget(const SizedBox());
+  await tester.pump();
+  await _mountTravel(tester, coordinator);
+  await tester.pump();
+}
+
+
+/// 进页面会自动拉取一次；等待它结束（不再有下载按钮可看，改看状态）。
+bool _initialPullDone(SyncStatusCoordinator coordinator, int reads) {
+  if (reads != 1) return false;
+  final status = coordinator.stateFor(SyncModule.travel).status;
+  return status != SyncModuleStatus.idle && status != SyncModuleStatus.syncing;
 }
 
 Future<void> _addRecord(WidgetTester tester) async {
@@ -108,7 +140,7 @@ void main() {
           coordinator.stateFor(SyncModule.travel).message, contains('本地保存失败'));
 
       store.failAll = false;
-      await tester.tap(find.byTooltip('拉取出行记录'));
+      await _reopenTravel(tester, coordinator);
       await _pumpUntil(
           tester,
           () =>
@@ -141,15 +173,7 @@ void main() {
 
       await http.runWithClient(() async {
         await _pumpTravel(tester, coordinator);
-        await _pumpUntil(
-          tester,
-          () =>
-              reads == 1 &&
-              tester
-                      .widget<IconButton>(find.widgetWithIcon(
-                          IconButton, Icons.download_outlined))
-                      .onPressed != null,
-        );
+        await _pumpUntil(tester, () => _initialPullDone(coordinator, reads));
         await _addRecord(tester);
         await _pumpUntil(
             tester,
@@ -195,15 +219,7 @@ void main() {
 
     await http.runWithClient(() async {
       await _pumpTravel(tester, coordinator);
-      await _pumpUntil(
-        tester,
-        () =>
-            reads == 1 &&
-            tester
-                    .widget<IconButton>(find.widgetWithIcon(
-                        IconButton, Icons.download_outlined))
-                    .onPressed != null,
-      );
+      await _pumpUntil(tester, () => _initialPullDone(coordinator, reads));
       await _addRecord(tester);
       await _pumpUntil(
           tester,
