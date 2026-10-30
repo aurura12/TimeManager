@@ -15,6 +15,7 @@ import '../services/diary_gitee_service.dart';
 import '../services/diary_local_store.dart';
 import '../services/diary_search_service.dart';
 import '../services/app_identity_service.dart';
+import '../services/diary_auto_sync_service.dart';
 import '../services/sync_operation_lock.dart';
 import '../services/sync_status_coordinator.dart';
 import '../utils/app_lifecycle.dart';
@@ -32,7 +33,10 @@ import '../widgets/desktop_shortcut_host.dart';
 enum _DiarySyncAction { pull, push }
 
 class DiaryScreen extends StatefulWidget {
-  const DiaryScreen({super.key});
+  const DiaryScreen({super.key, this.autoSyncService});
+
+  /// 仅供测试注入；生产环境使用默认的 [DiaryAutoSyncService]。
+  final DiaryAutoSyncService? autoSyncService;
 
   @override
   State<DiaryScreen> createState() => _DiaryScreenState();
@@ -54,6 +58,13 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
   bool _suppressBodyListener = false;
   Timer? _saveDebounce;
   bool _shortcutDateChanging = false;
+
+  /// 自动上传排期：停止输入后触发，任何一次新编辑都会重新计时。
+  Timer? _autoPushDebounce;
+  bool _autoPushRunning = false;
+  int _editRevision = 0;
+  late final DiaryAutoSyncService _autoSync;
+  static const Duration _autoPushDelay = Duration(seconds: 3);
 
   /// 编辑框区域：滑动切日要避开它，否则会抢走文字选择。
   final GlobalKey _editorAreaKey = GlobalKey();
@@ -206,10 +217,48 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// 停止输入后自动上传。日记的拉取本来就在进页面 / 切日时自动执行，
+  /// 上传也用同一节奏，用户不需要再手动点同步。
+  void _scheduleAutoPush() {
+    _autoPushDebounce?.cancel();
+    _autoPushDebounce = Timer(_autoPushDelay, () {
+      unawaited(_flushAutoPush());
+    });
+  }
+
+  /// 立即补推一次；并发触发时只保留一次在途任务（由 service 去重）。
+  ///
+  /// 只有「本次推送成功，且推送期间没有新编辑」才把当前上下文标记为已同步，
+  /// 否则下一次编辑、切日或回前台还会重试。
+  Future<void> _flushAutoPush() async {
+    _autoPushDebounce?.cancel();
+    _autoPushDebounce = null;
+    if (_autoPushRunning || !_dirtySinceContextLoaded) return;
+    _autoPushRunning = true;
+    final revision = _editRevision;
+    final contextKey = _contextKey(_kind, _selectedDate);
+    try {
+      final result = await _autoSync.flush(coordinator: _statusCoordinator);
+      if (result == null || !result.succeeded) return;
+      // 推送期间用户可能继续编辑或切到了别的日期：两种情况下都不能把
+      // 「已同步」记到当前上下文上。
+      if (revision != _editRevision ||
+          contextKey != _contextKey(_kind, _selectedDate)) {
+        _scheduleAutoPush();
+        return;
+      }
+      _dirtySinceContextLoaded = false;
+      if (mounted) setState(() {});
+    } finally {
+      _autoPushRunning = false;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _autoSync = widget.autoSyncService ?? DiaryAutoSyncService();
     _statusCoordinator = context.read<SyncStatusCoordinator?>();
     _bodyController.addListener(_onBodyChanged);
     _identitySubscription = AppIdentityService.changes.listen((_) {
@@ -223,13 +272,17 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _saveDebounce?.cancel();
+    _autoPushDebounce?.cancel();
+    _autoPushDebounce = null;
+    // 离开页面时把最后一次编辑落盘并补推一次；本地草稿即使推送失败也不会丢。
+    unawaited(_saveDraftNow().then((_) => _flushAutoPush()));
     _identitySubscription.cancel();
     _bodyController.removeListener(_onBodyChanged);
     _bodyController.dispose();
     super.dispose();
   }
 
-  /// 进入后台时立即落盘，不再等 350ms 防抖。
+  /// 进入后台时立即落盘并补推，不再等 350ms 保存防抖和 3 秒上传排期。
   ///
   /// 桌面最小化走 hidden、移动端切后台走 paused；这里只做「有未保存修改」时
   /// 的补写，避免每次失焦都多写一遍。
@@ -239,7 +292,9 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     if (!_dirtySinceContextLoaded) return;
     _saveDebounce?.cancel();
     _saveDebounce = null;
-    unawaited(_saveDraftNow());
+    _autoPushDebounce?.cancel();
+    _autoPushDebounce = null;
+    unawaited(_saveDraftNow().then((_) => _flushAutoPush()));
   }
 
   Future<void> _loadInitial() async {
@@ -514,6 +569,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     if (_suppressBodyListener) return;
     _startedAt ??= DateTime.now();
     _dirtySinceContextLoaded = true;
+    _editRevision++;
     unawaited(DiaryLocalStore.markDraftPending(_kind, _selectedDate));
     _markDiaryPending();
     _saveDebounce?.cancel();
@@ -521,6 +577,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
       _saveDraftNow();
       if (mounted) setState(() {});
     });
+    _scheduleAutoPush();
   }
 
   void _insertCurrentTime() {
@@ -550,6 +607,8 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
       _showMessage('本地保存失败，暂时无法切换日记，请检查存储空间');
       return;
     }
+    // 切走前补推当前这篇，避免「写了一半就换日期」永远不上传。
+    unawaited(_flushAutoPush());
     _contextRequestId++;
     final requestId = _contextRequestId;
 
@@ -596,7 +655,24 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
         await DiaryGiteeService.pullDiary(token: token, path: remotePath);
     if (!result.success) return;
     if (!mounted || requestId != _contextRequestId) return;
-    if (_dirtySinceContextLoaded) return;
+    if (_dirtySinceContextLoaded) {
+      // 本地还有未上传的修改时不能覆盖编辑器；但远端如果已经变了要立刻
+      // 标记冲突，否则用户只会在下一次自动上传时才知道（或被静默跳过）。
+      final baseline = _diaryRemoteBaselines[_contextKey(_kind, _selectedDate)];
+      final remoteChanged = baseline != null &&
+          (baseline.notFound ||
+              baseline.path != remotePath ||
+              baseline.sha != result.sha);
+      if (remoteChanged) {
+        _rememberRemoteDiaryPathSha(remotePath, result.sha!);
+        _reportDiary(const SyncOperationResult.conflict(
+          '远端日记已被其他设备更新，本地还有未上传的修改',
+          conflictCount: 1,
+          pendingUploadCount: 1,
+        ));
+      }
+      return;
+    }
     _rememberRemoteDiaryPathSha(remotePath, result.sha!);
     _setCurrentDiaryBaseline(
       path: remotePath,

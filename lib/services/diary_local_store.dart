@@ -179,10 +179,24 @@ class DiaryLocalStore {
     await prefs.remove(_draftPendingKey(kind, date));
   }
 
+  /// 是否存在任何待上传草稿（不区分身份）。
+  ///
+  /// 自动推送用它做前置判断：没有待上传内容时直接短路，避免每次回前台都
+  /// 触发一次远端列表请求。
+  static Future<bool> hasAnyPendingDraft() async {
+    final prefs = await SharedPreferences.getInstance();
+    const prefix = 'diary_draft_pending_';
+    for (final key in prefs.getKeys()) {
+      if (!key.startsWith(prefix)) continue;
+      if (prefs.getBool(key) == true) return true;
+    }
+    return false;
+  }
+
   /// 列出当前身份中明确标记为待上传且非空的本地草稿。
   ///
-  /// 仅有历史本地草稿、没有发生过待同步编辑标记时，不应因为点击同步中心
-  /// 就自动创建远端文件；用户仍可在日记页主动点击“推送”。
+  /// 仅有历史本地草稿、没有发生过待同步编辑标记时，不应因为自动推送或
+  /// 同步中心就创建远端文件；用户仍可在日记页主动上传当前这篇。
   static Future<List<DiaryLocalDraft>> loadDrafts({
     required DiaryKind kind,
   }) async {

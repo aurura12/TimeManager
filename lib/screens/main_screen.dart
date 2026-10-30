@@ -11,12 +11,14 @@ import '../providers/main_tab_provider.dart';
 import '../providers/desktop_layout_provider.dart';
 import '../providers/time_provider.dart';
 import '../services/app_log_service.dart';
+import '../services/diary_auto_sync_service.dart';
 import '../services/diary_local_store.dart';
 import '../services/check_in_reminder_service.dart';
 import '../services/diary_reminder_diagnostics.dart';
 import '../services/diary_reminder_service.dart';
 import '../services/diary_search_service.dart';
 import '../services/on_this_day_service.dart';
+import '../services/sync_status_coordinator.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/adaptive.dart';
@@ -87,6 +89,8 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   late final TimeProvider _timeProvider;
   late final MainTabProvider _mainTabProvider;
+  late final SyncStatusCoordinator? _syncCoordinator;
+  late final DiaryAutoSyncService _diaryAutoSync;
 
   @override
   void initState() {
@@ -95,6 +99,9 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
     // 在 initState 保存 Provider 引用，dispose 中不再使用 context（树已不稳定）
     _timeProvider = context.read<TimeProvider>();
+    _syncCoordinator = context.read<SyncStatusCoordinator?>();
+    // 日记上传不依赖日记页是否打开：冷启动和回前台都补推一次遗留草稿。
+    _diaryAutoSync = DiaryAutoSyncService();
     _timeProvider.addListener(_tryShowOnThisDay);
     _tabBuilders = {
       MainTabId.record: () => HomeScreen(key: _homeKey),
@@ -118,6 +125,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     // 第一帧后也尝试一次（此时数据可能已就绪）
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _tryShowOnThisDay();
+      unawaited(_diaryAutoSync.flush(coordinator: _syncCoordinator));
     });
   }
 
@@ -157,6 +165,8 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       _tryShowOnThisDay();
       unawaited(_timeProvider.onAppResumed());
       unawaited(_refreshReminders());
+      // 后台期间可能写过日记（或被系统杀掉前没来得及上传），回前台补推一次。
+      unawaited(_diaryAutoSync.flush(coordinator: _syncCoordinator));
     } else if (isAppBackgroundedLifecycleState(state)) {
       _timeProvider.onAppBackgrounded();
     }
