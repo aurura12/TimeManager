@@ -565,8 +565,6 @@ class _TravelScreenState extends State<TravelScreen> {
       );
       return;
     }
-    final ok = await _ensureToken();
-    if (!ok) return;
     if (!mounted) return;
     setState(() => _processing = true);
     final result = await TravelGiteeService.pullFile(
