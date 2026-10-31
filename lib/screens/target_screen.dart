@@ -15,6 +15,7 @@ import '../widgets/desktop_target_card.dart';
 import '../widgets/target_progress_indicator.dart';
 import '../widgets/target_day_refresh.dart';
 import '../services/target_progress_calculator.dart';
+import '../utils/haptics.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/main_tab_activity.dart';
 import '../widgets/wake_up_card.dart';
@@ -382,7 +383,9 @@ class _TargetScreenContent extends StatelessWidget {
           ),
           TextButton(
             onPressed: () {
-              provider.deleteTarget(target); // 请确保你的 TimeProvider 中有这个方法
+              if (provider.deleteTarget(target)) {
+                playHaptic(context, HapticStrength.light);
+              }
               Navigator.pop(context);
             },
             child: Text('确认',

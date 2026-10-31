@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -23,6 +22,7 @@ import '../widgets/sync_status_button.dart';
 import '../utils/app_lifecycle.dart';
 import '../utils/diary_markdown.dart';
 import '../utils/diary_remote_path_utils.dart';
+import '../utils/haptics.dart';
 import '../utils/local_day_range.dart';
 import '../utils/swipe_navigation.dart';
 import 'diary_conflict_screen.dart';
@@ -147,7 +147,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     );
     _resetSwipe();
     if (direction == null || !_dateNavigationEnabled) return;
-    unawaited(HapticFeedback.selectionClick());
+    playHaptic(context, HapticStrength.selection);
     _changeDateByShortcut(direction == SwipeNavigationDirection.next
         ? _selectedDate.add(const Duration(days: 1))
         : _selectedDate.subtract(const Duration(days: 1)));

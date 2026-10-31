@@ -7,6 +7,7 @@ import '../models/check_in_goal.dart';
 import '../services/app_log_service.dart';
 import '../services/check_in_location_service.dart';
 import '../services/check_in_sync_service.dart';
+import '../utils/haptics.dart';
 import '../utils/platform_features.dart';
 
 import '../theme/app_semantic_colors.dart';
@@ -194,6 +195,8 @@ class _CheckInPhotoSheetState extends State<CheckInPhotoSheet>
     }
 
     setState(() => _uploading = false);
+    // 打卡成功给一次中震，和「打勾」动画同一时刻生效
+    playHaptic(context, HapticStrength.medium);
     try {
       await _checkAnim.forward();
     } catch (_) {

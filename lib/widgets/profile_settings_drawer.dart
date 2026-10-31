@@ -15,6 +15,7 @@ import '../providers/time_provider.dart';
 import '../providers/main_tab_provider.dart';
 import '../providers/event_label_style_provider.dart';
 import '../providers/now_marker_provider.dart';
+import '../providers/haptics_provider.dart';
 import '../screens/event_label_settings_screen.dart';
 import '../screens/desktop_shortcut_settings_screen.dart';
 import '../providers/desktop_shortcut_provider.dart';
@@ -581,6 +582,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           ),
           ..._buildEventLabelStyleItem(context),
           ..._buildNowMarkerItem(context),
+          ..._buildHapticsItem(context),
         ],
       _ProfileDrawerSection.appearance => [
           ListTile(
@@ -717,6 +719,30 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           final messenger = ScaffoldMessenger.maybeOf(context);
           try {
             await nowMarker.setEnabled(value);
+          } on Object {
+            messenger?.showSnackBar(
+              const SnackBar(content: Text('保存设置失败，请检查存储空间后重试')),
+            );
+          }
+        },
+      ),
+    ];
+  }
+
+  /// 触感反馈总开关。没有注册 Provider 的宿主（部分测试）直接不显示。
+  List<Widget> _buildHapticsItem(BuildContext context) {
+    final haptics = context.watch<HapticsProvider?>();
+    if (haptics == null) return const [];
+    return [
+      SwitchListTile(
+        secondary: const Icon(Icons.vibration_outlined),
+        title: const Text('触感反馈'),
+        subtitle: const Text('刷格子、拉伸时间块、删除和打卡成功时轻微震动'),
+        value: haptics.enabled,
+        onChanged: (value) async {
+          final messenger = ScaffoldMessenger.maybeOf(context);
+          try {
+            await haptics.setEnabled(value);
           } on Object {
             messenger?.showSnackBar(
               const SnackBar(content: Text('保存设置失败，请检查存储空间后重试')),

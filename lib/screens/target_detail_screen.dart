@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 import '../models/target.dart';
+import '../utils/haptics.dart';
 import 'add_target_screen.dart';
 import '../widgets/target_stats_section.dart';
 
@@ -72,7 +73,9 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                             // Provider 通知触发空目标重建后再次 post-frame pop，
                             // 把搜索结果页等上一层也误关闭。
                             _deletionNoticeScheduled = true;
-                            timeProvider.deleteTarget(target);
+                            if (timeProvider.deleteTarget(target)) {
+                              playHaptic(dialogContext, HapticStrength.light);
+                            }
                             Navigator.pop(dialogContext);
                             if (mounted && Navigator.of(context).canPop()) {
                               Navigator.pop(context);

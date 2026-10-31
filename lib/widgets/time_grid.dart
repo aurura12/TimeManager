@@ -13,6 +13,7 @@ import '../providers/time_provider.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/haptics.dart';
 import '../utils/platform_features.dart';
 import '../utils/time_block_resize.dart';
 import '../utils/time_slot_segment.dart';
@@ -300,6 +301,8 @@ class _TimeGridState extends State<TimeGrid> {
     if (next != session.targetIndex) {
       final target = next;
       setState(() => session.targetIndex = target);
+      // 每跨一格给一次手感；松手提交的确认由页面层负责
+      playHaptic(context, HapticStrength.selection);
     }
   }
 

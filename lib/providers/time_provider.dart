@@ -6751,33 +6751,34 @@ class TimeProvider with ChangeNotifier {
   }
 
   // 移除指定时间块的事件
-  void removeEventFromSlot(int index, {DateTime? date}) {
-    if (!_allowScheduleMutation() || _remoteViewEnabled) return;
+  /// 返回是否真的清掉了一格：只读 / 被阻塞 / 空格位都返回 false，
+  /// 供 UI 判断要不要给删除反馈。
+  bool removeEventFromSlot(int index, {DateTime? date}) {
+    if (!_allowScheduleMutation() || _remoteViewEnabled) return false;
     final targetDate = date ?? _currentDate;
     final dateKey = _getDateKey(targetDate);
     final daySlots = slotsForDate(targetDate);
-    if (index >= 0 && index < daySlots.length) {
-      if (daySlots[index].recorded) {
-        final wasFromCalendar = daySlots[index].isFromCalendar;
-        _saveSnapshot(dateKey);
-        if (wasFromCalendar) {
-          _dismissCalendarImportAt(index, date: targetDate);
-        } else {
-          _clearSlotAt(daySlots, index, markDeleted: true);
-          _markSlotsDirty(dateKey);
-          _targetStatsCache.invalidateDate(dateKey);
-          // 编辑当前日期走完整同步链路；三列视图的其他日期也要同步到对应 Gitee 文件。
-          if (date == null || dateKey == _getDateKey(_currentDate)) {
-            _markPendingSync();
-            _scheduleCalendarSync();
-          } else {
-            _markPendingSync(dateKey);
-          }
-          _scheduleDataSave();
-          notifyListeners();
-        }
+    if (index < 0 || index >= daySlots.length) return false;
+    if (!daySlots[index].recorded) return false;
+    final wasFromCalendar = daySlots[index].isFromCalendar;
+    _saveSnapshot(dateKey);
+    if (wasFromCalendar) {
+      _dismissCalendarImportAt(index, date: targetDate);
+    } else {
+      _clearSlotAt(daySlots, index, markDeleted: true);
+      _markSlotsDirty(dateKey);
+      _targetStatsCache.invalidateDate(dateKey);
+      // 编辑当前日期走完整同步链路；三列视图的其他日期也要同步到对应 Gitee 文件。
+      if (date == null || dateKey == _getDateKey(_currentDate)) {
+        _markPendingSync();
+        _scheduleCalendarSync();
+      } else {
+        _markPendingSync(dateKey);
       }
+      _scheduleDataSave();
+      notifyListeners();
     }
+    return true;
   }
 
   void _clearSlotAt(List<TimeSlot> daySlots, int index,
@@ -10278,12 +10279,14 @@ class TimeProvider with ChangeNotifier {
     _saveData();
   }
 
-  void deleteCategory(int index) {
-    if (!_allowScheduleMutation()) return;
-    if (index < 0 || index >= _categories.length) return;
+  /// 返回是否真的删除了分类：被阻塞、索引无效或保留分类时返回 false，
+  /// 供 UI 判断要不要给删除反馈。
+  bool deleteCategory(int index) {
+    if (!_allowScheduleMutation()) return false;
+    if (index < 0 || index >= _categories.length) return false;
     final category = _categories[index];
     if (isReservedCategoryLabel(category.name)) {
-      return;
+      return false;
     }
     final categoryId = category.id;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
@@ -10335,6 +10338,7 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
     _saveData();
     _invalidateTargetStats();
+    return true;
   }
 
   void addTarget(Target target) {
@@ -10396,10 +10400,12 @@ class TimeProvider with ChangeNotifier {
     return true;
   }
 
-  void deleteTarget(Target target) {
-    if (!_allowScheduleMutation()) return;
+  /// 返回是否真的删除了目标：被阻塞或找不到时返回 false，
+  /// 供 UI 判断要不要给删除反馈。
+  bool deleteTarget(Target target) {
+    if (!_allowScheduleMutation()) return false;
     final index = _targets.indexWhere((item) => item.id == target.id);
-    if (index == -1) return;
+    if (index == -1) return false;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     _targets.removeAt(index);
     _deletedTargets[target.id] = nowMs;
@@ -10409,6 +10415,7 @@ class TimeProvider with ChangeNotifier {
     _saveData();
     notifyListeners();
     _invalidateTargetStats(); // 目标统计缓存整体失效
+    return true;
   }
 
   void reorderTargets(int oldIndex, int newIndex) {

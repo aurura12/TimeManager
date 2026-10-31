@@ -33,6 +33,7 @@ import 'desktop_shortcut_settings_screen.dart';
 import 'sync_center_screen.dart';
 import '../models/global_search_result.dart';
 import '../utils/desktop_selection.dart';
+import '../utils/haptics.dart';
 import '../utils/local_day_range.dart';
 import '../utils/timeline_geometry.dart';
 
@@ -263,6 +264,8 @@ class HomeScreenState extends State<HomeScreen> {
     final provider = context.read<TimeProvider>();
     if (!provider.resizeTimeBlock(request)) return;
     if (!mounted) return;
+    // 松手提交成功一次稍重的确认；被 stale 校验拒绝时不震
+    playHaptic(context, HapticStrength.light);
 
     // 缩短可能把当前单选的那一格裁掉，别留下一个空白高亮格
     final index = _selectionStart;
@@ -279,6 +282,15 @@ class HomeScreenState extends State<HomeScreen> {
         slots[index].recorded &&
         slots[index].label != null;
     if (!stillRecorded) _clearSelection();
+  }
+
+  /// 双击删除一格：只有真的清掉了才给触感反馈，
+  /// 空格位 / 只读视图 / 覆盖事务进行中都不震。
+  void _removeSlot(int index, {DateTime? date}) {
+    final provider = context.read<TimeProvider>();
+    if (!provider.removeEventFromSlot(index, date: date)) return;
+    if (!mounted) return;
+    playHaptic(context, HapticStrength.light);
   }
 
   // --- 刷子模式：进入 / 切换 / 退出与手势记录 ---
@@ -368,6 +380,8 @@ class HomeScreenState extends State<HomeScreen> {
       _brushStrokeDate = date;
       _brushStrokeIndices = <int>{index};
     });
+    // 落笔这一格也给一次手感，拖动过程中由 _brushExtend 逐格补
+    playHaptic(context, HapticStrength.selection);
   }
 
   void _brushExtend(DateTime date, int index) {
@@ -378,6 +392,8 @@ class HomeScreenState extends State<HomeScreen> {
     setState(() {
       _brushStrokeIndices = <int>{..._brushStrokeIndices, index};
     });
+    // 每刷进新的一格一次「嗒」，同一格内移动不重复震
+    playHaptic(context, HapticStrength.selection);
   }
 
   /// 松手一次性落数据：一次手势 = 一次 assignCategoryToSlots =
@@ -548,10 +564,8 @@ class HomeScreenState extends State<HomeScreen> {
                                               onResizeTimeBlock:
                                                   _handleResizeTimeBlock,
                                               onRemoveSlot: (date, index) =>
-                                                  timeProvider
-                                                      .removeEventFromSlot(
-                                                          index,
-                                                          date: date),
+                                                  _removeSlot(index,
+                                                      date: date),
                                             ),
                                           ),
                                           VerticalDivider(
@@ -591,10 +605,8 @@ class HomeScreenState extends State<HomeScreen> {
                                               onResizeTimeBlock:
                                                   _handleResizeTimeBlock,
                                               onRemoveSlot: (date, index) =>
-                                                  timeProvider
-                                                      .removeEventFromSlot(
-                                                          index,
-                                                          date: date),
+                                                  _removeSlot(index,
+                                                      date: date),
                                             ),
                                           ),
                                           VerticalDivider(
@@ -634,10 +646,8 @@ class HomeScreenState extends State<HomeScreen> {
                                               onResizeTimeBlock:
                                                   _handleResizeTimeBlock,
                                               onRemoveSlot: (date, index) =>
-                                                  timeProvider
-                                                      .removeEventFromSlot(
-                                                          index,
-                                                          date: date),
+                                                  _removeSlot(index,
+                                                      date: date),
                                             ),
                                           ),
                                         ],
@@ -678,8 +688,7 @@ class HomeScreenState extends State<HomeScreen> {
                                       _handleSelect(position, currentDate),
                                   readOnly: isRemoteViewEnabled,
                                   onResizeTimeBlock: _handleResizeTimeBlock,
-                                  onRemoveSlot: (index) =>
-                                      timeProvider.removeEventFromSlot(index),
+                                  onRemoveSlot: _removeSlot,
                                 ),
                               ),
                           ],
@@ -2507,7 +2516,9 @@ class HomeScreenState extends State<HomeScreen> {
           ),
           TextButton(
             onPressed: () {
-              provider.deleteCategory(index); // 在 Provider 中实现此方法
+              if (provider.deleteCategory(index)) {
+                playHaptic(context, HapticStrength.light);
+              }
               Navigator.pop(context);
             },
             style: TextButton.styleFrom(
