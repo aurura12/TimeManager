@@ -1,11 +1,16 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:intl/intl.dart';
 
 import '../models/check_in_goal.dart';
 import '../models/check_in_record.dart';
+import '../services/app_identity_service.dart';
+import '../services/check_in_photo_cache.dart';
 import '../services/check_in_reminder_service.dart';
 import '../services/check_in_sync_service.dart';
+import '../utils/app_snack_bar.dart';
 import '../widgets/check_in_map_preview.dart';
 import '../widgets/check_in_photo_sheet.dart';
 import '../widgets/check_in_photo_thumb.dart';
@@ -184,6 +189,10 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     }
   }
 
+  /// 即时删除打卡记录，提示条提供撤销入口。
+  ///
+  /// 删除事务会清理远端照片，撤销依赖删除前预取的照片字节重传。
+  /// 照片缓存缺失时无法恢复照片，回退为确认对话框并明确告知后果。
   Future<void> _confirmDeleteRecord(CheckInRecord record) async {
     final userId = _userId;
     final email = widget.syncService.currentUser?.email;
@@ -193,43 +202,76 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
       return;
     }
 
-    final dateStr = DateFormat('M月d日 HH:mm').format(record.timestamp);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('删除打卡记录'),
-        content: Text('确认删除 $dateStr 的打卡记录吗？\n此操作不可撤销。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
+    final hasPhoto = record.photoPath != null && record.photoPath!.isNotEmpty;
+    Uint8List? photoBytes;
+    if (hasPhoto) {
+      photoBytes = await _prefetchPhotoBytes(record.photoPath!);
+      if (!mounted) return;
+      if (photoBytes == null) {
+        // 照片缓存已被系统清理，远端照片删除后无法恢复，才需要确认。
+        final dateStr = DateFormat('M月d日 HH:mm').format(record.timestamp);
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('删除打卡记录'),
+            content: Text(
+                '确认删除 $dateStr 的打卡记录吗？\n照片缓存已缺失，删除后记录和照片均无法恢复。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: TextButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.error,
+                ),
+                child: const Text('删除'),
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.error,
-            ),
-            child: const Text('删除'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
+        );
+        if (confirmed != true || !mounted) return;
+      }
+    }
 
     setState(() => _processing = true);
     final result = await widget.syncService.deleteCheckInRecord(_goal, record);
     if (!mounted) return;
     setState(() => _processing = false);
-    if (result.success) {
-      _refreshGoalFromSync();
-      setState(() {});
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.warning ?? '已删除打卡记录')),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.error ?? '删除失败')),
-      );
+    if (!result.success) {
+      showAppSnackBar(context, result.error ?? '删除失败');
+      return;
+    }
+    _refreshGoalFromSync();
+    setState(() {});
+    showAppUndoSnackBar(
+      context,
+      message: result.warning ?? '已删除打卡记录',
+      identityToken: AppIdentityService.identityStamp,
+      onUndo: () async {
+        final restoreResult = await widget.syncService.restoreCheckInRecord(
+          goal: _goal,
+          record: record,
+          photoBytes: photoBytes,
+        );
+        if (!restoreResult.success) {
+          throw StateError(restoreResult.error ?? '撤销恢复失败');
+        }
+        _refreshGoalFromSync();
+        setState(() {});
+      },
+    );
+  }
+
+  /// 删除前预取照片字节，供撤销时重传。取不到时返回 null。
+  Future<Uint8List?> _prefetchPhotoBytes(String photoPath) async {
+    try {
+      final file = await CheckInPhotoCache.getCachedFile(photoPath);
+      if (file == null) return null;
+      return await file.readAsBytes();
+    } catch (_) {
+      return null;
     }
   }
 

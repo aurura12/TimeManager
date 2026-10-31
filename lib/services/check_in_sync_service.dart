@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show Uint8List;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/check_in_document.dart';
@@ -732,6 +733,124 @@ class CheckInSyncService {
     _reportSyncResult(
       result,
       fallbackMessage: '打卡记录已删除并同步',
+      scope: scope,
+      source: '打卡页',
+    );
+    return result;
+  }
+
+  /// 恢复刚删除的打卡记录（提示条撤销专用）。
+  ///
+  /// 打卡墓碑是绝对集合（id 进入 [CheckInDocument.deletedRecordIds] 后
+  /// merge 永不复活），恢复必须「记录放回 + 移除墓碑 + 整体推送」，推送
+  /// 成功后远端文档不再含该墓碑。另一台仍持有旧墓碑的设备若在其后推送，
+  /// 会再次抹掉记录——这是「撤销 = 再推一次反向修改」模型的固有边界。
+  ///
+  /// [photoBytes] 是删除前预取的照片字节；为 null 且记录带照片时，恢复
+  /// 的记录不带照片（远端照片可能已被清理，不能留下坏引用）。
+  Future<CheckInSyncResult> restoreCheckInRecord({
+    required CheckInGoal goal,
+    required CheckInRecord record,
+    Uint8List? photoBytes,
+  }) async {
+    await AppIdentityService.load();
+    final scope = _syncScope;
+    final user = await _requireUser();
+    if (!hasIdentity || user == null) {
+      final result = CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
+      _reportSyncResult(
+        result,
+        fallbackMessage: '打卡记录已恢复并同步',
+        scope: scope,
+        source: '打卡页',
+      );
+      return result;
+    }
+    final result = await _synchronized(() async {
+      _syncing = true;
+      _lastError = null;
+      try {
+        final token = await _requireToken();
+        if (token == null) {
+          return CheckInSyncResult.offline('未配置当前平台同步 Token');
+        }
+
+        // Step 1: Pull remote and merge so the pushed document carries
+        // others' concurrent writes instead of clobbering them.
+        final pull = await _pullAndMergeForWrite(token);
+        if (pull.error != null) {
+          return CheckInSyncResult.fail(pull.error!);
+        }
+        if (_document.deletedGoalIds.contains(goal.id)) {
+          return CheckInSyncResult.fail('目标已删除，无法恢复打卡记录');
+        }
+
+        // Step 2: rebuild the record (id/timestamp 原样保留，记录按 id
+        // 去重，无版本竞争)。照片字节可用时以原路径重传：若删除时远端
+        // 照片清理失败，同字节覆盖无害。
+        CheckInRecord restored = record;
+        if (record.photoPath != null && record.photoPath!.isNotEmpty) {
+          if (photoBytes == null) {
+            // copyWith 的 null 语义是「保留原值」，这里必须显式去掉照片。
+            restored = CheckInRecord(
+              id: record.id,
+              goalId: record.goalId,
+              userId: record.userId,
+              userEmail: record.userEmail,
+              userDisplayName: record.userDisplayName,
+              timestamp: record.timestamp,
+              latitude: record.latitude,
+              longitude: record.longitude,
+              locationName: record.locationName,
+              note: record.note,
+              isBackfill: record.isBackfill,
+            );
+          } else {
+            final imagePush = await CheckInGiteeService.pushBinary(
+              token: token,
+              path: record.photoPath!,
+              bytes: photoBytes,
+              commitMessage: 'check-in(${user.label}): restore photo ${record.id}',
+              skipGetSha: true,
+            );
+            if (!imagePush.success) {
+              return CheckInSyncResult.fail(imagePush.error ?? '照片恢复失败');
+            }
+            await CheckInPhotoCache.saveBytes(record.photoPath!, photoBytes);
+          }
+        }
+
+        // Step 3: put the record back and clear its tombstone.
+        final previous = _document;
+        _document = _document.reviveRecord(restored);
+
+        // Step 4: save locally (rollback on failure).
+        final saveFailure = await _saveLocalOrFail(rollbackOnFailure: previous);
+        if (saveFailure != null) return saveFailure;
+
+        // Step 5: push the whole document; the remote tombstone disappears
+        // with the pushed content.
+        final push = await CheckInGiteeService.pushText(
+          token: token,
+          path: CheckInDocument.filePath,
+          content: _document.toMarkdown(),
+          commitMessage: 'check-in(${user.label}): restore record ${record.id}',
+          expectedSha: pull.sha,
+          expectNotFound: pull.notFound,
+        );
+        if (!push.success) {
+          return CheckInSyncResult.fail(push.error ?? '恢复同步失败');
+        }
+        return CheckInSyncResult.ok(_document);
+      } catch (e) {
+        return CheckInSyncResult.fail('恢复失败: $e');
+      } finally {
+        _syncing = false;
+      }
+    }, onStarted: () => _reportSyncBegin(scope: scope, source: '打卡页'));
+    _reportSyncResult(
+      result,
+      fallbackMessage: '打卡记录已恢复并同步',
       scope: scope,
       source: '打卡页',
     );

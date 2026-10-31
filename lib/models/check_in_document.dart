@@ -127,6 +127,22 @@ class CheckInDocument {
     );
   }
 
+  /// 恢复一条被墓碑删除的记录，并从墓碑集合移除该 id（撤销删除专用）。
+  ///
+  /// 打卡墓碑是绝对集合：id 一旦进入 [deletedRecordIds]，merge 永远
+  /// 不让它复活。因此撤销删除不能只放回记录，必须同时清除墓碑并整体
+  /// 推送，推送成功后远端文档不再含该墓碑。
+  CheckInDocument reviveRecord(CheckInRecord record) {
+    final nextRecords = [...records.where((r) => r.id != record.id), record]
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return CheckInDocument(
+      goals: goals,
+      records: nextRecords,
+      deletedGoalIds: deletedGoalIds,
+      deletedRecordIds: {...deletedRecordIds}..remove(record.id),
+    );
+  }
+
   /// 合并本地与远端（按 id 去重，同 id 保留较新的记录）
   /// 目标（goal）元数据采用 "remote-first" 策略（首个出现者胜），
   /// 因为目标名称/图标等元数据变更较少，remote wns 策略可避免冲突。
