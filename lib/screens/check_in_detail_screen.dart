@@ -11,6 +11,7 @@ import '../services/check_in_photo_cache.dart';
 import '../services/check_in_reminder_service.dart';
 import '../services/check_in_sync_service.dart';
 import '../utils/app_snack_bar.dart';
+import '../utils/confirm_dialog.dart';
 import '../widgets/check_in_map_preview.dart';
 import '../widgets/check_in_photo_sheet.dart';
 import '../widgets/check_in_photo_thumb.dart';
@@ -139,32 +140,17 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
   Future<void> _confirmDelete() async {
     if (!_isMine || _processing) return;
     final recordCount = _goal.records.length;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('删除打卡目标'),
-        content: Text(
-          recordCount > 0
-              ? '确认删除「${_goal.name}」吗？\n'
-                  '该目标下的 $recordCount 条打卡记录也会一并删除。'
-              : '确认删除「${_goal.name}」吗？',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.error,
-            ),
-            child: const Text('删除'),
-          ),
-        ],
-      ),
+    final confirmed = await showConfirmDialog(
+      context,
+      title: '删除打卡目标',
+      message: recordCount > 0
+          ? '将永久删除「${_goal.name}」及其全部 $recordCount 条打卡记录，'
+              '关联照片将从远端清除，此操作不可撤销。'
+          : '将永久删除「${_goal.name}」，关联照片将从远端清除，此操作不可撤销。',
+      confirmLabel: '删除',
+      destructive: true,
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
 
     setState(() => _processing = true);
     final result = await widget.syncService.deleteGoal(_goal);
@@ -175,17 +161,12 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
       await CheckInReminderService.removeSettings(_goal.id);
       if (!mounted) return;
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            result.warning ?? '已删除「${_goal.name}」',
-          ),
-        ),
+      showAppSnackBar(
+        context,
+        result.warning ?? '已删除「${_goal.name}」',
       );
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.error ?? '删除失败')),
-      );
+      showAppSnackBar(context, result.error ?? '删除失败');
     }
   }
 

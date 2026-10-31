@@ -1161,6 +1161,9 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       }
     }
     if (mounted) {
+      // 挂着的「撤销删除」提示条属于旧身份：切换后不再有效，直接清掉，
+      // 避免用户点了一个注定失效（或写错分片）的撤销按钮。
+      ScaffoldMessenger.of(context).clearSnackBars();
       unawaited(_loadDiaryReminderStatus());
       widget.onChanged();
     }

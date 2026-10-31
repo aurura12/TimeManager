@@ -1,7 +1,7 @@
 name: time_manager
 description: "A new Flutter project."
 publish_to: "none"
-version: 1.130.0+48
+version: 1.131.0+49
 
 # 添加下面这段环境配置
 environment:
