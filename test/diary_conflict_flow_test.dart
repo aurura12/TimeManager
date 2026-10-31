@@ -74,7 +74,11 @@ Future<void> _pumpUntil(
   expect(finder, findsWidgets);
 }
 
-Future<void> _seedConflict(DateTime date, String localBody) async {
+Future<void> _seedConflict(
+  DateTime date,
+  String localBody, {
+  bool withBaseline = true,
+}) async {
   await DiaryLocalStore.saveDraftBody(DiaryKind.g, date, localBody);
   await DiaryLocalStore.saveDraftStartedAt(
     DiaryKind.g,
@@ -82,6 +86,7 @@ Future<void> _seedConflict(DateTime date, String localBody) async {
     DateTime(date.year, date.month, date.day, 8),
   );
   await DiaryLocalStore.markDraftPending(DiaryKind.g, date);
+  if (!withBaseline) return;
   // 旧基线：远端后来被别人改了，sha 与本地记录不一致。
   await DiaryLocalStore.saveRemoteBaseline(
     DiaryKind.g,
@@ -97,13 +102,14 @@ Future<void> _pumpDiary(
   required DateTime date,
   required String localBody,
   DiarySyncService? syncService,
+  bool withBaseline = true,
 }) async {
   SharedPreferences.setMockInitialValues({
     AppIdentityService.modeKey: 'manual',
     AppIdentityService.legacyScheduleUserKey: 'g',
   });
   AppIdentityService.resetForTesting();
-  await _seedConflict(date, localBody);
+  await _seedConflict(date, localBody, withBaseline: withBaseline);
 
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -255,6 +261,27 @@ void main() {
     );
   });
 
+  testWidgets('没有远端基线但有本地草稿时也要给出冲突入口', (tester) async {
+    final today = DateTime.now();
+    final date = DateTime(today.year, today.month, today.day);
+
+    await http.runWithClient(
+      () async {
+        await _pumpDiary(
+          tester,
+          date: date,
+          localBody: '本地新写的段落',
+          withBaseline: false,
+        );
+
+        // 自动上传对这一天同样只能报冲突（没有基线不敢覆盖远端），
+        // 页面必须给出入口，否则草稿永远传不上去。
+        expect(find.text('处理冲突'), findsOneWidget);
+      },
+      () => _client(date, '远端被别人改成的段落'),
+    );
+  });
+
   testWidgets('批量同步报告冲突时不会把冲突错标到当前日期', (tester) async {
     final today = DateTime.now();
     final date = DateTime(today.year, today.month, today.day);
@@ -262,7 +289,7 @@ void main() {
 
     await http.runWithClient(
       () async {
-        // 没有历史基线：即使远端 sha 不同，也不应凭空判定这一天有冲突。
+        // 基线指向远端当前版本：这一天确实没有冲突，只是还有待上传的修改。
         SharedPreferences.setMockInitialValues({
           AppIdentityService.modeKey: 'manual',
           AppIdentityService.legacyScheduleUserKey: 'g',
@@ -270,6 +297,13 @@ void main() {
         AppIdentityService.resetForTesting();
         await DiaryLocalStore.saveDraftBody(DiaryKind.g, date, '本地正文');
         await DiaryLocalStore.markDraftPending(DiaryKind.g, date);
+        await DiaryLocalStore.saveRemoteBaseline(
+          DiaryKind.g,
+          date,
+          path: 'G${_dateLabel(date)}.md',
+          sha: 'remote-sha',
+          notFound: false,
+        );
 
         final messenger = TestDefaultBinaryMessengerBinding
             .instance.defaultBinaryMessenger;

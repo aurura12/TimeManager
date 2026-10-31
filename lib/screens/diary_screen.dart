@@ -670,9 +670,14 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     if (_dirtySinceContextLoaded) {
       // 本地还有未上传的修改时不能覆盖编辑器；但远端如果已经变了要立刻
       // 记录冲突（带远端正文），否则用户只会在下一次自动上传时才知道。
+      // 没有基线（这一天从没成功对过远端）也算需要确认：自动上传那边同样
+      // 会判成冲突，页面不给入口就永远处理不掉。
       final baseline = _diaryRemoteBaselines[contextKey];
-      final remoteChanged = baseline != null &&
-          (baseline.notFound ||
+      final remoteMatchesLocal = normalizeDiaryBody(result.content!) ==
+          normalizeDiaryBody(_bodyController.text);
+      final remoteChanged = !remoteMatchesLocal &&
+          (baseline == null ||
+              baseline.notFound ||
               baseline.path != remotePath ||
               baseline.sha != result.sha);
       if (remoteChanged) {
@@ -696,6 +701,16 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
           pendingUploadCount: 1,
           details: [remotePath],
         ));
+        return;
+      }
+      if (baseline == null) {
+        // 正文已经一致，只是从没记过基线：补一条，避免每次打开都重新比对。
+        _rememberRemoteDiaryPathSha(remotePath, result.sha!);
+        _setCurrentDiaryBaseline(
+          path: remotePath,
+          sha: result.sha,
+          notFound: false,
+        );
       }
       return;
     }
