@@ -694,9 +694,6 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
           kind: _kind,
           date: _selectedDate,
           remotePath: remotePath,
-          remoteSha: result.sha!,
-          remoteBody: _extractBodyFromMarkdown(result.content!),
-          localBody: _bodyController.text,
         );
         if (mounted) {
           setState(() => _conflicts[contextKey] = entry);
