@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:http/http.dart' as http;
 
 import '../config/remote_repo_config.dart';
@@ -98,10 +99,30 @@ class CheckInGiteeDeleteResult {
 
 /// Gitee 打卡同步服务。
 class CheckInGiteeService {
-  static const _api = GiteeContentsApi(
+  static const _defaultApi = GiteeContentsApi(
     owner: RemoteRepoConfig.giteeOwner,
     repo: RemoteRepoConfig.giteeRepo,
   );
+
+  /// 测试注入的 HTTP 客户端：设置后所有未显式传 client 的请求都走它
+  /// （本地 MockClient），生产环境恒为 null，走真实网络。
+  ///
+  /// 「撤销删除打卡记录」要重传照片并整体推送文档，这条链路全是静态方法，
+  /// 只能在这里开口子才能端到端测试，而不是把网络层拆成可注入的对象。
+  static http.Client? _clientOverride;
+
+  @visibleForTesting
+  static void useClientForTesting(http.Client? client) {
+    _clientOverride = client;
+  }
+
+  static GiteeContentsApi get _api => _clientOverride == null
+      ? _defaultApi
+      : GiteeContentsApi(
+          owner: RemoteRepoConfig.giteeOwner,
+          repo: RemoteRepoConfig.giteeRepo,
+          client: _clientOverride,
+        );
 
   static Future<CheckInGiteePullResult> pullText({
     required String token,
@@ -125,7 +146,8 @@ class CheckInGiteeService {
       return CheckInGiteeBinaryPullResult.error('照片路径无效');
     }
 
-    final requestClient = client ?? http.Client();
+    final injected = client ?? _clientOverride;
+    final requestClient = injected ?? http.Client();
     try {
       final streamed = await requestWithRetry(
         () => requestClient.send(
@@ -180,7 +202,8 @@ class CheckInGiteeService {
     } catch (e) {
       return CheckInGiteeBinaryPullResult.error('拉取图片失败');
     } finally {
-      if (client == null) requestClient.close();
+      // 注入的客户端由调用方负责关闭，这里只关自己新建的。
+      if (injected == null) requestClient.close();
     }
   }
 
@@ -260,12 +283,13 @@ class CheckInGiteeService {
     bool skipGetSha = false,
     http.Client? client,
   }) async {
+    final requestClient = client ?? _clientOverride;
     try {
       String? sha;
       if (!skipGetSha) {
         final head = await requestWithRetry(
           () =>
-              client?.get(
+              requestClient?.get(
                 _api.contentsUri(path, token: token),
                 headers: _api.headers(token),
               ) ??
@@ -293,7 +317,7 @@ class CheckInGiteeService {
       // Gitee: 新文件用 POST，更新用 PUT
       final res = await requestWithRetry(
         () => sha == null
-            ? client?.post(
+            ? requestClient?.post(
                   _api.contentsUri(path, token: token),
                   headers: _api.headers(token),
                   body: json.encode(payload),
@@ -303,7 +327,7 @@ class CheckInGiteeService {
                   headers: _api.headers(token),
                   body: json.encode(payload),
                 )
-            : client?.put(
+            : requestClient?.put(
                   _api.contentsUri(path, token: token),
                   headers: _api.headers(token),
                   body: json.encode(payload),
@@ -334,10 +358,11 @@ class CheckInGiteeService {
       return CheckInGiteeDeleteResult.error('照片路径无效');
     }
 
+    final requestClient = client ?? _clientOverride;
     try {
       final head = await requestWithRetry(
         () =>
-            client?.get(
+            requestClient?.get(
               _api.contentsUri(normalizedPath, token: token),
               headers: _api.headers(token),
             ) ??
@@ -367,7 +392,7 @@ class CheckInGiteeService {
       });
       final res = await requestWithRetry(
         () =>
-            client?.delete(
+            requestClient?.delete(
               _api.contentsUri(normalizedPath, token: token),
               headers: _api.headers(token),
               body: payload,
