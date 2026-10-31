@@ -193,6 +193,62 @@ void main() {
     expect(provider.recordFor(today), isNull);
   });
 
+  test('删除后撤销恢复记录：revision 严格大于墓碑并移除本地墓碑', () async {
+    final store = _ControlledStore();
+    final provider = await makeProvider(store: store);
+    final time = DateTime(2026, 10, 3, 7, 30);
+    await provider.record(time, expectedKind: DiaryKind.j);
+    final original = store.data[DiaryKind.j]!.records[WakeUpRecord.keyForDate(time)]!;
+
+    await provider.remove(time, expectedKind: DiaryKind.j);
+    final deleted = store.data[DiaryKind.j]!;
+    expect(deleted.records.containsKey(WakeUpRecord.keyForDate(time)), isFalse);
+    expect(deleted.deletedDates[WakeUpRecord.keyForDate(time)], isNotNull);
+    final tombstone = deleted.deletedDates[WakeUpRecord.keyForDate(time)]!;
+
+    await provider.restore(original, expectedKind: DiaryKind.j);
+    final restoredDoc = store.data[DiaryKind.j]!;
+    final restored = restoredDoc.records[WakeUpRecord.keyForDate(time)];
+    expect(restored, isNotNull);
+    expect(restored!.updatedAt, greaterThan(tombstone));
+    expect(restoredDoc.deletedDates.containsKey(WakeUpRecord.keyForDate(time)),
+        isFalse);
+    // 撤销后的文档与远端合并时记录胜出（墓碑 >= updatedAt 才判删除）。
+    final merged = WakeUpDocument.merge(
+      restoredDoc,
+      WakeUpDocument(
+        deletedDates: {WakeUpRecord.keyForDate(time): tombstone},
+      ),
+    );
+    expect(merged.records.containsKey(WakeUpRecord.keyForDate(time)), isTrue);
+  });
+
+  test('撤销时该日期已写入新记录则放弃恢复，切身份后撤销抛错', () async {
+    final store = _ControlledStore();
+    final provider = await makeProvider(store: store);
+    final time = DateTime(2026, 10, 3, 7, 30);
+    await provider.record(time, expectedKind: DiaryKind.j);
+    final original = store.data[DiaryKind.j]!.records[WakeUpRecord.keyForDate(time)]!;
+
+    await provider.remove(time, expectedKind: DiaryKind.j);
+    // 用户在撤销前重新记录了该日期（内容不同）。
+    await provider.record(DateTime(2026, 10, 3, 6, 50),
+        expectedKind: DiaryKind.j);
+
+    await provider.restore(original, expectedKind: DiaryKind.j);
+    final current = store.data[DiaryKind.j]!
+        .records[WakeUpRecord.keyForDate(time)]!;
+    expect(current.timeLabel, '06:50');
+
+    // 切换身份后撤销必须被拒绝。
+    await provider.remove(time, expectedKind: DiaryKind.j);
+    AppIdentityService.adoptManualKind(DiaryKind.g);
+    await expectLater(
+      provider.restore(original, expectedKind: DiaryKind.j),
+      throwsStateError,
+    );
+  });
+
   test('保存失败保留原值，删除失败也不丢记录', () async {
     final store = _ControlledStore();
     final provider = await makeProvider(store: store);

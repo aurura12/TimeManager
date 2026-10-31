@@ -8,8 +8,10 @@ import '../models/sync_center_state.dart';
 import '../models/wake_up_record.dart';
 import '../providers/wake_up_provider.dart';
 import '../screens/wake_up_history_screen.dart';
+import '../services/app_identity_service.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/app_snack_bar.dart';
 import 'main_tab_activity.dart';
 import 'time_wheel_sheet.dart';
 import 'wake_up_chart.dart';
@@ -335,30 +337,23 @@ class _WakeUpCardState extends State<WakeUpCard> with WidgetsBindingObserver {
     }
   }
 
+  /// 即时删除起床记录，提示条提供撤销入口。
   Future<void> _remove(WakeUpRecord record) async {
     final provider = _provider;
     final kind = provider.kind;
     if (kind == null) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('删除起床记录'),
-        content: Text('删除 ${record.time.month}月${record.time.day}日 '
-            '${record.timeLabel} 的起床记录？'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消')),
-          TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('删除')),
-        ],
-      ),
-    );
-    if (!mounted || confirmed != true) return;
     try {
       await provider.remove(record.time, expectedKind: kind);
-      if (mounted) _message('已删除起床记录');
+      if (!mounted) return;
+      showAppUndoSnackBar(
+        context,
+        message:
+            '已删除 ${record.time.month}月${record.time.day}日 ${record.timeLabel} 的起床记录',
+        identityToken: AppIdentityService.identityStamp,
+        onUndo: () async {
+          await provider.restore(record, expectedKind: kind);
+        },
+      );
     } catch (error) {
       if (mounted) _message(_errorMessage(error));
     }

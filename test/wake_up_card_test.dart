@@ -175,7 +175,7 @@ void main() {
     expect(provider.recordFor(now)!.timeLabel, '08:44');
   });
 
-  testWidgets('最近七天可补填，删除需要确认并立即更新平均值', (tester) async {
+  testWidgets('最近七天可补填，删除即时生效且提示条可撤销', (tester) async {
     await prepare(tester);
     await mount(tester);
     await tester.tap(find.byKey(const ValueKey('wake-up-history-toggle')));
@@ -193,15 +193,14 @@ void main() {
     await tester.ensureVisible(delete);
     await tester.tap(delete);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('取消'));
-    await tester.pumpAndSettle();
-    expect(provider.recordFor(DateTime(2026, 10, 3)), isNotNull);
-    await tester.tap(delete);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('删除'));
-    await tester.pumpAndSettle();
+    // 即时删除，无需确认。
     expect(provider.recordFor(DateTime(2026, 10, 3)), isNull);
     expect(find.text('尚无起床记录'), findsOneWidget);
+    // 提示条撤销后恢复。
+    await tester.tap(find.text('撤销'));
+    await tester.pumpAndSettle();
+    expect(provider.recordFor(DateTime(2026, 10, 3)), isNotNull);
+    expect(find.text('平均 07:00 · 已记录 1 天'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

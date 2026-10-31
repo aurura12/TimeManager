@@ -227,6 +227,34 @@ class WakeUpProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// 恢复刚删除的起床记录（提示条撤销专用）。
+  ///
+  /// 恢复的记录以 [_nextRevision] 盖新版本，严格大于删除墓碑的 revision，
+  /// 与远端文档合并时记录胜出（墓碑 >= record.updatedAt 才判删除）。
+  /// 该日期已被写入新记录时放弃恢复，不做覆盖。
+  Future<void> restore(
+    WakeUpRecord record, {
+    required DiaryKind expectedKind,
+  }) async {
+    _checkWritable(expectedKind);
+    final state = _state!;
+    await _commit(state, (document) {
+      if (document.records.containsKey(record.dateKey)) {
+        return document;
+      }
+      final restored = record.withUpdatedAt(_nextRevision(document));
+      return WakeUpDocument(
+        records: {...document.records, restored.dateKey: restored},
+        deletedDates: {...document.deletedDates}..remove(restored.dateKey),
+        pendingSync: true,
+      );
+    }, allowStale: true);
+    if (_isCurrent(state) && state.document.pendingSync) {
+      _markPending(state);
+      _schedulePush();
+    }
+  }
+
   int _nextRevision(WakeUpDocument document) {
     final current = now.millisecondsSinceEpoch;
     return current > document.latestRevision
