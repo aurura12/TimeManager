@@ -294,13 +294,17 @@ class HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     playHaptic(context, HapticStrength.light);
     final dateKey = provider.dateKeyFor(date ?? provider.currentDate);
+    // 记下删除后的编辑版本：6 秒内又刷了格子 / 拖了边界，点撤销不能再
+    // 把那次新编辑撤掉，必须直接判失效。
+    final editVersion = provider.editVersionOn(dateKey);
     showAppUndoSnackBar(
       context,
       message: '已删除时间块',
       identityToken: AppIdentityService.identityStamp,
       onUndo: () async {
-        if (!provider.undoLastChangeOnDate(dateKey)) {
-          throw StateError('该日期已无可撤销的编辑');
+        if (!provider.undoLastChangeOnDate(dateKey,
+            expectedVersion: editVersion)) {
+          throw StateError('该日期已有新的编辑，撤销已失效');
         }
       },
     );

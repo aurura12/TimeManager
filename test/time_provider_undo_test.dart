@@ -109,6 +109,43 @@ void main() {
     expect(provider.undoLastChangeOnDate('2026-01-01'), isFalse);
   });
 
+  test('删除后又有新编辑时按日期撤销被判失效，不会撤掉新编辑', () async {
+    final provider = await _createProvider();
+    addTearDown(provider.dispose);
+
+    final date = provider.currentDate;
+    final dateKey = provider.dateKeyFor(date);
+    final category = Category(
+      id: 'work',
+      name: '工作',
+      color: Colors.blue,
+      subCategories: const [],
+    );
+
+    provider.assignCategoryToSlots(const {100}, category, date: date);
+    expect(provider.removeEventFromSlot(100, date: date), isTrue);
+    final versionAfterDelete = provider.editVersionOn(dateKey);
+
+    // 6 秒窗口内用户又刷了一格：栈顶已换成那次新编辑。
+    provider.assignCategoryToSlots(const {102}, category, date: date);
+
+    expect(
+      provider.undoLastChangeOnDate(dateKey, expectedVersion: versionAfterDelete),
+      isFalse,
+    );
+    // 两次编辑都还在，没有任何一次被误撤。
+    expect(provider.slotsForDate(date)[100].recorded, isFalse);
+    expect(provider.slotsForDate(date)[102].recorded, isTrue);
+
+    // 用当前版本撤销，撤的是最后一次编辑（刷的那格），符合「撤销最近一次」。
+    expect(
+      provider.undoLastChangeOnDate(dateKey,
+          expectedVersion: provider.editVersionOn(dateKey)),
+      isTrue,
+    );
+    expect(provider.slotsForDate(date)[102].recorded, isFalse);
+  });
+
   test('撤销后栈耗尽再撤销返回 false', () async {
     final provider = await _createProvider();
     addTearDown(provider.dispose);

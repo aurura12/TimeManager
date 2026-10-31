@@ -1176,6 +1176,7 @@ class TimeProvider with ChangeNotifier {
     _scheduleGiteeDateRevisions.clear();
     _undoStacks.clear();
     _redoStacks.clear();
+    _editVersionByDate.clear();
     _lastEditedDateKey = null;
     _remoteViewBackup.clear();
     _clearRemoteViewCache();
@@ -1911,6 +1912,9 @@ class TimeProvider with ChangeNotifier {
 
   final Map<String, List<List<TimeSlot>>> _undoStacks = {};
   final Map<String, List<List<TimeSlot>>> _redoStacks = {};
+  /// 每个日期被编辑（含撤销 / 重做）的次数，供提示条撤销校验
+  /// 「栈顶还是我删掉的那一次」，见 [undoLastChangeOnDate]。
+  final Map<String, int> _editVersionByDate = {};
   final int _maxStackSize = 20; // 最大支持撤回 20 步
 
   List<TimeSlot> get slots {
@@ -2443,6 +2447,12 @@ class TimeProvider with ChangeNotifier {
       _scheduleMutationBlockedMessage() == null &&
       (_redoStacks[_historyDateKey]?.isNotEmpty ?? false);
 
+  /// 该日期自上次清空历史以来被编辑过多少次（含撤销 / 重做）。
+  ///
+  /// 提示条撤销靠它确认「栈顶仍然是我删掉的那一次编辑」：删除之后用户
+  /// 又刷了一格或拖了边界，版本就会变，撤销应该拒绝而不是撤掉新编辑。
+  int editVersionOn(String dateKey) => _editVersionByDate[dateKey] ?? 0;
+
   void _saveSnapshot([String? dateKey]) {
     final key = dateKey ?? _getDateKey(_currentDate);
     _lastEditedDateKey = key;
@@ -2455,6 +2465,32 @@ class TimeProvider with ChangeNotifier {
     }
     stack.add(_copySlots(_dailySlots.putIfAbsent(key, _generateInitialSlots)));
     if (stack.length > _maxStackSize) stack.removeAt(0);
+    _bumpEditVersion(key);
+  }
+
+  void _bumpEditVersion(String dateKey) {
+    _editVersionByDate[dateKey] = editVersionOn(dateKey) + 1;
+    // 与撤销栈同步裁剪，避免长期使用后无限增长。
+    if (_editVersionByDate.length > _maxUndoDayCount) {
+      _editVersionByDate.removeWhere((key, _) => !_undoStacks.containsKey(key));
+    }
+  }
+
+  /// 撤销指定日期的最近一次编辑（SnackBar 撤销按钮专用）。
+  ///
+  /// 与 [undo] 的区别：用户点提示条上的「撤销」时，当前编辑焦点可能
+  /// 已经切到别的日期，这里显式定位到删除发生的那一天。返回 false
+  /// 表示撤销已失效：该日期没有可撤销的编辑，或删除之后又发生了新的
+  /// 编辑（[expectedVersion] 不匹配），此时不能把别人的编辑撤掉。
+  bool undoLastChangeOnDate(String dateKey, {int? expectedVersion}) {
+    if (!_allowScheduleMutation()) return false;
+    if ((_undoStacks[dateKey]?.isEmpty ?? true)) return false;
+    if (expectedVersion != null && editVersionOn(dateKey) != expectedVersion) {
+      return false;
+    }
+    _lastEditedDateKey = dateKey;
+    undo();
+    return true;
   }
 
   void undo() {
@@ -2463,19 +2499,6 @@ class TimeProvider with ChangeNotifier {
     final current = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
     _redoStacks.putIfAbsent(dateKey, () => []).add(_copySlots(current));
     _restoreHistory(dateKey, _undoStacks[dateKey]!.removeLast());
-  }
-
-  /// 撤销指定日期的最近一次编辑（SnackBar 撤销按钮专用）。
-  ///
-  /// 与 [undo] 的区别：用户点提示条上的「撤销」时，当前编辑焦点可能
-  /// 已经切到别的日期，这里显式定位到删除发生的那一天。返回 false
-  /// 表示该日期没有可撤销的编辑（已被新编辑覆盖或栈已清空）。
-  bool undoLastChangeOnDate(String dateKey) {
-    if (!_allowScheduleMutation()) return false;
-    if ((_undoStacks[dateKey]?.isEmpty ?? true)) return false;
-    _lastEditedDateKey = dateKey;
-    undo();
-    return true;
   }
 
   void redo() {
@@ -2509,6 +2532,7 @@ class TimeProvider with ChangeNotifier {
       after.deletedAt = after.recorded ? null : now;
     }
     _dailySlots[dateKey] = restored;
+    _bumpEditVersion(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
     _markSlotsDirty(dateKey);
     _markPendingSync(dateKey);
@@ -4550,6 +4574,7 @@ class TimeProvider with ChangeNotifier {
         ..addAll(nextDailySlots);
       _undoStacks.clear();
       _redoStacks.clear();
+      _editVersionByDate.clear();
       _pendingSyncState.replace();
       _pendingGiteeOwnerByDate.clear();
       _pendingScheduleGiteeDateKeys.clear();
@@ -9225,6 +9250,7 @@ class TimeProvider with ChangeNotifier {
       // 备份替换的是整份数据，旧历史不能在导入后复活上一份时间块。
       _undoStacks.clear();
       _redoStacks.clear();
+      _editVersionByDate.clear();
       _lastEditedDateKey = null;
       if (!_isDisposed) notifyListeners();
     } catch (_) {
