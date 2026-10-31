@@ -92,12 +92,16 @@ class DiarySyncService {
   /// 只在用户明确确认后调用。与 [sync] 的区别是不比对编辑基线，而是重新读取
   /// 远端当前版本后以它为 expectedSha 强推；推之前远端若又被改过会判冲突，
   /// 不会无声覆盖。调用方负责把「会覆盖别人刚写的内容」讲清楚。
+  ///
+  /// [expectRemoteAbsent] 表示「用户确认时远端这篇还不存在」（合并对比的是
+  /// 空远端）；期间如果远端重新出现，宁可判冲突也不能把它覆盖掉。
   Future<SyncOperationResult> overwriteRemote({
     required DiaryKind kind,
     required DateTime date,
     String? path,
     String? body,
     String? expectedRemoteSha,
+    bool expectRemoteAbsent = false,
   }) {
     return SyncOperationLock.instance.run(
       SyncModule.diary,
@@ -107,6 +111,7 @@ class DiarySyncService {
         path: path,
         bodyOverride: body,
         expectedRemoteSha: expectedRemoteSha,
+        expectRemoteAbsent: expectRemoteAbsent,
       ),
     );
   }
@@ -117,6 +122,7 @@ class DiarySyncService {
     String? path,
     String? bodyOverride,
     String? expectedRemoteSha,
+    bool expectRemoteAbsent = false,
   }) async {
     await AppIdentityService.load();
     final identity = AppIdentityService.personKind;
@@ -173,7 +179,7 @@ class DiarySyncService {
     String? expectedSha;
     var expectNotFound = false;
     if (remote.notFound) {
-      if (expectedRemoteSha != null) {
+      if (expectedRemoteSha != null && !expectRemoteAbsent) {
         return const SyncOperationResult.conflict(
           '远端这篇已被删除，请重新处理',
           pendingUploadCount: 1,
@@ -200,6 +206,14 @@ class DiarySyncService {
         await _cacheUpdater(kind.code, date, remote.content!);
         await DiaryLocalStore.clearDraftPending(kind, date);
         return const SyncOperationResult.success(message: '本地与远端已一致');
+      }
+      if (expectRemoteAbsent) {
+        // 用户确认合并时远端这篇还不存在，现在又出现了：多半是对方刚写好，
+        // 直接推会把他们的内容覆盖掉。
+        return const SyncOperationResult.conflict(
+          '远端这篇在确认期间重新出现，请重新处理冲突',
+          pendingUploadCount: 1,
+        );
       }
       if (expectedRemoteSha != null && remote.sha != expectedRemoteSha) {
         // 用户查看冲突期间远端又变了：拒绝覆盖，让用户重新确认。

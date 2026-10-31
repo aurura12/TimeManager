@@ -1182,6 +1182,8 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
         path: entry.remotePath,
         body: decision.body,
         expectedRemoteSha: remoteSha,
+        // 确认合并时远端还没有这篇：期间若被别人写出来，不能直接覆盖。
+        expectRemoteAbsent: remoteSha == null,
       );
       _afterOverwrite(result, contextKey: contextKey);
     }

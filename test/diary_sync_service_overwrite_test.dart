@@ -166,8 +166,63 @@ void main() {
     expect(pushedPath, '自定义/G2026年3月5日.md');
   });
 
-  test('查看冲突期间远端又变了：拒绝覆盖且不推送', () async {
+  test('确认时远端还不存在、期间又被写出来：拒绝覆盖', () async {
     await saveDraft('本地正文');
+    var pushes = 0;
+    final service = serviceFor(
+      pull: (_) => DiaryGiteePullResult.success('别人刚写的内容', 'sha-latest'),
+      push: ({
+        required path,
+        required content,
+        expectedSha,
+        required expectNotFound,
+      }) {
+        pushes++;
+        return DiaryGiteePushResult.success(created: false, sha: 'sha-new');
+      },
+    );
+
+    final result = await service.overwriteRemote(
+      kind: DiaryKind.g,
+      date: date,
+      body: '合并后的正文',
+      expectRemoteAbsent: true,
+    );
+
+    expect(result.status, SyncModuleStatus.conflict);
+    expect(pushes, 0);
+    expect(await DiaryLocalStore.isDraftPending(DiaryKind.g, date), isTrue);
+  });
+
+  test('远端重新出现但正文与合并结果相同：按已一致处理，不再推送', () async {
+    await saveDraft('本地正文');
+    var pushes = 0;
+    final service = serviceFor(
+      pull: (_) => DiaryGiteePullResult.success('合并后的正文', 'sha-latest'),
+      push: ({
+        required path,
+        required content,
+        expectedSha,
+        required expectNotFound,
+      }) {
+        pushes++;
+        return DiaryGiteePushResult.success(created: false, sha: 'sha-new');
+      },
+    );
+
+    final result = await service.overwriteRemote(
+      kind: DiaryKind.g,
+      date: date,
+      body: '合并后的正文',
+      expectRemoteAbsent: true,
+    );
+
+    expect(result.status, SyncModuleStatus.success);
+    expect(pushes, 0);
+    expect(await DiaryLocalStore.isDraftPending(DiaryKind.g, date), isFalse);
+  });
+
+  test('查看冲突期间远端又变了：拒绝覆盖且不推送', () async {    await saveDraft('本地正文');
     var pushes = 0;
     final service = serviceFor(
       pull: (_) => DiaryGiteePullResult.success('别人刚写的内容', 'sha-latest'),

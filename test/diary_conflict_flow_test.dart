@@ -41,6 +41,7 @@ class _RecordingSyncService extends DiarySyncService {
   String? path;
   String? body;
   String? expectedRemoteSha;
+  bool? expectRemoteAbsent;
   int calls = 0;
   SyncOperationResult result =
       const SyncOperationResult.success(message: '已用本地内容覆盖远端');
@@ -52,11 +53,13 @@ class _RecordingSyncService extends DiarySyncService {
     String? path,
     String? body,
     String? expectedRemoteSha,
+    bool expectRemoteAbsent = false,
   }) async {
     calls++;
     this.path = path;
     this.body = body;
     this.expectedRemoteSha = expectedRemoteSha;
+    this.expectRemoteAbsent = expectRemoteAbsent;
     return result;
   }
 }
