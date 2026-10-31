@@ -11,7 +11,7 @@ import '../models/sync_center_state.dart';
 import '../services/app_identity_service.dart';
 import '../services/check_in_reminder_service.dart';
 import '../services/check_in_sync_service.dart';
-import '../services/sync_status_coordinator.dart';
+import '../services/sync_center_service.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
@@ -39,6 +39,9 @@ class _CheckInScreenState extends State<CheckInScreen> {
   CheckInViewFilter _filter = CheckInViewFilter.all;
   late final StreamSubscription<void> _identitySubscription;
 
+  /// 同步中心「拉取远端」结束的通知；页面据此重读本地存储。
+  StreamSubscription<SyncModule>? _pullCompletedSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -47,6 +50,13 @@ class _CheckInScreenState extends State<CheckInScreen> {
     _sync = CheckInSyncService(
       statusCoordinator: context.read<SyncStatusCoordinator?>(),
     );
+    // 同步中心的拉取跑在它自己的服务实例上，只写本地存储：不订阅这个信号，
+    // 页面会一直用旧副本渲染。
+    _pullCompletedSubscription = context
+        .read<SyncCenterController?>()
+        ?.pullCompleted
+        .where((module) => module == SyncModule.checkIn)
+        .listen((_) => unawaited(_reloadFromLocal()));
     _identitySubscription = AppIdentityService.changes.listen((_) {
       if (mounted) setState(() {});
     });
@@ -55,8 +65,20 @@ class _CheckInScreenState extends State<CheckInScreen> {
 
   @override
   void dispose() {
+    _pullCompletedSubscription?.cancel();
     _identitySubscription.cancel();
     super.dispose();
+  }
+
+  /// 重读被同步中心写入的本地打卡数据。
+  Future<void> _reloadFromLocal() async {
+    await _sync.reloadLocal();
+    if (!mounted) return;
+    setState(() {});
+    // 目标列表是提醒的权威来源：拉取可能带来别的设备删掉的目标，
+    // 这里和 [_load] 一样顺手清一次失效提醒。
+    unawaited(
+        CheckInReminderService.reconcile(allGoals: _allGoals, force: true));
   }
 
   Future<void> _load() async {

@@ -187,6 +187,19 @@ class CheckInSyncService {
   bool get isCalendarOnline =>
       AppIdentityService.isGoogleMode && GoogleCalendarService.isSignedIn;
 
+  /// 重新读取本地存储里的打卡文档。
+  ///
+  /// 「同步中心 → 拉取远端」跑在另一个服务实例上，只写本地存储；页面持有的
+  /// 实例必须重读，否则界面和后续推送都基于过期副本。走同一把同步锁，
+  /// 保证读到的不会是拉取过程中的中间状态。
+  Future<void> reloadLocal() {
+    return _synchronized(() async {
+      final local = await CheckInLocalStore.loadDraft();
+      if (local == null) return;
+      _document = local;
+    });
+  }
+
   /// 初始化：读本地 → 拉远端 → 合并
   Future<void> initialize({
     bool silent = false,

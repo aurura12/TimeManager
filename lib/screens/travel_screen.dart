@@ -9,7 +9,7 @@ import '../utils/platform_features.dart';
 import '../models/sync_center_state.dart';
 import '../models/travel_record.dart';
 import '../services/diary_local_store.dart';
-import '../services/sync_status_coordinator.dart';
+import '../services/sync_center_service.dart';
 import '../services/sync_operation_lock.dart';
 import '../services/travel_gitee_service.dart';
 import '../services/travel_local_store.dart';
@@ -56,13 +56,52 @@ class _TravelScreenState extends State<TravelScreen> {
   /// 有 Provider 树，此时只跳过状态上报。
   SyncStatusCoordinator? _statusCoordinator;
 
+  /// 同步中心「拉取远端」结束的通知；页面据此重读本地存储。
+  StreamSubscription<SyncModule>? _pullCompletedSubscription;
+
   @override
   void initState() {
     super.initState();
     _statusCoordinator = context.read<SyncStatusCoordinator?>();
+    // 同步中心的拉取跑在它自己的服务实例上，只写本地存储：不订阅这个信号，
+    // 页面会一直用旧副本渲染，改动后的推送又会被判成内容冲突而中止。
+    _pullCompletedSubscription = context
+        .read<SyncCenterController?>()
+        ?.pullCompleted
+        .where((module) => module == SyncModule.travel)
+        .listen((_) => unawaited(_reloadDocumentFromLocal()));
     _selectedDate = _normalizedDate(DateTime.now());
     _calendarMonth = DateTime(_selectedDate.year, _selectedDate.month);
     _loadInitial();
+  }
+
+  @override
+  void dispose() {
+    _pullCompletedSubscription?.cancel();
+    super.dispose();
+  }
+
+  /// 重读本地存储里的出行记录。
+  ///
+  /// 走同一把同步锁，避免和页面自己的推送 / 拉取交错。
+  Future<void> _reloadDocumentFromLocal() async {
+    final document = await SyncOperationLock.instance.run(
+      SyncModule.travel,
+      () async {
+        final raw = await TravelLocalStore.loadDraft();
+        if (raw == null || raw.trim().isEmpty) {
+          return const TravelRecordsDocument(records: []);
+        }
+        try {
+          return TravelRecordsDocument.fromMarkdown(raw);
+        } catch (_) {
+          // 坏格式不覆盖内存，保留当前可用数据（与 _loadInitial 一致）。
+          return null;
+        }
+      },
+    );
+    if (!mounted || document == null) return;
+    setState(() => _document = document);
   }
 
   DateTime _normalizedDate(DateTime date) {

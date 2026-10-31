@@ -416,6 +416,17 @@ class SyncCenterController extends ChangeNotifier {
   bool _disposed = false;
   bool _liveRefreshScheduled = false;
 
+  /// 「拉取远端」跑完后广播对应模块。
+  ///
+  /// 拉取写在本地存储里、跑在同步中心自己的服务实例上；页面持有的内存副本
+  /// 不会跟着变。页面必须收到这个信号后重读本地存储，否则界面会继续显示
+  /// 旧数据，下一次编辑还会被推送前的比对判成「与远端内容冲突」而中止。
+  final StreamController<SyncModule> _pullCompleted =
+      StreamController<SyncModule>.broadcast();
+
+  /// 页面订阅它来在拉取结束后刷新自己的内存副本。
+  Stream<SyncModule> get pullCompleted => _pullCompleted.stream;
+
   SyncStatusCoordinator get coordinator => _coordinator;
 
   List<SyncModuleState> get states => _coordinator.states;
@@ -478,13 +489,16 @@ class SyncCenterController extends ChangeNotifier {
   /// 把远端改动取回本地（方向与 [retry] 相反）。
   ///
   /// 出行这类会覆盖本地内容的模块，调用方必须先让用户确认；控制器只负责
-  /// 并发互斥与状态上报。
+  /// 并发互斥与状态上报。操作结束后经 [pullCompleted] 通知持有内存副本的
+  /// 页面重读本地存储。
   Future<void> pull(SyncModule module) async {
     await initialize();
     if (_disposed || _allRetrying || _runningModules.contains(module)) return;
     final operation = _operations.pullFor(module);
     if (operation == null) return;
     await _runOne(module, operation: operation);
+    if (_disposed) return;
+    _pullCompleted.add(module);
   }
 
   /// 覆盖拉取日程（破坏性恢复入口）。
@@ -745,6 +759,7 @@ class SyncCenterController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _pullCompleted.close();
     _coordinator.removeListener(_notify);
     _liveStateSource?.removeListener(_scheduleLiveStateRefresh);
     if (_ownsCoordinator) _coordinator.dispose();
