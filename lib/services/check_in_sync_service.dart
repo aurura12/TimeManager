@@ -31,11 +31,16 @@ class CheckInSyncResult {
   final String? warning;
   final CheckInDocument? document;
 
+  /// 失败原因是「远端还没连接」（没有 Token / 没选身份），不是数据或网络
+  /// 层面的错误。同步中心据此把状态报成离线待恢复，而不是失败。
+  final bool offline;
+
   const CheckInSyncResult._({
     required this.success,
     this.error,
     this.warning,
     this.document,
+    this.offline = false,
   });
 
   factory CheckInSyncResult.ok(
@@ -51,6 +56,10 @@ class CheckInSyncResult {
 
   factory CheckInSyncResult.fail(String error) {
     return CheckInSyncResult._(success: false, error: error);
+  }
+
+  factory CheckInSyncResult.offline(String error) {
+    return CheckInSyncResult._(success: false, error: error, offline: true);
   }
 }
 
@@ -302,7 +311,7 @@ class CheckInSyncService {
       try {
         final token = await _requireToken();
         if (token == null) {
-          return CheckInSyncResult.fail('未配置当前平台同步 Token');
+          return CheckInSyncResult.offline('未配置当前平台同步 Token');
         }
 
         final pull = await CheckInGiteeService.pullText(
@@ -389,12 +398,9 @@ class CheckInSyncService {
     }
 
     final message = result.error ?? '打卡同步失败';
-    final offline = message.contains('未配置') ||
-        message.contains('身份') ||
-        message.contains('Token');
     coordinator.report(
       SyncModule.checkIn,
-      offline
+      result.offline
           ? SyncOperationResult.offline(message, pendingUploadCount: 1)
           : SyncOperationResult.failed(message, pendingUploadCount: 1),
       scope: scope,
@@ -472,7 +478,7 @@ class CheckInSyncService {
   Future<CheckInSyncResult> _pushToGitHubInternal() async {
     final token = await _requireToken();
     if (token == null) {
-      return CheckInSyncResult.fail('未配置当前平台同步 Token');
+      return CheckInSyncResult.offline('未配置当前平台同步 Token');
     }
 
     // 先拉远端合并，避免覆盖对方的打卡
@@ -517,7 +523,7 @@ class CheckInSyncService {
       try {
         final user = await _requireUser();
         if (!hasIdentity || user == null) {
-          return CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
+          return CheckInSyncResult.offline('请先选择乖乖或晶晶，或完成 Google 登录');
         }
 
         // 先合并远端，再做归属校验，避免旧页面快照覆盖远端的他人目标。
@@ -575,11 +581,11 @@ class CheckInSyncService {
       try {
         final user = await _requireUser();
         if (!hasIdentity || user == null) {
-          return CheckInSyncResult.fail('请先选择乖乖或晶晶，或完成 Google 登录');
+          return CheckInSyncResult.offline('请先选择乖乖或晶晶，或完成 Google 登录');
         }
         final token = await _requireToken();
         if (token == null) {
-          return CheckInSyncResult.fail('未配置当前平台同步 Token');
+          return CheckInSyncResult.offline('未配置当前平台同步 Token');
         }
 
         final pull = await _pullAndMergeForWrite(token);
@@ -664,7 +670,7 @@ class CheckInSyncService {
       try {
         final token = await _requireToken();
         if (token == null) {
-          return CheckInSyncResult.fail('未配置当前平台同步 Token');
+          return CheckInSyncResult.offline('未配置当前平台同步 Token');
         }
 
         // Step 1: Pull remote and merge to avoid overwriting others' data
@@ -869,7 +875,7 @@ class CheckInSyncService {
       try {
         final token = await _requireToken();
         if (token == null) {
-          return CheckInSyncResult.fail('未配置当前平台同步 Token');
+          return CheckInSyncResult.offline('未配置当前平台同步 Token');
         }
         final pending = await _loadPendingPhotoCleanup();
         if (pending.isEmpty) return CheckInSyncResult.ok(_document);

@@ -231,7 +231,7 @@ class SyncCenterOperations {
     final result = await sync.pushToGitHub();
     if (!result.success) {
       final message = result.error ?? '打卡同步失败';
-      if (message.contains('未配置') || message.contains('身份')) {
+      if (result.offline) {
         return SyncOperationResult.offline(message, pendingUploadCount: 1);
       }
       return SyncOperationResult.failed(message, pendingUploadCount: 1);
@@ -267,9 +267,7 @@ class SyncCenterOperations {
       );
     }
     final message = result.error ?? '打卡数据拉取失败';
-    if (message.contains('未配置') ||
-        message.contains('身份') ||
-        message.contains('Token')) {
+    if (result.offline) {
       return SyncOperationResult.offline(message, pendingDownloadCount: 1);
     }
     return SyncOperationResult.failed(message, pendingDownloadCount: 1);
