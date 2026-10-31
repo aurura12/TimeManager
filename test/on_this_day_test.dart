@@ -168,6 +168,9 @@ void main() {
       final now = DateTime.now();
       final y1 = now.year - 1;
       final y2 = now.year - 2;
+      // 「不同日」用 1 号/2 号：任何月份都合法，也不会因为 now.day + 1 在
+      // 月末拼出 32 号这种无效日期（导入校验会整份拒绝）。
+      final otherDay = now.day == 1 ? 2 : 1;
 
       final provider = await _makeProvider({
         '$y1-${_two(now.month)}-${_two(now.day)}': [
@@ -177,7 +180,7 @@ void main() {
         ],
         '$y2-${_two(now.month)}-${_two(now.day)}': [_slot(0, '学习')],
         // 日期不匹配，不应返回
-        '$y2-${_two(now.month)}-${_two(now.day + 1)}': [_slot(0, '学习')],
+        '$y2-${_two(now.month)}-${_two(otherDay)}': [_slot(0, '学习')],
       });
 
       final entries = await OnThisDayService.collectEntries(provider);
