@@ -193,6 +193,45 @@ void main() {
     expect(provider.templates.single.id, template.id);
   });
 
+  test('分类撤销只清掉本次删除写入的关系，保留之前单独删掉的子事件', () async {
+    final provider = await _createProvider();
+    addTearDown(provider.dispose);
+
+    provider.addCategory(Category(
+      name: '工作',
+      color: Colors.blue,
+      subCategories: ['开会', '写文档'],
+    ));
+    // 先单独把「写文档」这个子事件删掉（编辑分类时移除子事件）。
+    final index = provider.categories.indexWhere((c) => c.name == '工作');
+    provider.updateCategory(
+      index,
+      provider.categories[index].copyWith(subCategories: ['开会']),
+    );
+    final before = provider.deletedEventRelations
+        .where((relation) => relation.eventName == '写文档')
+        .single
+        .deletedAt;
+
+    final snapshot = provider.deleteCategory(
+        provider.categories.indexWhere((c) => c.name == '工作'));
+    expect(snapshot, isNotNull);
+    expect(provider.undoDeleteCategory(snapshot!), isTrue);
+
+    final relations = provider.deletedEventRelations;
+    // 「写文档」之前就已经删掉，撤销分类删除不该让它复活，时间戳也不能被改写。
+    expect(
+      relations
+          .where((relation) => relation.eventName == '写文档')
+          .single
+          .deletedAt,
+      before,
+    );
+    // 删除分类时新写入的关系要清掉，标签重新算存活。
+    expect(relations.any((relation) => relation.eventName == '开会'), isFalse);
+    expect(relations.any((relation) => relation.eventName == '工作'), isFalse);
+  });
+
   test('目标删除后可撤销恢复，同 id 已存在时拒绝恢复', () async {
     final provider = await _createProvider();
     addTearDown(provider.dispose);

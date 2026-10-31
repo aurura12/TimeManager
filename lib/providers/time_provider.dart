@@ -393,17 +393,24 @@ class DeletedTargetSnapshot {
   });
 }
 
-/// 分类删除的撤销快照：保留分类本体、原位置与被级联删除的目标，
-/// 供提示条撤销时恢复（见 [TimeProvider.undoDeleteCategory]）。
+/// 分类删除的撤销快照：保留分类本体、原位置、被级联删除的目标，以及
+/// 删除前该分类已有的「已删除事件关系」，供提示条撤销时恢复
+/// （见 [TimeProvider.undoDeleteCategory]）。
 class DeletedCategorySnapshot {
   final Category category;
   final int previousIndex;
   final List<DeletedTargetSnapshot> cascadeDeletedTargets;
 
+  /// 删除前就存在的删除关系（例如之前单独删过某个子事件）。删除分类时
+  /// 会把这些关系覆盖成新的 deletedAt，撤销要把它们原样放回去，否则
+  /// 统计口径会把那些早就删掉的子事件重新算成存活。
+  final List<DeletedEventRelation> previousDeletedRelations;
+
   const DeletedCategorySnapshot({
     required this.category,
     required this.previousIndex,
     required this.cascadeDeletedTargets,
+    required this.previousDeletedRelations,
   });
 }
 
@@ -8033,6 +8040,11 @@ class TimeProvider with ChangeNotifier {
     return labels;
   }
 
+  /// 已删除事件关系（只本地持久化 + 进备份，不写远端分类文档）。
+  @visibleForTesting
+  List<DeletedEventRelation> get deletedEventRelations =>
+      List.unmodifiable(_deletedRelations);
+
   List<DeletedEventRelation> _effectiveDeletedRelations() {
     final liveLabels = _liveCategoryLabels();
     return _deletedRelations
@@ -10375,6 +10387,11 @@ class TimeProvider with ChangeNotifier {
     final categoryId = category.id;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
 
+    // 删除分类会把这些关系覆盖成新的 deletedAt，先记下原样，撤销时放回。
+    final previousDeletedRelations = _deletedRelations
+        .where((relation) => relation.categoryId == categoryId)
+        .toList();
+
     _upsertDeletedRelation(
       categoryId: categoryId,
       parentName: category.name,
@@ -10428,6 +10445,7 @@ class TimeProvider with ChangeNotifier {
       category: category,
       previousIndex: index,
       cascadeDeletedTargets: removedTargets,
+      previousDeletedRelations: previousDeletedRelations,
     );
   }
 
@@ -10458,15 +10476,11 @@ class TimeProvider with ChangeNotifier {
       _markTargetsGiteePending();
     }
 
-    // 清掉删除时写入的 DeletedEventRelation，统计口径回到「存活分类」。
-    final liveLabels = {
-      category.name,
-      ...category.subCategories,
-      ...category.hiddenSubCategories,
-    };
-    _deletedRelations.removeWhere((relation) =>
-        relation.categoryId == category.id &&
-        liveLabels.contains(relation.eventName));
+    // 清掉删除时写入的 DeletedEventRelation，再把删除前就存在的关系放回：
+    // 统计口径回到「存活分类」，而之前单独删过的子事件仍然是删除状态。
+    _deletedRelations
+        .removeWhere((relation) => relation.categoryId == category.id);
+    _deletedRelations.addAll(snapshot.previousDeletedRelations);
 
     final index = snapshot.previousIndex.clamp(0, _categories.length);
     _categories.insert(index, category.copyWith(updatedAt: nowMs));
