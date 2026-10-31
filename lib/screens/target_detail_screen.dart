@@ -63,14 +63,16 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                   // Provider 通知触发空目标重建后再次 post-frame pop，
                   // 把搜索结果页等上一层也误关闭。
                   _deletionNoticeScheduled = true;
-                  if (timeProvider.deleteTarget(target)) {
+                  final deleted = timeProvider.deleteTarget(target);
+                  if (deleted != null) {
                     playHaptic(context, HapticStrength.light);
                     showAppUndoSnackBar(
                       context,
                       message: '已删除目标“${target.name}”',
                       identityToken: AppIdentityService.identityStamp,
                       onUndo: () async {
-                        if (!timeProvider.undoDeleteTarget(target)) {
+                        if (!timeProvider.undoDeleteTarget(target,
+                            previousIndex: deleted.previousIndex)) {
                           throw StateError('目标已重建，无法撤销');
                         }
                       },

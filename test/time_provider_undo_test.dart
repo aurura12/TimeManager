@@ -209,12 +209,16 @@ void main() {
     provider.addTarget(target);
     expect(provider.targets.any((t) => t.id == 'target-1'), isTrue);
 
-    expect(provider.deleteTarget(target), isTrue);
+    final deleted = provider.deleteTarget(target);
+    expect(deleted, isNotNull);
     expect(provider.targets.any((t) => t.id == 'target-1'), isFalse);
 
     // 撤销：addTarget 会移除墓碑并把 updatedAt 提到当前时间，
     // 恢复后的目标在与远端文档合并时能胜过旧墓碑。
-    expect(provider.undoDeleteTarget(target), isTrue);
+    expect(
+      provider.undoDeleteTarget(target, previousIndex: deleted!.previousIndex),
+      isTrue,
+    );
     final restored = provider.targets.firstWhere((t) => t.id == 'target-1');
     expect(
       restored.updatedAt,
@@ -223,6 +227,45 @@ void main() {
 
     // 同 id 已存在时撤销失效。
     expect(provider.undoDeleteTarget(target), isFalse);
+  });
+
+  test('撤销删除按删除前的位置放回，不打乱用户排序', () async {
+    final provider = await _createProvider();
+    addTearDown(provider.dispose);
+
+    provider.addCategory(Category(name: '工作', color: Colors.blue));
+    final category = provider.categories.firstWhere((c) => c.name == '工作');
+    Target makeTarget(String id) => Target(
+          id: id,
+          name: id,
+          categoryId: category.id,
+          type: TargetType.duration,
+          color: Colors.blue,
+          period: 'day',
+        );
+    for (final id in ['a', 'b', 'c']) {
+      provider.addTarget(makeTarget(id));
+    }
+    expect(provider.targets.map((t) => t.id), ['a', 'b', 'c']);
+
+    // 删除中间那个目标后撤销：必须回到原位，而不是追到末尾。
+    final deleted = provider.deleteTarget(provider.targets[1]);
+    expect(deleted, isNotNull);
+    expect(provider.targets.map((t) => t.id), ['a', 'c']);
+    expect(
+      provider.undoDeleteTarget(deleted!.target,
+          previousIndex: deleted.previousIndex),
+      isTrue,
+    );
+    expect(provider.targets.map((t) => t.id), ['a', 'b', 'c']);
+
+    // 分类删除级联带走的目标同样按原位置恢复。
+    final snapshot = provider.deleteCategory(
+        provider.categories.indexWhere((c) => c.id == category.id));
+    expect(snapshot, isNotNull);
+    expect(provider.targets, isEmpty);
+    expect(provider.undoDeleteCategory(snapshot!), isTrue);
+    expect(provider.targets.map((t) => t.id), ['a', 'b', 'c']);
   });
 
   test('分类删除后撤销恢复分类与级联目标，并清理删除关系', () async {
@@ -260,7 +303,7 @@ void main() {
     final snapshot = provider.deleteCategory(workIndex);
     expect(snapshot, isNotNull);
     expect(snapshot!.category.name, '工作');
-    expect(snapshot.cascadeDeletedTargets.single.id, 'target-1');
+    expect(snapshot.cascadeDeletedTargets.single.target.id, 'target-1');
     expect(provider.categories.any((c) => c.name == '工作'), isFalse);
     expect(provider.targets, isEmpty);
     // 历史标签「开会」落入临时口径，不再归入已删除的分类。

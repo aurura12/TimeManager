@@ -380,12 +380,25 @@ class _BackupImportSnapshot {
   }
 }
 
+/// 目标删除的撤销快照：目标本体 + 删除前在列表中的位置。
+///
+/// 目标顺序由用户手工拖动决定，撤销必须原位放回，不能追到末尾。
+class DeletedTargetSnapshot {
+  final Target target;
+  final int previousIndex;
+
+  const DeletedTargetSnapshot({
+    required this.target,
+    required this.previousIndex,
+  });
+}
+
 /// 分类删除的撤销快照：保留分类本体、原位置与被级联删除的目标，
 /// 供提示条撤销时恢复（见 [TimeProvider.undoDeleteCategory]）。
 class DeletedCategorySnapshot {
   final Category category;
   final int previousIndex;
-  final List<Target> cascadeDeletedTargets;
+  final List<DeletedTargetSnapshot> cascadeDeletedTargets;
 
   const DeletedCategorySnapshot({
     required this.category,
@@ -10394,12 +10407,14 @@ class TimeProvider with ChangeNotifier {
 
     // Remove targets referencing this category and keep tombstones so another
     // device cannot resurrect the cascade-deleted targets.
-    final removedTargets =
-        _targets.where((target) => target.categoryId == categoryId).toList();
-    _targets.removeWhere((target) => target.categoryId == categoryId);
-    for (final target in removedTargets) {
+    final removedTargets = <DeletedTargetSnapshot>[];
+    for (var i = 0; i < _targets.length; i++) {
+      final target = _targets[i];
+      if (target.categoryId != categoryId) continue;
+      removedTargets.add(DeletedTargetSnapshot(target: target, previousIndex: i));
       _deletedTargets[target.id] = nowMs;
     }
+    _targets.removeWhere((target) => target.categoryId == categoryId);
     if (removedTargets.isNotEmpty) {
       _targetsDocUpdatedAt = nowMs;
       _targetsDirty = true;
@@ -10428,11 +10443,14 @@ class TimeProvider with ChangeNotifier {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
 
     _deletedCategories.remove(category.id);
-    for (final target in snapshot.cascadeDeletedTargets) {
+    for (final deleted in snapshot.cascadeDeletedTargets) {
+      final target = deleted.target;
       // 用户可能已经重建了同 id 目标，跳过即可，不覆盖新数据。
       if (_targets.any((t) => t.id == target.id)) continue;
       _deletedTargets.remove(target.id);
-      _targets.add(target.copyWith(updatedAt: nowMs));
+      // 按删除前的位置放回；快照按原顺序遍历，逐个插入即可还原相对顺序。
+      final index = deleted.previousIndex.clamp(0, _targets.length);
+      _targets.insert(index, target.copyWith(updatedAt: nowMs));
     }
     if (snapshot.cascadeDeletedTargets.isNotEmpty) {
       _targetsDocUpdatedAt = nowMs;
@@ -10461,12 +10479,16 @@ class TimeProvider with ChangeNotifier {
     return true;
   }
 
-  void addTarget(Target target) {
+  void addTarget(Target target, {int? index}) {
     if (!_allowScheduleMutation()) return;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final stampedTarget = target.copyWith(updatedAt: nowMs);
     _deletedTargets.remove(stampedTarget.id);
-    _targets.add(stampedTarget);
+    if (index == null) {
+      _targets.add(stampedTarget);
+    } else {
+      _targets.insert(index.clamp(0, _targets.length), stampedTarget);
+    }
     _targetsDocUpdatedAt = nowMs;
     _targetsDirty = true;
     _markTargetsGiteePending();
@@ -10520,12 +10542,12 @@ class TimeProvider with ChangeNotifier {
     return true;
   }
 
-  /// 返回是否真的删除了目标：被阻塞或找不到时返回 false，
-  /// 供 UI 判断要不要给删除反馈。
-  bool deleteTarget(Target target) {
-    if (!_allowScheduleMutation()) return false;
+  /// 删除目标并返回撤销快照（含删除前的位置）：被阻塞或找不到时返回
+  /// null，供 UI 判断要不要给删除反馈，并在提示条撤销时原位恢复。
+  DeletedTargetSnapshot? deleteTarget(Target target) {
+    if (!_allowScheduleMutation()) return null;
     final index = _targets.indexWhere((item) => item.id == target.id);
-    if (index == -1) return false;
+    if (index == -1) return null;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     _targets.removeAt(index);
     _deletedTargets[target.id] = nowMs;
@@ -10535,7 +10557,7 @@ class TimeProvider with ChangeNotifier {
     _saveData();
     notifyListeners();
     _invalidateTargetStats(); // 目标统计缓存整体失效
-    return true;
+    return DeletedTargetSnapshot(target: target, previousIndex: index);
   }
 
   /// 恢复刚删除的目标（提示条撤销专用）。
@@ -10543,11 +10565,13 @@ class TimeProvider with ChangeNotifier {
   /// 复用 [addTarget]：它已内置「移除墓碑 + updatedAt 提到当前时间」，
   /// 恢复后的目标在与远端文档合并时能胜过旧墓碑
   /// （墓碑时间戳严格大于 updatedAt 才判删除，见 target_document_merge）。
+  /// 有 [previousIndex] 时按删除前的位置放回，目标顺序由用户手工拖出来，
+  /// 撤消失败回到末尾等于打乱用户的排序。
   /// 同 id 已存在时拒绝，返回 false 表示撤销已失效。
-  bool undoDeleteTarget(Target target) {
+  bool undoDeleteTarget(Target target, {int? previousIndex}) {
     if (!_allowScheduleMutation()) return false;
     if (_targets.any((t) => t.id == target.id)) return false;
-    addTarget(target);
+    addTarget(target, index: previousIndex);
     return true;
   }
 

@@ -374,14 +374,16 @@ class _TargetScreenContent extends StatelessWidget {
   /// 即时删除目标，提示条提供撤销入口。
   void _deleteTarget(
       BuildContext context, TimeProvider provider, Target target) {
-    if (!provider.deleteTarget(target)) return;
+    final snapshot = provider.deleteTarget(target);
+    if (snapshot == null) return;
     playHaptic(context, HapticStrength.light);
     showAppUndoSnackBar(
       context,
       message: '已删除目标“${target.name}”',
       identityToken: AppIdentityService.identityStamp,
       onUndo: () async {
-        if (!provider.undoDeleteTarget(target)) {
+        if (!provider.undoDeleteTarget(target,
+            previousIndex: snapshot.previousIndex)) {
           throw StateError('目标已重建，无法撤销');
         }
       },
