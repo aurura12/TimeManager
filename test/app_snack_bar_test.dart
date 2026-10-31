@@ -13,6 +13,34 @@ Future<void> _pumpHost(
   await tester.pump();
 }
 
+/// 在二级页面里构建内容：用于验证「页面关闭后提示条仍然可点」。
+Future<void> _pumpHostWithPush(
+  WidgetTester tester,
+  WidgetBuilder builder,
+) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Builder(
+        builder: (context) => Scaffold(
+          body: Center(
+            child: TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (pageContext) => Scaffold(
+                    body: Center(child: Builder(builder: builder)),
+                  ),
+                ),
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.pump();
+}
+
 void main() {
   setUp(() {
     AppIdentityService.resetForTesting();
@@ -122,7 +150,69 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('撤销'));
     await tester.pumpAndSettle();
-    expect(find.text('撤销失败，请重试'), findsOneWidget);
+    expect(find.text('撤销失败'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('展示提示条的页面关闭后，撤销仍然生效', (tester) async {
+    var undoCount = 0;
+    await _pumpHostWithPush(tester, (pageContext) {
+      return TextButton(
+        onPressed: () {
+          showAppUndoSnackBar(
+            pageContext,
+            message: '已删除目标',
+            onUndo: () async => undoCount++,
+          );
+          Navigator.of(pageContext).pop();
+        },
+        child: const Text('delete'),
+      );
+    });
+
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('delete'));
+    await tester.pumpAndSettle();
+
+    // SnackBar 挂在 ScaffoldMessenger 上，页面关闭后仍然可见可点。
+    expect(find.text('已删除目标'), findsOneWidget);
+    await tester.tap(find.text('撤销'));
+    await tester.pumpAndSettle();
+    expect(undoCount, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('页面关闭后身份已切换，撤销被拒绝且不崩溃', (tester) async {
+    AppIdentityService.adoptManualKind(DiaryKind.g);
+    var undoCount = 0;
+    await _pumpHostWithPush(tester, (pageContext) {
+      return TextButton(
+        onPressed: () {
+          showAppUndoSnackBar(
+            pageContext,
+            message: '已删除目标',
+            identityToken: AppIdentityService.identityStamp,
+            onUndo: () async => undoCount++,
+          );
+          Navigator.of(pageContext).pop();
+        },
+        child: const Text('delete'),
+      );
+    });
+
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('delete'));
+    await tester.pumpAndSettle();
+
+    AppIdentityService.adoptManualKind(DiaryKind.j);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('撤销'));
+    await tester.pumpAndSettle();
+    expect(undoCount, 0);
+    expect(find.text('身份已切换，撤销已失效'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('showConfirmDialog destructive 样式返回用户选择', (tester) async {
