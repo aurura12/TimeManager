@@ -17,6 +17,7 @@ import '../services/diary_sync_service.dart';
 import '../services/diary_search_service.dart';
 import '../services/app_identity_service.dart';
 import '../services/diary_auto_sync_service.dart';
+import '../services/sync_operation_lock.dart';
 import '../services/sync_status_coordinator.dart';
 import '../widgets/sync_status_button.dart';
 import '../utils/app_lifecycle.dart';
@@ -1087,9 +1088,10 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     _conflictResolving = true;
     _beginDiarySync();
     try {
-      final pull = await DiaryGiteeService.pullDiary(
-        token: token,
-        path: entry.remotePath,
+      // 和其他日记同步共用同一把锁：回前台的自动上传可能同时在读这一天。
+      final pull = await SyncOperationLock.instance.run(
+        SyncModule.diary,
+        () => DiaryGiteeService.pullDiary(token: token, path: entry.remotePath),
       );
       if (!mounted) return;
       if (!pull.success && !pull.notFound) {
