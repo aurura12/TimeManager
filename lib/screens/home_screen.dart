@@ -32,6 +32,8 @@ import 'global_search_screen.dart';
 import 'desktop_shortcut_settings_screen.dart';
 import 'sync_center_screen.dart';
 import '../models/global_search_result.dart';
+import '../services/app_identity_service.dart';
+import '../utils/app_snack_bar.dart';
 import '../utils/desktop_selection.dart';
 import '../utils/haptics.dart';
 import '../utils/local_day_range.dart';
@@ -284,13 +286,24 @@ class HomeScreenState extends State<HomeScreen> {
     if (!stillRecorded) _clearSelection();
   }
 
-  /// 双击删除一格：只有真的清掉了才给触感反馈，
-  /// 空格位 / 只读视图 / 覆盖事务进行中都不震。
+  /// 双击删除一格：即时执行，提示条提供撤销入口。
+  /// 空格位 / 只读视图 / 覆盖事务进行中都不会真正删除，也不震。
   void _removeSlot(int index, {DateTime? date}) {
     final provider = context.read<TimeProvider>();
     if (!provider.removeEventFromSlot(index, date: date)) return;
     if (!mounted) return;
     playHaptic(context, HapticStrength.light);
+    final dateKey = provider.dateKeyFor(date ?? provider.currentDate);
+    showAppUndoSnackBar(
+      context,
+      message: '已删除时间块',
+      identityToken: AppIdentityService.identityStamp,
+      onUndo: () async {
+        if (!provider.undoLastChangeOnDate(dateKey)) {
+          throw StateError('该日期已无可撤销的编辑');
+        }
+      },
+    );
   }
 
   // --- 刷子模式：进入 / 切换 / 退出与手势记录 ---

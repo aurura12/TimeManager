@@ -1934,6 +1934,10 @@ class TimeProvider with ChangeNotifier {
     return "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
   }
 
+  /// 对外暴露的日期 key（与内部撤销栈 / 同步分片使用同一格式），
+  /// 供 UI 在删除后构造按日期撤销的闭包。
+  String dateKeyFor(DateTime date) => _getDateKey(date);
+
   /// 将日期 key 规范化为 yyyy-MM-dd 格式。
   /// 兼容旧版本不补零的存储格式（如 "2024-7-24" → "2024-07-24"），
   /// 避免升级后旧数据读取不到。
@@ -2445,6 +2449,19 @@ class TimeProvider with ChangeNotifier {
     final current = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
     _redoStacks.putIfAbsent(dateKey, () => []).add(_copySlots(current));
     _restoreHistory(dateKey, _undoStacks[dateKey]!.removeLast());
+  }
+
+  /// 撤销指定日期的最近一次编辑（SnackBar 撤销按钮专用）。
+  ///
+  /// 与 [undo] 的区别：用户点提示条上的「撤销」时，当前编辑焦点可能
+  /// 已经切到别的日期，这里显式定位到删除发生的那一天。返回 false
+  /// 表示该日期没有可撤销的编辑（已被新编辑覆盖或栈已清空）。
+  bool undoLastChangeOnDate(String dateKey) {
+    if (!_allowScheduleMutation()) return false;
+    if ((_undoStacks[dateKey]?.isEmpty ?? true)) return false;
+    _lastEditedDateKey = dateKey;
+    undo();
+    return true;
   }
 
   void redo() {
