@@ -380,6 +380,20 @@ class _BackupImportSnapshot {
   }
 }
 
+/// 分类删除的撤销快照：保留分类本体、原位置与被级联删除的目标，
+/// 供提示条撤销时恢复（见 [TimeProvider.undoDeleteCategory]）。
+class DeletedCategorySnapshot {
+  final Category category;
+  final int previousIndex;
+  final List<Target> cascadeDeletedTargets;
+
+  const DeletedCategorySnapshot({
+    required this.category,
+    required this.previousIndex,
+    required this.cascadeDeletedTargets,
+  });
+}
+
 enum CategoryMutationStatus { success, validationError, blocked, invalidIndex }
 
 /// 分类新增/编辑的明确结果。
@@ -10310,14 +10324,14 @@ class TimeProvider with ChangeNotifier {
     _saveData();
   }
 
-  /// 返回是否真的删除了分类：被阻塞、索引无效或保留分类时返回 false，
-  /// 供 UI 判断要不要给删除反馈。
-  bool deleteCategory(int index) {
-    if (!_allowScheduleMutation()) return false;
-    if (index < 0 || index >= _categories.length) return false;
+  /// 删除分类并返回撤销快照：被阻塞、索引无效或保留分类时返回 null，
+  /// 供 UI 判断要不要给删除反馈，并在提示条撤销时恢复。
+  DeletedCategorySnapshot? deleteCategory(int index) {
+    if (!_allowScheduleMutation()) return null;
+    if (index < 0 || index >= _categories.length) return null;
     final category = _categories[index];
     if (isReservedCategoryLabel(category.name)) {
-      return false;
+      return null;
     }
     final categoryId = category.id;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
@@ -10368,6 +10382,55 @@ class TimeProvider with ChangeNotifier {
 
     notifyListeners();
     _saveData();
+    _invalidateTargetStats();
+    return DeletedCategorySnapshot(
+      category: category,
+      previousIndex: index,
+      cascadeDeletedTargets: removedTargets,
+    );
+  }
+
+  /// 恢复刚删除的分类及其级联删除的目标（提示条撤销专用）。
+  ///
+  /// 恢复思路与目标撤销一致：分类与目标以「updatedAt 提到当前时间」放回，
+  /// 与远端文档合并时胜过旧墓碑（墓碑时间戳严格大于 updatedAt 才判删除）。
+  /// 同 id 分类已被重建时拒绝，返回 false 表示撤销已失效。
+  bool undoDeleteCategory(DeletedCategorySnapshot snapshot) {
+    if (!_allowScheduleMutation()) return false;
+    final category = snapshot.category;
+    if (_categories.any((c) => c.id == category.id)) return false;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+
+    _deletedCategories.remove(category.id);
+    for (final target in snapshot.cascadeDeletedTargets) {
+      // 用户可能已经重建了同 id 目标，跳过即可，不覆盖新数据。
+      if (_targets.any((t) => t.id == target.id)) continue;
+      _deletedTargets.remove(target.id);
+      _targets.add(target.copyWith(updatedAt: nowMs));
+    }
+    if (snapshot.cascadeDeletedTargets.isNotEmpty) {
+      _targetsDocUpdatedAt = nowMs;
+      _targetsDirty = true;
+      _markTargetsGiteePending();
+    }
+
+    // 清掉删除时写入的 DeletedEventRelation，统计口径回到「存活分类」。
+    final liveLabels = {
+      category.name,
+      ...category.subCategories,
+      ...category.hiddenSubCategories,
+    };
+    _deletedRelations.removeWhere((relation) =>
+        relation.categoryId == category.id &&
+        liveLabels.contains(relation.eventName));
+
+    final index = snapshot.previousIndex.clamp(0, _categories.length);
+    _categories.insert(index, category.copyWith(updatedAt: nowMs));
+    _markCategoriesChanged();
+    _markCategoriesGiteePending();
+    _invalidateLabelCategoryIdCache();
+    _saveData();
+    notifyListeners();
     _invalidateTargetStats();
     return true;
   }

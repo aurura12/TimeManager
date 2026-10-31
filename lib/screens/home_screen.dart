@@ -1086,7 +1086,7 @@ class HomeScreenState extends State<HomeScreen> {
               extentRatio: 0.6, // 侧滑展开的宽度比例
               children: [
                 SlidableAction(
-                  onPressed: (context) => _showDeleteConfirmDialog(
+                  onPressed: (context) => _deleteCategory(
                       context, index, category, provider),
                   backgroundColor: AppSemanticColors.danger,
                   foregroundColor:
@@ -2507,32 +2507,27 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showDeleteConfirmDialog(
-      BuildContext context, int index, Category cat, TimeProvider provider) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("确认删除"),
-        content: Text("确定要删除“${cat.name}”及其所有子事件吗？"),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("取消"),
-          ),
-          TextButton(
-            onPressed: () {
-              if (provider.deleteCategory(index)) {
-                playHaptic(context, HapticStrength.light);
-              }
-              Navigator.pop(context);
-            },
-            style: TextButton.styleFrom(
-                foregroundColor: AppSemanticColors.readableOn(
-                    AppSemanticColors.danger, AppSurfaces.of(context).card)),
-            child: const Text("删除"),
-          ),
-        ],
-      ),
+  /// 即时删除分类，提示条提供撤销入口。
+  ///
+  /// 删除会级联移除引用该分类的目标，撤销时一并恢复（以 updatedAt
+  /// 提到当前时间的方式胜过远端墓碑）。
+  void _deleteCategory(BuildContext context, int index, Category cat,
+      TimeProvider provider) {
+    final snapshot = provider.deleteCategory(index);
+    if (snapshot == null) return;
+    playHaptic(context, HapticStrength.light);
+    final hasCascade = snapshot.cascadeDeletedTargets.isNotEmpty;
+    showAppUndoSnackBar(
+      context,
+      message: hasCascade
+          ? '已删除“${cat.name}”及其关联目标'
+          : '已删除“${cat.name}”',
+      identityToken: AppIdentityService.identityStamp,
+      onUndo: () async {
+        if (!provider.undoDeleteCategory(snapshot)) {
+          throw StateError('分类已重建，无法撤销');
+        }
+      },
     );
   }
 
@@ -2572,7 +2567,7 @@ class HomeScreenState extends State<HomeScreen> {
         provider.setCategoryExpandState(
             cat.id, !provider.getCategoryExpandState(cat.id));
       case 'delete':
-        _showDeleteConfirmDialog(context, index, cat, provider);
+        _deleteCategory(context, index, cat, provider);
     }
   }
 }

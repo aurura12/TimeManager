@@ -188,6 +188,67 @@ void main() {
     expect(provider.undoDeleteTarget(target), isFalse);
   });
 
+  test('分类删除后撤销恢复分类与级联目标，并清理删除关系', () async {
+    final provider = await _createProvider();
+    addTearDown(provider.dispose);
+
+    provider.addCategory(Category(
+      name: '工作',
+      color: Colors.blue,
+      subCategories: ['开会'],
+    ));
+    // 空偏好下 provider 会预置默认分类，按名称定位刚加的分类。
+    final workIndex = provider.categories.indexWhere((c) => c.name == '工作');
+    expect(workIndex, greaterThanOrEqualTo(0));
+    final categoryId = provider.categories[workIndex].id;
+    final target = Target(
+      id: 'target-1',
+      name: '健身',
+      categoryId: categoryId,
+      type: TargetType.duration,
+      color: Colors.blue,
+      period: 'day',
+    );
+    provider.addTarget(target);
+
+    final yesterday = DateTime.now().subtract(const Duration(days: 1));
+    provider.assignCategoryToSlots(
+      const {0},
+      Category(id: categoryId, name: '开会', color: Colors.blue),
+      subLabel: '开会',
+      date: yesterday,
+    );
+
+    // 删除：分类与级联目标即时消失，历史标签进入「已删除/临时」口径。
+    final snapshot = provider.deleteCategory(workIndex);
+    expect(snapshot, isNotNull);
+    expect(snapshot!.category.name, '工作');
+    expect(snapshot.cascadeDeletedTargets.single.id, 'target-1');
+    expect(provider.categories.any((c) => c.name == '工作'), isFalse);
+    expect(provider.targets, isEmpty);
+    // 历史标签「开会」落入临时口径，不再归入已删除的分类。
+    final statsAfterDelete =
+        provider.getParentStatistics(yesterday, yesterday);
+    expect(statsAfterDelete.containsKey('工作'), isFalse);
+
+    // 撤销：分类放回原位置、目标恢复、删除关系清理，
+    // 历史标签重新归入恢复的分类。
+    expect(provider.undoDeleteCategory(snapshot), isTrue);
+    final restored = provider.categories
+        .firstWhere((c) => c.name == '工作');
+    expect(restored.updatedAt, greaterThan(snapshot.category.updatedAt));
+    expect(provider.targets.single.id, 'target-1');
+    expect(provider.targets.single.updatedAt, greaterThan(target.updatedAt));
+    final statsAfterUndo =
+        provider.getParentStatistics(yesterday, yesterday);
+    expect(statsAfterUndo['工作'], isNotNull);
+    expect(statsAfterUndo['工作'], closeTo(1 / 6, 1e-9));
+
+    // 分类已回到列表时再次撤销失效。
+    expect(provider.undoDeleteCategory(snapshot), isFalse);
+    expect(provider.categories.where((c) => c.name == '工作').length, 1);
+  });
+
   // 跨身份安全说明：移动端身份切换经 _invalidateIdentityScopedOperations
   // 清空撤销栈；桌面端本地时间块本就不分身份，撤销栈共享同一份数据。
   // 提示条撤销的身份校验由 showAppUndoSnackBar 的 identityToken 承担，
