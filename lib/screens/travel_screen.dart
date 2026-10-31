@@ -317,13 +317,15 @@ class _TravelScreenState extends State<TravelScreen> {
       return;
     }
     _markTravelPending();
-    await _pushToGitHub();
     if (!mounted) return;
+    // 本地已经落盘，撤销入口立刻给出来；远端推送放到后台，慢网络下不能
+    // 拖着提示条一起等（等太久用户已经离开这一屏，撤销就白给了）。
     showAppUndoSnackBar(
       context,
       message: '已删除 ${record.dateKey} 的出行记录',
       identityToken: AppIdentityService.identityStamp,
       onUndo: () async {
+        if (!mounted) return;
         // 该日期已被用户写入新记录时撤销失效。
         if (_recordForDate(record.date) != null) {
           throw StateError('该日期已有新记录，撤销已失效');
@@ -340,6 +342,7 @@ class _TravelScreenState extends State<TravelScreen> {
         await _pushToGitHub();
       },
     );
+    unawaited(_pushToGitHub());
   }
 
   Future<void> _showAddRecordDialog({DateTime? initialDate}) async {
