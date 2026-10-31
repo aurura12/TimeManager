@@ -351,7 +351,11 @@ class _WakeUpCardState extends State<WakeUpCard> with WidgetsBindingObserver {
             '已删除 ${record.time.month}月${record.time.day}日 ${record.timeLabel} 的起床记录',
         identityToken: AppIdentityService.identityStamp,
         onUndo: () async {
-          await provider.restore(record, expectedKind: kind);
+          final restored =
+              await provider.restore(record, expectedKind: kind);
+          if (!restored) {
+            throw StateError('该日期已有新的起床记录，撤销已失效');
+          }
         },
       );
     } catch (error) {

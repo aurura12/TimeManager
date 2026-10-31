@@ -206,7 +206,7 @@ void main() {
     expect(deleted.deletedDates[WakeUpRecord.keyForDate(time)], isNotNull);
     final tombstone = deleted.deletedDates[WakeUpRecord.keyForDate(time)]!;
 
-    await provider.restore(original, expectedKind: DiaryKind.j);
+    expect(await provider.restore(original, expectedKind: DiaryKind.j), isTrue);
     final restoredDoc = store.data[DiaryKind.j]!;
     final restored = restoredDoc.records[WakeUpRecord.keyForDate(time)];
     expect(restored, isNotNull);
@@ -235,7 +235,8 @@ void main() {
     await provider.record(DateTime(2026, 10, 3, 6, 50),
         expectedKind: DiaryKind.j);
 
-    await provider.restore(original, expectedKind: DiaryKind.j);
+    // 该日期已有新记录：放弃恢复并返回 false，供提示条给出失效反馈。
+    expect(await provider.restore(original, expectedKind: DiaryKind.j), isFalse);
     final current = store.data[DiaryKind.j]!
         .records[WakeUpRecord.keyForDate(time)]!;
     expect(current.timeLabel, '06:50');
