@@ -125,10 +125,14 @@ List<HunkChoice> defaultHunkChoices(List<TextDiffBlock> blocks) {
 }
 
 /// 按用户对每个差异块的选择拼出最终正文。
+///
+/// 行拆分时丢掉了结尾空行，[endWithNewline] 用来把它补回去：任一版本以换行
+/// 结尾时合并结果也以换行结尾，避免合并一次就把远端文件的行尾改掉。
 String mergeDiffBlocks(
   List<TextDiffBlock> blocks,
-  List<HunkChoice> choices,
-) {
+  List<HunkChoice> choices, {
+  bool endWithNewline = false,
+}) {
   final output = <String>[];
   var index = 0;
   for (final block in blocks) {
@@ -150,8 +154,13 @@ String mergeDiffBlocks(
           ..addAll(block.remoteLines);
     }
   }
-  return output.join('\n');
+  final merged = output.join('\n');
+  if (!endWithNewline || merged.isEmpty) return merged;
+  return '$merged\n';
 }
+
+/// 正文是否以换行结尾（`\r\n` 也认）。
+bool textEndsWithNewline(String text) => text.endsWith('\n');
 
 List<String> _splitLines(String text) {
   if (text.isEmpty) return const [];

@@ -60,7 +60,13 @@ class _DiaryConflictScreenState extends State<DiaryConflictScreen> {
 
   String get _dateLabel => DateFormat('yyyy年M月d日').format(widget.date);
 
-  String get _mergedBody => mergeDiffBlocks(_blocks, _choices);
+  /// 合并结果。结尾换行跟任一版本走，避免合并后把远端文件的行尾改掉。
+  String get _mergedBody => mergeDiffBlocks(
+        _blocks,
+        _choices,
+        endWithNewline: textEndsWithNewline(widget.localBody) ||
+            textEndsWithNewline(widget.remoteBody),
+      );
 
   void _setChoice(int blockIndex, HunkChoice choice) {
     final index = _conflictBlockIndexes.indexOf(blockIndex);

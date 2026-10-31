@@ -107,4 +107,26 @@ void main() {
     final blocks = buildDiffBlocks('a\nb', 'a\nx');
     expect(defaultHunkChoices(blocks), [HunkChoice.both]);
   });
+
+  test('结尾换行按任一版本保留，空正文不补空行', () {
+    final withNewline = buildDiffBlocks('第一行\n', '第一行\n');
+    expect(
+      mergeDiffBlocks(withNewline, const [], endWithNewline: true),
+      '第一行\n',
+    );
+    // 两边都没有结尾换行时不要凭空加。
+    final without = buildDiffBlocks('第一行', '第一行');
+    expect(mergeDiffBlocks(without, const []), '第一行');
+
+    // 连续两个换行（末尾一个空行）也要原样保留。
+    final twoNewlines = buildDiffBlocks('a\n\n', 'a\n\n');
+    expect(
+      mergeDiffBlocks(twoNewlines, const [], endWithNewline: true),
+      'a\n\n',
+    );
+
+    final empty = buildDiffBlocks('', '');
+    expect(mergeDiffBlocks(empty, const [], endWithNewline: true), '');
+    expect(textEndsWithNewline('a\r\n'), isTrue);
+  });
 }
