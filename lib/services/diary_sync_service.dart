@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:intl/intl.dart';
 
 import '../models/diary_kind.dart';
+import '../utils/diary_markdown.dart';
 import '../models/sync_center_state.dart';
 import 'app_identity_service.dart';
 import 'diary_gitee_service.dart';
@@ -84,6 +85,180 @@ class DiarySyncService {
 
   Future<SyncOperationResult> sync() {
     return SyncOperationLock.instance.run(SyncModule.diary, _syncInternal);
+  }
+
+  /// 冲突处理的另一半：**用本地内容覆盖远端**。
+  ///
+  /// 只在用户明确确认后调用。与 [sync] 的区别是不比对编辑基线，而是重新读取
+  /// 远端当前版本后以它为 expectedSha 强推；推之前远端若又被改过会判冲突，
+  /// 不会无声覆盖。调用方负责把「会覆盖别人刚写的内容」讲清楚。
+  Future<SyncOperationResult> overwriteRemote({
+    required DiaryKind kind,
+    required DateTime date,
+    String? path,
+    String? body,
+    String? expectedRemoteSha,
+  }) {
+    return SyncOperationLock.instance.run(
+      SyncModule.diary,
+      () => _overwriteRemoteInternal(
+        kind,
+        date,
+        path: path,
+        bodyOverride: body,
+        expectedRemoteSha: expectedRemoteSha,
+      ),
+    );
+  }
+
+  Future<SyncOperationResult> _overwriteRemoteInternal(
+    DiaryKind kind,
+    DateTime date, {
+    String? path,
+    String? bodyOverride,
+    String? expectedRemoteSha,
+  }) async {
+    await AppIdentityService.load();
+    final identity = AppIdentityService.personKind;
+    if (identity == null) {
+      return const SyncOperationResult.offline('尚未选择日记身份，本地草稿会保留');
+    }
+    if (identity != kind) {
+      return const SyncOperationResult.skipped('当前分区只读，不能覆盖远端');
+    }
+
+    final token = (await _tokenLoader())?.trim();
+    if (token == null || token.isEmpty) {
+      return const SyncOperationResult.offline(
+        '日记远端未连接，本地草稿会保留',
+        pendingUploadCount: 1,
+      );
+    }
+
+    final content =
+        bodyOverride ?? (await DiaryLocalStore.loadDraftBody(kind, date)) ?? '';
+    if (content.trim().isEmpty) {
+      return const SyncOperationResult.skipped('这篇日记还没有内容');
+    }
+    final startedAt =
+        await DiaryLocalStore.loadDraftStartedAt(kind, date) ?? date;
+    final dateText = DateFormat('yyyy年M月d日').format(date);
+
+    String targetPath;
+    if (path != null && path.trim().isNotEmpty) {
+      // 页面已经解析好（含「多文件命中」时用户 pin 的路径），优先使用。
+      targetPath = path.trim();
+    } else {
+      final listing = await _listLoader(token);
+      if (!listing.success) {
+        return SyncOperationResult.failed(
+          '日记同步失败：${listing.error ?? '远端列表不可用'}',
+          pendingUploadCount: 1,
+        );
+      }
+      final matches = listing.pathShaMap.keys
+          .where((item) => _matchesKindAndDate(item, kind, dateText))
+          .toList(growable: false);
+      if (matches.length > 1) {
+        return const SyncOperationResult.failed(
+          '该日期命中多个远端文件，请从远程文件树点开目标文件后再处理',
+          pendingUploadCount: 1,
+        );
+      }
+      targetPath =
+          matches.isEmpty ? '${kind.prefix}$dateText.md' : matches.single;
+    }
+
+    final remote = await _pullLoader(token: token, path: targetPath);
+    String? expectedSha;
+    var expectNotFound = false;
+    if (remote.notFound) {
+      if (expectedRemoteSha != null) {
+        return const SyncOperationResult.conflict(
+          '远端这篇已被删除，请重新处理',
+          pendingUploadCount: 1,
+        );
+      }
+      expectNotFound = true;
+    } else if (!remote.success || remote.content == null) {
+      return SyncOperationResult.failed(
+        '日记同步失败：${remote.error ?? '读取远端内容失败'}',
+        pendingUploadCount: 1,
+      );
+    } else {
+      if (_normalizedBody(remote.content!) == _normalizedBody(content)) {
+        // 远端已经与本地一致：只需补基线与清待上传标记，不再造一个空提交。
+        if (remote.sha != null) {
+          await DiaryLocalStore.saveRemoteBaseline(
+            kind,
+            date,
+            path: targetPath,
+            sha: remote.sha,
+            notFound: false,
+          );
+        }
+        await _cacheUpdater(kind.code, date, remote.content!);
+        await DiaryLocalStore.clearDraftPending(kind, date);
+        return const SyncOperationResult.success(message: '本地与远端已一致');
+      }
+      if (expectedRemoteSha != null && remote.sha != expectedRemoteSha) {
+        // 用户查看冲突期间远端又变了：拒绝覆盖，让用户重新确认。
+        return const SyncOperationResult.conflict(
+          '远端已再次更新，请重新处理冲突',
+          pendingUploadCount: 1,
+        );
+      }
+      if (remote.sha == null) {
+        return const SyncOperationResult.failed(
+          '未能获取远端版本，请稍后重试',
+          pendingUploadCount: 1,
+        );
+      }
+      expectedSha = remote.sha;
+    }
+
+    final draft = DiaryLocalDraft(
+      kind: kind,
+      date: date,
+      body: content,
+      startedAt: startedAt,
+    );
+    final markdown = _buildMarkdown(draft);
+    final userLabel = kind == DiaryKind.g ? '乖乖' : '晶晶';
+    final push = await _pushLoader(
+      token: token,
+      path: targetPath,
+      content: markdown,
+      commitMessage: 'diary($userLabel): overwrite $targetPath',
+      expectedSha: expectedSha,
+      expectNotFound: expectNotFound,
+    );
+    if (!push.success) {
+      return push.conflict
+          ? const SyncOperationResult.conflict(
+              '远端刚刚又被更新，请确认后再试一次',
+              pendingUploadCount: 1,
+            )
+          : SyncOperationResult.failed(
+              '日记同步失败：${push.error ?? '推送失败'}',
+              pendingUploadCount: 1,
+            );
+    }
+
+    if (push.sha != null) {
+      await DiaryLocalStore.saveRemoteBaseline(
+        kind,
+        date,
+        path: targetPath,
+        sha: push.sha!,
+        notFound: false,
+      );
+    } else {
+      await DiaryLocalStore.removeRemoteBaseline(kind, date);
+    }
+    await _cacheUpdater(kind.code, date, markdown);
+    await DiaryLocalStore.clearDraftPending(kind, date);
+    return const SyncOperationResult.success(message: '已用本地内容覆盖远端');
   }
 
   Future<SyncOperationResult> _syncInternal() async {
@@ -272,12 +447,5 @@ class DiarySyncService {
         '${draft.body}';
   }
 
-  static String _normalizedBody(String value) {
-    final match = RegExp(r'^---\n([\s\S]*?)\n---\n?', multiLine: false)
-        .firstMatch(value.replaceAll('\r\n', '\n'));
-    final body = match == null
-        ? value
-        : value.replaceAll('\r\n', '\n').substring(match.end);
-    return body.trim();
-  }
+  static String _normalizedBody(String value) => normalizeDiaryBody(value);
 }

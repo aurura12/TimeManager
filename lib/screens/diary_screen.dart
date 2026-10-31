@@ -6,22 +6,25 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../models/diary_conflict.dart';
 import '../models/diary_kind.dart';
 import '../models/diary_search_result.dart';
 import '../models/remote_sync_platform.dart';
 import '../models/sync_center_state.dart';
 import '../services/diary_gitee_service.dart';
 import '../services/diary_local_store.dart';
+import '../services/diary_sync_service.dart';
 import '../services/diary_search_service.dart';
 import '../services/app_identity_service.dart';
 import '../services/diary_auto_sync_service.dart';
-import '../services/sync_operation_lock.dart';
 import '../services/sync_status_coordinator.dart';
 import '../widgets/sync_status_button.dart';
 import '../utils/app_lifecycle.dart';
+import '../utils/diary_markdown.dart';
 import '../utils/diary_remote_path_utils.dart';
 import '../utils/local_day_range.dart';
 import '../utils/swipe_navigation.dart';
+import 'diary_conflict_screen.dart';
 import 'diary_search_screen.dart';
 import 'sync_center_screen.dart';
 
@@ -32,10 +35,13 @@ import '../widgets/day_change_boundary.dart';
 import '../widgets/desktop_shortcut_host.dart';
 
 class DiaryScreen extends StatefulWidget {
-  const DiaryScreen({super.key, this.autoSyncService});
+  const DiaryScreen({super.key, this.autoSyncService, this.syncService});
 
   /// 仅供测试注入；生产环境使用默认的 [DiaryAutoSyncService]。
   final DiaryAutoSyncService? autoSyncService;
+
+  /// 仅供测试注入；生产环境用于冲突时的强制上传。
+  final DiarySyncService? syncService;
 
   @override
   State<DiaryScreen> createState() => _DiaryScreenState();
@@ -63,6 +69,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
   bool _autoPushRunning = false;
   int _editRevision = 0;
   late final DiaryAutoSyncService _autoSync;
+  late final DiarySyncService _syncService;
   static const Duration _autoPushDelay = Duration(seconds: 3);
 
   /// 编辑框区域：滑动切日要避开它，否则会抢走文字选择。
@@ -172,8 +179,14 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
   bool _dirtySinceContextLoaded = false;
   bool _localSaveFailed = false;
 
-  /// 远端已被其他设备更新、而本地还有未上传修改。
-  bool _remoteConflict = false;
+  /// 按日期记录「远端已更新 + 本地未上传」的冲突，只存内存。
+  final Map<String, DiaryConflictEntry> _conflicts = {};
+
+  /// 冲突处理页打开期间不再触发自动上传与重复入口。
+  bool _conflictResolving = false;
+
+  DiaryConflictEntry? get _currentConflict =>
+      _conflicts[_contextKey(_kind, _selectedDate)];
   static const Duration _remotePathsTtl = Duration(minutes: 3);
   Set<String> _gDiaryDateKeys = {};
   Set<String> _jDiaryDateKeys = {};
@@ -194,10 +207,6 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
       scope: _diarySyncScope,
       source: '日记页',
     );
-  }
-
-  void _reportDiarySkipped(String message) {
-    _reportDiary(SyncOperationResult.skipped(message));
   }
 
   void _beginDiarySync() {
@@ -242,9 +251,14 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     try {
       final result = await _autoSync.flush(coordinator: _statusCoordinator);
       if (result == null) return;
-      final conflict = result.status == SyncModuleStatus.conflict;
-      if (conflict != _remoteConflict && mounted) {
-        setState(() => _remoteConflict = conflict);
+      if (result.status == SyncModuleStatus.conflict) {
+        // 批量同步覆盖多个日期，冲突不一定属于当前这一天：补跑一次当前
+        // 上下文的远端对比，把冲突记录到正确的日期上。
+        unawaited(_refreshCurrentContextFromRemote(
+          _contextRequestId,
+          forcePathRefresh: true,
+        ));
+        return;
       }
       if (!result.succeeded) return;
       // 推送期间用户可能继续编辑或切到了别的日期：两种情况下都不能把
@@ -266,6 +280,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _autoSync = widget.autoSyncService ?? DiaryAutoSyncService();
+    _syncService = widget.syncService ?? DiarySyncService();
     _statusCoordinator = context.read<SyncStatusCoordinator?>();
     _bodyController.addListener(_onBodyChanged);
     _identitySubscription = AppIdentityService.changes.listen((_) {
@@ -322,11 +337,6 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     if (token != null && token.isNotEmpty) {
       DiarySearchService.loadInBackground(token);
     }
-  }
-
-  String _buildFileName() {
-    final dayText = DateFormat('yyyy年M月d日').format(_selectedDate);
-    return '${_kind.prefix}$dayText.md';
   }
 
   String _dateTextForFile(DateTime date) {
@@ -620,18 +630,29 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
         await DiaryGiteeService.pullDiary(token: token, path: remotePath);
     if (!result.success) return;
     if (!mounted || requestId != _contextRequestId) return;
+    final contextKey = _contextKey(_kind, _selectedDate);
     if (_dirtySinceContextLoaded) {
       // 本地还有未上传的修改时不能覆盖编辑器；但远端如果已经变了要立刻
-      // 标记冲突，否则用户只会在下一次自动上传时才知道（或被静默跳过）。
-      final baseline = _diaryRemoteBaselines[_contextKey(_kind, _selectedDate)];
+      // 记录冲突（带远端正文），否则用户只会在下一次自动上传时才知道。
+      final baseline = _diaryRemoteBaselines[contextKey];
       final remoteChanged = baseline != null &&
           (baseline.notFound ||
               baseline.path != remotePath ||
               baseline.sha != result.sha);
       if (remoteChanged) {
         _rememberRemoteDiaryPathSha(remotePath, result.sha!);
-        if (!_remoteConflict && mounted) {
-          setState(() => _remoteConflict = true);
+        final entry = DiaryConflictEntry(
+          kind: _kind,
+          date: _selectedDate,
+          remotePath: remotePath,
+          remoteSha: result.sha!,
+          remoteBody: _extractBodyFromMarkdown(result.content!),
+          localBody: _bodyController.text,
+        );
+        if (mounted) {
+          setState(() => _conflicts[contextKey] = entry);
+        } else {
+          _conflicts[contextKey] = entry;
         }
         _reportDiary(const SyncOperationResult.conflict(
           '远端日记已被其他设备更新，本地还有未上传的修改',
@@ -641,7 +662,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
       }
       return;
     }
-    if (_remoteConflict && mounted) setState(() => _remoteConflict = false);
+    if (_conflicts.remove(contextKey) != null && mounted) setState(() {});
     _rememberRemoteDiaryPathSha(remotePath, result.sha!);
     _setCurrentDiaryBaseline(
       path: remotePath,
@@ -735,10 +756,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
   }
 
   String _extractBodyFromMarkdown(String markdown) {
-    final match = RegExp(r'^---\n([\s\S]*?)\n---\n?', multiLine: false)
-        .firstMatch(markdown);
-    if (match == null) return markdown;
-    return markdown.substring(match.end);
+    return stripDiaryFrontMatter(markdown);
   }
 
   DateTime? _parseDateFromPath(String path) {
@@ -834,12 +852,6 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     await _loadRemoteTree();
   }
 
-  Future<bool> _ensureToken() async {
-    final token = (_token ?? '').trim();
-    if (token.isNotEmpty) return true;
-    _showMessage('未配置当前平台同步 Token，请在对应配置文件里设置 hardcodedToken');
-    return false;
-  }
 
   Future<void> _openPathFromTree(String path) async {
     Navigator.of(context).pop();
@@ -973,128 +985,168 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _pullDiary() {
-    return SyncOperationLock.instance.run(
-      SyncModule.diary,
-      () {
-        _beginDiarySync();
-        return _pullDiaryInternal();
-      },
-    );
+  /// 用远端内容替换编辑器，并同步基线 / 搜索缓存 / 待上传标记。
+  Future<void> _applyRemoteVersion({
+    required String raw,
+    required String path,
+    required String sha,
+  }) async {
+    final body = _extractBodyFromMarkdown(raw);
+    final startedAt = _parseStartedAtFromMarkdown(raw);
+    _suppressBodyListener = true;
+    _bodyController.text = body;
+    _suppressBodyListener = false;
+    _startedAt = startedAt ?? DateTime.now();
+    _rememberRemoteDiaryPathSha(path, sha);
+    _setCurrentDiaryBaseline(path: path, sha: sha, notFound: false);
+    _dirtySinceContextLoaded = false;
+    _conflicts.remove(_contextKey(_kind, _selectedDate));
+    await _saveDraftNow();
+    await DiaryLocalStore.clearDraftPending(_kind, _selectedDate);
+    // 刷新搜索缓存并落盘，避免重启后读到旧内容。
+    await DiarySearchService.updateCache(_kind.code, _selectedDate, raw);
   }
 
-  Future<void> _pullDiaryInternal() async {
-    final ok = await _ensureToken();
-    if (!ok) {
-      _reportDiary(
-        const SyncOperationResult.offline('日记远端未连接，本地草稿会保留'),
-      );
+  /// 打开冲突处理页：先落盘，再拉一次最新远端，确保对比的是当前版本。
+  Future<void> _openConflictResolution() async {
+    if (_processing || _conflictResolving) return;
+    final entry = _currentConflict;
+    if (entry == null) return;
+    if (_isReadOnlyContext) {
+      _showMessage('当前分区只读，请切换回自己的分区后再处理冲突');
+      return;
+    }
+    final token = (_token ?? '').trim();
+    if (token.isEmpty) {
+      _showMessage('请先配置当前平台同步 Token');
       return;
     }
 
-    if (!mounted) {
-      _reportDiarySkipped('日记拉取未执行：页面已关闭');
+    _saveDebounce?.cancel();
+    _autoPushDebounce?.cancel();
+    _autoPushDebounce = null;
+    if (!await _saveDraftNow()) {
+      _showMessage('本地保存失败，暂时无法处理冲突');
       return;
     }
+    if (!mounted) return;
+
     setState(() => _processing = true);
-    final path = await _findRemotePathForCurrentContext(refresh: true);
-    if (!mounted) {
-      _reportDiarySkipped('日记拉取未执行：页面已关闭');
-      return;
-    }
-    if (path == null && _lastContextPathAmbiguous) {
-      setState(() => _processing = false);
-      _showMessage('该日期命中多个远程文件，请从左侧文件树点开目标文件');
-      _reportDiarySkipped('该日期命中多个远程文件，日记拉取未执行');
-      return;
-    }
-    final targetPath = path ?? _buildFileName();
-    final result = await DiaryGiteeService.pullDiary(
-      token: _token!,
-      path: targetPath,
-    );
-    if (!mounted) {
-      _reportDiarySkipped('日记拉取未执行：页面已关闭');
-      return;
-    }
-    if (result.success) {
-      // 本地有未保存修改时先确认，避免覆盖
-      if (_dirtySinceContextLoaded) {
-        final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('本地有未保存修改'),
-            content: const Text('拉取远端会覆盖当前编辑器中的内容，是否继续？'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('覆盖'),
-              ),
-            ],
-          ),
-        );
-        if (confirmed != true) {
-          if (!mounted) return;
-          setState(() => _processing = false);
-          _reportDiarySkipped('已取消日记拉取');
-          return;
-        }
-        if (!mounted) return;
-      }
-      final raw = result.content!;
-      final body = _extractBodyFromMarkdown(raw);
-      final startedAt = _parseStartedAtFromMarkdown(raw);
-      _suppressBodyListener = true;
-      _bodyController.text = body;
-      _suppressBodyListener = false;
-      _startedAt = startedAt ?? DateTime.now();
-      _rememberRemoteDiaryPathSha(targetPath, result.sha!);
-      _setCurrentDiaryBaseline(
-        path: targetPath,
-        sha: result.sha,
-        notFound: false,
+    _conflictResolving = true;
+    _beginDiarySync();
+    try {
+      final pull = await DiaryGiteeService.pullDiary(
+        token: token,
+        path: entry.remotePath,
       );
-      _dirtySinceContextLoaded = false;
-      _remoteConflict = false;
-      await _saveDraftNow();
-      await DiaryLocalStore.clearDraftPending(_kind, _selectedDate);
-      // 刷新搜索缓存并落盘，避免重启后读到旧内容
-      await DiarySearchService.updateCache(_kind.code, _selectedDate, raw);
-      if (!mounted) {
-        _reportDiary(const SyncOperationResult.success(message: '日记已拉取'));
+      if (!mounted) return;
+      if (!pull.success && !pull.notFound) {
+        _showMessage(pull.error ?? '读取远端内容失败');
         return;
       }
-      _showMessage('拉取成功（已覆盖本地）');
-      _reportDiary(const SyncOperationResult.success(message: '日记已拉取'));
-      setState(() => _processing = false);
+      final remoteRaw = pull.notFound ? '' : pull.content!;
+      final remoteBody =
+          remoteRaw.isEmpty ? '' : _extractBodyFromMarkdown(remoteRaw);
+      final remoteSha = pull.notFound ? null : pull.sha;
+      final decision = await Navigator.of(context).push<DiaryConflictDecision>(
+        MaterialPageRoute(
+          builder: (_) => DiaryConflictScreen(
+            kind: _kind,
+            date: _selectedDate,
+            localBody: _bodyController.text,
+            remoteBody: remoteBody,
+            remoteSha: remoteSha,
+          ),
+        ),
+      );
+      if (decision == null || !mounted) return;
+      await _applyConflictDecision(
+        decision,
+        entry: entry,
+        remoteRaw: remoteRaw,
+        remoteSha: remoteSha,
+      );
+    } finally {
+      _conflictResolving = false;
+      if (mounted) setState(() => _processing = false);
+    }
+  }
+
+  Future<void> _applyConflictDecision(
+    DiaryConflictDecision decision, {
+    required DiaryConflictEntry entry,
+    required String remoteRaw,
+    required String? remoteSha,
+  }) async {
+    final contextKey = _contextKey(_kind, _selectedDate);
+    if (decision is DiaryUseRemote) {
+      if (remoteSha == null) {
+        _showMessage('远端这篇已不存在，请改用本地或合并');
+        return;
+      }
+      // 必须传完整的远端 Markdown：front matter 里的 date 决定这篇的归属日。
+      await _applyRemoteVersion(
+        raw: remoteRaw,
+        path: entry.remotePath,
+        sha: remoteSha,
+      );
+      _showMessage('已采用远端内容');
+      _reportDiary(const SyncOperationResult.success(message: '日记已采用远端内容'));
+      if (mounted) setState(() {});
       return;
     }
 
-    setState(() => _processing = false);
-    if (result.notFound) {
-      _setCurrentDiaryBaseline(path: null, sha: null, notFound: true);
-      if (_bodyController.text.trim().isEmpty) {
-        await DiaryLocalStore.clearDraftPending(_kind, _selectedDate);
-      }
-      _showMessage('远端不存在该日记文件');
-      _reportDiary(
-        _bodyController.text.trim().isEmpty
-            ? const SyncOperationResult.success(message: '远端暂无该日记文件')
-            : const SyncOperationResult.pending(
-                '远端暂无该日记文件，本地草稿待上传',
-                pendingUploadCount: 1,
-              ),
+    if (decision is DiaryKeepLocal) {
+      final result = await _syncService.overwriteRemote(
+        kind: _kind,
+        date: _selectedDate,
+        path: entry.remotePath,
+        body: _bodyController.text,
       );
+      _afterOverwrite(result, contextKey: contextKey);
       return;
     }
-    _showMessage(result.error ?? '拉取失败');
-    _reportDiary(
-      SyncOperationResult.failed('日记同步失败：${result.error ?? '拉取失败'}'),
-    );
+
+    if (decision is DiaryUseMerged) {
+      _suppressBodyListener = true;
+      _bodyController.text = decision.body;
+      _suppressBodyListener = false;
+      _dirtySinceContextLoaded = true;
+      _editRevision++;
+      await DiaryLocalStore.markDraftPending(_kind, _selectedDate);
+      if (!await _saveDraftNow()) {
+        _showMessage('合并结果保存失败，请检查存储空间');
+        return;
+      }
+      final result = await _syncService.overwriteRemote(
+        kind: _kind,
+        date: _selectedDate,
+        path: entry.remotePath,
+        body: decision.body,
+        expectedRemoteSha: remoteSha,
+      );
+      _afterOverwrite(result, contextKey: contextKey);
+    }
+  }
+
+  void _afterOverwrite(
+    SyncOperationResult result, {
+    required String contextKey,
+  }) {
+    if (result.succeeded) {
+      _conflicts.remove(contextKey);
+      _dirtySinceContextLoaded = false;
+      _showMessage('已用本地内容覆盖远端');
+      _reportDiary(const SyncOperationResult.success(message: '已用本地内容覆盖远端'));
+      // 服务只返回结果，不含新 sha：刷新一次拿回基线，避免下一轮又报冲突。
+      unawaited(_refreshCurrentContextFromRemote(
+        _contextRequestId,
+        forcePathRefresh: true,
+      ));
+    } else {
+      _showMessage(result.message ?? '覆盖远端失败');
+    }
+    if (mounted) setState(() {});
   }
 
   void _showMessage(String text) {
@@ -1119,7 +1171,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     if (_processing) return '正在同步…';
     if (_isReadOnlyContext) return '只读查看模式';
     if (_localSaveFailed) return '本地保存失败，请重试';
-    if (_remoteConflict) return '远端已被其他设备更新';
+    if (_currentConflict != null) return '远端已被其他设备更新';
     if (_bodyController.text.trim().isEmpty) return '今天还没有内容';
     if ((_token ?? '').trim().isEmpty) return '仅保存在本机';
     if (_dirtySinceContextLoaded) return '本地有未同步修改';
@@ -1130,7 +1182,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     if (_processing) return Icons.sync;
     if (_isReadOnlyContext) return Icons.visibility_outlined;
     if (_localSaveFailed) return Icons.error_outline;
-    if (_remoteConflict) return Icons.sync_problem;
+    if (_currentConflict != null) return Icons.sync_problem;
     if (_bodyController.text.trim().isEmpty) return Icons.edit_note_outlined;
     if ((_token ?? '').trim().isEmpty) return Icons.save_outlined;
     if (_dirtySinceContextLoaded) return Icons.edit_note_outlined;
@@ -1148,7 +1200,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
   Widget _buildDiaryStatus(ColorScheme colorScheme) {
     final detail = _isReadOnlyContext
         ? '可刷新远端内容；切换回自己的分区后才能提交'
-        : _remoteConflict
+        : _currentConflict != null
             ? '本地修改仍保留；可继续编辑，或改用远端内容'
             : _localSaveFailed
                 ? '内容仍在编辑框里，确认存储空间后继续输入会自动重试'
@@ -1165,7 +1217,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
           Icon(
             _diaryStatusIcon,
             size: 18,
-            color: _localSaveFailed || _remoteConflict
+            color: _localSaveFailed || _currentConflict != null
                 ? colorScheme.error
                 : colorScheme.primary,
           ),
@@ -1185,12 +1237,12 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
                     color: colorScheme.onSurfaceVariant,
                   ),
                 ),
-                if (_remoteConflict)
+                if (_currentConflict != null)
                   Align(
                     alignment: Alignment.centerRight,
                     child: TextButton(
-                      onPressed: _processing ? null : _pullDiary,
-                      child: const Text('用远端覆盖本地'),
+                      onPressed: _processing ? null : _openConflictResolution,
+                      child: const Text('处理冲突'),
                     ),
                   ),
               ],
