@@ -7497,6 +7497,20 @@ class TimeProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  /// 恢复刚删除的模板（提示条撤销专用）。
+  ///
+  /// 模板是纯本机数据（不进远端文档布局），恢复只需放回列表。
+  /// 同 id 已被用户重建时拒绝，返回 false 表示撤销已失效。
+  bool undoDeleteTemplate(ScheduleTemplate template) {
+    if (!_allowScheduleMutation()) return false;
+    if (_templates.any((t) => t.id == template.id)) return false;
+    _templates.add(template);
+    _markTemplatesChanged();
+    _saveData();
+    notifyListeners();
+    return true;
+  }
+
   // --- 分类管理方法 (从 HomeScreen 移入) ---
 
   /// 返回分类输入的校验错误；返回 null 表示可以保存。

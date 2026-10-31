@@ -128,6 +128,33 @@ void main() {
     expect(provider.undoLastChangeOnDate(provider.dateKeyFor(dateA)), isFalse);
   });
 
+  test('模板删除后可撤销恢复，同 id 已存在时拒绝恢复', () async {
+    final provider = await _createProvider();
+    addTearDown(provider.dispose);
+
+    final category = Category(
+      id: 'work',
+      name: '工作',
+      color: Colors.blue,
+      subCategories: const [],
+    );
+    provider.assignCategoryToSlots(const {100, 101}, category);
+    expect(provider.saveTemplateFromCurrentDay('晨间例程'), isTrue);
+    final template = provider.templates.single;
+    expect(template.name, '晨间例程');
+
+    provider.deleteTemplate(template.id);
+    expect(provider.templates, isEmpty);
+
+    // 撤销：恢复同一模板对象。
+    expect(provider.undoDeleteTemplate(template), isTrue);
+    expect(provider.templates.single.id, template.id);
+
+    // 同 id 已存在（例如用户已重建）时撤销失效。
+    expect(provider.undoDeleteTemplate(template), isFalse);
+    expect(provider.templates.single.id, template.id);
+  });
+
   // 跨身份安全说明：移动端身份切换经 _invalidateIdentityScopedOperations
   // 清空撤销栈；桌面端本地时间块本就不分身份，撤销栈共享同一份数据。
   // 提示条撤销的身份校验由 showAppUndoSnackBar 的 identityToken 承担，

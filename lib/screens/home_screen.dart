@@ -2370,7 +2370,7 @@ class HomeScreenState extends State<HomeScreen> {
                                             AppSemanticColors.danger,
                                             AppSurfaces.of(context).card)),
                                     onPressed: () {
-                                      _showDeleteTemplateConfirmDialog(
+                                      _deleteTemplate(
                                         t,
                                         provider,
                                         onDeleted: () => setSheetState(() {}),
@@ -2487,31 +2487,23 @@ class HomeScreenState extends State<HomeScreen> {
     ).whenComplete(() => nameController.dispose());
   }
 
-  void _showDeleteTemplateConfirmDialog(
+  /// 即时删除模板，提示条提供撤销入口（模板为纯本机数据，可直接恢复）。
+  void _deleteTemplate(
     ScheduleTemplate template,
     TimeProvider provider, {
     VoidCallback? onDeleted,
   }) {
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('确认删除'),
-        content: Text('确定要删除模板“${template.name}”吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              provider.deleteTemplate(template.id);
-              Navigator.pop(dialogContext);
-              onDeleted?.call();
-            },
-            child: const Text('删除'),
-          ),
-        ],
-      ),
+    provider.deleteTemplate(template.id);
+    onDeleted?.call();
+    showAppUndoSnackBar(
+      context,
+      message: '已删除模板“${template.name}”',
+      identityToken: AppIdentityService.identityStamp,
+      onUndo: () async {
+        if (!provider.undoDeleteTemplate(template)) {
+          throw StateError('模板已被重建，无法撤销');
+        }
+      },
     );
   }
 
