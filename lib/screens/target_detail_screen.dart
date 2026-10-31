@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/time_provider.dart';
 import '../models/target.dart';
+import '../services/app_identity_service.dart';
+import '../utils/app_snack_bar.dart';
 import '../utils/haptics.dart';
 import 'add_target_screen.dart';
 import '../widgets/target_stats_section.dart';
@@ -57,39 +59,26 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
                 icon: const Icon(Icons.delete_outline),
                 tooltip: '删除目标',
                 onPressed: () {
-                  showDialog<void>(
-                    context: context,
-                    builder: (dialogContext) => AlertDialog(
-                      title: const Text("确认删除"),
-                      content: Text('确定要删除目标"${target.name}"吗？'),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(dialogContext),
-                          child: const Text("取消"),
-                        ),
-                        TextButton(
-                          onPressed: () {
-                            // 本次删除会主动关闭详情页；先标记为已处理，避免
-                            // Provider 通知触发空目标重建后再次 post-frame pop，
-                            // 把搜索结果页等上一层也误关闭。
-                            _deletionNoticeScheduled = true;
-                            if (timeProvider.deleteTarget(target)) {
-                              playHaptic(dialogContext, HapticStrength.light);
-                            }
-                            Navigator.pop(dialogContext);
-                            if (mounted && Navigator.of(context).canPop()) {
-                              Navigator.pop(context);
-                            }
-                          },
-                          style: TextButton.styleFrom(
-                              foregroundColor: AppSemanticColors.readableOn(
-                                  AppSemanticColors.danger,
-                                  AppSurfaces.of(context).card)),
-                          child: const Text("删除"),
-                        ),
-                      ],
-                    ),
-                  );
+                  // 本次删除会主动关闭详情页；先标记为已处理，避免
+                  // Provider 通知触发空目标重建后再次 post-frame pop，
+                  // 把搜索结果页等上一层也误关闭。
+                  _deletionNoticeScheduled = true;
+                  if (timeProvider.deleteTarget(target)) {
+                    playHaptic(context, HapticStrength.light);
+                    showAppUndoSnackBar(
+                      context,
+                      message: '已删除目标“${target.name}”',
+                      identityToken: AppIdentityService.identityStamp,
+                      onUndo: () async {
+                        if (!timeProvider.undoDeleteTarget(target)) {
+                          throw StateError('目标已重建，无法撤销');
+                        }
+                      },
+                    );
+                  }
+                  if (mounted && Navigator.of(context).canPop()) {
+                    Navigator.pop(context);
+                  }
                 },
               ),
             ],

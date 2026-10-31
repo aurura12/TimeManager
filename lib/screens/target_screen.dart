@@ -15,6 +15,8 @@ import '../widgets/desktop_target_card.dart';
 import '../widgets/target_progress_indicator.dart';
 import '../widgets/target_day_refresh.dart';
 import '../services/target_progress_calculator.dart';
+import '../services/app_identity_service.dart';
+import '../utils/app_snack_bar.dart';
 import '../utils/haptics.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/main_tab_activity.dart';
@@ -168,7 +170,7 @@ class _TargetScreenContent extends StatelessWidget {
                           Expanded(
                             child: InkWell(
                               onTap: () =>
-                                  _confirmDelete(context, timeProvider, target),
+                                  _deleteTarget(context, timeProvider, target),
                               child: Center(
                                 child: Icon(Icons.delete_forever,
                                     color: AppSemanticColors.readableOn(
@@ -295,7 +297,7 @@ class _TargetScreenContent extends StatelessWidget {
                 ),
               ),
               onEdit: () => showTargetEditor(context, target: target),
-              onDelete: () => _confirmDelete(context, provider, target),
+              onDelete: () => _deleteTarget(context, provider, target),
             );
           },
         ),
@@ -369,33 +371,20 @@ class _TargetScreenContent extends StatelessWidget {
     );
   }
 
-  Future<void> _confirmDelete(
-      BuildContext context, TimeProvider provider, Target target) async {
-    return showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('确认删除'),
-        content: Text('确定要删除目标“${target.name}”吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              if (provider.deleteTarget(target)) {
-                playHaptic(context, HapticStrength.light);
-              }
-              Navigator.pop(context);
-            },
-            child: Text('确认',
-                style: TextStyle(
-                    color: AppSemanticColors.readableOn(
-                        AppSemanticColors.danger,
-                        AppSurfaces.of(context).card))),
-          ),
-        ],
-      ),
+  /// 即时删除目标，提示条提供撤销入口。
+  void _deleteTarget(
+      BuildContext context, TimeProvider provider, Target target) {
+    if (!provider.deleteTarget(target)) return;
+    playHaptic(context, HapticStrength.light);
+    showAppUndoSnackBar(
+      context,
+      message: '已删除目标“${target.name}”',
+      identityToken: AppIdentityService.identityStamp,
+      onUndo: () async {
+        if (!provider.undoDeleteTarget(target)) {
+          throw StateError('目标已重建，无法撤销');
+        }
+      },
     );
   }
 }

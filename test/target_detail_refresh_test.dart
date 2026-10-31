@@ -337,8 +337,6 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.delete_outline));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('删除'));
-    await tester.pumpAndSettle();
 
     expect(find.byType(TargetDetailScreen), findsNothing);
     expect(find.text('搜索结果页'), findsOneWidget);

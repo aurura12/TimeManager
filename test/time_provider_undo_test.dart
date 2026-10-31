@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/category.dart';
+import 'package:time_manager/models/target.dart';
 import 'package:time_manager/providers/time_provider.dart';
 
 class _FakeGoogleSignInPlatform extends GoogleSignInPlatform {
@@ -153,6 +154,38 @@ void main() {
     // 同 id 已存在（例如用户已重建）时撤销失效。
     expect(provider.undoDeleteTemplate(template), isFalse);
     expect(provider.templates.single.id, template.id);
+  });
+
+  test('目标删除后可撤销恢复，同 id 已存在时拒绝恢复', () async {
+    final provider = await _createProvider();
+    addTearDown(provider.dispose);
+
+    final target = Target(
+      id: 'target-1',
+      name: '健身',
+      categoryId: 'work',
+      type: TargetType.duration,
+      color: Colors.blue,
+      period: 'day',
+      updatedAt: DateTime(2026, 1, 1).millisecondsSinceEpoch,
+    );
+    provider.addTarget(target);
+    expect(provider.targets.any((t) => t.id == 'target-1'), isTrue);
+
+    expect(provider.deleteTarget(target), isTrue);
+    expect(provider.targets.any((t) => t.id == 'target-1'), isFalse);
+
+    // 撤销：addTarget 会移除墓碑并把 updatedAt 提到当前时间，
+    // 恢复后的目标在与远端文档合并时能胜过旧墓碑。
+    expect(provider.undoDeleteTarget(target), isTrue);
+    final restored = provider.targets.firstWhere((t) => t.id == 'target-1');
+    expect(
+      restored.updatedAt,
+      greaterThan(DateTime(2026, 1, 1).millisecondsSinceEpoch),
+    );
+
+    // 同 id 已存在时撤销失效。
+    expect(provider.undoDeleteTarget(target), isFalse);
   });
 
   // 跨身份安全说明：移动端身份切换经 _invalidateIdentityScopedOperations

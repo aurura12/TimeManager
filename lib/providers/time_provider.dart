@@ -10449,6 +10449,19 @@ class TimeProvider with ChangeNotifier {
     return true;
   }
 
+  /// 恢复刚删除的目标（提示条撤销专用）。
+  ///
+  /// 复用 [addTarget]：它已内置「移除墓碑 + updatedAt 提到当前时间」，
+  /// 恢复后的目标在与远端文档合并时能胜过旧墓碑
+  /// （墓碑时间戳严格大于 updatedAt 才判删除，见 target_document_merge）。
+  /// 同 id 已存在时拒绝，返回 false 表示撤销已失效。
+  bool undoDeleteTarget(Target target) {
+    if (!_allowScheduleMutation()) return false;
+    if (_targets.any((t) => t.id == target.id)) return false;
+    addTarget(target);
+    return true;
+  }
+
   void reorderTargets(int oldIndex, int newIndex) {
     if (!_allowScheduleMutation()) return;
     final Target item = _targets.removeAt(oldIndex);

@@ -361,7 +361,7 @@ void main() {
     expect(provider.targetById('duration')!.durationHours, 6);
   }, skip: !isDesktopPlatform);
 
-  testWidgets('右键菜单可删除目标，取消确认不改变数据', (tester) async {
+  testWidgets('右键菜单删除目标即时生效，提示条可撤销', (tester) async {
     final provider = await _provider(tester);
     await _pump(tester, provider);
     final card = find.byKey(const ValueKey('duration'));
@@ -369,17 +369,14 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('删除目标'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('取消'));
-    await tester.pumpAndSettle();
-    expect(provider.targetById('duration'), isNotNull);
-    await tester.tap(find.byTooltip('更多操作').first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('删除目标'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('确认'));
-    await tester.pumpAndSettle();
     expect(provider.targetById('duration'), isNull);
     expect(provider.targets.length, 3);
+
+    // 提示条撤销后恢复。
+    await tester.tap(find.text('撤销'));
+    await tester.pumpAndSettle();
+    expect(provider.targetById('duration'), isNotNull);
+    expect(provider.targets.length, 4);
   }, skip: !isDesktopPlatform);
 
   testWidgets('明确的拖拽把手调整目标顺序', (tester) async {
