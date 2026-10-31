@@ -236,11 +236,15 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
           record: record,
           photoBytes: photoBytes,
         );
+        // 页面可能在点撤销之前就关掉了，此时只做数据恢复、不再刷新界面。
+        if (!mounted) return;
+        // 推送失败时本地其实已经放回记录，这里照常刷新，避免「提示撤销
+        // 失败、列表里却已经恢复」的自相矛盾。
+        _refreshGoalFromSync();
+        setState(() {});
         if (!restoreResult.success) {
           throw StateError(restoreResult.error ?? '撤销恢复失败');
         }
-        _refreshGoalFromSync();
-        setState(() {});
       },
     );
   }
