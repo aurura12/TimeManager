@@ -6,6 +6,7 @@ import '../screens/sync_center_screen.dart';
 import '../services/sync_center_service.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
+import '../theme/app_tokens.dart';
 
 /// 页面顶栏的「同步状态灯」。
 ///
@@ -40,7 +41,7 @@ class SyncStatusButton extends StatelessWidget {
         if (state == null) return const SizedBox.shrink();
         if (_isRunning(state.status)) {
           return const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
+            padding: EdgeInsets.symmetric(horizontal: AppSpacing.lg),
             child: SizedBox(
               width: 20,
               height: 20,
@@ -66,13 +67,13 @@ class SyncStatusButton extends StatelessWidget {
           icon: Stack(
             clipBehavior: Clip.none,
             children: [
-              Icon(_statusIcon(state.status), size: 23),
+              Icon(_statusIcon(state.status), size: AppSizes.appBarActionIcon),
               Positioned(
                 right: -1,
                 top: -1,
                 child: Container(
-                  width: 8,
-                  height: 8,
+                  width: AppSizes.statusDot,
+                  height: AppSizes.statusDot,
                   decoration: BoxDecoration(
                     color: color,
                     shape: BoxShape.circle,

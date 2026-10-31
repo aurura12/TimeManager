@@ -121,6 +121,10 @@ abstract final class AppSizes {
   /// 「现在」小圆点标记的直径
   static const double nowMarkerSize = 7;
 
+  /// 同步状态灯：顶栏图标与角标圆点
+  static const double appBarActionIcon = 23;
+  static const double statusDot = 8;
+
   /// 桌面端常显滚动条的粗细
   static const double scrollbarThickness = 8;
 

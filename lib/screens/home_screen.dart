@@ -2049,7 +2049,7 @@ class HomeScreenState extends State<HomeScreen> {
                 children: [
                   Icon(
                     Icons.people_outline,
-                    size: 23,
+                    size: AppSizes.appBarActionIcon,
                     // 面板底色上的语义色要压到可读，否则 3.4:1 的蓝看不清
                     color: remoteViewEnabled
                         ? AppSemanticColors.readableOn(
