@@ -4,12 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../models/diary_kind.dart';
 import '../models/sync_center_state.dart';
 import '../services/sync_center_service.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/diary_remote_path_utils.dart';
 import 'app_log_screen.dart';
+import 'diary_screen.dart';
 
 class SyncCenterScreen extends StatefulWidget {
   const SyncCenterScreen({
@@ -298,6 +301,15 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
                 runSpacing: AppSpacing.sm,
                 alignment: WrapAlignment.end,
                 children: [
+                  if (state.module == SyncModule.diary &&
+                      state.conflictCount > 0 &&
+                      _diaryConflictTarget(state) != null)
+                    OutlinedButton.icon(
+                      key: const ValueKey('sync-center-diary-conflict'),
+                      onPressed: () => _openDiaryConflict(state),
+                      icon: const Icon(Icons.rule),
+                      label: const Text('去处理冲突'),
+                    ),
                   if (_controller.supportsPull(state.module))
                     OutlinedButton.icon(
                       key: ValueKey('sync-center-pull-${state.module.name}'),
@@ -339,6 +351,35 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
         SnackBar(content: Text(state.message ?? '${module.label}同步未完成')),
       );
     }
+  }
+
+  /// 从日记冲突的详情里找出可以直达的日期（详情是远端路径）。
+  ({DiaryKind kind, DateTime date})? _diaryConflictTarget(
+    SyncModuleState state,
+  ) {
+    for (final detail in state.details) {
+      final date = parseDiaryDateFromRemotePath(detail);
+      if (date == null) continue;
+      final fileName = detail.split('/').last;
+      final kind = fileName.startsWith('J') ? DiaryKind.j : DiaryKind.g;
+      return (kind: kind, date: date);
+    }
+    return null;
+  }
+
+  /// 跳到日记页对应日期，并在有冲突时直接进入冲突处理页。
+  void _openDiaryConflict(SyncModuleState state) {
+    final target = _diaryConflictTarget(state);
+    if (target == null) return;
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => DiaryScreen(
+          initialKind: target.kind,
+          initialDate: target.date,
+          openConflictOnLoad: true,
+        ),
+      ),
+    );
   }
 
   /// 「拉取远端」：把远端改动取回本地。出行会覆盖本地尚未上传的日期，

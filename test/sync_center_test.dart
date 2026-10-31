@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:time_manager/models/sync_center_state.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:time_manager/screens/diary_screen.dart';
 import 'package:time_manager/screens/sync_center_screen.dart';
 import 'package:time_manager/services/sync_center_service.dart';
 import 'package:time_manager/theme/app_theme.dart';
@@ -807,5 +810,102 @@ void main() {
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('日记有冲突时同步中心提供直达处理入口', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+      (call) async => null,
+    );
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('plugins.flutter.io/path_provider'),
+      (call) async => '/tmp/time_manager_sync_center_conflict_test',
+    );
+    messenger.setMockMethodCallHandler(
+      const MethodChannel('home_widget'),
+      (call) async => null,
+    );
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+        null,
+      );
+    });
+
+    final controller = SyncCenterController(
+      operations: SyncCenterOperations(
+        operations: {
+          for (final module in SyncModule.values)
+            module: () async => const SyncOperationResult.success(),
+        },
+      ),
+      store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
+    );
+    addTearDown(controller.dispose);
+    controller.coordinator.report(
+      SyncModule.diary,
+      const SyncOperationResult.conflict(
+        '远端日记已被其他设备更新',
+        conflictCount: 1,
+        pendingUploadCount: 1,
+        details: ['日记/G2026年3月5日.md'],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: SyncCenterScreen(controller: controller),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final button = find.byKey(const ValueKey('sync-center-diary-conflict'));
+    expect(button, findsOneWidget);
+    await tester.ensureVisible(button);
+    await tester.pumpAndSettle();
+    await tester.tap(button);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.byType(DiaryScreen), findsOneWidget);
+  });
+
+  testWidgets('日记冲突没有日期详情时不显示直达入口', (tester) async {
+    final controller = SyncCenterController(
+      operations: SyncCenterOperations(
+        operations: {
+          for (final module in SyncModule.values)
+            module: () async => const SyncOperationResult.success(),
+        },
+      ),
+      store: InMemorySyncStatusStore(),
+      loadIdentityBeforeState: false,
+    );
+    addTearDown(controller.dispose);
+    controller.coordinator.report(
+      SyncModule.diary,
+      const SyncOperationResult.conflict(
+        '远端日记已被其他设备更新',
+        conflictCount: 1,
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: SyncCenterScreen(controller: controller),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('sync-center-diary-conflict')),
+      findsNothing,
+    );
   });
 }

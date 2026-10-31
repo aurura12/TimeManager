@@ -35,7 +35,21 @@ import '../widgets/day_change_boundary.dart';
 import '../widgets/desktop_shortcut_host.dart';
 
 class DiaryScreen extends StatefulWidget {
-  const DiaryScreen({super.key, this.autoSyncService, this.syncService});
+  const DiaryScreen({
+    super.key,
+    this.autoSyncService,
+    this.syncService,
+    this.initialKind,
+    this.initialDate,
+    this.openConflictOnLoad = false,
+  });
+
+  /// 从同步中心跳转时指定要打开的日期与分区。
+  final DiaryKind? initialKind;
+  final DateTime? initialDate;
+
+  /// 打开页面后如果有冲突，直接进入冲突处理页。
+  final bool openConflictOnLoad;
 
   /// 仅供测试注入；生产环境使用默认的 [DiaryAutoSyncService]。
   final DiaryAutoSyncService? autoSyncService;
@@ -324,14 +338,36 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     await AppIdentityService.load();
     final identityKind = AppIdentityService.personKind;
     _selectedIdentityKind = identityKind;
-    final kind = identityKind ?? await DiaryLocalStore.loadPreferredKind();
+    final kind =
+        widget.initialKind ?? identityKind ?? await DiaryLocalStore.loadPreferredKind();
+    final initialDate = widget.initialDate;
     _token = token;
     _kind = kind;
+    if (initialDate != null) {
+      _selectedDate =
+          DateTime(initialDate.year, initialDate.month, initialDate.day);
+    }
     _dirtySinceContextLoaded = await _loadDraftForCurrentContext();
     if (!mounted) return;
     setState(() => _loading = false);
-    _refreshCurrentContextFromRemote(_contextRequestId,
-        forcePathRefresh: false);
+    final refresh = _refreshCurrentContextFromRemote(
+      _contextRequestId,
+      forcePathRefresh: widget.openConflictOnLoad,
+    );
+    if (widget.openConflictOnLoad) {
+      // 从同步中心来：等远端对比完成，冲突已记录后再打开处理页。
+      await refresh;
+      if (!mounted) return;
+      if (_currentConflict != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _currentConflict != null) {
+            unawaited(_openConflictResolution());
+          }
+        });
+      }
+    } else {
+      unawaited(refresh);
+    }
 
     // 后台加载搜索缓存
     if (token != null && token.isNotEmpty) {
@@ -654,10 +690,11 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
         } else {
           _conflicts[contextKey] = entry;
         }
-        _reportDiary(const SyncOperationResult.conflict(
+        _reportDiary(SyncOperationResult.conflict(
           '远端日记已被其他设备更新，本地还有未上传的修改',
           conflictCount: 1,
           pendingUploadCount: 1,
+          details: [remotePath],
         ));
       }
       return;
