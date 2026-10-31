@@ -200,6 +200,9 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
   /// 冲突处理页打开期间不再触发自动上传与重复入口。
   bool _conflictResolving = false;
 
+  /// 页面已销毁：异步收尾（离开页面时的补推）不能再排新的定时器。
+  bool _disposed = false;
+
   DiaryConflictEntry? get _currentConflict =>
       _conflicts[_contextKey(_kind, _selectedDate)];
   static const Duration _remotePathsTtl = Duration(minutes: 3);
@@ -246,6 +249,9 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
   /// 停止输入后自动上传。日记的拉取本来就在进页面 / 切日时自动执行，
   /// 上传也用同一节奏，用户不需要再手动点同步。
   void _scheduleAutoPush() {
+    // 页面销毁后不再排新的上传：离开页面时的那次补推还在飞，它回来时
+    // 可能发现「期间有新编辑」，不能再装一个没人取消的定时器。
+    if (_disposed) return;
     _autoPushDebounce?.cancel();
     _autoPushDebounce = Timer(_autoPushDelay, () {
       unawaited(_flushAutoPush());
@@ -307,6 +313,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _saveDebounce?.cancel();
     _autoPushDebounce?.cancel();
