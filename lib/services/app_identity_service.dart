@@ -191,6 +191,11 @@ class AppIdentityService {
 
   static bool get hasIdentity => currentIdentity != null;
 
+  /// 当前身份的快照字符串（如 `manual-g` / `google-<userId>`），未选择
+  /// 身份时为 null。撤销闭包在删除时捕获它，撤销前比对即可发现身份
+  /// 已切换；切换后 stableId 必然不同（含 Google 换号的情况）。
+  static String? get identityStamp => currentIdentity?.stableId;
+
   /// Returns a preference key in the namespace of the current logical person.
   /// Unknown or not-yet-selected identities use an isolated unbound namespace
   /// so they can never read another person's local data.

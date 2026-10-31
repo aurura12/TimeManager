@@ -17,6 +17,7 @@ import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/day_change_boundary.dart';
 import '../widgets/desktop_shortcut_host.dart';
+import '../utils/app_snack_bar.dart';
 import '../utils/platform_features.dart';
 import '../widgets/check_in_map_preview.dart';
 import '../widgets/check_in_photo_sheet.dart';
@@ -150,9 +151,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
 
   void _showMessage(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
-    );
+    showAppSnackBar(context, msg);
   }
 
   void _openSyncCenter() {

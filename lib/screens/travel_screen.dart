@@ -17,6 +17,7 @@ import '../services/travel_local_store.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/app_snack_bar.dart';
 import '../utils/local_day_range.dart';
 import '../widgets/day_change_boundary.dart';
 import '../widgets/desktop_shortcut_host.dart';
@@ -800,12 +801,7 @@ class _TravelScreenState extends State<TravelScreen> {
 
   void _showMessage(String text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        content: Text(text),
-      ),
-    );
+    showAppSnackBar(context, text);
   }
 
   void _handleRecordAction(_TravelRecordAction action, DateTime date) {

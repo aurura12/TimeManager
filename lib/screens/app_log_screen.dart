@@ -9,6 +9,7 @@ import '../services/app_log_export_service.dart';
 import '../services/app_log_service.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_tokens.dart';
+import '../utils/app_snack_bar.dart';
 
 class AppLogScreen extends StatefulWidget {
   const AppLogScreen({super.key, this.service});
@@ -336,8 +337,6 @@ class _AppLogScreenState extends State<AppLogScreen> {
   }
 
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+    showAppSnackBar(context, message);
   }
 }

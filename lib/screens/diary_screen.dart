@@ -20,6 +20,7 @@ import '../services/sync_operation_lock.dart';
 import '../services/sync_status_coordinator.dart';
 import '../widgets/sync_status_button.dart';
 import '../utils/app_lifecycle.dart';
+import '../utils/app_snack_bar.dart';
 import '../utils/diary_markdown.dart';
 import '../utils/diary_remote_path_utils.dart';
 import '../utils/haptics.dart';
@@ -1211,12 +1212,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
 
   void _showMessage(String text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        content: Text(text),
-      ),
-    );
+    showAppSnackBar(context, text);
   }
 
   String _kindDisplayName(DiaryKind kind) {
