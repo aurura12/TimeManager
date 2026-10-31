@@ -9,6 +9,7 @@ import '../utils/platform_features.dart';
 import '../models/sync_center_state.dart';
 import '../models/travel_record.dart';
 import '../services/diary_local_store.dart';
+import '../services/app_identity_service.dart';
 import '../services/sync_center_service.dart';
 import '../services/sync_operation_lock.dart';
 import '../services/travel_gitee_service.dart';
@@ -279,35 +280,15 @@ class _TravelScreenState extends State<TravelScreen> {
     return true;
   }
 
-  Future<void> _confirmDeleteRecord(DateTime date) async {
+  /// 即时删除出行记录，提示条提供撤销入口。
+  ///
+  /// 保留「内存先删、落盘失败回滚」的结构：落盘失败时界面不能显示
+  /// 已删除、重启后又出现，此时也不弹撤销提示条。
+  Future<void> _deleteRecord(DateTime date) async {
     if (_processing) return;
     final normalizedDate = _normalizedDate(date);
     final record = _recordForDate(normalizedDate);
     if (record == null) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('删除出行记录'),
-          content: Text('确认删除 ${record.dateKey} 的记录吗？'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.error,
-                foregroundColor: Theme.of(context).colorScheme.onError,
-              ),
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('删除'),
-            ),
-          ],
-        );
-      },
-    );
-    if (confirmed != true) return;
 
     // 删除先只改内存，落盘失败时回滚，避免界面显示已删除、重启后又出现。
     final previousDocument = _document;
@@ -337,6 +318,28 @@ class _TravelScreenState extends State<TravelScreen> {
     }
     _markTravelPending();
     await _pushToGitHub();
+    if (!mounted) return;
+    showAppUndoSnackBar(
+      context,
+      message: '已删除 ${record.dateKey} 的出行记录',
+      identityToken: AppIdentityService.identityStamp,
+      onUndo: () async {
+        // 该日期已被用户写入新记录时撤销失效。
+        if (_recordForDate(record.date) != null) {
+          throw StateError('该日期已有新记录，撤销已失效');
+        }
+        // upsert 自带墓碑仲裁：updatedAt <= 墓碑时自动盖成 deletedAt+1，
+        // 恢复后的记录在与远端文档合并时能胜过旧墓碑。
+        setState(() {
+          _document = _document.upsert(record);
+        });
+        if (!await _saveDraft()) {
+          throw StateError('撤销保存失败');
+        }
+        _markTravelPending();
+        await _pushToGitHub();
+      },
+    );
   }
 
   Future<void> _showAddRecordDialog({DateTime? initialDate}) async {
@@ -809,7 +812,7 @@ class _TravelScreenState extends State<TravelScreen> {
       case _TravelRecordAction.edit:
         unawaited(_showEditRecordDialog(date));
       case _TravelRecordAction.delete:
-        unawaited(_confirmDeleteRecord(date));
+        unawaited(_deleteRecord(date));
     }
   }
 
@@ -1193,7 +1196,7 @@ class _TravelScreenState extends State<TravelScreen> {
         onAdd: () =>
             unawaited(_showAddRecordDialog(initialDate: _selectedDate)),
         onEdit: () => unawaited(_showEditRecordDialog(_selectedDate)),
-        onDelete: () => unawaited(_confirmDeleteRecord(_selectedDate)),
+        onDelete: () => unawaited(_deleteRecord(_selectedDate)),
       );
 
   Widget _buildStatsView() {
