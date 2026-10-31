@@ -360,8 +360,13 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
     for (final detail in state.details) {
       final date = parseDiaryDateFromRemotePath(detail);
       if (date == null) continue;
+      // 文件名前缀是唯一可靠的归属线索，走 DiaryKind 自己的前缀常量，
+      // 不要在这里写死首字母。
       final fileName = detail.split('/').last;
-      final kind = fileName.startsWith('J') ? DiaryKind.j : DiaryKind.g;
+      final kind = DiaryKind.values.firstWhere(
+        (candidate) => fileName.startsWith(candidate.prefix),
+        orElse: () => DiaryKind.g,
+      );
       return (kind: kind, date: date);
     }
     return null;
