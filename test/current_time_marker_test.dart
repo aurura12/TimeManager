@@ -10,19 +10,26 @@ import 'package:time_manager/theme/app_tokens.dart';
 import 'package:time_manager/utils/timeline_geometry.dart';
 import 'package:time_manager/widgets/time_grid.dart';
 
+DateTime _dayOf(DateTime time) => DateTime(time.year, time.month, time.day);
+
 Future<TimeProvider> _pumpGrid(
   WidgetTester tester, {
   required DateTime Function() clock,
   DateTime? date,
   double initialOffset = 0,
+  ValueChanged<Offset>? onTapDown,
 }) async {
   SharedPreferences.setMockInitialValues({
-    'categories': jsonEncode(<Object>[]),
+    // 分类按 getStringList 读取，塞 JSON 字符串会抛类型转换错误。
+    'categories': <String>[],
     'daily_slots': jsonEncode(<String, Object>{}),
   });
   final provider = TimeProvider();
   final controller = ScrollController(initialScrollOffset: initialOffset);
   addTearDown(controller.dispose);
+  // 不传 date 时用注入时钟的当天：TimeGrid 会回落到 provider.currentDate
+  // （真实今天），否则测试只在「写死的日期正好是跑测试那天」时通过。
+  final gridDate = date ?? _dayOf(clock());
 
   await tester.pumpWidget(
     ChangeNotifierProvider<TimeProvider>.value(
@@ -36,11 +43,11 @@ Future<TimeProvider> _pumpGrid(
             child: TimeGrid(
               gridKey: GlobalKey(),
               controller: controller,
-              date: date,
+              date: gridDate,
               clock: clock,
               dragStartIndex: null,
               dragEndIndex: null,
-              onTapDown: (_) {},
+              onTapDown: onTapDown ?? (_) {},
               onPanStart: (_) {},
               onPanUpdate: (_) {},
               onRemoveSlot: (_) {},
@@ -98,43 +105,7 @@ void main() {
   testWidgets('标记不拦点击：点它所在的行仍会选中槽位', (tester) async {
     final now = DateTime(2026, 10, 29, 10, 20);
     final taps = <Offset>[];
-    SharedPreferences.setMockInitialValues({
-      'categories': jsonEncode(<Object>[]),
-      'daily_slots': jsonEncode(<String, Object>{}),
-    });
-    final provider = TimeProvider();
-    final controller = ScrollController();
-    addTearDown(controller.dispose);
-
-    await tester.pumpWidget(
-      ChangeNotifierProvider<TimeProvider>.value(
-        value: provider,
-        child: MaterialApp(
-          theme: AppTheme.light(),
-          home: Scaffold(
-            body: SizedBox(
-              width: 300,
-              height: 600,
-              child: TimeGrid(
-                gridKey: GlobalKey(),
-                controller: controller,
-                clock: () => now,
-                dragStartIndex: null,
-                dragEndIndex: null,
-                onTapDown: taps.add,
-                onPanStart: (_) {},
-                onPanUpdate: (_) {},
-                onRemoveSlot: (_) {},
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-    for (var i = 0; i < 40 && !provider.isInitialLoadFinished; i++) {
-      await tester.pump(const Duration(milliseconds: 50));
-    }
-    await tester.pump();
+    await _pumpGrid(tester, clock: () => now, onTapDown: taps.add);
 
     final marker = find.byKey(const ValueKey('current-time-marker'));
     expect(marker, findsOneWidget);
