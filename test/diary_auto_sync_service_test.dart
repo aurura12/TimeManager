@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:time_manager/models/diary_kind.dart';
 import 'package:time_manager/models/sync_center_state.dart';
 import 'package:time_manager/services/app_identity_service.dart';
 import 'package:time_manager/services/diary_auto_sync_service.dart';
+import 'package:time_manager/services/diary_local_store.dart';
 import 'package:time_manager/services/sync_status_coordinator.dart';
 
 void main() {
@@ -35,8 +37,25 @@ void main() {
     );
   });
 
-  test('没有待上传草稿时直接短路，不触发远端同步', () async {
+  test('另一个身份的待上传草稿不会触发自动上传', () async {
+    // 当前身份是 g，只有 j 有 pending：这次再推也推不了，不该白跑一次远端列表。
+    await DiaryLocalStore.markDraftPending(
+      DiaryKind.j,
+      DateTime(2026, 10, 1),
+    );
     var runs = 0;
+    final service = DiaryAutoSyncService(
+      syncRunner: () async {
+        runs++;
+        return const SyncOperationResult.success();
+      },
+    );
+
+    expect(await service.flush(), isNull);
+    expect(runs, 0);
+  });
+
+  test('没有待上传草稿时直接短路，不触发远端同步', () async {    var runs = 0;
     final service = DiaryAutoSyncService(
       pendingChecker: () async => false,
       syncRunner: () async {

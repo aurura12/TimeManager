@@ -179,13 +179,16 @@ class DiaryLocalStore {
     await prefs.remove(_draftPendingKey(kind, date));
   }
 
-  /// 是否存在任何待上传草稿（不区分身份）。
+  /// 是否有待上传草稿；[kind] 为空表示不区分身份。
   ///
   /// 自动推送用它做前置判断：没有待上传内容时直接短路，避免每次回前台都
-  /// 触发一次远端列表请求。
-  static Future<bool> hasAnyPendingDraft() async {
+  /// 触发一次远端列表请求。调用方应传当前身份——另一个身份的草稿这次也推
+  /// 不了，扫到它只会白跑一次远端列表、把状态灯点亮。
+  static Future<bool> hasPendingDraftFor(DiaryKind? kind) async {
     final prefs = await SharedPreferences.getInstance();
-    const prefix = 'diary_draft_pending_';
+    final prefix = kind == null
+        ? 'diary_draft_pending_'
+        : 'diary_draft_pending_${kind.code}_';
     for (final key in prefs.getKeys()) {
       if (!key.startsWith(prefix)) continue;
       if (prefs.getBool(key) == true) return true;

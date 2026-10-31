@@ -26,7 +26,8 @@ class DiaryAutoSyncService {
     Future<SyncOperationResult> Function()? syncRunner,
     Future<bool> Function()? pendingChecker,
   })  : _syncRunner = syncRunner ?? _runSync,
-        _pendingChecker = pendingChecker ?? DiaryLocalStore.hasAnyPendingDraft;
+        _pendingChecker =
+            pendingChecker ?? _hasPendingDraftForCurrentIdentity;
 
   /// 上报来源，出现在应用日志与同步中心的「最近尝试」里。
   static const String logSource = '日记自动同步';
@@ -37,6 +38,14 @@ class DiaryAutoSyncService {
 
   final Future<SyncOperationResult> Function() _syncRunner;
   final Future<bool> Function() _pendingChecker;
+
+  /// 只看当前身份的待上传草稿：另一个身份的草稿这次也推不了。
+  ///
+  /// 未选身份时退回全量扫描，好让 [flush] 仍能上报「尚未选择日记身份」。
+  static Future<bool> _hasPendingDraftForCurrentIdentity() async {
+    await AppIdentityService.load();
+    return DiaryLocalStore.hasPendingDraftFor(AppIdentityService.personKind);
+  }
 
   /// 有待上传草稿时执行一次批量推送；返回 null 表示本次无需同步。
   ///
