@@ -9,6 +9,7 @@ import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/desktop_shortcut_host.dart';
+import '../utils/app_snack_bar.dart';
 import '../utils/platform_features.dart';
 
 /// 桌面端原地编辑，移动端继续使用完整页面。
@@ -235,9 +236,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                       integer: title != '时长(小时)')
                   : (inputValue.trim().isEmpty ? '请输入$title' : null);
               if (error != null) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(error)),
-                );
+                showAppSnackBar(context, error);
               } else {
                 onSave(inputValue.trim());
                 Navigator.pop(context);
@@ -377,8 +376,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
       if (widget.asDialog) {
         setState(() => _saveError = validation);
       } else {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(validation)));
+        showAppSnackBar(context, validation);
       }
       return;
     }
@@ -416,9 +414,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
           _saveError = '保存失败，请稍后重试';
         });
         if (!widget.asDialog) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('保存失败，请稍后重试')),
-          );
+          showAppSnackBar(context, '保存失败，请稍后重试');
         }
         return;
       }

@@ -363,11 +363,7 @@ class _WakeUpCardState extends State<WakeUpCard> with WidgetsBindingObserver {
     }
   }
 
-  void _message(String text) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(text)));
-  }
+  void _message(String text) => showAppSnackBar(context, text);
 
   String _errorMessage(Object error) => switch (error) {
         ArgumentError() => error.message.toString(),

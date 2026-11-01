@@ -23,6 +23,7 @@ import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/adaptive.dart';
 import '../utils/app_lifecycle.dart';
+import '../utils/app_snack_bar.dart';
 import '../utils/platform_features.dart';
 import '../widgets/data_failure_banner.dart';
 import '../widgets/main_tab_activity.dart';
@@ -516,8 +517,10 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Future<void> _retryLocalSave(TimeProvider provider) async {
     final saved = await provider.retryLocalSave();
     if (saved || !mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('仍然无法保存，请检查存储空间后重试')),
+    showAppSnackBar(
+      context,
+      '仍然无法保存，请检查存储空间后重试',
+      interruptUndo: true,
     );
   }
 

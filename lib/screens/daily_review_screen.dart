@@ -7,6 +7,7 @@ import '../widgets/day_change_boundary.dart';
 
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/app_snack_bar.dart';
 
 class DailyReviewScreen extends StatefulWidget {
   final DateTime date;
@@ -863,9 +864,7 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                         if (sheetContext.mounted) {
                           Navigator.of(sheetContext).pop();
                         }
-                        messenger.showSnackBar(
-                          const SnackBar(content: Text('AI 缓存已清理')),
-                        );
+                        showAppSnackBarOn(messenger, 'AI 缓存已清理');
                       },
                     ),
                   ],

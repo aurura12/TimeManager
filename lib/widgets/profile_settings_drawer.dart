@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import '../utils/app_snack_bar.dart';
 import '../utils/platform_features.dart';
 
 import 'package:flutter/material.dart';
@@ -1503,11 +1504,9 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
 
     final messenger = ScaffoldMessenger.of(context);
     if (result.success) {
-      messenger.showSnackBar(const SnackBar(content: Text('备份已导出')));
+      showAppSnackBarOn(messenger, '备份已导出');
     } else {
-      messenger.showSnackBar(
-        SnackBar(content: Text(result.error ?? '导出失败')),
-      );
+      showAppSnackBarOn(messenger, result.error ?? '导出失败');
     }
   }
 

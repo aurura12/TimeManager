@@ -11,6 +11,7 @@ import '../services/reminder_platform.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/app_snack_bar.dart';
 import '../widgets/time_wheel_sheet.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../utils/platform_features.dart';
@@ -209,17 +210,13 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
     if (_saving) return;
     final name = _nameController.text.trim();
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请输入目标名称')),
-      );
+      showAppSnackBar(context, '请输入目标名称');
       return;
     }
     if (_startDate != null &&
         _endDate != null &&
         _endDate!.isBefore(_startDate!)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('结束日期不能早于开始日期')),
-      );
+      showAppSnackBar(context, '结束日期不能早于开始日期');
       return;
     }
     final count = int.tryParse(_countController.text) ?? 1;
@@ -281,7 +278,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
 
     final message = reminderResult.message;
     if (message != null) {
-      messenger.showSnackBar(SnackBar(content: Text(message)));
+      showAppSnackBarOn(messenger, message);
     }
   }
 
@@ -681,9 +678,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
         _onStartDateChanged(picked);
       } else {
         if (_startDate != null && picked.isBefore(_startDate!)) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('结束日期不能早于开始日期')),
-          );
+          showAppSnackBar(context, '结束日期不能早于开始日期');
           return;
         }
         setState(() {

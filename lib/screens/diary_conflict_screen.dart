@@ -6,6 +6,7 @@ import '../models/diary_kind.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/app_snack_bar.dart';
 import '../utils/text_diff.dart';
 
 /// 日记冲突处理页：逐块对比本地与远端，选择保留哪一边或手动合并。
@@ -119,9 +120,7 @@ class _DiaryConflictScreenState extends State<DiaryConflictScreen> {
   Future<void> _saveMerged() async {
     final body = _mergeController?.text ?? _mergedBody;
     if (body.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('合并结果为空，请补充内容后再保存')),
-      );
+      showAppSnackBar(context, '合并结果为空，请补充内容后再保存');
       return;
     }
     Navigator.of(context).pop<DiaryConflictDecision>(

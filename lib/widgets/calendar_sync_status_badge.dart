@@ -9,6 +9,7 @@ import '../services/google_calendar_service.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/app_snack_bar.dart';
 class CalendarSyncStatusBadge extends StatelessWidget {
   final VoidCallback? onNotLoggedIn;
 
@@ -155,11 +156,7 @@ class CalendarSyncStatusBadge extends StatelessWidget {
   Future<void> _reconnect(BuildContext context, TimeProvider provider) async {
     if (!GoogleCalendarService.isConfigured) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('请先在 google_sign_in_config.dart 配置 OAuth 客户端 ID'),
-        ),
-      );
+      showAppSnackBar(context, '请先在 google_sign_in_config.dart 配置 OAuth 客户端 ID');
       return;
     }
 
@@ -167,17 +164,9 @@ class CalendarSyncStatusBadge extends StatelessWidget {
     if (!context.mounted) return;
     if (ok) {
       provider.synchronizeCalendar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Google 日历已重新连接')),
-      );
+      showAppSnackBar(context, 'Google 日历已重新连接');
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            GoogleCalendarService.lastLoginError ?? '重新连接失败',
-          ),
-        ),
-      );
+      showAppSnackBar(context, GoogleCalendarService.lastLoginError ?? '重新连接失败');
     }
   }
 }

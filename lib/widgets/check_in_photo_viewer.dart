@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../models/check_in_record.dart';
 import '../services/check_in_sync_service.dart';
 import '../theme/app_tokens.dart';
+import '../utils/app_snack_bar.dart';
 
 /// 全屏查看打卡照片
 class CheckInPhotoViewer extends StatelessWidget {
@@ -30,9 +31,7 @@ class CheckInPhotoViewer extends StatelessWidget {
     VoidCallback? onDelete,
   }) {
     if (record.photoPath == null || record.photoPath!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('该记录没有照片')),
-      );
+      showAppSnackBar(context, '该记录没有照片');
       return Future.value();
     }
     return showDialog(

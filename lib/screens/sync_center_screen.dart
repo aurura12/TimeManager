@@ -10,6 +10,7 @@ import '../services/sync_center_service.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/app_snack_bar.dart';
 import '../utils/diary_remote_path_utils.dart';
 import 'app_log_screen.dart';
 import 'diary_screen.dart';
@@ -347,9 +348,7 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
     if (!mounted) return;
     final state = _controller.stateFor(module);
     if (state.hasIssue) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(state.message ?? '${module.label}同步未完成')),
-      );
+      showAppSnackBar(context, state.message ?? '${module.label}同步未完成');
     }
   }
 
@@ -416,9 +415,7 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
     await _controller.pull(module);
     if (!mounted) return;
     final state = _controller.stateFor(module);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(state.message ?? '${module.label}拉取未完成')),
-    );
+    showAppSnackBar(context, state.message ?? '${module.label}拉取未完成');
   }
 
   /// 覆盖拉取是破坏性操作，必须先二次确认再执行。
@@ -446,20 +443,15 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
     if (confirmed != true || !mounted) return;
     final result = await _controller.recoverScheduleOverwrite();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(result?.message ?? '覆盖拉取未执行，请稍后重试')),
-    );
+    showAppSnackBar(context, result?.message ?? '覆盖拉取未执行，请稍后重试');
   }
 
   Future<void> _retryAll() async {
     await _controller.retryAll();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _controller.hasUnresolved ? '部分模块仍需处理' : '全部同步任务已完成',
-        ),
-      ),
+    showAppSnackBar(
+      context,
+      _controller.hasUnresolved ? '部分模块仍需处理' : '全部同步任务已完成',
     );
   }
 

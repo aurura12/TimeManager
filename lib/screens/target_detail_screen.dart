@@ -127,9 +127,7 @@ class _TargetDetailScreenState extends State<TargetDetailScreen> {
     _deletionNoticeScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('目标已被删除')),
-      );
+      showAppSnackBarOn(ScaffoldMessenger.maybeOf(context), '目标已被删除');
       final navigator = Navigator.of(context);
       if (navigator.canPop()) navigator.pop();
     });
