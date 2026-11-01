@@ -9,6 +9,7 @@ import '../models/global_search_result.dart';
 import '../models/schedule_sync_progress.dart';
 import '../providers/main_tab_provider.dart';
 import '../providers/desktop_layout_provider.dart';
+import '../providers/on_this_day_popup_provider.dart';
 import '../providers/time_provider.dart';
 import '../services/app_log_service.dart';
 import '../services/diary_auto_sync_service.dart';
@@ -90,6 +91,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   late final TimeProvider _timeProvider;
   late final MainTabProvider _mainTabProvider;
+  late final OnThisDayPopupProvider? _onThisDayPopup;
   late final SyncStatusCoordinator? _syncCoordinator;
   late final DiaryAutoSyncService _diaryAutoSync;
 
@@ -101,9 +103,13 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     // 在 initState 保存 Provider 引用，dispose 中不再使用 context（树已不稳定）
     _timeProvider = context.read<TimeProvider>();
     _syncCoordinator = context.read<SyncStatusCoordinator?>();
+    // 可空泛型：没有注册该 Provider 的宿主（部分测试）按默认「自动弹出」处理。
+    _onThisDayPopup = context.read<OnThisDayPopupProvider?>();
     // 日记上传不依赖日记页是否打开：冷启动和回前台都补推一次遗留草稿。
     _diaryAutoSync = DiaryAutoSyncService();
     _timeProvider.addListener(_tryShowOnThisDay);
+    // 从「仅手动查看」切回自动弹出时，当天若还没弹过就立刻补一次。
+    _onThisDayPopup?.addListener(_tryShowOnThisDay);
     _tabBuilders = {
       MainTabId.record: () => HomeScreen(key: _homeKey),
       MainTabId.diary: () => const DiaryScreen(),
@@ -142,6 +148,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _hiddenTabHistory = null;
     hiddenTabHistory?.remove();
     _timeProvider.removeListener(_tryShowOnThisDay);
+    _onThisDayPopup?.removeListener(_tryShowOnThisDay);
     _mainTabProvider.removeListener(_onTabSettingsChanged);
     WidgetsBinding.instance.removeObserver(this);
     _shortcutFocus.dispose();
@@ -212,6 +219,8 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _tryShowOnThisDay() async {
+    // 用户选了「仅手动查看」→ 不自动弹层（「记录回顾 → 那年今日」仍可查看）
+    if (!(_onThisDayPopup?.autoShow ?? true)) return;
     // 正在检查中 → 跳过（防并发：notifyListeners 多次触发时防止弹两次）
     if (_onThisDayChecking) return;
     if (!mounted) return;

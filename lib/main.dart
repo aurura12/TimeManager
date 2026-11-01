@@ -14,6 +14,7 @@ import 'providers/main_tab_provider.dart';
 import 'providers/now_marker_provider.dart';
 import 'providers/event_label_style_provider.dart';
 import 'providers/haptics_provider.dart';
+import 'providers/on_this_day_popup_provider.dart';
 import 'providers/desktop_shortcut_provider.dart';
 import 'providers/desktop_layout_provider.dart';
 import 'package:time_manager/theme/app_semantic_colors.dart';
@@ -489,6 +490,10 @@ Future<void> _initializeAndRunApplication({
         // 触感开关同理用可空泛型：缺 Provider 的宿主按默认开启处理。
         ChangeNotifierProvider<HapticsProvider?>(
           create: (_) => HapticsProvider(),
+        ),
+        // 「那年今日」自动弹出开关同理可空：缺 Provider 时按默认自动弹出。
+        ChangeNotifierProvider<OnThisDayPopupProvider?>(
+          create: (_) => OnThisDayPopupProvider(),
         ),
         ChangeNotifierProvider(create: (_) => DesktopShortcutProvider()),
         ChangeNotifierProvider(create: (_) => DesktopLayoutProvider()),

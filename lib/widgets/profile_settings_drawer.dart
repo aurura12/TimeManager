@@ -17,6 +17,7 @@ import '../providers/main_tab_provider.dart';
 import '../providers/event_label_style_provider.dart';
 import '../providers/now_marker_provider.dart';
 import '../providers/haptics_provider.dart';
+import '../providers/on_this_day_popup_provider.dart';
 import '../screens/event_label_settings_screen.dart';
 import '../screens/desktop_shortcut_settings_screen.dart';
 import '../providers/desktop_shortcut_provider.dart';
@@ -550,6 +551,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               OnThisDayScreen.open(context);
             },
           ),
+          ..._buildOnThisDayPopupItem(context),
         ],
       _ProfileDrawerSection.interaction => [
           if (isDesktop && context.read<DesktopLayoutProvider?>() != null)
@@ -702,6 +704,30 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
         onTap: () => _openScreen(
           EventLabelSettingsScreen(provider: labelProvider),
         ),
+      ),
+    ];
+  }
+
+  /// 「那年今日」自动弹出开关。没有注册 Provider 的宿主（部分测试）直接不显示。
+  List<Widget> _buildOnThisDayPopupItem(BuildContext context) {
+    final popup = context.watch<OnThisDayPopupProvider?>();
+    if (popup == null) return const [];
+    return [
+      SwitchListTile(
+        secondary: const Icon(Icons.auto_awesome_outlined),
+        title: const Text('自动弹出'),
+        subtitle: Text(
+          popup.autoShow ? '打开应用时自动回顾往年今天的记录' : '只在上面手动查看',
+        ),
+        value: popup.autoShow,
+        onChanged: (value) async {
+          final messenger = ScaffoldMessenger.maybeOf(context);
+          try {
+            await popup.setAutoShow(value);
+          } on Object {
+            showAppSnackBarOn(messenger, '保存设置失败，请检查存储空间后重试');
+          }
+        },
       ),
     ];
   }

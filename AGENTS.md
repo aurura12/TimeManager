@@ -41,6 +41,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
   - `now_marker_provider.dart` → `NowMarkerProvider` — 记录页「现在」小圆点的显示开关（`app_now_marker_v1`，默认显示），**本机设置、独立于身份、不进同步或备份**；入口在「我的 → 设置 → 操作与布局 → 当前时刻标记」
   - `event_label_style_provider.dart` → `EventLabelStyleProvider` — 事件名显示偏好（`app_event_label_style_v1`，默认两行），**本机设置、独立于身份、不进同步或备份**；只决定 `EventLabelText` 渲染 1 行还是 2 行，名字被截断时靠长按（手机）/ 悬停（桌面）看全名。设置入口是 `EventLabelSettingsScreen`
   - `haptics_provider.dart` → `HapticsProvider` — 触感反馈总开关（`app_haptics_v1`，默认开启），**本机设置、独立于身份、不进同步或备份**。所有震动只能经 `lib/utils/haptics.dart` 的 `playHaptic(context, HapticStrength.*)` 发出（它读这个开关、吞掉平台通道异常），不要在页面里直接调 `HapticFeedback`；设置入口在「我的 → 设置 → 操作与布局 → 触感反馈」
+  - `on_this_day_popup_provider.dart` → `OnThisDayPopupProvider` — 「那年今日」启动自动弹出开关（`app_on_this_day_popup_v1`，默认自动弹出），**本机设置、独立于身份、不进同步或备份**；只决定 `MainScreen._tryShowOnThisDay` 是否自动弹层，「记录回顾 → 那年今日」的手动入口不受影响。设置入口在「我的 → 记录回顾 → 自动弹出」
 - **Models**: `lib/models/` (36 个文件)
   - 时间记录：`TimeSlot`, `Category`, `CalendarBlock`, `ScheduleTemplate`, `VoiceScheduleDraft`, `ScheduleSyncProgress`
   - 打卡系统：`CheckInGoal`, `CheckInRecord`, `CheckInDocument`, `CheckInViewFilter`
