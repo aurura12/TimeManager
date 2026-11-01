@@ -721,9 +721,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           try {
             await nowMarker.setEnabled(value);
           } on Object {
-            messenger?.showSnackBar(
-              const SnackBar(content: Text('保存设置失败，请检查存储空间后重试')),
-            );
+            showAppSnackBarOn(messenger, '保存设置失败，请检查存储空间后重试');
           }
         },
       ),
@@ -745,9 +743,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           try {
             await haptics.setEnabled(value);
           } on Object {
-            messenger?.showSnackBar(
-              const SnackBar(content: Text('保存设置失败，请检查存储空间后重试')),
-            );
+            showAppSnackBarOn(messenger, '保存设置失败，请检查存储空间后重试');
           }
         },
       ),
@@ -889,8 +885,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
 
       final message = status.message;
       if (message != null) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(message)));
+        showAppSnackBar(context, message);
       }
     } catch (error, stackTrace) {
       AppLogService.instance.error(
@@ -901,9 +896,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       );
       if (!mounted) return;
       setState(() => _diaryReminderBusy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('切换失败，请查看运行日志')),
-      );
+      showAppSnackBar(context, '切换失败，请查看运行日志');
     }
   }
 
@@ -949,8 +942,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       widget.onChanged();
       final message = status.message;
       if (message != null) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(message)));
+        showAppSnackBar(context, message);
       }
     } catch (error, stackTrace) {
       AppLogService.instance.error(
@@ -961,9 +953,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       );
       if (!mounted) return;
       setState(() => _diaryReminderBusy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('保存失败，请查看运行日志')),
-      );
+      showAppSnackBar(context, '保存失败，请查看运行日志');
     }
   }
 
@@ -977,12 +967,9 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
         _diaryReminderBusy = false;
       });
       final message = status.message;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            message ?? '测试通知已发送；若没看到，请检查系统通知设置',
-          ),
-        ),
+      showAppSnackBar(
+        context,
+        message ?? '测试通知已发送；若没看到，请检查系统通知设置',
       );
     } catch (error, stackTrace) {
       AppLogService.instance.error(
@@ -993,9 +980,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       );
       if (!mounted) return;
       setState(() => _diaryReminderBusy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('发送失败，请查看运行日志')),
-      );
+      showAppSnackBar(context, '发送失败，请查看运行日志');
     }
   }
 
@@ -1046,14 +1031,11 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     unawaited(_loadDiaryReminderStatus());
     widget.onChanged();
     if (!ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            enabled
-                ? (GoogleCalendarService.lastLoginError ?? 'Google 登录未完成')
-                : '无法切换到手动身份',
-          ),
-        ),
+      showAppSnackBar(
+        context,
+        enabled
+            ? (GoogleCalendarService.lastLoginError ?? 'Google 登录未完成')
+            : '无法切换到手动身份',
       );
     }
   }
@@ -1164,7 +1146,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     if (mounted) {
       // 挂着的「撤销删除」提示条属于旧身份：切换后不再有效，直接清掉，
       // 避免用户点了一个注定失效（或写错分片）的撤销按钮。
-      ScaffoldMessenger.of(context).clearSnackBars();
+      clearAppSnackBars(ScaffoldMessenger.of(context));
       unawaited(_loadDiaryReminderStatus());
       widget.onChanged();
     }
@@ -1205,16 +1187,12 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     if (!context.mounted) return;
 
     if (result.hasError) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.error!)),
-      );
+      showAppSnackBar(context, result.error!);
       return;
     }
 
     if (!result.hasUpdate) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('当前已是最新版本')),
-      );
+      showAppSnackBar(context, '当前已是最新版本');
       return;
     }
 
@@ -1279,9 +1257,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
         );
       } else if (!await UpdateService.openReleasePage(updateInfo.version) &&
           context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('无法打开发布页，请稍后重试')),
-        );
+        showAppSnackBar(context, '无法打开发布页，请稍后重试');
       }
     }
   }
@@ -1462,12 +1438,9 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       BuildContext context, TimeProvider provider) async {
     if (!GoogleCalendarService.isConfigured) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            '请先在 lib/config/google_sign_in_config.dart 填写 Web 客户端 ID',
-          ),
-        ),
+      showAppSnackBar(
+        context,
+        '请先在 lib/config/google_sign_in_config.dart 填写 Web 客户端 ID',
       );
       return;
     }
@@ -1478,12 +1451,9 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       widget.onChanged();
       _closeDrawer();
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            GoogleCalendarService.lastLoginError ?? 'Google 登录失败',
-          ),
-        ),
+      showAppSnackBar(
+        context,
+        GoogleCalendarService.lastLoginError ?? 'Google 登录失败',
       );
     }
   }
@@ -1518,9 +1488,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     if (!picked.result.success ||
         picked.preview == null ||
         picked.json == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(picked.result.error ?? '无法读取备份文件')),
-      );
+      showAppSnackBar(context, picked.result.error ?? '无法读取备份文件');
       return;
     }
 
@@ -1560,10 +1528,9 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
         await DataBackupService.importFromJson(provider, picked.json!);
     if (!context.mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(result.success ? '数据已恢复' : (result.error ?? '导入失败')),
-      ),
+    showAppSnackBar(
+      context,
+      result.success ? '数据已恢复' : (result.error ?? '导入失败'),
     );
   }
 }
