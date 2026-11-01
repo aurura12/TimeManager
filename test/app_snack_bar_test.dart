@@ -41,6 +41,15 @@ Future<void> _pumpHostWithPush(
   await tester.pump();
 }
 
+/// 让提示条走完「计时器到期 + 退场动画」。
+///
+/// SnackBar 的停留计时器在入场动画结束后的那次 build 里才创建，所以先要
+/// pumpAndSettle 走完入场，再越过 duration 才会触发 hide。
+Future<void> _elapseSnackBar(WidgetTester tester, Duration duration) async {
+  await tester.pump(duration + const Duration(seconds: 1));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   setUp(() {
     AppIdentityService.resetForTesting();
@@ -76,6 +85,274 @@ void main() {
     await tester.pump();
     expect(find.text('第一条'), findsNothing);
     expect(find.text('第二条'), findsOneWidget);
+  });
+
+  testWidgets('duration 只影响这一条提示的停留时间', (tester) async {
+    await _pumpHost(tester, builder: (context) {
+      return Center(
+        child: Column(
+          children: [
+            TextButton(
+              onPressed: () => showAppSnackBar(
+                context,
+                '短提示',
+                duration: const Duration(seconds: 2),
+              ),
+              child: const Text('short'),
+            ),
+            TextButton(
+              onPressed: () => showAppSnackBar(context, '默认提示'),
+              child: const Text('default'),
+            ),
+          ],
+        ),
+      );
+    });
+
+    await tester.tap(find.text('short'));
+    await tester.pumpAndSettle();
+    expect(find.text('短提示'), findsOneWidget);
+
+    await _elapseSnackBar(tester, const Duration(seconds: 2));
+    expect(find.text('短提示'), findsNothing);
+
+    await tester.tap(find.text('default'));
+    await tester.pumpAndSettle();
+    expect(find.text('默认提示'), findsOneWidget);
+
+    // 默认时长更长：2 秒时还在。
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.text('默认提示'), findsOneWidget);
+
+    await _elapseSnackBar(tester, const Duration(seconds: 2));
+    expect(find.text('默认提示'), findsNothing);
+  });
+
+  testWidgets('showAppSnackBarOn 传入 null 时静默不抛', (tester) async {
+    await _pumpHost(tester, builder: (context) {
+      return Center(
+        child: TextButton(
+          onPressed: () => showAppSnackBarOn(null, '不会出现'),
+          child: const Text('fire'),
+        ),
+      );
+    });
+
+    await tester.tap(find.text('fire'));
+    await tester.pump();
+    expect(find.text('不会出现'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('showAppSnackBarOn 用提前抓的 messenger 跨页面展示', (tester) async {
+    ScaffoldMessengerState? messenger;
+    await _pumpHostWithPush(tester, (pageContext) {
+      return TextButton(
+        onPressed: () {
+          messenger = ScaffoldMessenger.of(pageContext);
+          Navigator.of(pageContext).pop();
+        },
+        child: const Text('grab'),
+      );
+    });
+
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('grab'));
+    await tester.pumpAndSettle();
+
+    showAppSnackBarOn(messenger, '跨页面提示');
+    await tester.pump();
+    expect(find.text('跨页面提示'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('撤销窗口内普通提示排队，不顶掉撤销按钮', (tester) async {
+    await _pumpHost(tester, builder: (context) {
+      return Center(
+        child: Column(
+          children: [
+            TextButton(
+              onPressed: () => showAppUndoSnackBar(
+                context,
+                message: '已删除',
+                onUndo: () async {},
+              ),
+              child: const Text('delete'),
+            ),
+            TextButton(
+              onPressed: () => showAppSnackBar(context, '同步失败'),
+              child: const Text('plain'),
+            ),
+          ],
+        ),
+      );
+    });
+
+    await tester.tap(find.text('delete'));
+    await tester.pumpAndSettle();
+    expect(find.text('撤销'), findsOneWidget);
+
+    await tester.tap(find.text('plain'));
+    await tester.pump();
+    // 撤销窗口还有效：撤销按钮仍在，普通提示先不出现。
+    expect(find.text('撤销'), findsOneWidget);
+    expect(find.text('同步失败'), findsNothing);
+
+    // 撤销条自己超时后，待发的普通提示才出现。
+    await _elapseSnackBar(tester, appUndoSnackBarDuration);
+    expect(find.text('撤销'), findsNothing);
+    expect(find.text('同步失败'), findsOneWidget);
+  });
+
+  testWidgets('撤销窗口内连发多条只保留最新一条', (tester) async {
+    await _pumpHost(tester, builder: (context) {
+      return Center(
+        child: Column(
+          children: [
+            TextButton(
+              onPressed: () => showAppUndoSnackBar(
+                context,
+                message: '已删除',
+                onUndo: () async {},
+              ),
+              child: const Text('delete'),
+            ),
+            TextButton(
+              onPressed: () {
+                showAppSnackBar(context, '第一条');
+                showAppSnackBar(context, '第二条');
+                showAppSnackBar(context, '第三条');
+              },
+              child: const Text('plain'),
+            ),
+          ],
+        ),
+      );
+    });
+
+    await tester.tap(find.text('delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('plain'));
+    await tester.pump();
+    expect(find.text('第一条'), findsNothing);
+
+    await _elapseSnackBar(tester, appUndoSnackBarDuration);
+    expect(find.text('第三条'), findsOneWidget);
+    expect(find.text('第一条'), findsNothing);
+    expect(find.text('第二条'), findsNothing);
+  });
+
+  testWidgets('点撤销后撤销窗口立即结束，普通提示不再排队', (tester) async {
+    var undoCount = 0;
+    await _pumpHost(tester, builder: (context) {
+      return Center(
+        child: Column(
+          children: [
+            TextButton(
+              onPressed: () => showAppUndoSnackBar(
+                context,
+                message: '已删除',
+                onUndo: () async => undoCount++,
+              ),
+              child: const Text('delete'),
+            ),
+            TextButton(
+              onPressed: () => showAppSnackBar(context, '同步失败'),
+              child: const Text('plain'),
+            ),
+          ],
+        ),
+      );
+    });
+
+    await tester.tap(find.text('delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('撤销'));
+    await tester.pumpAndSettle();
+    expect(undoCount, 1);
+
+    await tester.tap(find.text('plain'));
+    await tester.pump();
+    expect(find.text('同步失败'), findsOneWidget);
+  });
+
+  testWidgets('interruptUndo 立刻顶掉撤销条', (tester) async {
+    await _pumpHost(tester, builder: (context) {
+      return Center(
+        child: Column(
+          children: [
+            TextButton(
+              onPressed: () => showAppUndoSnackBar(
+                context,
+                message: '已删除',
+                onUndo: () async {},
+              ),
+              child: const Text('delete'),
+            ),
+            TextButton(
+              onPressed: () => showAppSnackBar(
+                context,
+                '保存失败',
+                interruptUndo: true,
+              ),
+              child: const Text('urgent'),
+            ),
+          ],
+        ),
+      );
+    });
+
+    await tester.tap(find.text('delete'));
+    await tester.pumpAndSettle();
+    expect(find.text('撤销'), findsOneWidget);
+
+    await tester.tap(find.text('urgent'));
+    await tester.pumpAndSettle();
+    expect(find.text('保存失败'), findsOneWidget);
+    expect(find.text('撤销'), findsNothing);
+  });
+
+  testWidgets('clearAppSnackBars 连待发消息一起清掉', (tester) async {
+    await _pumpHost(tester, builder: (context) {
+      return Center(
+        child: Column(
+          children: [
+            TextButton(
+              onPressed: () => showAppUndoSnackBar(
+                context,
+                message: '已删除',
+                onUndo: () async {},
+              ),
+              child: const Text('delete'),
+            ),
+            TextButton(
+              onPressed: () => showAppSnackBar(context, '切换后的提示'),
+              child: const Text('plain'),
+            ),
+            TextButton(
+              onPressed: () => clearAppSnackBars(ScaffoldMessenger.of(context)),
+              child: const Text('clear'),
+            ),
+          ],
+        ),
+      );
+    });
+
+    await tester.tap(find.text('delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('plain'));
+    await tester.pump();
+    expect(find.text('切换后的提示'), findsNothing);
+
+    await tester.tap(find.text('clear'));
+    await tester.pumpAndSettle();
+    expect(find.text('撤销'), findsNothing);
+
+    // 撤销窗口曾经结束，也不会把待发消息补出来。
+    await tester.pump(appUndoSnackBarDuration + const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.text('切换后的提示'), findsNothing);
   });
 
   testWidgets('showAppUndoSnackBar 点击撤销执行回调', (tester) async {
