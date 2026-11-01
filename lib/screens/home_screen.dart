@@ -133,9 +133,10 @@ class HomeScreenState extends State<HomeScreen> {
           !isScheduleSyncMessage &&
           message != "SYNCING" &&
           message != "IDLE") {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(message), duration: const Duration(seconds: 2)),
+        showAppSnackBar(
+          context,
+          message,
+          duration: const Duration(seconds: 2),
         );
       }
     });
@@ -860,8 +861,11 @@ class HomeScreenState extends State<HomeScreen> {
       }
     } on Object {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('保存事件栏宽度失败，请重试')));
+        showAppSnackBar(
+          context,
+          '保存事件栏宽度失败，请重试',
+          interruptUndo: true,
+        );
       }
     } finally {
       if (mounted && version == _categoryResizeVersion) {
@@ -1299,9 +1303,10 @@ class HomeScreenState extends State<HomeScreen> {
         _selectionDate = null;
       });
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text("请先在左侧网格中选择时间块"), duration: Duration(seconds: 2)),
+      showAppSnackBar(
+        context,
+        "请先在左侧网格中选择时间块",
+        duration: const Duration(seconds: 2),
       );
     }
   }
@@ -1324,18 +1329,20 @@ class HomeScreenState extends State<HomeScreen> {
         _selectionDate = null;
       });
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text("请先在左侧网格中选择时间块"), duration: Duration(seconds: 2)),
+      showAppSnackBar(
+        context,
+        "请先在左侧网格中选择时间块",
+        duration: const Duration(seconds: 2),
       );
     }
   }
 
   void _showTemporaryEventDialog(TimeProvider provider) {
     if (_selectionStart == null || _selectionEnd == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text("请先在左侧网格中选择时间块"), duration: Duration(seconds: 2)),
+      showAppSnackBar(
+        context,
+        "请先在左侧网格中选择时间块",
+        duration: const Duration(seconds: 2),
       );
       return;
     }
@@ -1362,10 +1369,9 @@ class HomeScreenState extends State<HomeScreen> {
                 final name = nameController.text.trim();
                 if (name.isNotEmpty &&
                     name == TimeProvider.deletedCategoryName) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('“已删除”为系统保留名称，不能作为临时事件名称'),
-                    ),
+                  showAppSnackBar(
+                    context,
+                    '“已删除”为系统保留名称，不能作为临时事件名称',
                   );
                   return;
                 }
@@ -1505,11 +1511,11 @@ class HomeScreenState extends State<HomeScreen> {
                           .firstWhere((c) => c.id == selectedCategoryId);
                       onMove(currentCategoryId, selectedCategoryId!, subCat);
                       Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('已将"$subCat"移动到${targetCat.name}'),
-                          duration: const Duration(seconds: 2),
-                        ),
+                      // 弹层已经 pop，这里必须用 State 的 context 展示提示。
+                      showAppSnackBar(
+                        this.context,
+                        '已将"$subCat"移动到${targetCat.name}',
+                        duration: const Duration(seconds: 2),
                       );
                     },
               child: const Text('移动'),
@@ -1551,9 +1557,7 @@ class HomeScreenState extends State<HomeScreen> {
           void addSubCategory(String rawValue) {
             final value = rawValue.trim();
             if (value.isEmpty) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('子事件名称不能为空')),
-              );
+              showAppSnackBar(context, '子事件名称不能为空');
               return;
             }
             final key = value.toLowerCase();
@@ -1562,9 +1566,7 @@ class HomeScreenState extends State<HomeScreen> {
               ...tempHiddenSubCategories,
             ].any((item) => item.trim().toLowerCase() == key);
             if (duplicated) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('子事件“$value”重复，请保留一个')),
-              );
+              showAppSnackBar(context, '子事件“$value”重复，请保留一个');
               return;
             }
             setDialogState(() {
@@ -1627,10 +1629,9 @@ class HomeScreenState extends State<HomeScreen> {
 
                         final parsed = AppSemanticColors.parseOpaqueHex(value);
                         if (parsed == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text(
-                                    '请输入合法的6位/8位十六进制颜色值（如 #FFFFFF 或 #FFFFFFFF，透明度会被忽略）')),
+                          showAppSnackBar(
+                            context,
+                            '请输入合法的6位/8位十六进制颜色值（如 #FFFFFF 或 #FFFFFFFF，透明度会被忽略）',
                           );
                           return;
                         }
@@ -1833,12 +1834,9 @@ class HomeScreenState extends State<HomeScreen> {
                       ? provider.updateCategoryWithResult(index, newCat)
                       : provider.addCategoryWithResult(newCat);
                   if (!result.isSuccess) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          result.error ?? '事件保存失败，请稍后重试',
-                        ),
-                      ),
+                    showAppSnackBar(
+                      context,
+                      result.error ?? '事件保存失败，请稍后重试',
                     );
                     return;
                   }
@@ -2213,11 +2211,10 @@ class HomeScreenState extends State<HomeScreen> {
 
   void _onCopyYesterday(TimeProvider provider) {
     if (!provider.hasYesterdayToCopy) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('昨天没有可复制的记录'),
-          duration: Duration(seconds: 2),
-        ),
+      showAppSnackBar(
+        context,
+        '昨天没有可复制的记录',
+        duration: const Duration(seconds: 2),
       );
       return;
     }
@@ -2441,11 +2438,10 @@ class HomeScreenState extends State<HomeScreen> {
                   provider.saveTemplateFromCurrentDay(nameController.text);
               Navigator.pop(context);
               if (!ok) {
-                ScaffoldMessenger.of(this.context).showSnackBar(
-                  const SnackBar(
-                    content: Text('今天还没有可保存的记录'),
-                    duration: Duration(seconds: 2),
-                  ),
+                showAppSnackBar(
+                  this.context,
+                  '今天还没有可保存的记录',
+                  duration: const Duration(seconds: 2),
                 );
               } else {
                 onSaved?.call();

@@ -7,6 +7,7 @@ import '../services/daily_review_summary.dart';
 import '../services/siliconflow_ai_service.dart';
 
 import '../theme/app_tokens.dart';
+import '../utils/app_snack_bar.dart';
 class DailyReviewChatSheet extends StatefulWidget {
   final DateTime date;
   final String? reviewBody;
@@ -197,9 +198,9 @@ class _DailyReviewChatSheetState extends State<DailyReviewChatSheet> {
   }
 
   void _showSnack(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(text), duration: const Duration(seconds: 2)),
-    );
+    // 调用方在 await _persist() 之后直接进来，弹层可能已经关掉。
+    if (!mounted) return;
+    showAppSnackBar(context, text, duration: const Duration(seconds: 2));
   }
 
   Future<void> _confirmClear() async {
