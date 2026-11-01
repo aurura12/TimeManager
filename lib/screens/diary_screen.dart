@@ -24,6 +24,7 @@ import '../utils/app_snack_bar.dart';
 import '../utils/diary_markdown.dart';
 import '../utils/diary_remote_path_utils.dart';
 import '../utils/haptics.dart';
+import '../utils/keyboard_dismiss.dart';
 import '../utils/local_day_range.dart';
 import '../utils/swipe_navigation.dart';
 import 'diary_conflict_screen.dart';
@@ -1518,6 +1519,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
                           controller: _bodyController,
                           maxLines: null,
                           expands: true,
+                          onTapOutside: dismissKeyboardOnTapOutside,
                           readOnly: _isReadOnlyContext ||
                               _shortcutDateChanging ||
                               _processing,

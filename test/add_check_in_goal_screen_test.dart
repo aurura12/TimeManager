@@ -59,4 +59,76 @@ void main() {
     expect(tester.getSize(iconFinder), const Size(48, 48));
     expect(tester.getSize(colorFinder), const Size(48, 48));
   });
+
+  testWidgets('点输入框以外的区域会收起键盘', (tester) async {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      const MaterialApp(home: AddCheckInGoalScreen()),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byType(TextField).first);
+    await tester.pump();
+    final focused = tester.binding.focusManager.primaryFocus;
+    expect(focused, isNotNull);
+
+    // 分区标题不在任何输入框的 TapRegion 内，点它应当失焦。
+    await tester.tap(find.text('图标'));
+    await tester.pump();
+
+    expect(tester.binding.focusManager.primaryFocus, isNot(focused));
+  });
+
+  testWidgets('拖动表单列表会收起键盘', (tester) async {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      const MaterialApp(home: AddCheckInGoalScreen()),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byType(TextField).first);
+    await tester.pump();
+    final focused = tester.binding.focusManager.primaryFocus;
+    expect(focused, isNotNull);
+
+    await tester.drag(find.byType(ListView), const Offset(0, -120));
+    await tester.pump();
+
+    expect(tester.binding.focusManager.primaryFocus, isNot(focused));
+  });
+
+  testWidgets('输入类弹窗点遮罩不会关闭，已输入内容保留', (tester) async {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      const MaterialApp(home: AddCheckInGoalScreen()),
+    );
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(ChoiceChip, '自定义'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsOneWidget);
+
+    final dialogField = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(dialogField, '30');
+    await tester.pump();
+
+    // 弹窗居中，左上角一定落在遮罩上。
+    await tester.tapAt(const Offset(8, 8));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(tester.widget<TextField>(dialogField).controller?.text, '30');
+  });
 }

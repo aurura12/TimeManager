@@ -36,6 +36,7 @@ import '../services/app_identity_service.dart';
 import '../utils/app_snack_bar.dart';
 import '../utils/desktop_selection.dart';
 import '../utils/haptics.dart';
+import '../utils/keyboard_dismiss.dart';
 import '../utils/local_day_range.dart';
 import '../utils/timeline_geometry.dart';
 
@@ -1351,11 +1352,15 @@ class HomeScreenState extends State<HomeScreen> {
 
     showDialog(
       context: context,
+      // 输入类弹窗不响应遮罩点击：键盘弹起后弹窗上移、上方遮罩变大，
+      // 手滑点到就会连输入一起丢掉。
+      barrierDismissible: false,
       builder: (context) {
         return AlertDialog(
           title: const Text("请输入临时事件名称"),
           content: TextField(
             controller: nameController,
+            onTapOutside: dismissKeyboardOnTapOutside,
             decoration: const InputDecoration(hintText: "名称尽量短"),
             autofocus: true,
           ),
@@ -1530,6 +1535,9 @@ class HomeScreenState extends State<HomeScreen> {
 
     showDialog(
       context: context,
+      // 输入类弹窗不响应遮罩点击：键盘弹起后弹窗上移、上方遮罩变大，
+      // 手滑点到就会连输入一起丢掉。
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           void addSubCategory(String rawValue) {
@@ -1559,6 +1567,8 @@ class HomeScreenState extends State<HomeScreen> {
             content: SizedBox(
               width: MediaQuery.of(context).size.width * 0.8,
               child: SingleChildScrollView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1566,6 +1576,7 @@ class HomeScreenState extends State<HomeScreen> {
                     // 1. 事件名称
                     TextField(
                       controller: nameController,
+                      onTapOutside: dismissKeyboardOnTapOutside,
                       decoration: const InputDecoration(labelText: '事件名称'),
                       onChanged: (value) => catName = value,
                     ),
@@ -1590,6 +1601,7 @@ class HomeScreenState extends State<HomeScreen> {
                     // 3. 十六进制输入
                     TextField(
                       controller: hexController,
+                      onTapOutside: dismissKeyboardOnTapOutside,
                       decoration: const InputDecoration(
                         labelText: '十六进制代码',
                         prefixText: '#',
@@ -1740,6 +1752,7 @@ class HomeScreenState extends State<HomeScreen> {
                         Expanded(
                           child: TextField(
                             controller: subCatController,
+                            onTapOutside: dismissKeyboardOnTapOutside,
                             decoration: const InputDecoration(
                                 hintText: '添加子事件', isDense: true),
                             onSubmitted: addSubCategory,
@@ -2396,10 +2409,14 @@ class HomeScreenState extends State<HomeScreen> {
 
     showDialog(
       context: context,
+      // 输入类弹窗不响应遮罩点击：键盘弹起后弹窗上移、上方遮罩变大，
+      // 手滑点到就会连输入一起丢掉。
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: const Text('保存为模板'),
         content: TextField(
           controller: nameController,
+          onTapOutside: dismissKeyboardOnTapOutside,
           decoration: const InputDecoration(
             hintText: '例如：周一、工作日',
           ),
@@ -2441,10 +2458,14 @@ class HomeScreenState extends State<HomeScreen> {
 
     showDialog(
       context: context,
+      // 输入类弹窗不响应遮罩点击：键盘弹起后弹窗上移、上方遮罩变大，
+      // 手滑点到就会连输入一起丢掉。
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: const Text('重命名模板'),
         content: TextField(
           controller: nameController,
+          onTapOutside: dismissKeyboardOnTapOutside,
           autofocus: true,
         ),
         actions: [

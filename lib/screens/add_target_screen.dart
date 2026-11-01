@@ -10,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../utils/app_snack_bar.dart';
+import '../utils/keyboard_dismiss.dart';
 import '../utils/platform_features.dart';
 
 /// 桌面端原地编辑，移动端继续使用完整页面。
@@ -216,11 +217,15 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
     var inputValue = currentValue;
     await showDialog<void>(
       context: context,
+      // 输入类弹窗不响应遮罩点击：键盘弹起后弹窗上移、上方遮罩变大，
+      // 手滑点到就会连输入一起丢掉。
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: Text("设置$title"),
         content: TextFormField(
           initialValue: currentValue,
           autofocus: true,
+          onTapOutside: dismissKeyboardOnTapOutside,
           onChanged: (value) => inputValue = value,
           keyboardType: isNumber ? TextInputType.number : TextInputType.text,
           decoration: InputDecoration(hintText: "请输入$title"),
@@ -646,6 +651,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
                   ? _durationValue
                   : _frequencyCount,
               enabled: !_isSaving,
+              onTapOutside: dismissKeyboardOnTapOutside,
               keyboardType: TextInputType.numberWithOptions(
                   decimal: _selectedType == TargetType.duration),
               textInputAction: TextInputAction.next,
@@ -702,6 +708,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
               key: const ValueKey('target_period_days'),
               initialValue: _periodDaysValue,
               enabled: !_isSaving,
+              onTapOutside: dismissKeyboardOnTapOutside,
               keyboardType: TextInputType.number,
               textInputAction: TextInputAction.next,
               decoration:
@@ -808,6 +815,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
       key: ValueKey(label),
       initialValue: value,
       enabled: !_isSaving,
+      onTapOutside: dismissKeyboardOnTapOutside,
       textInputAction: TextInputAction.next,
       decoration: InputDecoration(labelText: label, hintText: 'HH:mm'),
       validator: (raw) =>
@@ -880,6 +888,7 @@ class _AddTargetScreenState extends State<AddTargetScreen> {
         ],
       ),
       body: SingleChildScrollView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

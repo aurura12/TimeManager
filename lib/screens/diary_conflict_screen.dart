@@ -7,6 +7,7 @@ import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/app_snack_bar.dart';
+import '../utils/keyboard_dismiss.dart';
 import '../utils/text_diff.dart';
 
 /// 日记冲突处理页：逐块对比本地与远端，选择保留哪一边或手动合并。
@@ -182,6 +183,7 @@ class _DiaryConflictScreenState extends State<DiaryConflictScreen> {
   Widget _buildDiffView(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return SingleChildScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: AppSpacing.page,
       child: Center(
         child: ConstrainedBox(
@@ -377,6 +379,7 @@ class _DiaryConflictScreenState extends State<DiaryConflictScreen> {
         expands: true,
         maxLines: null,
         minLines: null,
+        onTapOutside: dismissKeyboardOnTapOutside,
         textAlignVertical: TextAlignVertical.top,
         decoration: const InputDecoration(
           hintText: '在这里调整合并后的正文',

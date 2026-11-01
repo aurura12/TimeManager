@@ -19,6 +19,7 @@ import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/app_snack_bar.dart';
+import '../utils/keyboard_dismiss.dart';
 import '../utils/local_day_range.dart';
 import '../widgets/day_change_boundary.dart';
 import '../widgets/desktop_shortcut_host.dart';
@@ -354,6 +355,9 @@ class _TravelScreenState extends State<TravelScreen> {
 
     final shouldSave = await showDialog<bool>(
       context: context,
+      // 输入类弹窗不响应遮罩点击：键盘弹起后弹窗上移、上方遮罩变大，
+      // 手滑点到就会连输入一起丢掉。
+      barrierDismissible: false,
       builder: (context) {
         dialogRoute = ModalRoute.of<bool>(context);
         return StatefulBuilder(
@@ -371,6 +375,8 @@ class _TravelScreenState extends State<TravelScreen> {
               child: AlertDialog(
                 title: const Text('新增出行记录'),
                 content: SingleChildScrollView(
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -389,6 +395,7 @@ class _TravelScreenState extends State<TravelScreen> {
                       TextField(
                         controller: locationController,
                         autofocus: isDesktopPlatform,
+                        onTapOutside: dismissKeyboardOnTapOutside,
                         onChanged: (_) {
                           if (locationError != null) {
                             setDialogState(() => locationError = null);
@@ -404,6 +411,7 @@ class _TravelScreenState extends State<TravelScreen> {
                       const SizedBox(height: 8),
                       TextField(
                         controller: eventController,
+                        onTapOutside: dismissKeyboardOnTapOutside,
                         decoration: const InputDecoration(
                           labelText: '事件',
                           border: OutlineInputBorder(),
@@ -456,6 +464,9 @@ class _TravelScreenState extends State<TravelScreen> {
 
     final shouldSave = await showDialog<bool>(
       context: context,
+      // 输入类弹窗不响应遮罩点击：键盘弹起后弹窗上移、上方遮罩变大，
+      // 手滑点到就会连输入一起丢掉。
+      barrierDismissible: false,
       builder: (context) {
         dialogRoute = ModalRoute.of<bool>(context);
         return StatefulBuilder(
@@ -473,6 +484,8 @@ class _TravelScreenState extends State<TravelScreen> {
               child: AlertDialog(
                 title: const Text('编辑出行记录'),
                 content: SingleChildScrollView(
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -491,6 +504,7 @@ class _TravelScreenState extends State<TravelScreen> {
                       TextField(
                         controller: locationController,
                         autofocus: isDesktopPlatform,
+                        onTapOutside: dismissKeyboardOnTapOutside,
                         onChanged: (_) {
                           if (locationError != null) {
                             setDialogState(() => locationError = null);
@@ -506,6 +520,7 @@ class _TravelScreenState extends State<TravelScreen> {
                       const SizedBox(height: 8),
                       TextField(
                         controller: eventController,
+                        onTapOutside: dismissKeyboardOnTapOutside,
                         decoration: const InputDecoration(
                           labelText: '事件',
                           border: OutlineInputBorder(),

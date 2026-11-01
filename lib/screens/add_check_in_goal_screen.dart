@@ -12,6 +12,7 @@ import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/app_snack_bar.dart';
+import '../utils/keyboard_dismiss.dart';
 import '../widgets/time_wheel_sheet.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../utils/platform_features.dart';
@@ -308,6 +309,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         children: [
           _buildPreview(colorScheme),
           const SizedBox(height: 24),
@@ -316,6 +318,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
           TextField(
             controller: _nameController,
             autofocus: isDesktopPlatform,
+            onTapOutside: dismissKeyboardOnTapOutside,
             onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(
               labelText: '目标名称',
@@ -326,6 +329,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _descController,
+            onTapOutside: dismissKeyboardOnTapOutside,
             onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(
               labelText: '描述（可选）',
@@ -347,6 +351,7 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _countController,
+            onTapOutside: dismissKeyboardOnTapOutside,
             onChanged: (_) => setState(() {}),
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
@@ -695,12 +700,16 @@ class _AddCheckInGoalScreenState extends State<AddCheckInGoalScreen> {
     );
     final result = await showDialog<int>(
       context: context,
+      // 输入类弹窗不响应遮罩点击：键盘弹起后弹窗上移、上方遮罩变大，
+      // 手滑点到就会连输入一起丢掉。
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: const Text('自定义天数'),
         content: TextField(
           controller: controller,
           keyboardType: TextInputType.number,
           autofocus: true,
+          onTapOutside: dismissKeyboardOnTapOutside,
           decoration: const InputDecoration(
             labelText: '打卡天数',
             suffixText: '天',

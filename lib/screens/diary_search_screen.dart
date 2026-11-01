@@ -183,6 +183,7 @@ class _DiarySearchScreenState extends State<DiarySearchScreen> {
         ),
         Expanded(
           child: ListView.builder(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
             itemCount: _results.length,
             itemBuilder: (context, index) {
