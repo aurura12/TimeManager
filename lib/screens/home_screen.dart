@@ -1419,32 +1419,10 @@ class HomeScreenState extends State<HomeScreen> {
                           AppSemanticColors.danger,
                           AppSurfaces.of(context).card))),
               onTap: () {
+                // 只改编辑对话框里的草稿列表，点「保存修改」才落盘、
+                // 取消整份丢弃，因此不弹确认也不需要撤销入口。
                 Navigator.pop(context);
-                showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('确认删除'),
-                    content: Text('确定要删除子事件"$subCat"吗？'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('取消'),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          setDialogState(
-                              () => tempSubCategories.removeAt(subIndex));
-                          Navigator.pop(context);
-                        },
-                        style: TextButton.styleFrom(
-                            foregroundColor: AppSemanticColors.readableOn(
-                                AppSemanticColors.danger,
-                                AppSurfaces.of(context).card)),
-                        child: const Text('删除'),
-                      ),
-                    ],
-                  ),
-                );
+                setDialogState(() => tempSubCategories.removeAt(subIndex));
               },
             ),
             ListTile(

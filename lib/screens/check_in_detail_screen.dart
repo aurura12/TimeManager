@@ -129,11 +129,9 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     setState(() => _processing = false);
     _refreshGoalFromSync();
     setState(() {});
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content:
-            Text(saveResult.success ? '已保存' : (saveResult.error ?? '保存失败')),
-      ),
+    showAppSnackBar(
+      context,
+      saveResult.success ? '已保存' : (saveResult.error ?? '保存失败'),
     );
   }
 
@@ -260,27 +258,9 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     }
   }
 
+  /// 归档是纯元数据切换，归档页随时能恢复，因此不弹确认、点了就生效。
   Future<void> _archive() async {
     if (!_isMine || _processing) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('归档目标'),
-        content: Text('确认归档「${_goal.name}」吗？\n归档后将从主列表隐藏，可在归档页面查看。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('归档'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
     setState(() => _processing = true);
     final updated = _goal.copyWith(
       isArchived: true,
@@ -294,14 +274,12 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
       // 所以必须显式同步一次状态）
       await CheckInReminderService.syncGoal(updated);
       if (!mounted) return;
+      // 先抓 messenger 再 pop：pop 之后原 context 已经 deactivate。
+      final messenger = ScaffoldMessenger.of(context);
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已归档「${_goal.name}」')),
-      );
+      showAppSnackBarOn(messenger, '已归档「${_goal.name}」');
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.error ?? '归档失败')),
-      );
+      showAppSnackBar(context, result.error ?? '归档失败');
     }
   }
 

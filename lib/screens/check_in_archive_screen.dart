@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models/check_in_goal.dart';
+import '../services/app_log_service.dart';
+import '../services/check_in_reminder_service.dart';
 import '../services/check_in_sync_service.dart';
+import '../utils/app_snack_bar.dart';
 import 'check_in_detail_screen.dart';
 
 import '../theme/app_semantic_colors.dart';
@@ -22,38 +25,32 @@ class _CheckInArchiveScreenState extends State<CheckInArchiveScreen> {
   List<CheckInGoal> get _archivedGoals =>
       widget.syncService.goalsWithRecords.where((g) => g.isArchived).toList();
 
+  /// 恢复是纯元数据切换（归档页随时能再归档），不弹确认，点了就生效。
   Future<void> _restoreGoal(CheckInGoal goal) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('恢复目标'),
-        content: Text('确认恢复「${goal.name}」到活跃列表吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('恢复'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
     final updated = goal.copyWith(isArchived: false, archivedAt: null);
     final result = await widget.syncService.saveGoal(updated);
     if (!mounted) return;
     setState(() {});
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          result.success
-              ? (result.warning ?? '已恢复「${goal.name}」')
-              : (result.error ?? '恢复失败'),
-        ),
-      ),
+    if (result.success) {
+      // 归档时把提醒停掉了，恢复后要重新排上（这条路径不经过编辑页）。
+      // 提醒失败不该让恢复看起来失败，单独记日志。
+      try {
+        await CheckInReminderService.syncGoal(updated);
+      } catch (error, stackTrace) {
+        AppLogService.instance.error(
+          '恢复目标后重排提醒失败',
+          source: 'check_in_archive',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+      if (!mounted) return;
+    }
+    showAppSnackBar(
+      context,
+      result.success
+          ? (result.warning ?? '已恢复「${goal.name}」')
+          : (result.error ?? '恢复失败'),
     );
   }
 

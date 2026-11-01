@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:time_manager/models/diary_kind.dart';
@@ -549,5 +551,19 @@ void main() {
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
     expect(confirmed, isFalse);
+  });
+
+  test('lib 下只有提示条 helper 允许直接调用 showSnackBar', () {
+    // 页面各自搭 SnackBar 会让「顶掉式」与撤销窗口保护失效，
+    // 这里守住入口：新提示一律走 showAppSnackBar / showAppSnackBarOn。
+    final offenders = <String>[];
+    for (final entity in Directory('lib').listSync(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.dart')) continue;
+      if (entity.path.endsWith('lib/utils/app_snack_bar.dart')) continue;
+      if (entity.readAsStringSync().contains('showSnackBar(')) {
+        offenders.add(entity.path);
+      }
+    }
+    expect(offenders, isEmpty, reason: '这些文件还直接调用了 showSnackBar');
   });
 }
