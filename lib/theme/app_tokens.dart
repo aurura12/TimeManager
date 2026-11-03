@@ -1,5 +1,6 @@
 /// 设计令牌 —— 只放"数值"。
 ///
+/// 包含间距、圆角、控件高度、文字层级与动效时长/曲线；页面不得自己写字面量。
 /// 这里不定义任何颜色，颜色分两处：
 /// - 主题色 / 表面层级：`app_theme.dart`
 /// - 身份色、分类色、图表色等语义色：`app_semantic_colors.dart`
@@ -252,4 +253,19 @@ abstract final class AppText {
     fontWeight: FontWeight.w600,
     height: 1.2,
   );
+}
+
+/// 动效。全站只留一档转场时长，避免「这里该用几百毫秒」的漂移。
+///
+/// 减小动效由 `appMotionDuration(context, AppMotion.transition)` 统一降级为
+/// `Duration.zero`，页面与组件都不要自己判断 `disableAnimations`。
+abstract final class AppMotion {
+  /// 180ms —— 切 Tab、切日期、列表条目进出的唯一转场时长。
+  static const Duration transition = Duration(milliseconds: 180);
+
+  /// 转场曲线：起始快、收尾稳，适合「内容换了一天」这种小幅淡入。
+  static const Curve curve = Curves.easeOutCubic;
+
+  /// 8 —— 新增列表条目入场时向上位移的像素，纯装饰、不影响布局。
+  static const double listEnterOffset = 8;
 }

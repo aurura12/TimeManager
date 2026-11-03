@@ -33,7 +33,7 @@
 | 文件 | 职责 | 里面有什么 |
 |---|---|---|
 | `docs/design-system.md` | 设计规则与白名单 | 本文件 |
-| `lib/theme/app_tokens.dart` | **数值** | 间距、圆角、控件高度、文字层级 |
+| `lib/theme/app_tokens.dart` | **数值** | 间距、圆角、控件高度、文字层级、动效时长与曲线 |
 | `lib/theme/app_theme.dart` | **主题色与组件主题** | `ColorScheme`、`AppSurfaces`、`AppWallpaperTheme`、各 Material 组件主题 |
 | `lib/theme/app_semantic_colors.dart` | **语义色** | 身份色、分类色、图表色、奖牌色、状态色 |
 | `lib/theme/background_image_contrast.dart` | **背景图对比度** | 合成、对比度与安全照片不透明度计算（见 3.5） |
@@ -319,6 +319,8 @@ Container(color: context.adaptSemanticFill(goal.color))
 - [ ] 输入框使用 `surfaces.subtle`；弹窗、底部弹层、PopupMenu 使用不透明的 `surfaces.overlay`
 - [ ] 带缓存/记忆化的组件：缓存里是否混进了与主题相关的量（如词云曾把文字色存进布局缓存）
 - [ ] 小屏幕上没有按钮或文字溢出（360×640 是基准尺寸）
+- [ ] 新增的过渡是否复用了 `AppMotion` 与 `widgets/motion_transitions.dart`，没有在页面里写 `Duration` 字面量
+- [ ] 系统「减弱动态效果」下是否一步到位（统一由 `appMotionDuration` 降级）
 
 删除的只是"纯颜色用途"的 `isDark` 分支；特殊场景（例如地图自定义样式）仍允许保留。
 
@@ -369,3 +371,38 @@ Container(color: context.adaptSemanticFill(goal.color))
 （不透明度只在 commit 时落盘、启动清失效路径、超限/取消属正常结果）。
 
 新增例外时请在 PR/提交信息里写清原因，不要直接放宽正则。
+
+---
+
+## 十、动效
+
+动效属于设计系统，和颜色、圆角一样只允许走令牌，页面里不写时长/曲线字面量。
+
+### 10.1 令牌
+
+- `AppMotion.transition` = **180ms**（全站唯一一档，落在 160–200ms 区间）
+- `AppMotion.curve` = `Curves.easeOutCubic`
+- `AppMotion.listEnterOffset` = 8（新增条目入场的上移像素）
+- 降级：`appMotionDuration(context, base)`（`lib/utils/motion.dart`）在
+  `MediaQuery.disableAnimationsOf` 为真时返回 `Duration.zero`。**不要在页面里自己判断**。
+- `kThemeAnimationDuration` 只留给 Material 组件自带的展开/收起（设置抽屉等），
+  不要和新转场混用。
+
+### 10.2 三个组件
+
+| 场景 | 组件 | 说明 |
+| --- | --- | --- |
+| 切 Tab、切日期、切视图 | `ValueChangeTransition` | 值变化时给**同一棵子树**套淡入；不换 key、不换 Element，所以 `IndexedStack` 保活、滚动位置、`GlobalKey` 都不受影响 |
+| 新增列表条目 | `ListItemEntrance` | 只给页面显式标记的那一条播，避免滚动重建时反复淡入 |
+| 删除列表条目 | `ListItemRemoval` | 先收高淡出，塌到 0 才回调删数据；不要用定时器延时 |
+
+### 10.3 约束
+
+- **只淡入、不位移**：时间网格与不参与包裹的时间轴刻度必须像素对齐，位移会被读成渲染 bug；
+  整页位移还会把 `AppBar` 推出窗口。条目入场的 8px 位移只发生在列表项内部，不改变布局。
+- **页面层不得自己搭转场**：`lib/screens/` 里不要直接出现
+  `AnimatedSwitcher` / `FadeTransition` / `SlideTransition` / `SizeTransition` /
+  `TweenAnimationBuilder` / `AnimationController(`，由 `test/motion_test.dart` 的源码守卫拦住。
+- **删除语义不变**：仍然是「即时执行 + 撤销提示」，只是把真正的删除挪到收高动画结束之后；
+  落盘失败的回滚照旧，回滚时把标记置空，条目高度会自己长回去。
+- **不加 `Hero`**，也不改 `MaterialPageRoute` 的默认转场。
