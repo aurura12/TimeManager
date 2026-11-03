@@ -166,29 +166,73 @@ class _ListItemEntranceState extends State<ListItemEntrance>
 /// `pumpAndSettle` 自然推完。
 ///
 /// `removing` 回落（删除失败回滚）时高度会自己长回去，页面只需要把标记置空。
-class ListItemRemoval extends StatelessWidget {
+///
+/// 退场动画播到一半就被卸载（切视图、列表重建、页面销毁）时
+/// `TweenAnimationBuilder` 不会再回调 `onEnd`，删除永远不会提交，页面的
+/// 「待删」标记也会卡住、把后续删除全部拦掉。这里在 [dispose] 里帧末补发一次
+/// [onInterrupted]，语义等价于删除失败回滚：数据不动，页面把标记置空让行
+/// 恢复。补发只走一次——正常塌陷后再卸载不会重复触发。
+class ListItemRemoval extends StatefulWidget {
   const ListItemRemoval({
     super.key,
     required this.removing,
     required this.onCollapsed,
+    this.onInterrupted,
     required this.child,
   });
 
   final bool removing;
 
-  /// 收高动画结束时回调一次；页面在这里执行真正的删除。
+  /// 收高动画塌到 0 时回调一次；页面在这里执行真正的删除。
   final VoidCallback onCollapsed;
+
+  /// 退场动画没播完就被卸载时补发一次；页面在这里把「待删」标记置空。
+  ///
+  /// 删除不提交，等价于删除失败回滚。页面回调需自行判 `mounted`——
+  /// 页面整体销毁时补发发生在销毁之后。不传则打断时静默放弃
+  /// （不适用于「待删」标记会卡住删除入口的页面）。
+  final VoidCallback? onInterrupted;
 
   final Widget child;
 
   @override
+  State<ListItemRemoval> createState() => _ListItemRemovalState();
+}
+
+class _ListItemRemovalState extends State<ListItemRemoval> {
+  /// 本轮退场是否已发出 [ListItemRemoval.onCollapsed]。
+  bool _collapsed = false;
+
+  @override
+  void didUpdateWidget(ListItemRemoval oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 回滚 / 打断后同一行会复用，允许下一轮退场重新回调。
+    if (!widget.removing) _collapsed = false;
+  }
+
+  @override
+  void dispose() {
+    if (widget.removing && !_collapsed) {
+      final onInterrupted = widget.onInterrupted;
+      if (onInterrupted != null) {
+        // 卸载可能发生在构建 / 布局阶段，直接调父级 setState 会炸；
+        // 推到帧末再补发。
+        WidgetsBinding.instance.addPostFrameCallback((_) => onInterrupted());
+      }
+    }
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: 1, end: removing ? 0 : 1),
+      tween: Tween<double>(begin: 1, end: widget.removing ? 0 : 1),
       duration: appMotionDuration(context),
       curve: AppMotion.curve,
       onEnd: () {
-        if (removing) onCollapsed();
+        if (!widget.removing || _collapsed) return;
+        _collapsed = true;
+        widget.onCollapsed();
       },
       builder: (context, value, child) {
         final content = Align(
@@ -198,14 +242,14 @@ class ListItemRemoval extends StatelessWidget {
           child: SizedBox(width: double.infinity, child: child),
         );
         return IgnorePointer(
-          ignoring: removing,
+          ignoring: widget.removing,
           child: Opacity(
             opacity: value,
-            child: removing ? ClipRect(child: content) : content,
+            child: widget.removing ? ClipRect(child: content) : content,
           ),
         );
       },
-      child: child,
+      child: widget.child,
     );
   }
 }

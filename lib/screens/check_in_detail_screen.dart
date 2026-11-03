@@ -631,6 +631,15 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
       key: ValueKey(record.id),
       removing: _removingId == record.id,
       onCollapsed: () => _deleteAfterCollapse(record),
+      onInterrupted: () {
+        // 退场动画被卸载打断：删除不提交，清掉「待删」标记让行恢复，
+        // 否则 _removingId 卡住会把后续删除全部静默拦掉。
+        if (!mounted || _removingId != record.id) return;
+        setState(() {
+          _removingId = null;
+          _pendingPhotoBytes = null;
+        });
+      },
       child: ListItemEntrance(
         playing: _enteringId == record.id,
         onEnd: () {

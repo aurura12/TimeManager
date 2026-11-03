@@ -18,6 +18,7 @@ class TravelRecordTable extends StatelessWidget {
     this.removingDateKey,
     this.onEntranceEnd,
     this.onRemovalCollapsed,
+    this.onRemovalInterrupted,
   });
 
   final List<TravelRecord> records;
@@ -33,6 +34,9 @@ class TravelRecordTable extends StatelessWidget {
 
   final VoidCallback? onEntranceEnd;
   final ValueChanged<TravelRecord>? onRemovalCollapsed;
+
+  /// 退场动画被卸载打断时补发；页面把「待删」标记置空（删除不提交）。
+  final ValueChanged<TravelRecord>? onRemovalInterrupted;
 
   @override
   Widget build(BuildContext context) {
@@ -100,6 +104,7 @@ class TravelRecordTable extends StatelessWidget {
                   key: ValueKey('travel-table-row-${record.dateKey}'),
                   removing: removingDateKey == record.dateKey,
                   onCollapsed: () => onRemovalCollapsed?.call(record),
+                  onInterrupted: () => onRemovalInterrupted?.call(record),
                   child: ListItemEntrance(
                     playing: enteringDateKey == record.dateKey,
                     onEnd: onEntranceEnd,

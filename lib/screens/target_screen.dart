@@ -158,6 +158,11 @@ class _TargetScreenContentState extends State<_TargetScreenContent> {
                 key: ValueKey(target.id),
                 removing: _removingId == target.id,
                 onCollapsed: () => _commitDelete(timeProvider, target),
+                onInterrupted: () {
+                  // 退场动画被卸载打断：删除不提交，清掉「待删」标记让行恢复。
+                  if (!mounted || _removingId != target.id) return;
+                  setState(() => _removingId = null);
+                },
                 child: ListItemEntrance(
                   playing: _enteringId == target.id,
                   onEnd: () {
@@ -345,6 +350,11 @@ class _TargetScreenContentState extends State<_TargetScreenContent> {
               key: ValueKey(target.id),
               removing: _removingId == target.id,
               onCollapsed: () => _commitDelete(provider, target),
+              onInterrupted: () {
+                // 退场动画被卸载打断：删除不提交，清掉「待删」标记让行恢复。
+                if (!mounted || _removingId != target.id) return;
+                setState(() => _removingId = null);
+              },
               child: ListItemEntrance(
                 playing: _enteringId == target.id,
                 onEnd: () {

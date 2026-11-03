@@ -938,6 +938,12 @@ class _TravelScreenState extends State<TravelScreen> {
           setState(() => _removingDateKey = null);
         }));
       },
+      onRemovalInterrupted: (record) {
+        // 退场动画被卸载打断：删除不提交，清掉「待删」标记让行恢复，
+        // 否则 _removingDateKey 卡住会把后续删除全部静默拦掉。
+        if (!mounted || _removingDateKey != record.dateKey) return;
+        setState(() => _removingDateKey = null);
+      },
     );
   }
 

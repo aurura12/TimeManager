@@ -155,6 +155,99 @@ void main() {
       expect(tester.getSize(find.byType(ListItemRemoval)).height, 0);
       expect(collapsed, 1);
     });
+
+    testWidgets('退场动画被卸载打断时补发一次打断回调，不提交删除', (tester) async {
+      var collapsed = 0;
+      var interrupted = 0;
+      Widget build(bool shown) => _host(Center(
+            child: SizedBox(
+              width: 240,
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                if (shown)
+                  ListItemRemoval(
+                    removing: true,
+                    onCollapsed: () => collapsed++,
+                    onInterrupted: () => interrupted++,
+                    child: const SizedBox(height: 120, child: Text('一行')),
+                  ),
+              ]),
+            ),
+          ));
+
+      await tester.pumpWidget(build(true));
+      await tester.pump(const Duration(milliseconds: 90));
+      expect(collapsed, 0);
+
+      // 收高播到一半整行被移出树（切视图 / 列表重建 / 页面销毁）。
+      await tester.pumpWidget(build(false));
+      await tester.pump();
+      expect(collapsed, 0);
+      expect(interrupted, 1);
+
+      // 补发只走一次。
+      await tester.pumpAndSettle();
+      expect(interrupted, 1);
+    });
+
+    testWidgets('正常塌陷后再卸载不重复触发打断回调', (tester) async {
+      var collapsed = 0;
+      var interrupted = 0;
+      Widget build(bool shown) => _host(Center(
+            child: SizedBox(
+              width: 240,
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                if (shown)
+                  ListItemRemoval(
+                    removing: true,
+                    onCollapsed: () => collapsed++,
+                    onInterrupted: () => interrupted++,
+                    child: const SizedBox(height: 120, child: Text('一行')),
+                  ),
+              ]),
+            ),
+          ));
+
+      await tester.pumpWidget(build(true));
+      await tester.pumpAndSettle();
+      expect(collapsed, 1);
+
+      await tester.pumpWidget(build(false));
+      await tester.pump();
+      expect(interrupted, 0);
+    });
+
+    testWidgets('塌陷回调后回滚再删，同一 State 的下一轮退场仍能回调', (tester) async {
+      var collapsed = 0;
+      Widget build(bool removing) => _host(Center(
+            child: SizedBox(
+              width: 240,
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                ListItemRemoval(
+                  key: const ValueKey('row'),
+                  removing: removing,
+                  onCollapsed: () => collapsed++,
+                  onInterrupted: () => fail('未被打断不应触发打断回调'),
+                  child: const SizedBox(height: 120, child: Text('一行')),
+                ),
+              ]),
+            ),
+          ));
+
+      // 第一轮：正常塌陷提交。
+      await tester.pumpWidget(build(true));
+      await tester.pumpAndSettle();
+      expect(collapsed, 1);
+
+      // 删除失败回滚，行长回去（同一 State 复用）。
+      await tester.pumpWidget(build(false));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(find.byType(ListItemRemoval)).height, 120);
+
+      // 第二轮：再删必须重新回调，不能被上一轮的标记吃掉。
+      await tester.pumpWidget(build(true));
+      await tester.pumpAndSettle();
+      expect(collapsed, 2);
+    });
   });
 
   group('ListItemEntrance', () {
