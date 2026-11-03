@@ -96,6 +96,13 @@ void main() {
         SwipeNavigationDirection.next,
       );
     });
+
+    test('速度够但纵向占优的快速竖滑不触发（速度路径也要横竖占优）', () {
+      // 列表上快速竖滑：横向漂移 25px 就能达到 350px/s 的横向速度，
+      // 但整体是纵向滚动，绝不能翻日记。
+      expect(resolveSwipeNavigation(dx: -25, dy: -200, velocityX: -350), isNull);
+      expect(resolveSwipeNavigation(dx: 25, dy: 200, velocityX: 350), isNull);
+    });
   });
 
   testWidgets('编辑框外左滑进入后一天，右滑回到前一天', (tester) async {

@@ -9,7 +9,8 @@ enum SwipeNavigationDirection { previous, next }
 /// 根据累计位移与速度判定是否构成「切换上一天 / 下一天」。
 ///
 /// - 位移达到 [minDistance] 且横向位移大于纵向位移才算滑动；
-/// - 位移不足时允许用速度兜底（快速轻扫）；
+/// - 位移不足时允许用速度兜底（快速轻扫），但同样要求横向占优——
+///   否则列表上的快速竖滑（横向漂移 25px、纵向 200px）会被误判成切日；
 /// - 返回 null 表示这次手势不该切日（可能是滚动、竖向拖动或点按）。
 SwipeNavigationDirection? resolveSwipeNavigation({
   required double dx,
@@ -21,7 +22,8 @@ SwipeNavigationDirection? resolveSwipeNavigation({
   final byDistance = dx.abs() >= minDistance;
   final byVelocity = velocityX.abs() >= minVelocity;
   if (!byDistance && !byVelocity) return null;
-  if (byDistance && dx.abs() <= dy.abs()) return null;
+  // 横竖占优对两条触发路径都生效，不能只挡位移路径。
+  if (dx.abs() <= dy.abs()) return null;
 
   final leftward = byDistance ? dx < 0 : velocityX < 0;
   return leftward
