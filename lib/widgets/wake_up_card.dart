@@ -13,6 +13,7 @@ import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/app_snack_bar.dart';
 import 'main_tab_activity.dart';
+import 'motion_transitions.dart';
 import 'time_wheel_sheet.dart';
 import 'wake_up_chart.dart';
 
@@ -28,6 +29,12 @@ class _WakeUpCardState extends State<WakeUpCard> with WidgetsBindingObserver {
   bool _showHistory = false;
   bool _isActive = false;
   late WakeUpProvider _provider;
+
+  /// 本次补填、需要播放一次入场动画的日期。
+  String? _enteringDateKey;
+
+  /// 正在播放退场动画、还没真正删除的日期。
+  String? _removingDateKey;
 
   @override
   void initState() {
@@ -286,24 +293,39 @@ class _WakeUpCardState extends State<WakeUpCard> with WidgetsBindingObserver {
   Widget _historyRow(BuildContext context, DateTime date, bool isToday) {
     final record = _provider.recordFor(date);
     final dateKey = WakeUpRecord.keyForDate(date);
-    return Row(
-      children: [
-        Expanded(
-          child: Text('${date.month}月${date.day}日${isToday ? '（今天）' : ''}',
-              style: AppText.body),
+    return ListItemRemoval(
+      key: ValueKey('wake-up-row-$dateKey'),
+      removing: _removingDateKey == dateKey,
+      onCollapsed: () {
+        if (record == null) return;
+        unawaited(_deleteAfterCollapse(record));
+      },
+      child: ListItemEntrance(
+        playing: _enteringDateKey == dateKey,
+        onEnd: () {
+          if (_enteringDateKey != dateKey) return;
+          setState(() => _enteringDateKey = null);
+        },
+        child: Row(
+          children: [
+            Expanded(
+              child: Text('${date.month}月${date.day}日${isToday ? '（今天）' : ''}',
+                  style: AppText.body),
+            ),
+            TextButton(
+              key: ValueKey('wake-up-history-$dateKey'),
+              onPressed: _provider.canRecord ? () => _pickTime(date) : null,
+              child: Text(record?.timeLabel ?? '补填'),
+            ),
+            if (record != null)
+              IconButton(
+                tooltip: '删除${date.month}月${date.day}日起床记录',
+                onPressed: _provider.canRecord ? () => _remove(record) : null,
+                icon: const Icon(Icons.delete_outline),
+              ),
+          ],
         ),
-        TextButton(
-          key: ValueKey('wake-up-history-$dateKey'),
-          onPressed: _provider.canRecord ? () => _pickTime(date) : null,
-          child: Text(record?.timeLabel ?? '补填'),
-        ),
-        if (record != null)
-          IconButton(
-            tooltip: '删除${date.month}月${date.day}日起床记录',
-            onPressed: _provider.canRecord ? () => _remove(record) : null,
-            icon: const Icon(Icons.delete_outline),
-          ),
-      ],
+      ),
     );
   }
 
@@ -324,6 +346,8 @@ class _WakeUpCardState extends State<WakeUpCard> with WidgetsBindingObserver {
         provider,
         DateTime(date.year, date.month, date.day, picked.hour, picked.minute),
         kind);
+    if (!mounted || provider.recordFor(date) == null) return;
+    setState(() => _enteringDateKey = WakeUpRecord.keyForDate(date));
   }
 
   Future<void> _saveTime(WakeUpProvider provider, DateTime time, DiaryKind kind,
@@ -337,29 +361,37 @@ class _WakeUpCardState extends State<WakeUpCard> with WidgetsBindingObserver {
     }
   }
 
-  /// 即时删除起床记录，提示条提供撤销入口。
-  Future<void> _remove(WakeUpRecord record) async {
+  /// 先播退场动画，塌到 0 才真正删除（提示条带撤销入口）。
+  void _remove(WakeUpRecord record) {
+    if (_provider.kind == null || _removingDateKey != null) return;
+    setState(() => _removingDateKey = WakeUpRecord.keyForDate(record.time));
+  }
+
+  Future<void> _deleteAfterCollapse(WakeUpRecord record) async {
     final provider = _provider;
     final kind = provider.kind;
-    if (kind == null) return;
+    final dateKey = WakeUpRecord.keyForDate(record.time);
+    if (kind == null || _removingDateKey != dateKey) return;
     try {
       await provider.remove(record.time, expectedKind: kind);
       if (!mounted) return;
+      setState(() => _removingDateKey = null);
       showAppUndoSnackBar(
         context,
         message:
             '已删除 ${record.time.month}月${record.time.day}日 ${record.timeLabel} 的起床记录',
         identityToken: AppIdentityService.identityStamp,
         onUndo: () async {
-          final restored =
-              await provider.restore(record, expectedKind: kind);
+          final restored = await provider.restore(record, expectedKind: kind);
           if (!restored) {
             throw StateError('该日期已有新的起床记录，撤销已失效');
           }
         },
       );
     } catch (error) {
-      if (mounted) _message(_errorMessage(error));
+      if (!mounted) return;
+      setState(() => _removingDateKey = null);
+      _message(_errorMessage(error));
     }
   }
 

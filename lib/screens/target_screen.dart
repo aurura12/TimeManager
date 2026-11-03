@@ -20,6 +20,7 @@ import '../utils/app_snack_bar.dart';
 import '../utils/haptics.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/main_tab_activity.dart';
+import '../widgets/motion_transitions.dart';
 import '../widgets/wake_up_card.dart';
 
 class TargetScreen extends StatelessWidget {
@@ -37,14 +38,25 @@ class TargetScreen extends StatelessWidget {
   }
 }
 
-class _TargetScreenContent extends StatelessWidget {
+class _TargetScreenContent extends StatefulWidget {
   const _TargetScreenContent();
+
+  @override
+  State<_TargetScreenContent> createState() => _TargetScreenContentState();
+}
+
+class _TargetScreenContentState extends State<_TargetScreenContent> {
+  /// 正在播放退场动画、还没真正删除的目标。
+  String? _removingId;
+
+  /// 本次新增、需要播放一次入场动画的目标。
+  String? _enteringId;
 
   @override
   Widget build(BuildContext context) => TargetDayRefresh(
         builder: (context) => DesktopShortcutHost(
           autofocus: true,
-          onNewItem: () => unawaited(showTargetEditor(context)),
+          onNewItem: () => unawaited(_addTarget()),
           child: _buildPage(context),
         ),
       );
@@ -141,76 +153,119 @@ class _TargetScreenContent extends StatelessWidget {
                 );
               }
 
-              return Slidable(
-                key: ValueKey(target.id), // 必须有 Key
-                endActionPane: ActionPane(
-                  motion: const ScrollMotion(),
-                  extentRatio: 0.2, // 侧滑按钮占据的宽度比例
-                  children: [
-                    // 编辑和删除按钮上下排列
-                    Expanded(
-                      child: Column(
-                        children: [
-                          // 编辑按钮
-                          Expanded(
-                            child: InkWell(
-                              onTap: () {
-                                // 处理编辑逻辑
-                                showTargetEditor(context, target: target);
-                              },
-                              child: Center(
-                                child: Icon(
-                                  Icons.edit,
-                                  color: colorScheme.primary,
+              return ListItemRemoval(
+                // ReorderableListView 要求直接子节点带 Key，包一层后 key 上移。
+                key: ValueKey(target.id),
+                removing: _removingId == target.id,
+                onCollapsed: () => _commitDelete(timeProvider, target),
+                child: ListItemEntrance(
+                  playing: _enteringId == target.id,
+                  onEnd: () {
+                    if (_enteringId != target.id) return;
+                    setState(() => _enteringId = null);
+                  },
+                  child: Slidable(
+                    key: ValueKey('slidable_${target.id}'),
+                    endActionPane: ActionPane(
+                      motion: const ScrollMotion(),
+                      extentRatio: 0.2, // 侧滑按钮占据的宽度比例
+                      children: [
+                        // 编辑和删除按钮上下排列
+                        Expanded(
+                          child: Column(
+                            children: [
+                              // 编辑按钮
+                              Expanded(
+                                child: InkWell(
+                                  onTap: () {
+                                    // 处理编辑逻辑
+                                    showTargetEditor(context, target: target);
+                                  },
+                                  child: Center(
+                                    child: Icon(
+                                      Icons.edit,
+                                      color: colorScheme.primary,
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                          // 删除按钮
-                          Expanded(
-                            child: InkWell(
-                              onTap: () =>
-                                  _deleteTarget(context, timeProvider, target),
-                              child: Center(
-                                child: Icon(Icons.delete_forever,
-                                    color: AppSemanticColors.readableOn(
-                                        AppSemanticColors.danger,
-                                        AppSurfaces.of(context).page)),
+                              // 删除按钮
+                              Expanded(
+                                child: InkWell(
+                                  onTap: () => _deleteTarget(target),
+                                  child: Center(
+                                    child: Icon(Icons.delete_forever,
+                                        color: AppSemanticColors.readableOn(
+                                            AppSemanticColors.danger,
+                                            AppSurfaces.of(context).page)),
+                                  ),
+                                ),
                               ),
-                            ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                child: _buildTargetCard(
-                  context: context,
-                  key: ValueKey("card_${target.name}"), // 这里用不同的 key 区分
-                  subtitle: target.period,
-                  title: title,
-                  progress: TargetProgressIndicator(
-                      progress: progress,
-                      showTodayLabel: true,
-                      foregroundColor: onCardColor,
-                      surface: cardColor),
-                  topRightWidget: topRightWidget,
-                  color: target.color,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            TargetDetailScreen(targetId: target.id),
-                      ),
-                    );
-                  },
+                    child: _buildTargetCard(
+                      context: context,
+                      key: ValueKey("card_${target.name}"), // 这里用不同的 key 区分
+                      subtitle: target.period,
+                      title: title,
+                      progress: TargetProgressIndicator(
+                          progress: progress,
+                          showTodayLabel: true,
+                          foregroundColor: onCardColor,
+                          surface: cardColor),
+                      topRightWidget: topRightWidget,
+                      color: target.color,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                TargetDetailScreen(targetId: target.id),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
                 ),
               );
             }).toList(),
           );
         },
       ),
+    );
+  }
+
+  Future<void> _addTarget() async {
+    final created = await showTargetEditor(context);
+    if (!mounted || created == null) return;
+    setState(() => _enteringId = created.id);
+  }
+
+  /// 删除先播退场动画，塌到 0 才真正改数据（见 [ListItemRemoval]）。
+  void _deleteTarget(Target target) {
+    if (_removingId != null) return;
+    setState(() => _removingId = target.id);
+  }
+
+  void _commitDelete(TimeProvider provider, Target target) {
+    if (_removingId != target.id) return;
+    setState(() => _removingId = null);
+    final snapshot = provider.deleteTarget(target);
+    if (snapshot == null) return;
+    playHaptic(context, HapticStrength.light);
+    showAppUndoSnackBar(
+      context,
+      message: '已删除目标“${target.name}”',
+      identityToken: AppIdentityService.identityStamp,
+      onUndo: () async {
+        if (!provider.undoDeleteTarget(target,
+            previousIndex: snapshot.previousIndex)) {
+          throw StateError('目标已重建，无法撤销');
+        }
+      },
     );
   }
 
@@ -286,18 +341,29 @@ class _TargetScreenContent extends StatelessWidget {
           ]),
           itemBuilder: (context, index) {
             final target = provider.targets[index];
-            return DesktopTargetCard(
+            return ListItemRemoval(
               key: ValueKey(target.id),
-              target: target,
-              provider: provider,
-              index: index,
-              onOpen: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => TargetDetailScreen(targetId: target.id),
+              removing: _removingId == target.id,
+              onCollapsed: () => _commitDelete(provider, target),
+              child: ListItemEntrance(
+                playing: _enteringId == target.id,
+                onEnd: () {
+                  if (_enteringId != target.id) return;
+                  setState(() => _enteringId = null);
+                },
+                child: DesktopTargetCard(
+                  target: target,
+                  provider: provider,
+                  index: index,
+                  onOpen: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => TargetDetailScreen(targetId: target.id),
+                    ),
+                  ),
+                  onEdit: () => showTargetEditor(context, target: target),
+                  onDelete: () => _deleteTarget(target),
                 ),
               ),
-              onEdit: () => showTargetEditor(context, target: target),
-              onDelete: () => _deleteTarget(context, provider, target),
             );
           },
         ),
@@ -368,25 +434,6 @@ class _TargetScreenContent extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-
-  /// 即时删除目标，提示条提供撤销入口。
-  void _deleteTarget(
-      BuildContext context, TimeProvider provider, Target target) {
-    final snapshot = provider.deleteTarget(target);
-    if (snapshot == null) return;
-    playHaptic(context, HapticStrength.light);
-    showAppUndoSnackBar(
-      context,
-      message: '已删除目标“${target.name}”',
-      identityToken: AppIdentityService.identityStamp,
-      onUndo: () async {
-        if (!provider.undoDeleteTarget(target,
-            previousIndex: snapshot.previousIndex)) {
-          throw StateError('目标已重建，无法撤销');
-        }
-      },
     );
   }
 }

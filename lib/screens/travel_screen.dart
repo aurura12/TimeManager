@@ -56,6 +56,12 @@ class _TravelScreenState extends State<TravelScreen> {
   bool _processing = false;
   int _touchedIndex = -1;
 
+  /// 本次新增、需要播放一次入场动画的出行记录日期。
+  String? _enteringDateKey;
+
+  /// 正在播放退场动画、还没真正删除的出行记录日期。
+  String? _removingDateKey;
+
   /// 全局同步状态中心。允许为空：独立构建出行页（例如页面级测试）时没
   /// 有 Provider 树，此时只跳过状态上报。
   SyncStatusCoordinator? _statusCoordinator;
@@ -284,9 +290,22 @@ class _TravelScreenState extends State<TravelScreen> {
 
   /// 即时删除出行记录，提示条提供撤销入口。
   ///
+  /// 表格视图下先让这一行收高，塌到 0 才真正删除（见 [ListItemRemoval]）；
+  /// 日历 / 统计视图看不到表格行，直接删即可。
+  void _deleteRecord(DateTime date) {
+    if (_processing || _removingDateKey != null) return;
+    final record = _recordForDate(_normalizedDate(date));
+    if (record == null) return;
+    if (_viewMode != _TravelViewMode.table) {
+      unawaited(_deleteRecordNow(date));
+      return;
+    }
+    setState(() => _removingDateKey = record.dateKey);
+  }
+
   /// 保留「内存先删、落盘失败回滚」的结构：落盘失败时界面不能显示
   /// 已删除、重启后又出现，此时也不弹撤销提示条。
-  Future<void> _deleteRecord(DateTime date) async {
+  Future<void> _deleteRecordNow(DateTime date) async {
     if (_processing) return;
     final normalizedDate = _normalizedDate(date);
     final record = _recordForDate(normalizedDate);
@@ -298,6 +317,7 @@ class _TravelScreenState extends State<TravelScreen> {
     final previousCalendarMonth = _calendarMonth;
     setState(() {
       _document = _document.deleteByDate(record.date);
+      _removingDateKey = null;
       if (_selectedDateText() == record.dateKey) {
         if (_document.records.isNotEmpty) {
           _selectedDate = _document.records.first.date;
@@ -314,6 +334,7 @@ class _TravelScreenState extends State<TravelScreen> {
           _document = previousDocument;
           _selectedDate = previousSelectedDate;
           _calendarMonth = previousCalendarMonth;
+          _removingDateKey = null;
         });
       }
       return;
@@ -349,6 +370,8 @@ class _TravelScreenState extends State<TravelScreen> {
 
   Future<void> _showAddRecordDialog({DateTime? initialDate}) async {
     var tempDate = _normalizedDate(initialDate ?? DateTime.now());
+    final knownDateKeys =
+        _document.records.map((record) => record.dateKey).toSet();
     final locationController = TextEditingController();
     final eventController = TextEditingController();
     String? locationError;
@@ -445,7 +468,14 @@ class _TravelScreenState extends State<TravelScreen> {
         location: locationController.text,
         event: eventController.text,
       );
-      if (saved) await _pushToGitHub();
+      if (saved) {
+        for (final record in _document.records) {
+          if (knownDateKeys.contains(record.dateKey)) continue;
+          setState(() => _enteringDateKey = record.dateKey);
+          break;
+        }
+        await _pushToGitHub();
+      }
     }
     // pop 的结果早于退出动画结束，控件仍挂载时不能销毁它们的 controller。
     await dialogRoute?.completed;
@@ -831,7 +861,7 @@ class _TravelScreenState extends State<TravelScreen> {
       case _TravelRecordAction.edit:
         unawaited(_showEditRecordDialog(date));
       case _TravelRecordAction.delete:
-        unawaited(_deleteRecord(date));
+        _deleteRecord(date);
     }
   }
 
@@ -895,6 +925,19 @@ class _TravelScreenState extends State<TravelScreen> {
       selectedDateKey: _selectedDateText(),
       onSelectDate: _selectTravelDate,
       actionsBuilder: _buildRecordActions,
+      enteringDateKey: _enteringDateKey,
+      removingDateKey: _removingDateKey,
+      onEntranceEnd: () {
+        if (_enteringDateKey == null) return;
+        setState(() => _enteringDateKey = null);
+      },
+      onRemovalCollapsed: (record) {
+        unawaited(_deleteRecordNow(record.date).whenComplete(() {
+          // 删除被提前挡下（并发操作 / 记录已消失）时也要让行恢复，别卡在塌陷态。
+          if (!mounted || _removingDateKey != record.dateKey) return;
+          setState(() => _removingDateKey = null);
+        }));
+      },
     );
   }
 
@@ -1217,7 +1260,7 @@ class _TravelScreenState extends State<TravelScreen> {
           onAdd: () =>
               unawaited(_showAddRecordDialog(initialDate: _selectedDate)),
           onEdit: () => unawaited(_showEditRecordDialog(_selectedDate)),
-          onDelete: () => unawaited(_deleteRecord(_selectedDate)),
+          onDelete: () => _deleteRecord(_selectedDate),
         ),
       );
 

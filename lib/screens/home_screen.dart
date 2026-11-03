@@ -69,6 +69,9 @@ class HomeScreenState extends State<HomeScreen> {
   late final TimeProvider _timeProvider;
   late DateTime _observedDate;
 
+  /// 本次新增、需要播放一次入场动画的分类。
+  String? _enteringCategoryId;
+
   // 当前选中待分配的范围（跨平台统一）。
   // Windows 双列下由各 _DayGrid 上报其日期，安卓恒为当前日期。
   int? _selectionStart;
@@ -1014,7 +1017,14 @@ class HomeScreenState extends State<HomeScreen> {
 
                     // 3. 列表项构建
                     itemBuilder: (context, index) {
-                      return _buildSlidableCategory(index, provider);
+                      final category = provider.categories[index];
+                      return ListItemEntrance(
+                        // ReorderableListView 要求直接子节点带 key。
+                        key: ValueKey('category-entry-${category.id}'),
+                        playing: _enteringCategoryId == category.id,
+                        onEnd: () => _clearEnteringCategory(category.id),
+                        child: _buildSlidableCategory(index, provider),
+                      );
                     },
                   ),
           ),
@@ -1084,14 +1094,27 @@ class HomeScreenState extends State<HomeScreen> {
         ),
         children: [
           for (var index = 0; index < provider.categories.length; index++)
-            SizedBox(
-              key: ValueKey('category-tile-${provider.categories[index].id}'),
-              width: tileWidth,
-              child: _buildSlidableCategory(index, provider),
+            ListItemEntrance(
+              key: ValueKey(
+                  'category-tile-entry-${provider.categories[index].id}'),
+              playing: _enteringCategoryId == provider.categories[index].id,
+              onEnd: () =>
+                  _clearEnteringCategory(provider.categories[index].id),
+              child: SizedBox(
+                key: ValueKey('category-tile-${provider.categories[index].id}'),
+                width: tileWidth,
+                child: _buildSlidableCategory(index, provider),
+              ),
             ),
         ],
       );
     });
+  }
+
+  /// 入场动画播完清掉标记，避免排序 / 重建时重复播。
+  void _clearEnteringCategory(String? id) {
+    if (id == null || _enteringCategoryId != id) return;
+    setState(() => _enteringCategoryId = null);
   }
 
   Widget _buildSlidableCategory(int index, TimeProvider provider) {
@@ -1531,6 +1554,9 @@ class HomeScreenState extends State<HomeScreen> {
     final colorScheme = Theme.of(context).colorScheme;
     final surfaces = AppSurfaces.of(context);
     bool isEdit = index != null && existingCat != null;
+    // 保存后靠差集找出这次新建的分类，只给它播一次入场动画。
+    final knownCategoryIds =
+        provider.categories.map((category) => category.id).toSet();
 
     String catName = isEdit ? existingCat.name : '';
     Color selectedColor =
@@ -1847,6 +1873,13 @@ class HomeScreenState extends State<HomeScreen> {
                       result.error ?? '事件保存失败，请稍后重试',
                     );
                     return;
+                  }
+                  if (!isEdit) {
+                    for (final category in provider.categories) {
+                      if (knownCategoryIds.contains(category.id)) continue;
+                      setState(() => _enteringCategoryId = category.id);
+                      break;
+                    }
                   }
                   Navigator.pop(context);
                 },

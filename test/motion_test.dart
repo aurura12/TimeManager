@@ -206,7 +206,7 @@ void main() {
         final lines = entity.readAsStringSync().split('\n');
         for (var i = 0; i < lines.length; i++) {
           if (banned.hasMatch(lines[i])) {
-            violations.add('${path}:${i + 1}  ${lines[i].trim()}');
+            violations.add('$path:${i + 1}  ${lines[i].trim()}');
           }
         }
       }

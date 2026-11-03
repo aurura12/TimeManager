@@ -16,6 +16,7 @@ import '../widgets/check_in_map_preview.dart';
 import '../widgets/check_in_photo_sheet.dart';
 import '../widgets/check_in_photo_thumb.dart';
 import '../widgets/check_in_photo_viewer.dart';
+import '../widgets/motion_transitions.dart';
 import 'add_check_in_goal_screen.dart';
 
 import '../theme/app_semantic_colors.dart';
@@ -40,6 +41,15 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
   late CheckInGoal _goal;
   bool _processing = false;
 
+  /// 本次新增、需要播放一次入场动画的打卡记录。
+  String? _enteringId;
+
+  /// 正在播放退场动画、还没真正删除的打卡记录。
+  String? _removingId;
+
+  /// 删除前预取的照片字节，退场动画结束后交给删除事务与撤销重传。
+  Uint8List? _pendingPhotoBytes;
+
   @override
   void initState() {
     super.initState();
@@ -60,6 +70,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
       _goal.isOwnedBy(_userId!, email: widget.syncService.currentUser?.email);
 
   Future<void> _checkIn() async {
+    final knownRecordIds = _goal.records.map((r) => r.id).toSet();
     final ok = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -69,11 +80,20 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     );
     if (ok == true && mounted) {
       _refreshGoalFromSync();
-      setState(() {});
+      setState(() => _enteringId = _newRecordIdSince(knownRecordIds));
     }
   }
 
+  /// 找到本次新写入的记录，用于播一次入场动画。
+  String? _newRecordIdSince(Set<String> known) {
+    for (final record in _goal.records) {
+      if (!known.contains(record.id)) return record.id;
+    }
+    return null;
+  }
+
   Future<void> _backfillCheckIn() async {
+    final knownRecordIds = _goal.records.map((r) => r.id).toSet();
     final pickedDate = await showDatePicker(
       context: context,
       // 补打卡只能选过去的日期，避免误选今天导致当天重复打卡
@@ -110,7 +130,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     );
     if (ok == true && mounted) {
       _refreshGoalFromSync();
-      setState(() {});
+      setState(() => _enteringId = _newRecordIdSince(knownRecordIds));
     }
   }
 
@@ -177,7 +197,8 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
     final email = widget.syncService.currentUser?.email;
     if (userId == null ||
         !record.belongsTo(userId, email ?? '') ||
-        _processing) {
+        _processing ||
+        _removingId != null) {
       return;
     }
 
@@ -193,8 +214,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
           context: context,
           builder: (context) => AlertDialog(
             title: const Text('删除打卡记录'),
-            content: Text(
-                '确认删除 $dateStr 的打卡记录吗？\n照片缓存已缺失，删除后记录和照片均无法恢复。'),
+            content: Text('确认删除 $dateStr 的打卡记录吗？\n照片缓存已缺失，删除后记录和照片均无法恢复。'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
@@ -214,16 +234,31 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
       }
     }
 
+    _pendingPhotoBytes = photoBytes;
+    setState(() => _removingId = record.id);
+  }
+
+  /// 退场动画塌到 0 之后才真正删除；失败时让条目长回去。
+  Future<void> _deleteAfterCollapse(CheckInRecord record) async {
+    if (_removingId != record.id) return;
+    final photoBytes = _pendingPhotoBytes;
+    _pendingPhotoBytes = null;
     setState(() => _processing = true);
     final result = await widget.syncService.deleteCheckInRecord(_goal, record);
     if (!mounted) return;
-    setState(() => _processing = false);
     if (!result.success) {
+      setState(() {
+        _processing = false;
+        _removingId = null;
+      });
       showAppSnackBar(context, result.error ?? '删除失败');
       return;
     }
     _refreshGoalFromSync();
-    setState(() {});
+    setState(() {
+      _processing = false;
+      _removingId = null;
+    });
     showAppUndoSnackBar(
       context,
       message: result.warning ?? '已删除打卡记录',
@@ -398,8 +433,8 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                   const SizedBox(height: 20),
                   Text('打卡地图',
                       style: AppText.sectionTitle.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: colorScheme.onSurface,
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.onSurface,
                       )),
                   const SizedBox(height: 8),
                   CheckInMapPreview(records: _goal.records, height: 200),
@@ -409,12 +444,12 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                     children: [
                       Text('打卡记录',
                           style: AppText.sectionTitle.copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: colorScheme.onSurface,
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.onSurface,
                           )),
                       Text('共 ${sortedRecords.length} 条',
                           style: AppText.caption.copyWith(
-                              color: colorScheme.onSurfaceVariant,
+                            color: colorScheme.onSurfaceVariant,
                           )),
                     ],
                   ),
@@ -510,7 +545,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                       children: [
                         Text(dateStr,
                             style: AppText.body.copyWith(
-                                fontWeight: FontWeight.w600,
+                              fontWeight: FontWeight.w600,
                             )),
                         if (record.isBackfill) ...[
                           const SizedBox(width: 6),
@@ -528,11 +563,11 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                             ),
                             child: Text('补',
                                 style: AppText.badge.copyWith(
-                                    fontWeight: FontWeight.normal,
-                                    color: AppSemanticColors.onTint(
-                                        AppSemanticColors.warning,
-                                        colorScheme.surfaceContainerLow,
-                                        alpha: 0.2),
+                                  fontWeight: FontWeight.normal,
+                                  color: AppSemanticColors.onTint(
+                                      AppSemanticColors.warning,
+                                      colorScheme.surfaceContainerLow,
+                                      alpha: 0.2),
                                 )),
                           ),
                         ],
@@ -559,7 +594,7 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
                           Expanded(
                             child: Text(record.locationName!,
                                 style: AppText.caption.copyWith(
-                                    color: colorScheme.onSurfaceVariant,
+                                  color: colorScheme.onSurfaceVariant,
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis),
@@ -592,24 +627,36 @@ class _CheckInDetailScreenState extends State<CheckInDetailScreen> {
 
     if (!isMe) return tile;
 
-    return Slidable(
+    return ListItemRemoval(
       key: ValueKey(record.id),
-      endActionPane: ActionPane(
-        motion: const DrawerMotion(),
-        extentRatio: 0.25,
-        children: [
-          SlidableAction(
-            onPressed: (_) => _confirmDeleteRecord(record),
-            backgroundColor: AppSemanticColors.danger,
-            foregroundColor:
-                AppSemanticColors.onColor(AppSemanticColors.danger),
-            icon: Icons.delete,
-            label: '删除',
-            borderRadius: AppRadius.controlAll,
+      removing: _removingId == record.id,
+      onCollapsed: () => _deleteAfterCollapse(record),
+      child: ListItemEntrance(
+        playing: _enteringId == record.id,
+        onEnd: () {
+          if (_enteringId != record.id) return;
+          setState(() => _enteringId = null);
+        },
+        child: Slidable(
+          key: ValueKey('slidable_${record.id}'),
+          endActionPane: ActionPane(
+            motion: const DrawerMotion(),
+            extentRatio: 0.25,
+            children: [
+              SlidableAction(
+                onPressed: (_) => _confirmDeleteRecord(record),
+                backgroundColor: AppSemanticColors.danger,
+                foregroundColor:
+                    AppSemanticColors.onColor(AppSemanticColors.danger),
+                icon: Icons.delete,
+                label: '删除',
+                borderRadius: AppRadius.controlAll,
+              ),
+            ],
           ),
-        ],
+          child: tile,
+        ),
       ),
-      child: tile,
     );
   }
 }
@@ -644,10 +691,12 @@ class _StatCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(value,
               style: AppText.sectionTitle.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: onTinted,
+                fontWeight: FontWeight.bold,
+                color: onTinted,
               )),
-          Text(label, style: AppText.badge.copyWith(fontWeight: FontWeight.normal, color: onTinted)),
+          Text(label,
+              style: AppText.badge
+                  .copyWith(fontWeight: FontWeight.normal, color: onTinted)),
         ],
       ),
     );

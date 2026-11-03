@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/travel_record.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import 'motion_transitions.dart';
 import '../utils/platform_features.dart';
 
 /// 出行表格的表头与正文共用列宽、间隔和内边距。
@@ -13,12 +14,25 @@ class TravelRecordTable extends StatelessWidget {
     required this.selectedDateKey,
     required this.onSelectDate,
     required this.actionsBuilder,
+    this.enteringDateKey,
+    this.removingDateKey,
+    this.onEntranceEnd,
+    this.onRemovalCollapsed,
   });
 
   final List<TravelRecord> records;
   final String selectedDateKey;
   final ValueChanged<DateTime> onSelectDate;
   final Widget Function(TravelRecord record) actionsBuilder;
+
+  /// 本次新增、需要播放一次入场动画的日期。
+  final String? enteringDateKey;
+
+  /// 正在播放退场动画、还没真正删除的日期。
+  final String? removingDateKey;
+
+  final VoidCallback? onEntranceEnd;
+  final ValueChanged<TravelRecord>? onRemovalCollapsed;
 
   @override
   Widget build(BuildContext context) {
@@ -82,56 +96,65 @@ class TravelRecordTable extends StatelessWidget {
                 final selected = record.dateKey == selectedDateKey;
                 final foreground =
                     selected ? scheme.onPrimaryContainer : scheme.onSurface;
-                return Container(
+                return ListItemRemoval(
                   key: ValueKey('travel-table-row-${record.dateKey}'),
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? context.wallpaperFill(scheme.primaryContainer)
-                        : null,
-                    border: Border(
-                      bottom: BorderSide(color: surfaces.border),
-                    ),
-                  ),
-                  child: InkWell(
-                    onTap: () => onSelectDate(record.date),
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        minHeight: desktop
-                            ? AppSizes.desktopTravelRowHeight
-                            : AppSizes.minTapTarget,
-                      ),
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: horizontalPadding,
-                          vertical: desktop ? AppSpacing.md : AppSpacing.xs,
+                  removing: removingDateKey == record.dateKey,
+                  onCollapsed: () => onRemovalCollapsed?.call(record),
+                  child: ListItemEntrance(
+                    playing: enteringDateKey == record.dateKey,
+                    onEnd: onEntranceEnd,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? context.wallpaperFill(scheme.primaryContainer)
+                            : null,
+                        border: Border(
+                          bottom: BorderSide(color: surfaces.border),
                         ),
-                        child: columns(
-                          date: Text(
-                            record.dateKey,
-                            style: AppText.body.copyWith(color: foreground),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                      ),
+                      child: InkWell(
+                        onTap: () => onSelectDate(record.date),
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            minHeight: desktop
+                                ? AppSizes.desktopTravelRowHeight
+                                : AppSizes.minTapTarget,
                           ),
-                          location: Tooltip(
-                            message: record.location,
-                            child: Text(
-                              record.location,
-                              style: AppText.body.copyWith(color: foreground),
-                              maxLines: desktop ? 2 : 1,
-                              overflow: TextOverflow.ellipsis,
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: horizontalPadding,
+                              vertical: desktop ? AppSpacing.md : AppSpacing.xs,
+                            ),
+                            child: columns(
+                              date: Text(
+                                record.dateKey,
+                                style: AppText.body.copyWith(color: foreground),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              location: Tooltip(
+                                message: record.location,
+                                child: Text(
+                                  record.location,
+                                  style:
+                                      AppText.body.copyWith(color: foreground),
+                                  maxLines: desktop ? 2 : 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              event: Text(
+                                record.event,
+                                style: AppText.body.copyWith(
+                                  color: selected
+                                      ? foreground
+                                      : scheme.onSurfaceVariant,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              actions: actionsBuilder(record),
                             ),
                           ),
-                          event: Text(
-                            record.event,
-                            style: AppText.body.copyWith(
-                              color: selected
-                                  ? foreground
-                                  : scheme.onSurfaceVariant,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          actions: actionsBuilder(record),
                         ),
                       ),
                     ),

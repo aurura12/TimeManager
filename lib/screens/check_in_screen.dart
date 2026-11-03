@@ -21,6 +21,7 @@ import '../utils/app_snack_bar.dart';
 import '../utils/platform_features.dart';
 import '../widgets/check_in_map_preview.dart';
 import '../widgets/check_in_photo_sheet.dart';
+import '../widgets/motion_transitions.dart';
 import '../widgets/sync_status_button.dart';
 import 'add_check_in_goal_screen.dart';
 import 'check_in_archive_screen.dart';
@@ -36,6 +37,9 @@ class CheckInScreen extends StatefulWidget {
 }
 
 class _CheckInScreenState extends State<CheckInScreen> {
+  /// 本次新增、需要播放一次入场动画的打卡目标。
+  String? _enteringId;
+
   late final CheckInSyncService _sync;
   CheckInViewFilter _filter = CheckInViewFilter.all;
   late final StreamSubscription<void> _identitySubscription;
@@ -157,7 +161,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
   void _openSyncCenter() {
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) => const SyncCenterScreen(initialModule: SyncModule.checkIn),
+        builder: (_) =>
+            const SyncCenterScreen(initialModule: SyncModule.checkIn),
       ),
     );
   }
@@ -175,7 +180,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
 
     final saveResult = await _sync.saveGoal(result);
     if (!mounted) return;
-    setState(() {});
+    setState(() => _enteringId = saveResult.success ? result.id : null);
     _showMessage(
       saveResult.success ? '目标已保存并同步' : (saveResult.error ?? '保存失败'),
     );
@@ -671,142 +676,149 @@ class _CheckInScreenState extends State<CheckInScreen> {
     final progressUserId = goal.ownerId;
     final progressUserEmail = goal.ownerEmail;
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Material(
-        color: cardFill,
-        borderRadius: AppRadius.cardAll,
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: () => _openDetail(goal),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: iconChipBg,
-                        borderRadius: AppRadius.controlAll,
+    return ListItemEntrance(
+      playing: _enteringId == goal.id,
+      onEnd: () {
+        if (_enteringId != goal.id) return;
+        setState(() => _enteringId = null);
+      },
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Material(
+          color: cardFill,
+          borderRadius: AppRadius.cardAll,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => _openDetail(goal),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: iconChipBg,
+                          borderRadius: AppRadius.controlAll,
+                        ),
+                        child: Icon(goal.icon,
+                            color: AppSemanticColors.onColor(iconChipBg),
+                            size: 24),
                       ),
-                      child: Icon(goal.icon,
-                          color: AppSemanticColors.onColor(iconChipBg),
-                          size: 24),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(goal.name,
-                              style: AppText.sectionTitle.copyWith(
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(goal.name,
+                                style: AppText.sectionTitle.copyWith(
                                   fontWeight: FontWeight.bold,
                                   color: onCardColor,
-                              )),
-                          Text(
-                            isMine
-                                ? goal.description
-                                : '${goal.ownerLabel} 的目标',
-                            style: AppText.caption.copyWith(color: mutedColor),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (goal.isNotStarted)
-                      _badge('未开始', Icons.schedule, onCardColor, cardColor)
-                    else if (checked)
-                      _badge('已打卡', Icons.check, onCardColor, cardColor),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: AppRadius.gridAll,
-                        child: LinearProgressIndicator(
-                          value: goal.progressFor(
-                            progressUserId,
-                            email: progressUserEmail,
-                          ),
-                          minHeight: 6,
-                          backgroundColor: onCardColor.withValues(alpha: 0.2),
-                          valueColor:
-                              AlwaysStoppedAnimation<Color>(onCardColor),
+                                )),
+                            Text(
+                              isMine
+                                  ? goal.description
+                                  : '${goal.ownerLabel} 的目标',
+                              style:
+                                  AppText.caption.copyWith(color: mutedColor),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      '${goal.currentPeriodCountFor(
-                        progressUserId,
-                        email: progressUserEmail,
-                      )}/${goal.targetCount}',
-                      style: AppText.caption.copyWith(
+                      if (goal.isNotStarted)
+                        _badge('未开始', Icons.schedule, onCardColor, cardColor)
+                      else if (checked)
+                        _badge('已打卡', Icons.check, onCardColor, cardColor),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: AppRadius.gridAll,
+                          child: LinearProgressIndicator(
+                            value: goal.progressFor(
+                              progressUserId,
+                              email: progressUserEmail,
+                            ),
+                            minHeight: 6,
+                            backgroundColor: onCardColor.withValues(alpha: 0.2),
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(onCardColor),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        '${goal.currentPeriodCountFor(
+                          progressUserId,
+                          email: progressUserEmail,
+                        )}/${goal.targetCount}',
+                        style: AppText.caption.copyWith(
                           fontWeight: FontWeight.w600,
                           color: onCardColor,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Icon(Icons.local_fire_department,
-                        size: 14, color: mutedColor),
-                    const SizedBox(width: 4),
-                    Text(
-                      '连续 ${goal.streakDaysFor(
-                        progressUserId,
-                        email: progressUserEmail,
-                      )} 天',
-                      style: AppText.caption.copyWith(color: mutedColor),
-                    ),
-                    const Spacer(),
-                    // 补打卡 — 已开始的自己的目标始终显示，不受当天是否已打卡影响
-                    if (canCheckIn) ...[
-                      TextButton(
-                        onPressed: () => _backfillCheckIn(goal),
-                        style: TextButton.styleFrom(
-                          foregroundColor: onCardColor.withValues(alpha: 0.7),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: AppRadius.sheetAll),
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
                         ),
-                        child:
-                            const Text('补打卡', style: AppText.caption),
                       ),
                     ],
-                    // 打卡 — 不做次数限制，自己的目标随时可打
-                    if (canCheckIn) ...[
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Icon(Icons.local_fire_department,
+                          size: 14, color: mutedColor),
                       const SizedBox(width: 4),
-                      TextButton.icon(
-                        onPressed: () => _quickCheckIn(goal),
-                        style: TextButton.styleFrom(
-                          foregroundColor:
-                              AppSemanticColors.onColor(quickActionBg),
-                          backgroundColor: quickActionBg,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: AppRadius.sheetAll),
-                        ),
-                        icon: Icon(
-                          supportsCameraCapture
-                              ? Icons.camera_alt
-                              : Icons.photo_library_outlined,
-                          size: 16,
-                        ),
-                        label: const Text('打卡', style: AppText.caption),
+                      Text(
+                        '连续 ${goal.streakDaysFor(
+                          progressUserId,
+                          email: progressUserEmail,
+                        )} 天',
+                        style: AppText.caption.copyWith(color: mutedColor),
                       ),
+                      const Spacer(),
+                      // 补打卡 — 已开始的自己的目标始终显示，不受当天是否已打卡影响
+                      if (canCheckIn) ...[
+                        TextButton(
+                          onPressed: () => _backfillCheckIn(goal),
+                          style: TextButton.styleFrom(
+                            foregroundColor: onCardColor.withValues(alpha: 0.7),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: AppRadius.sheetAll),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                          ),
+                          child: const Text('补打卡', style: AppText.caption),
+                        ),
+                      ],
+                      // 打卡 — 不做次数限制，自己的目标随时可打
+                      if (canCheckIn) ...[
+                        const SizedBox(width: 4),
+                        TextButton.icon(
+                          onPressed: () => _quickCheckIn(goal),
+                          style: TextButton.styleFrom(
+                            foregroundColor:
+                                AppSemanticColors.onColor(quickActionBg),
+                            backgroundColor: quickActionBg,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: AppRadius.sheetAll),
+                          ),
+                          icon: Icon(
+                            supportsCameraCapture
+                                ? Icons.camera_alt
+                                : Icons.photo_library_outlined,
+                            size: 16,
+                          ),
+                          label: const Text('打卡', style: AppText.caption),
+                        ),
+                      ],
                     ],
-                  ],
-                ),
-              ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -835,8 +847,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
           const SizedBox(width: 4),
           Text(text,
               style: AppText.caption.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: fg,
+                fontWeight: FontWeight.w600,
+                color: fg,
               )),
         ],
       ),
@@ -863,7 +875,7 @@ class _SummaryItem extends StatelessWidget {
       children: [
         Text(label,
             style: AppText.caption.copyWith(
-                color: textColor.withValues(alpha: 0.8),
+              color: textColor.withValues(alpha: 0.8),
             )),
         const SizedBox(height: 4),
         Row(
@@ -873,13 +885,13 @@ class _SummaryItem extends StatelessWidget {
           children: [
             Text(value,
                 style: AppText.display.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: textColor,
+                  fontWeight: FontWeight.bold,
+                  color: textColor,
                 )),
             const SizedBox(width: 2),
             Text(unit,
                 style: AppText.caption.copyWith(
-                    color: textColor.withValues(alpha: 0.8),
+                  color: textColor.withValues(alpha: 0.8),
                 )),
           ],
         ),
