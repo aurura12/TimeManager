@@ -30,6 +30,7 @@ import '../widgets/data_failure_banner.dart';
 import '../widgets/main_tab_activity.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/main_tab_navigation.dart';
+import '../widgets/motion_transitions.dart';
 import '../widgets/on_this_day_sheet.dart';
 import '../widgets/schedule_sync_progress_banner.dart';
 import 'app_log_screen.dart';
@@ -398,8 +399,14 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         context.select<TimeProvider, ScheduleSyncProgress?>(
             (p) => p.scheduleSyncProgress);
     // 数据层故障统一挂在壳层：底部标签允许隐藏「记录」页，横幅放在记录页里会看不到
-    final failure = context.select<TimeProvider,
-        ({bool initFailed, String? initMessage, bool saveFailed, String? saveMessage})>(
+    final failure = context.select<
+        TimeProvider,
+        ({
+          bool initFailed,
+          String? initMessage,
+          bool saveFailed,
+          String? saveMessage
+        })>(
       (p) => (
         initFailed: p.hasInitializationFailure,
         initMessage: p.initializationFailureMessage,
@@ -483,10 +490,15 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       onAction: () => _retryLocalSave(_timeProvider),
                     ),
                   Expanded(
-                    child: _buildContentStack(
-                      options: options,
-                      safeIndex: selectedTab.index,
-                      progress: scheduleSyncProgress,
+                    // 切 Tab 只淡入新页面：IndexedStack 的子树与 key 都不动，
+                    // 页面状态（滚动位置、编辑器内容）照旧保活。
+                    child: ValueChangeTransition(
+                      value: selectedTab,
+                      child: _buildContentStack(
+                        options: options,
+                        safeIndex: selectedTab.index,
+                        progress: scheduleSyncProgress,
+                      ),
                     ),
                   ),
                 ],

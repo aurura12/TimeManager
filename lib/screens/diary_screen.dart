@@ -36,6 +36,7 @@ import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/day_change_boundary.dart';
 import '../widgets/desktop_shortcut_host.dart';
+import '../widgets/motion_transitions.dart';
 
 class DiaryScreen extends StatefulWidget {
   const DiaryScreen({
@@ -100,8 +101,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
   bool _isInsideEditor(Offset globalPosition) {
     final box = _editorAreaKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null || !box.attached || !box.hasSize) return false;
-    return (box.localToGlobal(Offset.zero) & box.size)
-        .contains(globalPosition);
+    return (box.localToGlobal(Offset.zero) & box.size).contains(globalPosition);
   }
 
   void _resetSwipe() {
@@ -139,9 +139,8 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
   void _onSwipePointerUp(PointerUpEvent event) {
     if (event.pointer != _swipePointer) return;
     final startedAt = _swipeStartStamp;
-    final elapsedMs = startedAt == null
-        ? 0
-        : (event.timeStamp - startedAt).inMilliseconds;
+    final elapsedMs =
+        startedAt == null ? 0 : (event.timeStamp - startedAt).inMilliseconds;
     final direction = resolveSwipeNavigation(
       dx: _swipeDx,
       dy: _swipeDy,
@@ -348,8 +347,9 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     await AppIdentityService.load();
     final identityKind = AppIdentityService.personKind;
     _selectedIdentityKind = identityKind;
-    final kind =
-        widget.initialKind ?? identityKind ?? await DiaryLocalStore.loadPreferredKind();
+    final kind = widget.initialKind ??
+        identityKind ??
+        await DiaryLocalStore.loadPreferredKind();
     final initialDate = widget.initialDate;
     _token = token;
     _kind = kind;
@@ -911,7 +911,6 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
     await _loadRemoteTree();
   }
 
-
   Future<void> _openPathFromTree(String path) async {
     Navigator.of(context).pop();
     setState(() => _processing = true);
@@ -1459,8 +1458,7 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
                             icon: const Icon(Icons.chevron_left),
                           ),
                           OutlinedButton.icon(
-                            onPressed:
-                                _processing ? null : _showCalendarPicker,
+                            onPressed: _processing ? null : _showCalendarPicker,
                             icon: const Icon(Icons.calendar_today_outlined,
                                 size: 16),
                             label: Text(
@@ -1512,46 +1510,51 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
                   _buildDiaryStatus(colorScheme),
                   const SizedBox(height: 12),
                   Expanded(
-                    child: Stack(
-                      key: _editorAreaKey,
-                      children: [
-                        TextField(
-                          controller: _bodyController,
-                          maxLines: null,
-                          expands: true,
-                          onTapOutside: dismissKeyboardOnTapOutside,
-                          readOnly: _isReadOnlyContext ||
-                              _shortcutDateChanging ||
-                              _processing,
-                          textAlignVertical: TextAlignVertical.top,
-                          decoration: InputDecoration(
-                            hintText:
-                                _isReadOnlyContext ? '当前分区仅供查看' : '写下今天发生的事…',
-                            contentPadding: const EdgeInsets.only(
-                              top: 16,
-                              left: 12,
-                              right: 44,
-                              bottom: 12,
-                            ),
-                            border: OutlineInputBorder(
-                              borderRadius: AppRadius.controlAll,
+                    // 切日 / 切分区时只淡入，编辑器本身（controller、GlobalKey）
+                    // 不动，草稿与光标位置都不受影响。
+                    child: ValueChangeTransition(
+                      value: (_kind, _selectedDate),
+                      child: Stack(
+                        key: _editorAreaKey,
+                        children: [
+                          TextField(
+                            controller: _bodyController,
+                            maxLines: null,
+                            expands: true,
+                            onTapOutside: dismissKeyboardOnTapOutside,
+                            readOnly: _isReadOnlyContext ||
+                                _shortcutDateChanging ||
+                                _processing,
+                            textAlignVertical: TextAlignVertical.top,
+                            decoration: InputDecoration(
+                              hintText:
+                                  _isReadOnlyContext ? '当前分区仅供查看' : '写下今天发生的事…',
+                              contentPadding: const EdgeInsets.only(
+                                top: 16,
+                                left: 12,
+                                right: 44,
+                                bottom: 12,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: AppRadius.controlAll,
+                              ),
                             ),
                           ),
-                        ),
-                        Positioned(
-                          top: 0,
-                          right: 0,
-                          child: IconButton(
-                            tooltip: '插入当前时间',
-                            onPressed: _isReadOnlyContext ||
-                                    _shortcutDateChanging ||
-                                    _processing
-                                ? null
-                                : _insertCurrentTime,
-                            icon: const Icon(Icons.access_time, size: 20),
+                          Positioned(
+                            top: 0,
+                            right: 0,
+                            child: IconButton(
+                              tooltip: '插入当前时间',
+                              onPressed: _isReadOnlyContext ||
+                                      _shortcutDateChanging ||
+                                      _processing
+                                  ? null
+                                  : _insertCurrentTime,
+                              icon: const Icon(Icons.access_time, size: 20),
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -1756,7 +1759,8 @@ class _CalendarPickerSheetState extends State<_CalendarPickerSheet> {
                       Text(
                         '$day',
                         style: AppText.body.copyWith(
-                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          fontWeight:
+                              isSelected ? FontWeight.bold : FontWeight.normal,
                           color: isSelected
                               ? colorScheme.onPrimaryContainer
                               : null,

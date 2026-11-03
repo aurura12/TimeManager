@@ -23,6 +23,7 @@ import '../utils/keyboard_dismiss.dart';
 import '../utils/local_day_range.dart';
 import '../widgets/day_change_boundary.dart';
 import '../widgets/desktop_shortcut_host.dart';
+import '../widgets/motion_transitions.dart';
 import '../widgets/travel_date_details.dart';
 import '../widgets/travel_desktop_calendar.dart';
 import '../widgets/travel_tables.dart';
@@ -1179,8 +1180,8 @@ class _TravelScreenState extends State<TravelScreen> {
                   color: isSelected
                       ? context.wallpaperFill(colorScheme.primaryContainer)
                       : hasEvent
-                          ? context.wallpaperFill(
-                              colorScheme.surfaceContainerHigh)
+                          ? context
+                              .wallpaperFill(colorScheme.surfaceContainerHigh)
                           : null,
                   border: isToday
                       ? Border.all(color: colorScheme.primary, width: 1.5)
@@ -1191,9 +1192,9 @@ class _TravelScreenState extends State<TravelScreen> {
                   child: Text(
                     '$day',
                     style: AppText.body.copyWith(
-                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                      color:
-                          isSelected ? colorScheme.onPrimaryContainer : null,
+                      fontWeight:
+                          isSelected ? FontWeight.bold : FontWeight.normal,
+                      color: isSelected ? colorScheme.onPrimaryContainer : null,
                     ),
                   ),
                 ),
@@ -1207,14 +1208,17 @@ class _TravelScreenState extends State<TravelScreen> {
     );
   }
 
-  Widget _buildSelectedDateCard(TravelRecord? record) => TravelDateDetails(
-        date: _selectedDate,
-        record: record,
-        enabled: !_processing,
-        onAdd: () =>
-            unawaited(_showAddRecordDialog(initialDate: _selectedDate)),
-        onEdit: () => unawaited(_showEditRecordDialog(_selectedDate)),
-        onDelete: () => unawaited(_deleteRecord(_selectedDate)),
+  Widget _buildSelectedDateCard(TravelRecord? record) => ValueChangeTransition(
+        value: _selectedDate,
+        child: TravelDateDetails(
+          date: _selectedDate,
+          record: record,
+          enabled: !_processing,
+          onAdd: () =>
+              unawaited(_showAddRecordDialog(initialDate: _selectedDate)),
+          onEdit: () => unawaited(_showEditRecordDialog(_selectedDate)),
+          onDelete: () => unawaited(_deleteRecord(_selectedDate)),
+        ),
       );
 
   Widget _buildStatsView() {
@@ -1343,10 +1347,9 @@ class _TravelScreenState extends State<TravelScreen> {
                                   : '${percentage.toStringAsFixed(1)}%'),
                           radius: isTouched ? 56.0 : 48.0,
                           titlePositionPercentageOffset: isTouched ? 1.5 : 0.5,
-                          titleStyle: (isTouched
-                                  ? AppText.caption
-                                  : AppText.badge)
-                              .copyWith(
+                          titleStyle:
+                              (isTouched ? AppText.caption : AppText.badge)
+                                  .copyWith(
                             fontWeight: FontWeight.bold,
                             color: isTouched
                                 ? colorScheme.onSurface
@@ -1508,11 +1511,14 @@ class _TravelScreenState extends State<TravelScreen> {
             _buildViewSwitch(),
             const SizedBox(height: AppSpacing.md),
             Expanded(
-              child: _viewMode == _TravelViewMode.table
-                  ? _buildTableView()
-                  : _viewMode == _TravelViewMode.calendar
-                      ? _buildCalendarContent()
-                      : _buildStatsView(),
+              child: ValueChangeTransition(
+                value: _viewMode,
+                child: _viewMode == _TravelViewMode.table
+                    ? _buildTableView()
+                    : _viewMode == _TravelViewMode.calendar
+                        ? _buildCalendarContent()
+                        : _buildStatsView(),
+              ),
             ),
           ],
         ),

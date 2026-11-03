@@ -24,6 +24,7 @@ import '../widgets/day_change_boundary.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/event_label_text.dart';
+import '../widgets/motion_transitions.dart';
 import '../widgets/sync_status_button.dart';
 import '../widgets/template_bar.dart';
 import '../widgets/time_grid.dart';
@@ -521,193 +522,207 @@ class HomeScreenState extends State<HomeScreen> {
                             ),
                             if (isDesktopPlatform)
                               Expanded(
-                                child: Column(
-                                  children: [
-                                    // 三列日期头（插入与网格行相同的分割线占位以保持列宽一致）
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                            child: _DayHeader(date: prevDate)),
-                                        VerticalDivider(
-                                          width: 1,
-                                          thickness: 1,
-                                          color: surfaces.joinDivider,
-                                        ),
-                                        Expanded(
-                                            child:
-                                                _DayHeader(date: currentDate)),
-                                        VerticalDivider(
-                                          width: 1,
-                                          thickness: 1,
-                                          color: surfaces.joinDivider,
-                                        ),
-                                        Expanded(
-                                            child: _DayHeader(date: nextDate)),
-                                      ],
-                                    ),
-                                    // 三列网格：昨天 / 今天 / 明天
-                                    Expanded(
-                                      child: Row(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
+                                // 列头与三列网格一起淡入；左侧时间轴保持不动，
+                                // 否则刻度与格子会在过渡期间错位。
+                                child: ValueChangeTransition(
+                                  value: currentDate,
+                                  child: Column(
+                                    children: [
+                                      // 三列日期头（插入与网格行相同的分割线占位以保持列宽一致）
+                                      Row(
                                         children: [
                                           Expanded(
-                                            child: _DayGrid(
-                                              date: prevDate,
-                                              clock: widget.clock,
-                                              brushMode: _isBrushMode,
-                                              brushPreviewIndices:
-                                                  _brushPreviewFor(prevDate),
-                                              onBrushIndexDown: _brushStart,
-                                              onBrushIndexMove: _brushExtend,
-                                              onBrushEnd: (_) =>
-                                                  _finishBrushStroke(),
-                                              onBrushCancel: (_) =>
-                                                  _cancelBrushStroke(),
-                                              timeAxisController:
-                                                  _scrollController,
-                                              dragStartIndex: _selectionStart,
-                                              dragEndIndex: _selectionEnd,
-                                              selectionDate: _selectionDate,
-                                              onSelectionChanged:
-                                                  (date, start, end) {
-                                                setState(() {
-                                                  _selectionDate = date;
-                                                  _selectionStart = start;
-                                                  _selectionEnd = end;
-                                                });
-                                              },
-                                              onSelectionCleared:
-                                                  _clearSelection,
-                                              readOnly: isRemoteViewEnabled,
-                                              onResizeTimeBlock:
-                                                  _handleResizeTimeBlock,
-                                              onRemoveSlot: (date, index) =>
-                                                  _removeSlot(index,
-                                                      date: date),
-                                            ),
-                                          ),
+                                              child:
+                                                  _DayHeader(date: prevDate)),
                                           VerticalDivider(
                                             width: 1,
                                             thickness: 1,
                                             color: surfaces.joinDivider,
                                           ),
                                           Expanded(
-                                            child: _DayGrid(
-                                              date: currentDate,
-                                              clock: widget.clock,
-                                              brushMode: _isBrushMode,
-                                              brushPreviewIndices:
-                                                  _brushPreviewFor(currentDate),
-                                              onBrushIndexDown: _brushStart,
-                                              onBrushIndexMove: _brushExtend,
-                                              onBrushEnd: (_) =>
-                                                  _finishBrushStroke(),
-                                              onBrushCancel: (_) =>
-                                                  _cancelBrushStroke(),
-                                              timeAxisController:
-                                                  _scrollController,
-                                              dragStartIndex: _selectionStart,
-                                              dragEndIndex: _selectionEnd,
-                                              selectionDate: _selectionDate,
-                                              onSelectionChanged:
-                                                  (date, start, end) {
-                                                setState(() {
-                                                  _selectionDate = date;
-                                                  _selectionStart = start;
-                                                  _selectionEnd = end;
-                                                });
-                                              },
-                                              onSelectionCleared:
-                                                  _clearSelection,
-                                              readOnly: isRemoteViewEnabled,
-                                              onResizeTimeBlock:
-                                                  _handleResizeTimeBlock,
-                                              onRemoveSlot: (date, index) =>
-                                                  _removeSlot(index,
-                                                      date: date),
-                                            ),
-                                          ),
+                                              child: _DayHeader(
+                                                  date: currentDate)),
                                           VerticalDivider(
                                             width: 1,
                                             thickness: 1,
                                             color: surfaces.joinDivider,
                                           ),
                                           Expanded(
-                                            child: _DayGrid(
-                                              date: nextDate,
-                                              clock: widget.clock,
-                                              brushMode: _isBrushMode,
-                                              brushPreviewIndices:
-                                                  _brushPreviewFor(nextDate),
-                                              onBrushIndexDown: _brushStart,
-                                              onBrushIndexMove: _brushExtend,
-                                              onBrushEnd: (_) =>
-                                                  _finishBrushStroke(),
-                                              onBrushCancel: (_) =>
-                                                  _cancelBrushStroke(),
-                                              timeAxisController:
-                                                  _scrollController,
-                                              dragStartIndex: _selectionStart,
-                                              dragEndIndex: _selectionEnd,
-                                              selectionDate: _selectionDate,
-                                              onSelectionChanged:
-                                                  (date, start, end) {
-                                                setState(() {
-                                                  _selectionDate = date;
-                                                  _selectionStart = start;
-                                                  _selectionEnd = end;
-                                                });
-                                              },
-                                              onSelectionCleared:
-                                                  _clearSelection,
-                                              readOnly: isRemoteViewEnabled,
-                                              onResizeTimeBlock:
-                                                  _handleResizeTimeBlock,
-                                              onRemoveSlot: (date, index) =>
-                                                  _removeSlot(index,
-                                                      date: date),
-                                            ),
-                                          ),
+                                              child:
+                                                  _DayHeader(date: nextDate)),
                                         ],
                                       ),
-                                    ),
-                                  ],
+                                      // 三列网格：昨天 / 今天 / 明天
+                                      Expanded(
+                                        child: Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Expanded(
+                                              child: _DayGrid(
+                                                date: prevDate,
+                                                clock: widget.clock,
+                                                brushMode: _isBrushMode,
+                                                brushPreviewIndices:
+                                                    _brushPreviewFor(prevDate),
+                                                onBrushIndexDown: _brushStart,
+                                                onBrushIndexMove: _brushExtend,
+                                                onBrushEnd: (_) =>
+                                                    _finishBrushStroke(),
+                                                onBrushCancel: (_) =>
+                                                    _cancelBrushStroke(),
+                                                timeAxisController:
+                                                    _scrollController,
+                                                dragStartIndex: _selectionStart,
+                                                dragEndIndex: _selectionEnd,
+                                                selectionDate: _selectionDate,
+                                                onSelectionChanged:
+                                                    (date, start, end) {
+                                                  setState(() {
+                                                    _selectionDate = date;
+                                                    _selectionStart = start;
+                                                    _selectionEnd = end;
+                                                  });
+                                                },
+                                                onSelectionCleared:
+                                                    _clearSelection,
+                                                readOnly: isRemoteViewEnabled,
+                                                onResizeTimeBlock:
+                                                    _handleResizeTimeBlock,
+                                                onRemoveSlot: (date, index) =>
+                                                    _removeSlot(index,
+                                                        date: date),
+                                              ),
+                                            ),
+                                            VerticalDivider(
+                                              width: 1,
+                                              thickness: 1,
+                                              color: surfaces.joinDivider,
+                                            ),
+                                            Expanded(
+                                              child: _DayGrid(
+                                                date: currentDate,
+                                                clock: widget.clock,
+                                                brushMode: _isBrushMode,
+                                                brushPreviewIndices:
+                                                    _brushPreviewFor(
+                                                        currentDate),
+                                                onBrushIndexDown: _brushStart,
+                                                onBrushIndexMove: _brushExtend,
+                                                onBrushEnd: (_) =>
+                                                    _finishBrushStroke(),
+                                                onBrushCancel: (_) =>
+                                                    _cancelBrushStroke(),
+                                                timeAxisController:
+                                                    _scrollController,
+                                                dragStartIndex: _selectionStart,
+                                                dragEndIndex: _selectionEnd,
+                                                selectionDate: _selectionDate,
+                                                onSelectionChanged:
+                                                    (date, start, end) {
+                                                  setState(() {
+                                                    _selectionDate = date;
+                                                    _selectionStart = start;
+                                                    _selectionEnd = end;
+                                                  });
+                                                },
+                                                onSelectionCleared:
+                                                    _clearSelection,
+                                                readOnly: isRemoteViewEnabled,
+                                                onResizeTimeBlock:
+                                                    _handleResizeTimeBlock,
+                                                onRemoveSlot: (date, index) =>
+                                                    _removeSlot(index,
+                                                        date: date),
+                                              ),
+                                            ),
+                                            VerticalDivider(
+                                              width: 1,
+                                              thickness: 1,
+                                              color: surfaces.joinDivider,
+                                            ),
+                                            Expanded(
+                                              child: _DayGrid(
+                                                date: nextDate,
+                                                clock: widget.clock,
+                                                brushMode: _isBrushMode,
+                                                brushPreviewIndices:
+                                                    _brushPreviewFor(nextDate),
+                                                onBrushIndexDown: _brushStart,
+                                                onBrushIndexMove: _brushExtend,
+                                                onBrushEnd: (_) =>
+                                                    _finishBrushStroke(),
+                                                onBrushCancel: (_) =>
+                                                    _cancelBrushStroke(),
+                                                timeAxisController:
+                                                    _scrollController,
+                                                dragStartIndex: _selectionStart,
+                                                dragEndIndex: _selectionEnd,
+                                                selectionDate: _selectionDate,
+                                                onSelectionChanged:
+                                                    (date, start, end) {
+                                                  setState(() {
+                                                    _selectionDate = date;
+                                                    _selectionStart = start;
+                                                    _selectionEnd = end;
+                                                  });
+                                                },
+                                                onSelectionCleared:
+                                                    _clearSelection,
+                                                readOnly: isRemoteViewEnabled,
+                                                onResizeTimeBlock:
+                                                    _handleResizeTimeBlock,
+                                                onRemoveSlot: (date, index) =>
+                                                    _removeSlot(index,
+                                                        date: date),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               )
                             else
                               Expanded(
-                                child: TimeGrid(
-                                  gridKey: _gridKey,
-                                  clock: widget.clock,
-                                  controller: _gridScrollController,
-                                  dragStartIndex: _selectionStart,
-                                  dragEndIndex: _selectionEnd,
-                                  brushMode: _isBrushMode,
-                                  brushPreviewIndices: _brushStrokeIndices,
-                                  onBrushPointerDown: _isBrushMode
-                                      ? (position) => _brushStart(currentDate,
-                                          _calculateIndex(position))
-                                      : null,
-                                  onBrushPointerMove: _isBrushMode
-                                      ? (position) => _brushExtend(currentDate,
-                                          _calculateIndex(position))
-                                      : null,
-                                  onBrushPointerUp:
-                                      _isBrushMode ? _finishBrushStroke : null,
-                                  onBrushPointerCancel:
-                                      _isBrushMode ? _cancelBrushStroke : null,
-                                  onTapDown: (position) => _handleSelect(
-                                      position, currentDate,
-                                      isClick: true),
-                                  onPanStart: (position) => _handleSelect(
-                                      position, currentDate,
-                                      isStart: true),
-                                  onPanUpdate: (position) =>
-                                      _handleSelect(position, currentDate),
-                                  readOnly: isRemoteViewEnabled,
-                                  onResizeTimeBlock: _handleResizeTimeBlock,
-                                  onRemoveSlot: _removeSlot,
+                                child: ValueChangeTransition(
+                                  value: currentDate,
+                                  child: TimeGrid(
+                                    gridKey: _gridKey,
+                                    clock: widget.clock,
+                                    controller: _gridScrollController,
+                                    dragStartIndex: _selectionStart,
+                                    dragEndIndex: _selectionEnd,
+                                    brushMode: _isBrushMode,
+                                    brushPreviewIndices: _brushStrokeIndices,
+                                    onBrushPointerDown: _isBrushMode
+                                        ? (position) => _brushStart(currentDate,
+                                            _calculateIndex(position))
+                                        : null,
+                                    onBrushPointerMove: _isBrushMode
+                                        ? (position) => _brushExtend(
+                                            currentDate,
+                                            _calculateIndex(position))
+                                        : null,
+                                    onBrushPointerUp: _isBrushMode
+                                        ? _finishBrushStroke
+                                        : null,
+                                    onBrushPointerCancel: _isBrushMode
+                                        ? _cancelBrushStroke
+                                        : null,
+                                    onTapDown: (position) => _handleSelect(
+                                        position, currentDate,
+                                        isClick: true),
+                                    onPanStart: (position) => _handleSelect(
+                                        position, currentDate,
+                                        isStart: true),
+                                    onPanUpdate: (position) =>
+                                        _handleSelect(position, currentDate),
+                                    readOnly: isRemoteViewEnabled,
+                                    onResizeTimeBlock: _handleResizeTimeBlock,
+                                    onRemoveSlot: _removeSlot,
+                                  ),
                                 ),
                               ),
                           ],
@@ -1095,8 +1110,8 @@ class HomeScreenState extends State<HomeScreen> {
               extentRatio: 0.6, // 侧滑展开的宽度比例
               children: [
                 SlidableAction(
-                  onPressed: (context) => _deleteCategory(
-                      context, index, category, provider),
+                  onPressed: (context) =>
+                      _deleteCategory(context, index, category, provider),
                   backgroundColor: AppSemanticColors.danger,
                   foregroundColor:
                       AppSemanticColors.onColor(AppSemanticColors.danger),
@@ -1275,7 +1290,9 @@ class HomeScreenState extends State<HomeScreen> {
                         Icon(Icons.edit, color: onEditBg, size: 14),
                         const SizedBox(width: 4),
                         Text('编辑',
-                            style: AppText.badge.copyWith(fontWeight: FontWeight.normal, color: onEditBg)),
+                            style: AppText.badge.copyWith(
+                                fontWeight: FontWeight.normal,
+                                color: onEditBg)),
                       ],
                     ),
                   ),
@@ -1585,7 +1602,7 @@ class HomeScreenState extends State<HomeScreen> {
                     // 2. 颜色选择器
                     Text('选择颜色:',
                         style: AppText.body.copyWith(
-                            fontWeight: FontWeight.w500,
+                          fontWeight: FontWeight.w500,
                         )),
                     _buildColorPalette(selectedColor, (color) {
                       setDialogState(() {
@@ -1636,8 +1653,8 @@ class HomeScreenState extends State<HomeScreen> {
                     // 4. 子事件区域
                     Text('编辑子事件 (点击删除，拖动到下方隐藏)',
                         style: AppText.badge.copyWith(
-                            fontWeight: FontWeight.normal,
-                            color: colorScheme.onSurfaceVariant,
+                          fontWeight: FontWeight.normal,
+                          color: colorScheme.onSurfaceVariant,
                         )),
                     const SizedBox(height: 10),
 
@@ -1775,8 +1792,8 @@ class HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 10),
                       Text('已隐藏的子事件 (点击恢复)',
                           style: AppText.badge.copyWith(
-                              fontWeight: FontWeight.normal,
-                              color: colorScheme.onSurfaceVariant,
+                            fontWeight: FontWeight.normal,
+                            color: colorScheme.onSurfaceVariant,
                           )),
                       const SizedBox(height: 10),
                       Wrap(
@@ -1788,7 +1805,7 @@ class HomeScreenState extends State<HomeScreen> {
                                 size: 14, color: colorScheme.onSurfaceVariant),
                             label: Text(hiddenSubCat,
                                 style: AppText.caption.copyWith(
-                                    color: colorScheme.onSurfaceVariant,
+                                  color: colorScheme.onSurfaceVariant,
                                 )),
                             backgroundColor: surfaces.subtle,
                             onPressed: () {
@@ -2106,7 +2123,8 @@ class HomeScreenState extends State<HomeScreen> {
   void _openSyncCenter() {
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) => const SyncCenterScreen(initialModule: SyncModule.schedule),
+        builder: (_) =>
+            const SyncCenterScreen(initialModule: SyncModule.schedule),
       ),
     );
   }
@@ -2510,17 +2528,15 @@ class HomeScreenState extends State<HomeScreen> {
   ///
   /// 删除会级联移除引用该分类的目标，撤销时一并恢复（以 updatedAt
   /// 提到当前时间的方式胜过远端墓碑）。
-  void _deleteCategory(BuildContext context, int index, Category cat,
-      TimeProvider provider) {
+  void _deleteCategory(
+      BuildContext context, int index, Category cat, TimeProvider provider) {
     final snapshot = provider.deleteCategory(index);
     if (snapshot == null) return;
     playHaptic(context, HapticStrength.light);
     final hasCascade = snapshot.cascadeDeletedTargets.isNotEmpty;
     showAppUndoSnackBar(
       context,
-      message: hasCascade
-          ? '已删除“${cat.name}”及其关联目标'
-          : '已删除“${cat.name}”',
+      message: hasCascade ? '已删除“${cat.name}”及其关联目标' : '已删除“${cat.name}”',
       identityToken: AppIdentityService.identityStamp,
       onUndo: () async {
         if (!provider.undoDeleteCategory(snapshot)) {
@@ -3037,7 +3053,7 @@ class _ReorderableChipWrapState extends State<_ReorderableChipWrap> {
         backgroundColor: chipBg,
         label: Text(item,
             style: AppText.caption.copyWith(
-                color: AppSemanticColors.onColor(chipBg),
+              color: AppSemanticColors.onColor(chipBg),
             )),
         shape: const RoundedRectangleBorder(borderRadius: AppRadius.badgeAll),
         side: BorderSide.none,
@@ -3054,7 +3070,7 @@ class _ReorderableChipWrapState extends State<_ReorderableChipWrap> {
         backgroundColor: widget.color,
         label: Text(item,
             style: AppText.caption.copyWith(
-                color: AppSemanticColors.onColor(widget.color),
+              color: AppSemanticColors.onColor(widget.color),
             )),
         shape: const RoundedRectangleBorder(borderRadius: AppRadius.badgeAll),
         side: BorderSide.none,
