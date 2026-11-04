@@ -180,6 +180,7 @@ scripts/build_windows.bat          # Windows 构建（含自动下载 nuget.exe�
 scripts/update_macos.sh            # macOS 构建并安装到 /Applications
 scripts/run_android.sh             # 拉起 Android 模拟器/设备再 flutter run（默认 AVD Pixel_7，可用 ANDROID_EMULATOR_NAME 覆盖；多余参数透传给 flutter run）
 scripts/install_latest_android.sh  # 下载 Gitee 最新 Android APK，校验 SHA-256 后安装到 adb 连接的设备
+scripts/build_and_install_android.sh # 用当前代码构建 Android release APK 并安装到 adb 连接的设备（不 bump 版本、不 git）
 scripts/package_macos_release.sh   # macOS .app 打包为 dist/*.dmg + .dmg.sha256
 scripts/generate_update_metadata.sh <安装包…>  # 为 APK/EXE/DMG 生成同名 .sha256（Windows 用 generate_update_metadata.ps1）
 scripts/publish_android_release.sh # 构建 + 发布到 Gitee Release（见「构建与发布」）

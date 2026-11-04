@@ -90,6 +90,7 @@ scripts/publish_windows_release.bat # Windows 构建安装包并发布到 Gitee�
 scripts/publish_all_release.bat     # 一键：版本号 +1、构建并发布 Android + Windows 到同一个 Gitee Release
 scripts/update_macos.sh             # macOS 构建并安装到 /Applications，默认不跑测试
 scripts/install_latest_android.sh   # 从 Gitee 下载最新 Android 版并安装到 adb 连接的设备
+scripts/build_and_install_android.sh # 用当前代码构建 Android release APK 并安装到 adb 连接的设备
 flutter build apk --release         # 直接构建 release APK
 ```
 
