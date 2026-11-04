@@ -380,8 +380,9 @@ Container(color: context.adaptSemanticFill(goal.color))
 
 ### 10.1 令牌
 
-- `AppMotion.transition` = **180ms**（全站唯一一档，落在 160–200ms 区间）
-- `AppMotion.curve` = `Curves.easeOutCubic`
+- `AppMotion.transition` = **200ms**（全站唯一一档，落在 160–200ms 区间上限）
+- `AppMotion.curve` = `Curves.easeInOutCubic`。**透明度过渡不要用 `easeOutCubic`**：
+  它前 100ms 就走完 90%，整段淡入会被读成「闪一下」，正是 1.149 之前的体感问题
 - `AppMotion.listEnterOffset` = 8（新增条目入场的上移像素）
 - 降级：`appMotionDuration(context, base)`（`lib/utils/motion.dart`）在
   `MediaQuery.disableAnimationsOf` 为真时返回 `Duration.zero`。**不要在页面里自己判断**。

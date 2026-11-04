@@ -260,11 +260,14 @@ abstract final class AppText {
 /// 减小动效由 `appMotionDuration(context, AppMotion.transition)` 统一降级为
 /// `Duration.zero`，页面与组件都不要自己判断 `disableAnimations`。
 abstract final class AppMotion {
-  /// 180ms —— 切 Tab、切日期、列表条目进出的唯一转场时长。
-  static const Duration transition = Duration(milliseconds: 180);
+  /// 200ms —— 切 Tab、切日期、列表条目进出的唯一转场时长（160–200ms 区间上限）。
+  static const Duration transition = Duration(milliseconds: 200);
 
-  /// 转场曲线：起始快、收尾稳，适合「内容换了一天」这种小幅淡入。
-  static const Curve curve = Curves.easeOutCubic;
+  /// 转场曲线：两头缓、中间快。
+  ///
+  /// 透明度的过渡不能用 `easeOutCubic`——它前 100ms 就走完 90%，整段淡入看起来
+  /// 只是闪了一下。用 easeInOut 让变化均匀铺满全程，用户才看得出「内容换了一批」。
+  static const Curve curve = Curves.easeInOutCubic;
 
   /// 8 —— 新增列表条目入场时向上位移的像素，纯装饰、不影响布局。
   static const double listEnterOffset = 8;
