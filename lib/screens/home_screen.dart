@@ -294,26 +294,14 @@ class HomeScreenState extends State<HomeScreen> {
 
   /// 双击删除一格：即时执行，提示条提供撤销入口。
   /// 空格位 / 只读视图 / 覆盖事务进行中都不会真正删除，也不震。
+  ///
+  /// 刻意不弹「已删除 + 撤销」提示条：双击删一格是高频动作，每删一次都在
+  /// 底部压一条提示很吵。要撤回用顶栏的撤销按钮 / Ctrl+Z，撤销栈照旧。
   void _removeSlot(int index, {DateTime? date}) {
     final provider = context.read<TimeProvider>();
     if (!provider.removeEventFromSlot(index, date: date)) return;
     if (!mounted) return;
     playHaptic(context, HapticStrength.light);
-    final dateKey = provider.dateKeyFor(date ?? provider.currentDate);
-    // 记下删除后的编辑版本：6 秒内又刷了格子 / 拖了边界，点撤销不能再
-    // 把那次新编辑撤掉，必须直接判失效。
-    final editVersion = provider.editVersionOn(dateKey);
-    showAppUndoSnackBar(
-      context,
-      message: '已删除时间块',
-      identityToken: AppIdentityService.identityStamp,
-      onUndo: () async {
-        if (!provider.undoLastChangeOnDate(dateKey,
-            expectedVersion: editVersion)) {
-          throw StateError('该日期已有新的编辑，撤销已失效');
-        }
-      },
-    );
   }
 
   // --- 刷子模式：进入 / 切换 / 退出与手势记录 ---
