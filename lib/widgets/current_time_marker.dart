@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -9,8 +10,10 @@ import 'main_tab_activity.dart';
 
 /// 「现在」的小标记。
 ///
-/// 只在今天这一列显示一个小圆点，随分钟沿左侧缓慢下移；不做整行红线——
-/// 整天铺一条线会盖住时间块本身的色块，视觉噪声太大。
+/// 只在今天这一列显示一个小圆点：网格每小时一行、横向 6 格各 10 分钟，
+/// 所以圆点横向落在当前分钟按比例换算出的一格内位置，纵向贴在这一格的
+/// 底边（行内居中的事件名不会被压住）；不做整行红线——整天铺一条线会
+/// 盖住时间块本身的色块，视觉噪声太大。
 ///
 /// 计时与可见性门控照起床卡片的做法：保活 Tab 隐藏、切后台时停表。
 class CurrentTimeMarker extends StatefulWidget {
@@ -85,8 +88,10 @@ class _CurrentTimeMarkerState extends State<CurrentTimeMarker>
     final now = _now;
     if (!isSameLocalDay(widget.date, now)) return const SizedBox.shrink();
 
-    final y = timelineYForMinutes(
-      minutesOfDayOf(now),
+    const size = AppSizes.nowMarkerSize;
+    // 这一小时行的底边：圆点贴底放置，避开行内上下居中的事件名。
+    final rowBottomY = timelineYForMinutes(
+      (now.hour + 1) * 60,
       rowExtent: AppSizes.gridRow,
       topPadding: AppSpacing.sm,
     );
@@ -100,22 +105,30 @@ class _CurrentTimeMarkerState extends State<CurrentTimeMarker>
         return IgnorePointer(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final top = y - offset - AppSizes.nowMarkerSize / 2;
-              if (top < -AppSizes.nowMarkerSize ||
-                  top > constraints.maxHeight) {
+              final top = rowBottomY - size - offset;
+              if (top < -size || top > constraints.maxHeight) {
                 return const SizedBox.shrink();
               }
+              // 整点 / 59 分时圆点会压在行边缘，一半被裁掉，横向夹一下
+              final maxLeft = math.max(0.0, constraints.maxWidth - size);
+              final left = (timelineXForMinute(
+                        now.minute,
+                        rowWidth: constraints.maxWidth,
+                      ) -
+                      size / 2)
+                  .clamp(0.0, maxLeft)
+                  .toDouble();
               return Stack(
                 children: [
                   Positioned(
                     key: const ValueKey('current-time-marker'),
-                    left: AppSpacing.xs,
+                    left: left,
                     top: top,
                     child: Semantics(
                       label: '当前时间',
                       child: Container(
-                        width: AppSizes.nowMarkerSize,
-                        height: AppSizes.nowMarkerSize,
+                        width: size,
+                        height: size,
                         decoration: BoxDecoration(
                           color: color,
                           shape: BoxShape.circle,

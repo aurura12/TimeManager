@@ -7,6 +7,17 @@ library;
 /// 一天中的分钟数（0..1440）。
 int minutesOfDayOf(DateTime time) => time.hour * 60 + time.minute;
 
+/// 一小时的格子数：每格 10 分钟。
+const int slotsPerHour = 6;
+
+/// 分钟（0..59）在所属小时行内的 x（内容坐标）。
+///
+/// 网格每小时占一整行宽、横向 6 格共 60 分钟，所以分钟按比例铺到行宽上，
+/// 10 分钟刻度天然对齐格子边界。
+double timelineXForMinute(int minuteOfHour, {required double rowWidth}) {
+  return rowWidth * minuteOfHour.clamp(0, 59) / 60.0;
+}
+
 /// 分钟 → 时间轴内容坐标里的 y（含列表顶部的内边距）。
 double timelineYForMinutes(
   int minutesOfDay, {

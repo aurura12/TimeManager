@@ -65,7 +65,7 @@ Future<TimeProvider> _pumpGrid(
 }
 
 void main() {
-  testWidgets('今天这一列显示「现在」标记，位置按分钟插值', (tester) async {
+  testWidgets('今天这一列显示「现在」标记，落在当前 10 分钟格子内', (tester) async {
     final now = DateTime(2026, 10, 29, 10, 20);
     await _pumpGrid(tester, clock: () => now);
 
@@ -74,10 +74,33 @@ void main() {
 
     final gridRect = tester.getRect(find.byType(TimeGrid));
     final center = tester.getCenter(marker);
+    // 纵向贴 10:00 这一行的底边，不压住行内居中的事件名
     final expectedY = gridRect.top +
-        timelineYForMinutes(10 * 60 + 20,
-            rowExtent: AppSizes.gridRow, topPadding: AppSpacing.sm);
+        timelineYForMinutes(11 * 60,
+            rowExtent: AppSizes.gridRow, topPadding: AppSpacing.sm) -
+        AppSizes.nowMarkerSize / 2;
     expect(center.dy, closeTo(expectedY, 0.5));
+    // 20 分 → 落在 20–30 分那一格里，而不是行首
+    final expectedX = gridRect.left +
+        timelineXForMinute(20, rowWidth: gridRect.width);
+    expect(center.dx, closeTo(expectedX, 0.5));
+  });
+
+  testWidgets('分钟不同落在不同格子，不再固定在第一个格', (tester) async {
+    final now = DateTime(2026, 10, 29, 10, 45);
+    await _pumpGrid(tester, clock: () => now);
+
+    final marker = find.byKey(const ValueKey('current-time-marker'));
+    final gridRect = tester.getRect(find.byType(TimeGrid));
+    final columnWidth = gridRect.width / slotsPerHour;
+    final center = tester.getCenter(marker);
+
+    // 45 分属于第 5 格（40–50 分）
+    expect(
+      center.dx,
+      closeTo(gridRect.left + columnWidth * 4.5, 0.5),
+    );
+    expect(center.dx, greaterThan(gridRect.left + columnWidth * 4));
   });
 
   testWidgets('不是今天的列不画标记', (tester) async {
@@ -96,8 +119,9 @@ void main() {
     final marker = find.byKey(const ValueKey('current-time-marker'));
     final gridRect = tester.getRect(find.byType(TimeGrid));
     final expectedY = gridRect.top +
-        timelineYForMinutes(10 * 60 + 20,
+        timelineYForMinutes(11 * 60,
             rowExtent: AppSizes.gridRow, topPadding: AppSpacing.sm) -
+        AppSizes.nowMarkerSize / 2 -
         120;
     expect(tester.getCenter(marker).dy, closeTo(expectedY, 0.5));
   });
