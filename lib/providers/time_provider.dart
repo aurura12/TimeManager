@@ -7866,17 +7866,19 @@ class TimeProvider with ChangeNotifier {
         for (final category in _categories) category.id,
         for (final relation in _deletedRelations) relation.categoryId,
       };
+      // 日历导入块有独立来源标记，不属于分类历史，也不会被改名传播。
       final ambiguousHistory = _dailySlots.values.any((slots) => slots.any(
             (slot) =>
                 slot.recorded &&
+                !slot.isFromCalendar &&
                 slot.label == entry.key &&
                 (slot.categoryId == null ||
                     slot.categoryId!.isEmpty ||
                     !knownCategoryIds.contains(slot.categoryId)),
           ));
       if (ambiguousHistory) {
-        return const CategoryMutationResult.validationError(
-            '存在无法确定所属父事件的同名历史记录，请先核对后再改名');
+        return CategoryMutationResult.validationError(
+            '存在无法确定所属父事件的“${entry.key}”同名历史记录，无法确认它是否属于“${oldCategory.name}”。为避免误改其他事件的历史，本次改名未保存，请先核对这些记录后再试');
       }
       // 若目标名称由另一个原子事件占用，只有它也明确改名时才能安全交换。
       // 否则历史记录、目标和模板将无法区分两者，不能静默合并。

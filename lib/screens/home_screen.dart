@@ -1614,6 +1614,7 @@ class HomeScreenState extends State<HomeScreen> {
         provider.categories.map((category) => category.id).toSet();
 
     String catName = isEdit ? existingCat.name : '';
+    String? saveError;
     Color selectedColor =
         isEdit ? existingCat.color : AppSemanticColors.palette.first;
     List<String> tempSubCategories =
@@ -1652,7 +1653,7 @@ class HomeScreenState extends State<HomeScreen> {
           void addSubCategory(String rawValue) {
             final value = rawValue.trim();
             if (value.isEmpty) {
-              showAppSnackBar(context, '子事件名称不能为空');
+              setDialogState(() => saveError = '子事件名称不能为空');
               return;
             }
             final key = value.toLowerCase();
@@ -1661,10 +1662,11 @@ class HomeScreenState extends State<HomeScreen> {
               ...tempHiddenSubCategories,
             ].any((item) => item.trim().toLowerCase() == key);
             if (duplicated) {
-              showAppSnackBar(context, '子事件“$value”重复，请保留一个');
+              setDialogState(() => saveError = '子事件“$value”重复，请保留一个');
               return;
             }
             setDialogState(() {
+              saveError = null;
               tempSubCategories.add(value);
               subCatController.clear();
             });
@@ -1687,6 +1689,7 @@ class HomeScreenState extends State<HomeScreen> {
                   return;
                 }
                 setDialogState(() {
+                  saveError = null;
                   final original = originalNamesByCurrent.remove(subCat);
                   tempSubCategories[subIndex] = value;
                   if (original != null) {
@@ -1695,6 +1698,7 @@ class HomeScreenState extends State<HomeScreen> {
                 });
               },
               onDelete: () => setDialogState(() {
+                saveError = null;
                 tempSubCategories.removeAt(subIndex);
                 originalNamesByCurrent.remove(subCat);
               }),
@@ -1721,6 +1725,7 @@ class HomeScreenState extends State<HomeScreen> {
                 final updated = provider.categories[sourceIndex];
                 if (updated.subCategories.contains(name)) return false;
                 setDialogState(() {
+                  saveError = null;
                   tempSubCategories.remove(name);
                   originalNamesByCurrent.remove(name);
                   expectedCategory = updated;
@@ -1731,8 +1736,48 @@ class HomeScreenState extends State<HomeScreen> {
           }
 
           return AlertDialog(
-            title: Text(isEdit ? '编辑事件' : '添加事件',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
+            title: SizedBox(
+              width: MediaQuery.of(context).size.width * 0.8,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(isEdit ? '编辑事件' : '添加事件',
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                  if (saveError != null) ...[
+                    const SizedBox(height: AppSpacing.md),
+                    Semantics(
+                      liveRegion: true,
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(AppSpacing.sm),
+                        decoration: BoxDecoration(
+                          color: colorScheme.errorContainer,
+                          borderRadius: AppRadius.controlAll,
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.error_outline,
+                                size: 20, color: colorScheme.onErrorContainer),
+                            const SizedBox(width: AppSpacing.sm),
+                            Expanded(
+                              child: Text(
+                                saveError!,
+                                softWrap: true,
+                                style: AppText.body.copyWith(
+                                  color: colorScheme.onErrorContainer,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
             content: SizedBox(
               width: MediaQuery.of(context).size.width * 0.8,
               child: SingleChildScrollView(
@@ -1747,7 +1792,12 @@ class HomeScreenState extends State<HomeScreen> {
                       controller: nameController,
                       onTapOutside: dismissKeyboardOnTapOutside,
                       decoration: const InputDecoration(labelText: '事件名称'),
-                      onChanged: (value) => catName = value,
+                      onChanged: (value) {
+                        catName = value;
+                        if (saveError != null) {
+                          setDialogState(() => saveError = null);
+                        }
+                      },
                     ),
                     const SizedBox(height: 20),
 
@@ -1758,6 +1808,7 @@ class HomeScreenState extends State<HomeScreen> {
                         )),
                     _buildColorPalette(selectedColor, (color) {
                       setDialogState(() {
+                        saveError = null;
                         selectedColor = color;
                         hexController.text = (color.toARGB32())
                             .toRadixString(16)
@@ -1794,7 +1845,10 @@ class HomeScreenState extends State<HomeScreen> {
                           );
                           return;
                         }
-                        setDialogState(() => selectedColor = parsed);
+                        setDialogState(() {
+                          saveError = null;
+                          selectedColor = parsed;
+                        });
                       },
                     ),
 
@@ -1817,6 +1871,7 @@ class HomeScreenState extends State<HomeScreen> {
                         color: selectedColor,
                         onReorder: (oldIndex, newIndex) {
                           setDialogState(() {
+                            saveError = null;
                             final item = tempSubCategories.removeAt(oldIndex);
                             tempSubCategories.insert(newIndex, item);
                           });
@@ -1834,6 +1889,7 @@ class HomeScreenState extends State<HomeScreen> {
                       },
                       onAcceptWithDetails: (details) {
                         setDialogState(() {
+                          saveError = null;
                           tempSubCategories.remove(details.data);
                           tempHiddenSubCategories.add(details.data);
                         });
@@ -1934,6 +1990,7 @@ class HomeScreenState extends State<HomeScreen> {
                             backgroundColor: surfaces.subtle,
                             onPressed: () {
                               setDialogState(() {
+                                saveError = null;
                                 tempHiddenSubCategories.remove(hiddenSubCat);
                                 tempSubCategories.add(hiddenSubCat);
                               });
@@ -1979,10 +2036,8 @@ class HomeScreenState extends State<HomeScreen> {
                         )
                       : provider.addCategoryWithResult(newCat);
                   if (!result.isSuccess) {
-                    showAppSnackBar(
-                      context,
-                      result.error ?? '事件保存失败，请稍后重试',
-                    );
+                    setDialogState(
+                        () => saveError = result.error ?? '事件保存失败，请稍后重试');
                     return;
                   }
                   if (!isEdit) {
