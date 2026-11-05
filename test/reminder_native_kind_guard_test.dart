@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:time_manager/services/check_in_reminder_service.dart';
+import 'package:time_manager/services/diary_reminder_service.dart';
 import 'package:time_manager/services/time_block_reminder_service.dart';
 import 'package:time_manager/utils/time_block_reminder_plan.dart';
 
@@ -36,6 +38,19 @@ void main() {
     expect(checkInMax < timeBlockReminderIdBase, isTrue);
     expect(TimeBlockReminderService.testNotificationId, 2399);
     expect(TimeBlockReminderService.testNotificationId < timeBlockReminderIdBase, isTrue);
+  });
+
+  test('三类提醒的小图标都必须被 keep.xml 保留', () {
+    // release 构建会做资源压缩：图标只用 Dart 字符串按名字引用，压缩器看不见，
+    // 漏进 keep.xml 就会「编译通过、运行时 invalid_icon」。
+    final keep = File('android/app/src/main/res/raw/keep.xml').readAsStringSync();
+    for (final icon in <String>[
+      DiaryReminderService.smallIcon,
+      CheckInReminderService.smallIcon,
+      TimeBlockReminderService.smallIcon,
+    ]) {
+      expect(keep, contains('@drawable/$icon'), reason: '$icon 被资源压缩裁掉了');
+    }
   });
 
   test('通知小图标存在', () {

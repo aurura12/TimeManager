@@ -157,6 +157,9 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
     否则会误 cancel 别的提醒或丢掉原生日志（`test/reminder_native_kind_guard_test.dart` 会拦）
   - 时间块提醒的数据源返回 `null`（未初始化 / 身份切换 / 正在看对方日程）时**必须原样保留现有排程**，
     不能把「读不到」当成「没有事件」全部取消
+  - **新增 / 重命名提醒小图标必须同时改 `android/app/src/main/res/raw/keep.xml`**：图标只用 Dart
+    字符串按名字引用，release 的资源压缩看不见这层引用，漏掉就「编译通过、运行时
+    `PlatformException(invalid_icon)`」。`test/reminder_native_kind_guard_test.dart` 会校验三类图标都在保留清单里
   - 时间块提醒的去重记录必须在**排程 / 补发的同时**落盘：到点时 Dart 不运行，无法事后判断是否响过；
     否则每次回前台都会把「已开始未结束」的块重复补发
 
