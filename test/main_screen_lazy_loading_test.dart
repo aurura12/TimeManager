@@ -857,4 +857,43 @@ void main() {
     expect(tester.widget<TabBar>(find.byType(TabBar)).controller!.index, 3);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('时间块提醒导航：切到记录页并跳到事件日期', (tester) async {
+    final provider = await _pumpMainScreen(tester);
+    final state = tester.state<MainScreenState>(find.byType(MainScreen));
+    final target = DateTime(2026, 10, 20);
+
+    state.openRecordAtDate(target);
+    await tester.pumpAndSettle();
+
+    expect(provider.currentDate, target);
+    expect(find.byType(HomeScreen), findsOneWidget);
+    final bar = tester.widget<NavigationBar>(find.byType(NavigationBar));
+    expect(bar.selectedIndex, 0, reason: '默认顺序下第一个可见标签是记录');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('记录标签被隐藏时，提醒导航仍能临时打开记录页', (tester) async {
+    final provider = await _pumpMainScreen(
+      tester,
+      initialPreferences: {
+        MainTabProvider.storageKey: jsonEncode({
+          'order': MainTabId.values.map((tab) => tab.id).toList(),
+          'hidden': [MainTabId.record.id],
+        }),
+      },
+    );
+    final state = tester.state<MainScreenState>(find.byType(MainScreen));
+    final target = DateTime(2026, 10, 21);
+
+    state.openRecordAtDate(target);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(provider.currentDate, target);
+    expect(find.byType(HomeScreen), findsOneWidget);
+    expect(find.byType(NavigationBar), findsNothing);
+    expect(find.byType(BackButton), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
