@@ -20,7 +20,8 @@ import java.util.Set;
  * <p>到点时 Dart 不运行，AppLogService 收不到任何回调，所以由原生 receiver 把触发、通知提交、
  * 下次登记和开机恢复的结果写进一个有界队列，App 启动或回到前台时再导入到「运行日志」。
  *
- * <p>只记录通知 ID 2001 / payload diary_reminder 的事件，不写通知正文或任何用户数据。
+ * <p>只记录写日记（2001 / diary_reminder）、打卡（2200–2299）与时间块（2400–2831）三类提醒的事件，
+ * 不写通知正文或任何用户数据。
  * 队列使用独立 SharedPreferences 文件，不污染 Flutter 自己的偏好存储。
  *
  * <p>读取使用「不清空 + 按 ID 确认」语义：Dart 侧只有把日志真正持久化成功后才确认，
@@ -36,9 +37,15 @@ public final class DiaryReminderNativeEventStore {
   public static final int CHECK_IN_ID_MAX = 2299;
   public static final String CHECK_IN_PAYLOAD_PREFIX = "check_in_reminder:";
 
+  /** 时间块提醒：id 段 2400–2831（3 天 × 144 个块起点），payload 形如 time_block_reminder:<dateKey>:<startIndex>。 */
+  public static final int TIME_BLOCK_ID_MIN = 2400;
+  public static final int TIME_BLOCK_ID_MAX = 2831;
+  public static final String TIME_BLOCK_PAYLOAD_PREFIX = "time_block_reminder:";
+
   /** 事件归属的提醒类型，写进事件的 kind 字段，Dart 侧据此选文案。 */
   public static final String KIND_DIARY = "diary_reminder";
   public static final String KIND_CHECK_IN = "check_in_reminder";
+  public static final String KIND_TIME_BLOCK = "time_block_reminder";
 
   // 事件码，与 Dart 侧 DiaryReminderDiagnostics 的映射保持一致
   public static final String RECEIVER_FIRED = "receiver_fired";
@@ -79,6 +86,12 @@ public final class DiaryReminderNativeEventStore {
         && details.payload != null
         && details.payload.startsWith(CHECK_IN_PAYLOAD_PREFIX)) {
       return KIND_CHECK_IN;
+    }
+    if (details.id >= TIME_BLOCK_ID_MIN
+        && details.id <= TIME_BLOCK_ID_MAX
+        && details.payload != null
+        && details.payload.startsWith(TIME_BLOCK_PAYLOAD_PREFIX)) {
+      return KIND_TIME_BLOCK;
     }
     return null;
   }

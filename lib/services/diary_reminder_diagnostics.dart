@@ -209,6 +209,15 @@ class DiaryReminderDiagnostics {
   ) {
     // 原生侧不只埋写日记提醒，文案必须按 kind 区分，否则打卡的触发会被误标成写日记
     final label = _labelFor(event.kind);
+    if (event.kind == 'time_block_reminder' &&
+        event.code.startsWith('next_schedule')) {
+      // 时间块提醒是一次性绝对时刻，到点后原生不会也不该登记下一次，
+      // 沿用「每天重复可能中断」的文案会把排查方向带偏。
+      return (
+        level: AppLogLevel.info,
+        message: '$label：到点触发已收尾（一次性提醒无需续订）',
+      );
+    }
     switch (event.code) {
       case 'receiver_fired':
         return (
@@ -268,6 +277,8 @@ class DiaryReminderDiagnostics {
     switch (kind) {
       case 'check_in_reminder':
         return '打卡提醒';
+      case 'time_block_reminder':
+        return '时间块提醒';
       case null:
       case 'diary_reminder':
         return '写日记提醒';

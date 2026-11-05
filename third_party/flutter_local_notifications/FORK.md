@@ -17,7 +17,7 @@
 
 | 文件 | 改动 |
 | --- | --- |
-| `DiaryReminderNativeEventStore.java` | **新增**。`kindOf(NotificationDetails)` 是唯一的归属判定入口，返回 `diary_reminder` / `check_in_reminder` / null。有界事件队列（最多 50 条，溢出丢最旧并累计丢弃数），独立 SharedPreferences 文件，同步 `commit()` 并检查返回值。 |
+| `DiaryReminderNativeEventStore.java` | **新增**。`kindOf(NotificationDetails)` 是唯一的归属判定入口，返回 `diary_reminder` / `check_in_reminder` / `time_block_reminder` / null。有界事件队列（最多 50 条，溢出丢最旧并累计丢弃数），独立 SharedPreferences 文件，同步 `commit()` 并检查返回值。 |
 | `ScheduledNotificationReceiver.java` | 埋 `receiver_fired`、`notify_returned`/`notify_failed`、`next_schedule_attempt`。 |
 | `FlutterLocalNotificationsPlugin.java` | 埋 `next_schedule_returned`/`next_schedule_failed` 与 `boot_reschedule_*`。成功事件刻意记在**内部真正登记完成处**：`scheduleNextNotification` 会吞掉 `ExactAlarmPermissionException`，`zonedScheduleNextNotificationMatchingDateComponents` 在拿不到下次触发时间时会静默 return（这会让「每天重复」永久断链），在外层记成功会把这两种失败误报成成功。 |
 
@@ -29,8 +29,9 @@
 
 - 写日记提醒：通知 id `2001` + payload 恰好 `diary_reminder`
 - 打卡提醒：通知 id `2200–2299` + payload 以 `check_in_reminder:` 开头
+- 时间块提醒：通知 id `2400–2831`（3 天 × 144 个块起点）+ payload 以 `time_block_reminder:` 开头
 
-新增第三类提醒时只需在 `kindOf()` 里加一段——9 个埋点调用点共用同一个判定，
+新增提醒类型时只需在 `kindOf()` 里加一段——9 个埋点调用点共用同一个判定，
 不用逐个改。
 
 对应 Dart 侧：`lib/services/diary_reminder_diagnostics.dart`（读取并导入运行日志）与

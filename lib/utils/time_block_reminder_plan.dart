@@ -77,6 +77,7 @@ class TimeBlockReminderPlan {
   const TimeBlockReminderPlan({
     required this.toSchedule,
     required this.staleIds,
+    required this.desiredIds,
     required this.handled,
     required this.scheduledCount,
     required this.catchUpCount,
@@ -86,6 +87,9 @@ class TimeBlockReminderPlan {
 
   final List<TimeBlockReminderScheduledItem> toSchedule;
   final Set<int> staleIds;
+
+  /// 窗口内仍然有效的通知 id（含已经在 pending 里的）。
+  final Set<int> desiredIds;
 
   /// 本轮结束后应当落盘的去重记录（已裁剪到窗口内）。
   final Map<String, TimeBlockReminderFiredRecord> handled;
@@ -287,6 +291,7 @@ TimeBlockReminderPlan buildTimeBlockReminderPlan({
   return TimeBlockReminderPlan(
     toSchedule: toSchedule,
     staleIds: staleIds,
+    desiredIds: desiredIds,
     handled: nextHandled,
     scheduledCount: desiredIds.length,
     catchUpCount: catchUpCount,
