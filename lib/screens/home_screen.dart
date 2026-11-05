@@ -1427,12 +1427,13 @@ class HomeScreenState extends State<HomeScreen> {
   void _showSubCategoryMenu({
     required BuildContext context,
     required String subCat,
-    required int subIndex,
-    required StateSetter setDialogState,
-    required List<String> tempSubCategories,
+    required VoidCallback onRename,
+    required VoidCallback onDelete,
+    required bool canMove,
     required String currentCategoryId,
     required List<Category> allCategories,
-    required Function(String fromCategoryId, String toCategoryId, String name)
+    required bool Function(
+            String fromCategoryId, String toCategoryId, String name)
         onMove,
   }) {
     showModalBottomSheet(
@@ -1442,6 +1443,14 @@ class HomeScreenState extends State<HomeScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('重命名'),
+              onTap: () {
+                Navigator.pop(context);
+                onRename();
+              },
+            ),
             ListTile(
               leading: Icon(Icons.delete_outline,
                   color: AppSemanticColors.readableOn(
@@ -1455,25 +1464,79 @@ class HomeScreenState extends State<HomeScreen> {
                 // 只改编辑对话框里的草稿列表，点「保存修改」才落盘、
                 // 取消整份丢弃，因此不弹确认也不需要撤销入口。
                 Navigator.pop(context);
-                setDialogState(() => tempSubCategories.removeAt(subIndex));
+                onDelete();
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.move_to_inbox),
-              title: const Text('移动到...'),
-              onTap: () {
-                Navigator.pop(context);
-                _showMoveSubCategoryDialog(
-                  context: context,
-                  subCat: subCat,
-                  currentCategoryId: currentCategoryId,
-                  allCategories: allCategories,
-                  onMove: onMove,
-                );
-              },
-            ),
+            if (canMove)
+              ListTile(
+                leading: const Icon(Icons.move_to_inbox),
+                title: const Text('移动到...'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showMoveSubCategoryDialog(
+                    context: context,
+                    subCat: subCat,
+                    currentCategoryId: currentCategoryId,
+                    allCategories: allCategories,
+                    onMove: onMove,
+                  );
+                },
+              ),
           ],
         ),
+      ),
+    );
+  }
+
+  Future<String?> _promptSubCategoryRename(
+    BuildContext context,
+    String currentName,
+    Iterable<String> names,
+  ) {
+    var input = currentName;
+    String? error;
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) {
+          void submit() {
+            final value = input.trim();
+            final duplicate = names.any((name) =>
+                name != currentName &&
+                name.trim().toLowerCase() == value.toLowerCase());
+            if (value.isEmpty || duplicate) {
+              setState(() => error =
+                  value.isEmpty ? '子事件名称不能为空' : '子事件“$value”重复，请使用其他名称');
+              return;
+            }
+            Navigator.pop(dialogContext, value);
+          }
+
+          return AlertDialog(
+            title: const Text('重命名子事件'),
+            content: TextFormField(
+              initialValue: currentName,
+              autofocus: true,
+              onTapOutside: dismissKeyboardOnTapOutside,
+              onChanged: (value) => input = value,
+              onFieldSubmitted: (_) => submit(),
+              decoration: InputDecoration(
+                labelText: '子事件名称',
+                helperText: '保存后更新本机已有记录、目标和模板；远端历史请先同步到本机',
+                helperMaxLines: 3,
+                errorText: error,
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('取消'),
+              ),
+              FilledButton(onPressed: submit, child: const Text('确定')),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1483,7 +1546,8 @@ class HomeScreenState extends State<HomeScreen> {
     required String subCat,
     required String currentCategoryId,
     required List<Category> allCategories,
-    required Function(String fromCategoryId, String toCategoryId, String name)
+    required bool Function(
+            String fromCategoryId, String toCategoryId, String name)
         onMove,
   }) {
     String? selectedCategoryId;
@@ -1520,12 +1584,15 @@ class HomeScreenState extends State<HomeScreen> {
                   : () {
                       final targetCat = allCategories
                           .firstWhere((c) => c.id == selectedCategoryId);
-                      onMove(currentCategoryId, selectedCategoryId!, subCat);
+                      final moved = onMove(
+                          currentCategoryId, selectedCategoryId!, subCat);
                       Navigator.pop(context);
                       // 弹层已经 pop，这里必须用 State 的 context 展示提示。
                       showAppSnackBar(
                         this.context,
-                        '已将"$subCat"移动到${targetCat.name}',
+                        moved
+                            ? '已将"$subCat"移动到${targetCat.name}'
+                            : '移动失败，请检查事件是否已变化或目标中已有同名子事件',
                         duration: const Duration(seconds: 2),
                       );
                     },
@@ -1553,6 +1620,12 @@ class HomeScreenState extends State<HomeScreen> {
         isEdit ? List.from(existingCat.subCategories) : [];
     List<String> tempHiddenSubCategories =
         isEdit ? List.from(existingCat.hiddenSubCategories) : [];
+    Category? expectedCategory = existingCat;
+    // 只追踪用户明确发起的改名；排序、删除和新增不能凭位置推测。
+    final originalNamesByCurrent = <String, String>{
+      for (final name in [...tempSubCategories, ...tempHiddenSubCategories])
+        name: name,
+    };
 
     final nameController = TextEditingController(text: catName);
     final subCatController = TextEditingController();
@@ -1564,8 +1637,13 @@ class HomeScreenState extends State<HomeScreen> {
         .substring(2);
     final hexController = TextEditingController(text: currentHex);
 
-    showDialog(
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = DialogRoute<void>(
       context: context,
+      themes: InheritedTheme.capture(from: context, to: navigator.context),
+      barrierColor: DialogTheme.of(context).barrierColor ??
+          Theme.of(context).dialogTheme.barrierColor ??
+          Colors.black54,
       // 输入类弹窗不响应遮罩点击：键盘弹起后弹窗上移、上方遮罩变大，
       // 手滑点到就会连输入一起丢掉。
       barrierDismissible: false,
@@ -1590,6 +1668,66 @@ class HomeScreenState extends State<HomeScreen> {
               tempSubCategories.add(value);
               subCatController.clear();
             });
+          }
+
+          void showSubCategoryMenu(String subCat, int subIndex) {
+            _showSubCategoryMenu(
+              context: context,
+              subCat: subCat,
+              currentCategoryId: existingCat?.id ?? '',
+              allCategories: provider.categories,
+              canMove: isEdit && originalNamesByCurrent[subCat] == subCat,
+              onRename: () async {
+                final value = await _promptSubCategoryRename(
+                  context,
+                  subCat,
+                  [...tempSubCategories, ...tempHiddenSubCategories],
+                );
+                if (!context.mounted || value == null || value == subCat) {
+                  return;
+                }
+                setDialogState(() {
+                  final original = originalNamesByCurrent.remove(subCat);
+                  tempSubCategories[subIndex] = value;
+                  if (original != null) {
+                    originalNamesByCurrent[value] = original;
+                  }
+                });
+              },
+              onDelete: () => setDialogState(() {
+                tempSubCategories.removeAt(subIndex);
+                originalNamesByCurrent.remove(subCat);
+              }),
+              onMove: (fromCategoryId, toCategoryId, name) {
+                final sourceIndex = provider.categories
+                    .indexWhere((category) => category.id == fromCategoryId);
+                final destinationIndex = provider.categories
+                    .indexWhere((category) => category.id == toCategoryId);
+                if (sourceIndex < 0 ||
+                    destinationIndex < 0 ||
+                    provider.categories[sourceIndex].updatedAt !=
+                        expectedCategory?.updatedAt) {
+                  return false;
+                }
+                final destination = provider.categories[destinationIndex];
+                if ([
+                  ...destination.subCategories,
+                  ...destination.hiddenSubCategories
+                ].any((item) =>
+                    item.trim().toLowerCase() == name.trim().toLowerCase())) {
+                  return false;
+                }
+                provider.moveSubCategory(fromCategoryId, toCategoryId, name);
+                final updated = provider.categories[sourceIndex];
+                if (updated.subCategories.contains(name)) return false;
+                setDialogState(() {
+                  tempSubCategories.remove(name);
+                  originalNamesByCurrent.remove(name);
+                  expectedCategory = updated;
+                });
+                return true;
+              },
+            );
           }
 
           return AlertDialog(
@@ -1665,7 +1803,7 @@ class HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 15),
 
                     // 4. 子事件区域
-                    Text('编辑子事件 (点击删除，拖动到下方隐藏)',
+                    Text('编辑子事件 (点击管理，拖动到下方隐藏)',
                         style: AppText.badge.copyWith(
                           fontWeight: FontWeight.normal,
                           color: colorScheme.onSurfaceVariant,
@@ -1683,37 +1821,9 @@ class HomeScreenState extends State<HomeScreen> {
                             tempSubCategories.insert(newIndex, item);
                           });
                         },
-                        onTap: (subCat, subIndex) => _showSubCategoryMenu(
-                          context: context,
-                          subCat: subCat,
-                          subIndex: subIndex,
-                          setDialogState: setDialogState,
-                          tempSubCategories: tempSubCategories,
-                          currentCategoryId:
-                              isEdit ? provider.categories[index].id : '',
-                          allCategories: provider.categories,
-                          onMove: (fromCategoryId, toCategoryId, name) {
-                            provider.moveSubCategory(
-                                fromCategoryId, toCategoryId, name);
-                          },
-                        ),
-                        onSecondaryTap: isDesktopPlatform
-                            ? (subCat, subIndex) => _showSubCategoryMenu(
-                                  context: context,
-                                  subCat: subCat,
-                                  subIndex: subIndex,
-                                  setDialogState: setDialogState,
-                                  tempSubCategories: tempSubCategories,
-                                  currentCategoryId: isEdit
-                                      ? provider.categories[index].id
-                                      : '',
-                                  allCategories: provider.categories,
-                                  onMove: (fromCategoryId, toCategoryId, name) {
-                                    provider.moveSubCategory(
-                                        fromCategoryId, toCategoryId, name);
-                                  },
-                                )
-                            : null,
+                        onTap: showSubCategoryMenu,
+                        onSecondaryTap:
+                            isDesktopPlatform ? showSubCategoryMenu : null,
                       ),
 
                     // 隐藏区域
@@ -1845,15 +1955,28 @@ class HomeScreenState extends State<HomeScreen> {
                   child: const Text('取消')),
               ElevatedButton(
                 onPressed: () {
+                  final currentIndex = isEdit
+                      ? provider.categories.indexWhere(
+                          (category) => category.id == existingCat.id)
+                      : -1;
                   final newCat = Category(
-                    id: isEdit ? provider.categories[index].id : null,
+                    id: isEdit ? existingCat.id : null,
                     name: catName,
                     color: selectedColor,
                     subCategories: tempSubCategories,
                     hiddenSubCategories: tempHiddenSubCategories,
                   );
                   final result = isEdit
-                      ? provider.updateCategoryWithResult(index, newCat)
+                      ? provider.updateCategoryWithResult(
+                          currentIndex,
+                          newCat,
+                          expectedCategory: expectedCategory,
+                          subCategoryRenames: {
+                            for (final entry in originalNamesByCurrent.entries)
+                              if (entry.key != entry.value)
+                                entry.value: entry.key,
+                          },
+                        )
                       : provider.addCategoryWithResult(newCat);
                   if (!result.isSuccess) {
                     showAppSnackBar(
@@ -1877,7 +2000,10 @@ class HomeScreenState extends State<HomeScreen> {
           );
         },
       ),
-    ).whenComplete(() {
+    );
+    navigator.push(route);
+    // push 的返回值在 pop 时就完成；completed 要等退场动画与子树销毁。
+    route.completed.whenComplete(() {
       nameController.dispose();
       subCatController.dispose();
       hexController.dispose();

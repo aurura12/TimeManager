@@ -95,8 +95,8 @@ List<String> _seedCategoriesJson() => [
         subCategories: ['会议', '文档'],
         updatedAt: 100,
       ).toJson()),
-      jsonEncode(Category(name: '运动', color: Colors.green, updatedAt: 100)
-          .toJson()),
+      jsonEncode(
+          Category(name: '运动', color: Colors.green, updatedAt: 100).toJson()),
     ];
 
 void _installPluginMocks({Map<String, Object> prefs = const {}}) {
@@ -208,8 +208,7 @@ _GridGeometry _gridGeometry(
 ) {
   final grid = tester.widget<TimeGrid>(find.byType(TimeGrid).at(column));
   final rect = tester.getRect(find.byType(TimeGrid).at(column));
-  final offset =
-      grid.controller.hasClients ? grid.controller.offset : 0.0;
+  final offset = grid.controller.hasClients ? grid.controller.offset : 0.0;
   return _GridGeometry(rect, rect.width / 6, offset);
 }
 
@@ -257,6 +256,65 @@ Future<void> _selectCell(WidgetTester tester, Offset point) async {
 }
 
 void main() {
+  testWidgets('子事件改名先校验并保留草稿，只有保存事件才更新历史', (tester) async {
+    final provider = await _pumpHome(tester, size: const Size(1600, 900));
+    final study = _category(provider, '学习');
+    provider.assignCategoryToSlots({0}, study, subLabel: '阅读');
+
+    Future<void> openEditor() async {
+      final mouse = await tester.startGesture(
+        tester.getCenter(_categoryItem('学习')),
+        kind: PointerDeviceKind.mouse,
+        buttons: kSecondaryMouseButton,
+      );
+      await mouse.up();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('编辑事件'));
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> renameDraft({bool verifyDuplicate = false}) async {
+      final chip = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('阅读'),
+      );
+      await tester.ensureVisible(chip);
+      await tester.tap(chip);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('重命名'));
+      await tester.pumpAndSettle();
+      final nameField = find.byWidgetPredicate((widget) =>
+          widget is TextField && widget.decoration?.labelText == '子事件名称');
+      if (verifyDuplicate) {
+        await tester.enterText(nameField, '编程');
+        await tester.tap(find.text('确定'));
+        await tester.pumpAndSettle();
+        expect(find.text('子事件“编程”重复，请使用其他名称'), findsOneWidget);
+      }
+      await tester.enterText(nameField, '读书');
+      await tester.tap(find.text('确定'));
+      await tester.pumpAndSettle();
+      expect(find.text('读书'), findsOneWidget);
+      expect(provider.slots[0].label, '阅读');
+    }
+
+    await openEditor();
+    await renameDraft(verifyDuplicate: true);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(_category(provider, '学习').subCategories, contains('阅读'));
+    expect(provider.slots[0].label, '阅读');
+
+    await openEditor();
+    await renameDraft();
+    await tester.tap(find.text('保存修改'));
+    await tester.pumpAndSettle();
+    expect(_category(provider, '学习').subCategories, contains('读书'));
+    expect(provider.slots[0].label, '读书');
+    expect(tester.takeException(), isNull);
+    await _drainPendingSync(tester);
+  });
+
   testWidgets('拖宽事件栏可并排选择子事件，网格刷子与右键编辑仍然正确', (tester) async {
     final provider = await _pumpHome(tester, size: const Size(1600, 900));
     final panel = find.byKey(const ValueKey('category-panel'));

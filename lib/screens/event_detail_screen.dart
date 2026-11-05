@@ -5,12 +5,19 @@ import '../providers/time_provider.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+
 class EventDetailScreen extends StatelessWidget {
   final String eventName;
   final int tabIndex;
+  final bool groupDeleted;
+  final bool includeDeleted;
 
   const EventDetailScreen(
-      {super.key, required this.eventName, required this.tabIndex});
+      {super.key,
+      required this.eventName,
+      required this.tabIndex,
+      this.groupDeleted = true,
+      this.includeDeleted = true});
 
   @override
   Widget build(BuildContext context) {
@@ -19,7 +26,8 @@ class EventDetailScreen extends StatelessWidget {
 
     // 普通详情仍按时间平铺；“已删除”详情额外携带父事件关系。
     final Map<String, List<EventHistoryItem>> history =
-        provider.getEventHistory(eventName, tabIndex);
+        provider.getEventHistory(eventName, tabIndex,
+            groupDeleted: groupDeleted, includeDeleted: includeDeleted);
     final showDeletedRelations = provider.isDeletedEventName(eventName);
 
     return Scaffold(
@@ -33,7 +41,8 @@ class EventDetailScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text("时间分布详情",
-                  style: AppText.pageTitle.copyWith(fontWeight: FontWeight.bold)),
+                  style:
+                      AppText.pageTitle.copyWith(fontWeight: FontWeight.bold)),
               const SizedBox(height: 16),
               if (history.isEmpty)
                 Padding(
@@ -64,10 +73,10 @@ class EventDetailScreen extends StatelessWidget {
                         // 日期标题
                         Text(entry.key,
                             style: AppText.sectionTitle.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: AppSemanticColors.readableOn(
-                                    AppSemanticColors.brand,
-                                    AppSurfaces.of(context).card),
+                              fontWeight: FontWeight.bold,
+                              color: AppSemanticColors.readableOn(
+                                  AppSemanticColors.brand,
+                                  AppSurfaces.of(context).card),
                             )),
                         const SizedBox(height: 8),
                         if (showDeletedRelations)
@@ -151,8 +160,7 @@ class EventDetailScreen extends StatelessWidget {
             child: Text(
               label,
               overflow: TextOverflow.ellipsis,
-              style:
-                  AppText.body.copyWith(color: colorScheme.onSurfaceVariant),
+              style: AppText.body.copyWith(color: colorScheme.onSurfaceVariant),
             ),
           ),
         ],

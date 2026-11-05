@@ -603,7 +603,9 @@ class ProfileScreenState extends State<ProfileScreen>
         const SizedBox(width: 4),
         Text(
           text,
-          style: AppText.badge.copyWith(fontWeight: FontWeight.normal, color: colorScheme.onSurfaceVariant),
+          style: AppText.badge.copyWith(
+              fontWeight: FontWeight.normal,
+              color: colorScheme.onSurfaceVariant),
         ),
       ],
     );
@@ -695,9 +697,9 @@ class ProfileScreenState extends State<ProfileScreen>
           children: [
             Text(value,
                 style: AppText.display.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: colorScheme.onSurface,
-                    letterSpacing: -1,
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.onSurface,
+                  letterSpacing: -1,
                 )),
             const SizedBox(height: 4),
             Row(
@@ -710,8 +712,8 @@ class ProfileScreenState extends State<ProfileScreen>
                 const SizedBox(width: 6),
                 Text(label,
                     style: AppText.caption.copyWith(
-                        fontWeight: FontWeight.w500,
-                        color: colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w500,
+                      color: colorScheme.onSurfaceVariant,
                     )),
               ],
             ),
@@ -766,6 +768,8 @@ class ProfileScreenState extends State<ProfileScreen>
                     builder: (context) => EventDetailScreen(
                       eventName: key,
                       tabIndex: tabIndex,
+                      groupDeleted: _groupDeletedEvents,
+                      includeDeleted: _showDeletedEvents,
                     ),
                   ),
                 );
@@ -779,8 +783,8 @@ class ProfileScreenState extends State<ProfileScreen>
               ),
               title: Text(key,
                   style: AppText.body.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: colorScheme.onSurface,
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.onSurface,
                   )),
               subtitle: Text("占比 ${percent.toStringAsFixed(1)}%",
                   style: AppText.caption.copyWith(
@@ -788,8 +792,8 @@ class ProfileScreenState extends State<ProfileScreen>
                   )),
               trailing: Text("${val.toStringAsFixed(2)} h",
                   style: AppText.sectionTitle.copyWith(
-                      fontWeight: FontWeight.w900,
-                      color: colorScheme.onSurface,
+                    fontWeight: FontWeight.w900,
+                    color: colorScheme.onSurface,
                   )),
             ),
           );
@@ -848,6 +852,8 @@ class ProfileScreenState extends State<ProfileScreen>
                             builder: (context) => EventDetailScreen(
                               eventName: stats[index].key,
                               tabIndex: tabIndex,
+                              groupDeleted: _groupDeletedEvents,
+                              includeDeleted: _showDeletedEvents,
                             ),
                           ),
                         );

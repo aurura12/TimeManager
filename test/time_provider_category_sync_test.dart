@@ -124,6 +124,90 @@ void main() {
     );
   });
 
+  test('收到远端子事件删除后在本机恢复删除关系，不把关系写入分类文档', () async {
+    final old = Category(
+      id: 'study',
+      name: '学习',
+      color: Colors.blue,
+      subCategories: ['阅读', '英语'],
+      updatedAt: 100,
+    );
+    final state = _CategoryRemoteState();
+    state.contents['g'] = encodeCategoryDocument(
+      CategoryDocument(
+        updatedAt: 200,
+        categories: [
+          old.copyWith(subCategories: ['英语'], updatedAt: 200)
+        ],
+      ),
+      nowMs: 200,
+    );
+    final provider = await _createProvider(
+      state,
+      initialPreferences: {
+        AppIdentityResolver.dataKey(DiaryKind.g, 'categories'): [
+          jsonEncode(old.toJson()),
+        ],
+      },
+    );
+    addTearDown(provider.dispose);
+    await _waitUntil(() => provider.categories.any((category) =>
+        category.id == old.id && !category.subCategories.contains('阅读')));
+    expect(
+      provider.deletedEventRelations.any((relation) =>
+          relation.categoryId == old.id &&
+          relation.parentName == '学习' &&
+          relation.eventName == '阅读'),
+      isTrue,
+    );
+    expect(await provider.retryLocalSave(), isTrue);
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+      prefs.getStringList(
+          AppIdentityResolver.dataKey(DiaryKind.g, 'deleted_relations')),
+      isNotEmpty,
+    );
+    expect(jsonDecode(state.contents['g']!)['deletedRelations'], isNull);
+  });
+
+  test('新设备仅有旧日程和远端当前分类时仍能识别已删除子事件', () async {
+    final date = DateTime.now();
+    final key = '${date.year}-${date.month.toString().padLeft(2, '0')}-'
+        '${date.day.toString().padLeft(2, '0')}';
+    final state = _CategoryRemoteState();
+    state.contents['g'] = encodeCategoryDocument(
+      CategoryDocument(updatedAt: 200, categories: [
+        Category(
+          id: 'study',
+          name: '学习',
+          color: Colors.blue,
+          subCategories: ['英语'],
+          updatedAt: 200,
+        ),
+      ]),
+      nowMs: 200,
+    );
+    final provider = await _createProvider(
+      state,
+      initialPreferences: {
+        AppIdentityResolver.dataKey(DiaryKind.g, 'daily_slots'): jsonEncode({
+          key: [
+            {'i': 0, 'l': '阅读', 'cid': 'study', 'ts': 1},
+          ],
+        }),
+      },
+    );
+    addTearDown(provider.dispose);
+    await _waitUntil(
+        () => provider.categories.any((item) => item.id == 'study'));
+    expect(
+        provider.getParentStatistics(date, date)['已删除'], closeTo(1 / 6, 1e-9));
+    final history = provider.getEventHistory('已删除', 0);
+    final item = history.values.expand((items) => items).single;
+    expect(item.label, '阅读');
+    expect(item.parentName, '学习');
+  });
+
   test('回到前台时在冷却时间内不会重复拉取分类', () async {
     final state = _CategoryRemoteState();
     state.contents['g'] = encodeCategoryDocument(

@@ -111,6 +111,23 @@ class _CountingProvider extends TimeProvider {
   }
 
   @override
+  Map<String, double> getParentStatistics(DateTime start, DateTime end,
+      {bool includeDeleted = true}) {
+    statsCalls++;
+    return super
+        .getParentStatistics(start, end, includeDeleted: includeDeleted);
+  }
+
+  @override
+  Map<String, double> getStatisticsWithTemporaryGrouped(
+      DateTime start, DateTime end,
+      {bool groupDeleted = true, bool includeDeleted = true}) {
+    statsCalls++;
+    return super.getStatisticsWithTemporaryGrouped(start, end,
+        groupDeleted: groupDeleted, includeDeleted: includeDeleted);
+  }
+
+  @override
   List<DailyStatistics> getDailyStatistics(DateTime start, DateTime end) {
     dailyCalls++;
     return lastDailyStatistics = super.getDailyStatistics(start, end);
