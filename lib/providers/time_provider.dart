@@ -722,6 +722,9 @@ class TimeProvider with ChangeNotifier {
   final AppLogService _appLogService;
   final SyncStatusCoordinator? _statusCoordinator;
   final Future<bool> Function()? _saveDataOverride;
+
+  /// 日程落盘后的提交回调（时间块提醒据此重排），不反向依赖提醒服务。
+  final void Function()? _onScheduleCommitted;
   final void Function(String key)? _scheduleSnapshotWriteObserver;
   final void Function(String phase)? _scheduleSnapshotJournalPhaseObserver;
   final Future<bool> Function()? _scheduleSnapshotJournalRemoveOverride;
@@ -981,6 +984,10 @@ class TimeProvider with ChangeNotifier {
   /// 是否正在查看对方日程（合并了远端数据）
   bool _remoteViewEnabled = false;
   bool get isRemoteViewEnabled => _remoteViewEnabled;
+
+  /// 时间块提醒的数据源是否可用：身份数据已加载，且没有处在「查看对方日程」。
+  bool get isTimeBlockReminderSourceReady =>
+      _isScheduleIdentityReady && !_remoteViewEnabled;
   final Map<String, String> _remoteViewBackup = {}; // dateKey → 本地 JSON 快照
   int _schedulePullRevision = 0;
   // Remote view has asynchronous save/pull phases. Claim this lock before
@@ -1742,6 +1749,7 @@ class TimeProvider with ChangeNotifier {
     void Function(String key)? scheduleSnapshotWriteObserver,
     void Function(String phase)? scheduleSnapshotJournalPhaseObserver,
     Future<bool> Function()? scheduleSnapshotJournalRemoveOverride,
+    void Function()? onScheduleCommitted,
   })  : _localSaveDebounce = localSaveDebounce,
         _scheduleGiteeDebounce = scheduleGiteeDebounce,
         _scheduleAutoRefreshInterval = scheduleAutoRefreshInterval,
@@ -1769,7 +1777,8 @@ class TimeProvider with ChangeNotifier {
         _scheduleSnapshotJournalPhaseObserver =
             scheduleSnapshotJournalPhaseObserver,
         _scheduleSnapshotJournalRemoveOverride =
-            scheduleSnapshotJournalRemoveOverride {
+            scheduleSnapshotJournalRemoveOverride,
+        _onScheduleCommitted = onScheduleCommitted {
     _lastKnownToday = localDayOf(_currentDate);
     if (_googleCalendarSyncPlatformOverride != null) {
       _googleCalendarSyncEnabled = _googleCalendarSyncPlatformOverride!;
@@ -2132,6 +2141,7 @@ class TimeProvider with ChangeNotifier {
     if (!_allowScheduleNavigation()) return false;
     _lastKnownToday = today;
     goToDate(today);
+    _onScheduleCommitted?.call();
     return true;
   }
 
@@ -8735,7 +8745,11 @@ class TimeProvider with ChangeNotifier {
       _deferredScheduleSaveRequested = true;
       return false;
     }
-    if (snapshot != null) return _saveScheduleSnapshot(snapshot);
+    if (snapshot != null) {
+      final saved = await _saveScheduleSnapshot(snapshot);
+      if (saved) _onScheduleCommitted?.call();
+      return saved;
+    }
 
     final prefs = await SharedPreferences.getInstance();
     if (!_isScheduleReady || !canPersist()) return false;
@@ -8959,6 +8973,7 @@ class TimeProvider with ChangeNotifier {
       await _refreshHomeWidget();
       if (!canPersist()) return false;
     }
+    if (slotsChanged) _onScheduleCommitted?.call();
     return true;
   }
 

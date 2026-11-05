@@ -20,6 +20,7 @@ import 'providers/desktop_layout_provider.dart';
 import 'package:time_manager/theme/app_semantic_colors.dart';
 import 'package:time_manager/theme/app_scroll_behavior.dart';
 import 'package:time_manager/theme/app_theme.dart';
+import 'models/time_block_reminder.dart';
 import 'providers/time_provider.dart';
 import 'providers/wake_up_provider.dart';
 import 'services/wake_up_sync_dependencies.dart';
@@ -35,11 +36,34 @@ import 'services/home_widget_action_router.dart';
 import 'services/home_widget_service.dart';
 import 'services/reminder_platform.dart';
 import 'services/sync_center_service.dart';
+import 'services/time_block_reminder_service.dart';
 import 'services/windows_legacy_preferences_migration.dart';
+import 'utils/local_day_range.dart';
+import 'utils/time_block_reminder_plan.dart';
 import 'widgets/desktop_shortcut_host.dart';
 import 'widgets/background_image_layer.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
+
+/// 供时间块提醒读取「今天 + 未来两天」的槽位快照。
+///
+/// 返回 null 表示数据尚未就绪（初始化中 / 身份切换 / 正在查看对方日程）：
+/// 服务会原样保留现有排程，不能把「读不到」当成「没有事件」。
+List<TimeBlockReminderDay>? _timeBlockReminderDays(TimeProvider provider) {
+  if (!provider.isInitialLoadFinished) return null;
+  if (!provider.isTimeBlockReminderSourceReady) return null;
+  final today = localDayOf(DateTime.now());
+  return <TimeBlockReminderDay>[
+    for (var offset = 0; offset < timeBlockReminderDayCount; offset++)
+      TimeBlockReminderDay(
+        date: today.add(Duration(days: offset)),
+        slots: provider.getSlotsForDate(
+              provider.dateKeyFor(today.add(Duration(days: offset))),
+            ) ??
+            const [],
+      ),
+  ];
+}
 
 enum SafeErrorPageKind {
   render,
@@ -442,6 +466,17 @@ Future<void> _initializeAndRunApplication({
           stackTrace: stackTrace,
         );
       }
+      try {
+        // 只初始化插件、通道与身份订阅；真正排程等首份时间块数据就绪。
+        await TimeBlockReminderService.initialize();
+      } catch (error, stackTrace) {
+        appLogService.error(
+          '时间块提醒初始化失败',
+          source: TimeBlockReminderService.logSource,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
     }());
   }
 
@@ -454,12 +489,20 @@ Future<void> _initializeAndRunApplication({
           create: (context) => SyncStatusCoordinator(),
         ),
         ChangeNotifierProvider<TimeProvider>(
-          create: (context) => TimeProvider(
-            statusCoordinator: context.read<SyncStatusCoordinator>(),
-            // 前台每 60 秒做一次「只看远端 SHA」的日程增量拉取，
-            // 远端与本地一致时不下载正文；切后台自动停止。
-            scheduleAutoRefreshInterval: const Duration(seconds: 60),
-          ),
+          create: (context) {
+            final provider = TimeProvider(
+              statusCoordinator: context.read<SyncStatusCoordinator>(),
+              // 前台每 60 秒做一次「只看远端 SHA」的日程增量拉取，
+              // 远端与本地一致时不下载正文；切后台自动停止。
+              scheduleAutoRefreshInterval: const Duration(seconds: 60),
+              // 时间块提醒靠落盘提交回调重排，服务不反向依赖 Provider。
+              onScheduleCommitted: TimeBlockReminderService.requestReconcile,
+            );
+            TimeBlockReminderService.attachScheduleSource(
+              () => _timeBlockReminderDays(provider),
+            );
+            return provider;
+          },
         ),
         // 起床同步不依赖目标页是否打开或显示，隐藏该标签时仍能跨端同步。
         ChangeNotifierProvider<WakeUpProvider>(
@@ -589,6 +632,7 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
   HomeWidgetActionRequest? _pendingHomeWidgetAction;
   bool _pendingDiaryReminderRoute = false;
   bool _pendingCheckInReminderRoute = false;
+  DateTime? _pendingTimeBlockReminderDate;
   final _RootRouteTracker _rootRouteTracker = _RootRouteTracker();
   final _mainScreenKey = GlobalKey<MainScreenState>();
   static const _desktopCommands =
@@ -622,6 +666,7 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
       // 插件只能初始化一次，所以冷启动读取由 ReminderPlatform 统一负责。
       DiaryReminderService.bindTapHandler(_openDiaryFromReminder);
       CheckInReminderService.bindTapHandler(_openCheckInFromReminder);
+      TimeBlockReminderService.bindTapHandler(_openTimeBlockFromReminder);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         unawaited(_readInitialReminderLaunch());
       });
@@ -746,6 +791,35 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
         builder: (_) => const DiaryScreen(),
       ),
     ));
+  }
+
+  /// 时间块提醒的点击落点：切到「记录」页并跳到事件所在日期。
+  void _openTimeBlockFromReminder(TimeBlockReminderTap tap) {
+    final date = tap.date;
+    if (date == null) return;
+    _pendingTimeBlockReminderDate = date;
+    _dispatchPendingTimeBlockReminderRoute();
+  }
+
+  void _dispatchPendingTimeBlockReminderRoute() {
+    if (!mounted) return;
+    final date = _pendingTimeBlockReminderDate;
+    if (date == null) return;
+
+    final navigator = rootNavigatorKey.currentState;
+    if (navigator == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _dispatchPendingTimeBlockReminderRoute();
+      });
+      return;
+    }
+
+    _pendingTimeBlockReminderDate = null;
+    // 点击可能发生在日记 / 搜索等 push 路由上：先回根路由再切 Tab。
+    navigator.popUntil((route) => route.isFirst);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _mainScreenKey.currentState?.openRecordAtDate(date);
+    });
   }
 
   @override

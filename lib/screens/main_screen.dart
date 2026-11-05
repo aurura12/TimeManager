@@ -20,6 +20,7 @@ import '../services/diary_reminder_service.dart';
 import '../services/diary_search_service.dart';
 import '../services/on_this_day_service.dart';
 import '../services/sync_status_coordinator.dart';
+import '../services/time_block_reminder_service.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/adaptive.dart';
@@ -70,6 +71,21 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     });
   }
 
+  /// 点时间块提醒后落到「记录」页，并把视图切到事件所在日期。
+  ///
+  /// 记录页本身跟随 provider 的 currentDate，不需要再传参；「记录」被隐藏时
+  /// 走临时切换（返回键回「我的」），保持与「更多功能」一致。
+  void openRecordAtDate(DateTime date) {
+    if (!mounted) return;
+    _hiddenTabHistory?.remove();
+    _timeProvider.goToDate(date);
+    if (_mainTabProvider.visibleTabs.contains(MainTabId.record)) {
+      _onItemTapped(MainTabId.record);
+    } else {
+      _openHiddenTab(MainTabId.record);
+    }
+  }
+
   void _searchCurrentPage() {
     final type = switch (_selectedTab) {
       MainTabId.record => GlobalSearchContentType.timeRecord,
@@ -88,6 +104,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   // 那年今日弹窗状态
   String? _onThisDayShownDateKey; // 本次会话已弹过的日期（跨午夜时重置）
   bool _onThisDayChecking = false; // 正在检查中（防并发重复触发）
+  bool _reminderPlanSeeded = false; // 时间块提醒是否已按启动时的数据排过一轮
   static const _lastShownDateKey = 'on_this_day_last_shown_date';
 
   late final TimeProvider _timeProvider;
@@ -109,6 +126,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     // 日记上传不依赖日记页是否打开：冷启动和回前台都补推一次遗留草稿。
     _diaryAutoSync = DiaryAutoSyncService();
     _timeProvider.addListener(_tryShowOnThisDay);
+    _timeProvider.addListener(_seedTimeBlockReminderPlan);
     // 从「仅手动查看」切回自动弹出时，当天若还没弹过就立刻补一次。
     _onThisDayPopup?.addListener(_tryShowOnThisDay);
     _tabBuilders = {
@@ -133,6 +151,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     // 第一帧后也尝试一次（此时数据可能已就绪）
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _tryShowOnThisDay();
+      _seedTimeBlockReminderPlan();
       unawaited(_diaryAutoSync.flush(coordinator: _syncCoordinator));
     });
   }
@@ -149,6 +168,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _hiddenTabHistory = null;
     hiddenTabHistory?.remove();
     _timeProvider.removeListener(_tryShowOnThisDay);
+    _timeProvider.removeListener(_seedTimeBlockReminderPlan);
     _onThisDayPopup?.removeListener(_tryShowOnThisDay);
     _mainTabProvider.removeListener(_onTabSettingsChanged);
     WidgetsBinding.instance.removeObserver(this);
@@ -217,6 +237,38 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         stackTrace: stackTrace,
       );
     }
+    try {
+      await TimeBlockReminderService.reconcile(
+        force: true,
+        trigger: TimeBlockReminderTrigger.resume,
+      );
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        '时间块提醒恢复自检失败',
+        source: TimeBlockReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  /// 数据首次就绪后排一轮时间块提醒。
+  ///
+  /// 启动时 provider 还没加载完，服务拿不到槽位；这里等第一次 notifyListeners
+  /// 再排，避免把「数据未就绪」误当成「今天没有事件」。
+  void _seedTimeBlockReminderPlan() {
+    if (_reminderPlanSeeded || !mounted) return;
+    if (!_timeProvider.isInitialLoadFinished ||
+        !_timeProvider.isTimeBlockReminderSourceReady) {
+      return;
+    }
+    _reminderPlanSeeded = true;
+    unawaited(
+      TimeBlockReminderService.reconcile(
+        force: true,
+        trigger: TimeBlockReminderTrigger.startup,
+      ),
+    );
   }
 
   Future<void> _tryShowOnThisDay() async {
