@@ -173,8 +173,8 @@ void main() {
     expect(find.text('写日记提醒'), findsOneWidget);
     expect(find.text('提醒时间'), findsOneWidget);
     expect(find.text('21:00'), findsOneWidget);
-    expect(find.text('发送测试通知'), findsOneWidget);
-    expect(find.text('已关闭'), findsOneWidget);
+    expect(find.text('发送测试通知'), findsNWidgets(2));
+    expect(find.text('已关闭'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
 
@@ -212,7 +212,7 @@ void main() {
 
     await pumpDrawer(tester, android: true);
 
-    expect(find.text('请先选择用户身份'), findsOneWidget);
+    expect(find.text('请先选择用户身份'), findsWidgets);
     final switchTile = tester.widget<SwitchListTile>(
       find.byType(SwitchListTile).last,
     );
@@ -227,7 +227,7 @@ void main() {
     // 抽屉必须照常渲染，异常不能抛进 build
     expect(tester.takeException(), isNull);
     expect(find.text('写日记提醒'), findsOneWidget);
-    expect(find.text('提醒初始化失败，请查看运行日志'), findsOneWidget);
+    expect(find.text('提醒初始化失败，请查看运行日志'), findsWidgets);
   });
 
   testWidgets('提醒异常收起时可见，展开后显示处理说明', (tester) async {
@@ -241,7 +241,7 @@ void main() {
 
     await tester.tap(find.text('提醒设置'));
     await tester.pumpAndSettle();
-    expect(find.text('提醒初始化失败，请查看运行日志'), findsOneWidget);
+    expect(find.text('提醒初始化失败，请查看运行日志'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 

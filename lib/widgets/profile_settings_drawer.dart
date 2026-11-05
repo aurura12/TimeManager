@@ -6,6 +6,7 @@ import '../utils/platform_features.dart';
 
 import 'package:flutter/material.dart';
 import '../models/diary_reminder.dart';
+import '../models/time_block_reminder.dart';
 import '../models/google_calendar_user.dart';
 import '../models/event_label_style.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -26,6 +27,7 @@ import '../screens/desktop_layout_settings_screen.dart';
 import '../services/app_log_service.dart';
 import '../services/data_backup_service.dart';
 import '../services/diary_reminder_service.dart';
+import '../services/time_block_reminder_service.dart';
 import '../services/update_service.dart';
 import '../screens/app_log_screen.dart';
 import '../screens/main_tab_settings_screen.dart';
@@ -37,6 +39,7 @@ import '../services/sync_center_service.dart';
 import '../services/app_identity_service.dart';
 import '../models/diary_kind.dart';
 import '../theme/app_semantic_colors.dart';
+import 'time_block_reminder_lead_sheet.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import 'background_image_layer.dart';
@@ -92,10 +95,16 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
   bool _diaryReminderBusy = false;
   DiaryReminderStatus? _diaryReminderStatus;
 
+  /// 时间块提醒（仅 Android），同样只活在抽屉里。
+  bool _timeBlockReminderLoaded = false;
+  bool _timeBlockReminderBusy = false;
+  TimeBlockReminderStatus? _timeBlockReminderStatus;
+
   @override
   void initState() {
     super.initState();
     unawaited(_loadDiaryReminderStatus());
+    unawaited(_loadTimeBlockReminderStatus());
   }
 
   @override
@@ -112,6 +121,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     if (previous == _ProfileDrawerSection.account ||
         _expandedSection == _ProfileDrawerSection.reminders) {
       unawaited(_loadDiaryReminderStatus());
+      unawaited(_loadTimeBlockReminderStatus());
     }
   }
 
@@ -218,9 +228,13 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
   ) {
     final colorScheme = Theme.of(context).colorScheme;
     final reminderStatus = _diaryReminderStatus;
-    final reminderNeedsAttention = reminderStatus != null &&
-        (reminderStatus.issue != DiaryReminderIssue.none ||
-            reminderStatus.message != null);
+    final timeBlockReminderStatus = _timeBlockReminderStatus;
+    final reminderNeedsAttention = (reminderStatus != null &&
+            (reminderStatus.issue != DiaryReminderIssue.none ||
+                reminderStatus.message != null)) ||
+        (timeBlockReminderStatus != null &&
+            (timeBlockReminderStatus.issue != TimeBlockReminderIssue.none ||
+                timeBlockReminderStatus.message != null));
     final interactionSubtitle = [
       if (isDesktop && context.read<DesktopLayoutProvider?>() != null)
         '桌面布局',
@@ -310,9 +324,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               context,
               section: _ProfileDrawerSection.reminders,
               icon: Icons.notifications_none_rounded,
-              subtitle: !_diaryReminderLoaded || reminderStatus == null
-                  ? '正在读取设置…'
-                  : _diaryReminderSubtitle(reminderStatus),
+              subtitle: _remindersGroupSubtitle(),
               needsAttention: reminderNeedsAttention,
             ),
           _buildGroup(
@@ -640,6 +652,10 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
         ],
       _ProfileDrawerSection.reminders => [
           _buildDiaryReminderSection(context, Theme.of(context).colorScheme),
+          _buildTimeBlockReminderSection(
+            context,
+            Theme.of(context).colorScheme,
+          ),
         ],
       _ProfileDrawerSection.backup => [
           ListTile(
@@ -1017,6 +1033,287 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
       AppLogService.instance.warning(
         '打开系统通知设置失败',
         source: DiaryReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+
+  /// 提醒设置分组的副标题：两类提醒各自独立，这里只做汇总。
+  String _remindersGroupSubtitle() {
+    final diary = _diaryReminderLoaded ? _diaryReminderStatus : null;
+    final timeBlock =
+        _timeBlockReminderLoaded ? _timeBlockReminderStatus : null;
+    if (diary == null && timeBlock == null) return '正在读取设置…';
+    // 折叠状态下也要能看出异常：优先显示真正的问题，再退回汇总。
+    if (diary != null && diary.issue != DiaryReminderIssue.none) {
+      return _diaryReminderSubtitle(diary);
+    }
+    if (timeBlock != null &&
+        timeBlock.issue != TimeBlockReminderIssue.none &&
+        timeBlock.issue != TimeBlockReminderIssue.sourceUnavailable) {
+      return _timeBlockReminderSubtitle(timeBlock);
+    }
+    if (diary == null || timeBlock == null) return '正在读取设置…';
+    final enabled = <String>[
+      if (diary.settings.enabled) '写日记',
+      if (timeBlock.settings.enabled) '时间块',
+    ];
+    return enabled.isEmpty ? '均未开启' : '已开启：${enabled.join('、')}';
+  }
+
+  /// 时间块提醒分区。与写日记提醒同一套置灰与回滚规则。
+  Widget _buildTimeBlockReminderSection(
+    BuildContext context,
+    ColorScheme colorScheme,
+  ) {
+    final status = _timeBlockReminderStatus;
+    if (!_timeBlockReminderLoaded || status == null) {
+      return const ListTile(
+        leading: Icon(Icons.event_available_outlined),
+        title: Text('时间块提醒'),
+        subtitle: Text('正在读取设置...'),
+      );
+    }
+
+    final settings = status.settings;
+    final blockEditing =
+        status.issue == TimeBlockReminderIssue.unsupportedPlatform ||
+            status.issue == TimeBlockReminderIssue.statusUnavailable ||
+            status.issue == TimeBlockReminderIssue.identityUnavailable;
+    final canEdit = !blockEditing && !_timeBlockReminderBusy;
+    final message = status.message;
+
+    return Column(
+      children: [
+        SwitchListTile(
+          secondary: const Icon(Icons.event_available_outlined),
+          title: const Text('时间块提醒'),
+          subtitle: Text(_timeBlockReminderSubtitle(status)),
+          value: settings.enabled,
+          onChanged: canEdit
+              ? (value) => _handleTimeBlockReminderToggle(value)
+              : null,
+        ),
+        ListTile(
+          leading: const Icon(Icons.av_timer_outlined),
+          title: const Text('提前量'),
+          subtitle: Text(settings.leadLabel),
+          trailing: const Icon(Icons.chevron_right),
+          enabled: canEdit && settings.enabled,
+          onTap:
+              canEdit && settings.enabled ? _pickTimeBlockReminderLead : null,
+        ),
+        if (message != null)
+          ListTile(
+            leading:
+                Icon(Icons.warning_amber_rounded, color: colorScheme.error),
+            title: Text(message),
+            subtitle: status.issue == TimeBlockReminderIssue.none
+                ? null
+                : const Text('点按前往系统设置'),
+            onTap: status.issue == TimeBlockReminderIssue.none
+                ? null
+                : _openTimeBlockReminderSettings,
+          ),
+        ListTile(
+          leading: const Icon(Icons.notifications_none_rounded),
+          title: const Text('发送测试通知'),
+          subtitle: const Text('立即验证通知权限、通道与图标是否正常'),
+          enabled: !_timeBlockReminderBusy,
+          onTap: _sendTimeBlockReminderTest,
+        ),
+      ],
+    );
+  }
+
+  Future<void> _loadTimeBlockReminderStatus() async {
+    try {
+      final status = await TimeBlockReminderService.loadStatus();
+      if (!mounted) return;
+      setState(() {
+        _timeBlockReminderStatus = status;
+        _timeBlockReminderLoaded = true;
+      });
+    } catch (error, stackTrace) {
+      AppLogService.instance.warning(
+        '读取时间块提醒设置失败',
+        source: TimeBlockReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) return;
+      setState(() {
+        _timeBlockReminderStatus = const TimeBlockReminderStatus.fallback();
+        _timeBlockReminderLoaded = true;
+      });
+    }
+  }
+
+  String _timeBlockReminderSubtitle(TimeBlockReminderStatus status) {
+    switch (status.issue) {
+      case TimeBlockReminderIssue.unsupportedPlatform:
+        return '当前平台不支持';
+      case TimeBlockReminderIssue.statusUnavailable:
+        return '读取设置失败';
+      case TimeBlockReminderIssue.identityUnavailable:
+        return '请先选择用户身份';
+      case TimeBlockReminderIssue.timezoneUnavailable:
+        return '系统时区异常，已暂停提醒';
+      case TimeBlockReminderIssue.notificationsDenied:
+        return '通知权限未授予';
+      case TimeBlockReminderIssue.channelDisabled:
+        return '通知通道已被关闭';
+      case TimeBlockReminderIssue.exactAlarmDenied:
+        return status.scheduledCount > 0 ? '已开启（可能延迟几分钟）' : '尚未登记';
+      case TimeBlockReminderIssue.scheduleFailed:
+        return status.scheduledCount > 0 ? '已开启' : '排程失败';
+      case TimeBlockReminderIssue.saveFailed:
+        return '保存设置失败';
+      case TimeBlockReminderIssue.sourceUnavailable:
+        return '正在读取时间块…';
+      case TimeBlockReminderIssue.none:
+        if (!status.settings.enabled) return '已关闭';
+        return '已开启 · ${status.settings.leadLabel} · '
+            '未来 3 天 ${status.scheduledCount} 个提醒';
+    }
+  }
+
+  Future<void> _handleTimeBlockReminderToggle(bool enabled) async {
+    final current = _timeBlockReminderStatus?.settings;
+    if (current == null) return;
+
+    setState(() => _timeBlockReminderBusy = true);
+    try {
+      var status = await TimeBlockReminderService.saveSettings(
+        current.copyWith(enabled: enabled),
+      );
+
+      if (enabled && status.issue != TimeBlockReminderIssue.none) {
+        status = await TimeBlockReminderService.requestPermissions();
+        if (_shouldRollBackTimeBlockToOff(status)) {
+          // 不留下一个永远不会响的「已开启」。
+          status = await TimeBlockReminderService.saveSettings(
+            status.settings.copyWith(enabled: false),
+          );
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _timeBlockReminderStatus = status;
+        _timeBlockReminderBusy = false;
+      });
+      widget.onChanged();
+
+      final message = status.message;
+      if (message != null) {
+        showAppSnackBar(context, message);
+      }
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        '切换时间块提醒失败',
+        source: TimeBlockReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) return;
+      setState(() => _timeBlockReminderBusy = false);
+      showAppSnackBar(context, '切换失败，请查看运行日志');
+    }
+  }
+
+  bool _shouldRollBackTimeBlockToOff(TimeBlockReminderStatus status) {
+    switch (status.issue) {
+      case TimeBlockReminderIssue.notificationsDenied:
+      case TimeBlockReminderIssue.timezoneUnavailable:
+      case TimeBlockReminderIssue.identityUnavailable:
+      case TimeBlockReminderIssue.scheduleFailed:
+      case TimeBlockReminderIssue.statusUnavailable:
+      case TimeBlockReminderIssue.unsupportedPlatform:
+      case TimeBlockReminderIssue.saveFailed:
+        return true;
+      case TimeBlockReminderIssue.none:
+      case TimeBlockReminderIssue.channelDisabled:
+      case TimeBlockReminderIssue.exactAlarmDenied:
+      case TimeBlockReminderIssue.sourceUnavailable:
+        return false;
+    }
+  }
+
+  Future<void> _pickTimeBlockReminderLead() async {
+    final current = _timeBlockReminderStatus?.settings;
+    if (current == null) return;
+
+    final picked = await showTimeBlockReminderLeadSheet(
+      context,
+      initialMinutes: current.leadMinutes,
+    );
+    if (picked == null || !mounted) return;
+
+    setState(() => _timeBlockReminderBusy = true);
+    try {
+      final status = await TimeBlockReminderService.saveSettings(
+        current.copyWith(leadMinutes: picked),
+      );
+      if (!mounted) return;
+      setState(() {
+        _timeBlockReminderStatus = status;
+        _timeBlockReminderBusy = false;
+      });
+      widget.onChanged();
+      final message = status.message;
+      if (message != null) {
+        showAppSnackBar(context, message);
+      }
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        '保存时间块提醒提前量失败',
+        source: TimeBlockReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) return;
+      setState(() => _timeBlockReminderBusy = false);
+      showAppSnackBar(context, '保存失败，请查看运行日志');
+    }
+  }
+
+  Future<void> _sendTimeBlockReminderTest() async {
+    setState(() => _timeBlockReminderBusy = true);
+    try {
+      final status = await TimeBlockReminderService.sendTestNotification();
+      if (!mounted) return;
+      setState(() {
+        _timeBlockReminderStatus = status;
+        _timeBlockReminderBusy = false;
+      });
+      final message = status.message;
+      showAppSnackBar(
+        context,
+        message ?? '测试通知已发送；若没看到，请检查系统通知设置',
+      );
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        '发送时间块提醒测试通知失败',
+        source: TimeBlockReminderService.logSource,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) return;
+      setState(() => _timeBlockReminderBusy = false);
+      showAppSnackBar(context, '发送失败，请查看运行日志');
+    }
+  }
+
+  Future<void> _openTimeBlockReminderSettings() async {
+    try {
+      await TimeBlockReminderService.openSystemSettings();
+    } catch (error, stackTrace) {
+      AppLogService.instance.warning(
+        '打开系统通知设置失败',
+        source: TimeBlockReminderService.logSource,
         error: error,
         stackTrace: stackTrace,
       );

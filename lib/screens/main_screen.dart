@@ -104,7 +104,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   // 那年今日弹窗状态
   String? _onThisDayShownDateKey; // 本次会话已弹过的日期（跨午夜时重置）
   bool _onThisDayChecking = false; // 正在检查中（防并发重复触发）
-  bool _reminderPlanSeeded = false; // 时间块提醒是否已按启动时的数据排过一轮
+  bool _reminderSourceReady = false; // 时间块数据是否已就绪（用于识别就绪边沿）
   static const _lastShownDateKey = 'on_this_day_last_shown_date';
 
   late final TimeProvider _timeProvider;
@@ -252,17 +252,20 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// 数据首次就绪后排一轮时间块提醒。
+  /// 时间块数据从「不可用」变成「可用」时排一轮提醒。
   ///
-  /// 启动时 provider 还没加载完，服务拿不到槽位；这里等第一次 notifyListeners
-  /// 再排，避免把「数据未就绪」误当成「今天没有事件」。
+  /// 覆盖三种边沿：启动（provider 加载完成）、切身份（数据换了一套）、
+  /// 退出「查看对方日程」。不用定时器，避免测试与后台常驻负担。
   void _seedTimeBlockReminderPlan() {
-    if (_reminderPlanSeeded || !mounted) return;
-    if (!_timeProvider.isInitialLoadFinished ||
-        !_timeProvider.isTimeBlockReminderSourceReady) {
+    if (!mounted) return;
+    final ready = _timeProvider.isInitialLoadFinished &&
+        _timeProvider.isTimeBlockReminderSourceReady;
+    if (!ready) {
+      _reminderSourceReady = false;
       return;
     }
-    _reminderPlanSeeded = true;
+    if (_reminderSourceReady) return;
+    _reminderSourceReady = true;
     unawaited(
       TimeBlockReminderService.reconcile(
         force: true,

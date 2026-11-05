@@ -66,11 +66,11 @@ class TimeBlockReminderService {
   static TimeBlockReminderScheduleSource? _source;
   static DateTime? _lastReconcileAt;
   static TimeBlockReminderStatus? _lastStatus;
-  static Future<void> _queue = Future<void>.value();
+  /// 串行队列。刻意留空并在调用方所在的 Zone 里懒创建：
+  /// 静态初始化的 Future 属于根 Zone，在 widget 测试的 FakeAsync 里不会被
+  /// pump 推进，会让第一次 reconcile 一直挂起。
+  static Future<void>? _queue;
   static Timer? _debounceTimer;
-  static Timer? _identityTimer;
-  static Timer? _midnightTimer;
-  static StreamSubscription<void>? _identitySubscription;
   static Map<String, TimeBlockReminderFiredRecord> _handled = {};
   static String? _handledScope;
 
@@ -88,15 +88,9 @@ class TimeBlockReminderService {
     _source = null;
     _lastReconcileAt = null;
     _lastStatus = null;
-    _queue = Future<void>.value();
+    _queue = null;
     _debounceTimer?.cancel();
     _debounceTimer = null;
-    _identityTimer?.cancel();
-    _identityTimer = null;
-    _midnightTimer?.cancel();
-    _midnightTimer = null;
-    _identitySubscription?.cancel();
-    _identitySubscription = null;
     _handled = {};
     _handledScope = null;
     clockOverride = null;
@@ -147,18 +141,6 @@ class TimeBlockReminderService {
           importance: Importance.high,
         ),
       );
-      _identitySubscription ??= AppIdentityService.changes.listen((_) {
-        // 身份切换时数据会被重新加载，等一拍再排，避免拿到旧身份的槽位。
-        _identityTimer?.cancel();
-        _identityTimer = Timer(const Duration(seconds: 1), () {
-          unawaited(
-            reconcile(
-              force: true,
-              trigger: TimeBlockReminderTrigger.identity,
-            ),
-          );
-        });
-      });
       status = _status(settings: await _readSettingsSafe());
     } catch (error, stackTrace) {
       _initialized = true;
@@ -174,7 +156,6 @@ class TimeBlockReminderService {
       );
     }
     _initialized = true;
-    _scheduleMidnightTimer();
     return status;
   }
 
@@ -260,6 +241,14 @@ class TimeBlockReminderService {
     if (init.issue == TimeBlockReminderIssue.scheduleFailed) return init;
 
     final settings = await _readSettingsSafe();
+    if (!await _ensureIdentityLoaded()) {
+      // 未选身份时开关必须置灰：否则会写进 identity_unbound_*，选完身份后设置凭空消失。
+      return _status(
+        settings: settings,
+        issue: TimeBlockReminderIssue.identityUnavailable,
+        message: '请先选择用户身份，再开启时间块提醒',
+      );
+    }
     if (!settings.enabled) {
       final backend = _backend;
       final exactAllowed =
@@ -292,7 +281,8 @@ class TimeBlockReminderService {
     TimeBlockReminderTrigger trigger = TimeBlockReminderTrigger.manual,
   }) {
     final completer = Completer<TimeBlockReminderStatus>();
-    _queue = _queue.then((_) async {
+    final previous = _queue ?? Future<void>.value();
+    _queue = previous.then((_) async {
       try {
         completer.complete(await _reconcile(force: force, trigger: trigger));
       } catch (error, stackTrace) {
@@ -489,7 +479,6 @@ class TimeBlockReminderService {
       channelImportance: channel?.importance.value,
     );
     _logSelfCheck('reconciled', status, plan: plan, reason: trigger.name);
-    _scheduleMidnightTimer();
     return _lastStatus = status;
   }
 
@@ -707,23 +696,6 @@ class TimeBlockReminderService {
     await _saveScheduledIds(const <int>{});
   }
 
-  static void _scheduleMidnightTimer() {
-    if (!_isAndroid) return;
-    _midnightTimer?.cancel();
-    final now = _now();
-    final next = DateTime(now.year, now.month, now.day + 1)
-        .add(const Duration(seconds: 2));
-    var delay = next.difference(now);
-    if (delay.isNegative || delay == Duration.zero) {
-      delay = const Duration(seconds: 1);
-    }
-    _midnightTimer = Timer(delay, () {
-      unawaited(
-        reconcile(force: true, trigger: TimeBlockReminderTrigger.midnight),
-      );
-    });
-  }
-
   // ------------------------------------------------------------ 持久化
 
   static Future<void> _loadHandled() async {
@@ -808,7 +780,8 @@ class TimeBlockReminderService {
 
   static Future<SharedPreferences> _prefs() async {
     await _ensureIdentityLoaded();
-    return SharedPreferences.getInstance();
+    final prefs = await SharedPreferences.getInstance();
+    return prefs;
   }
 
   static String _key(String baseKey) =>
