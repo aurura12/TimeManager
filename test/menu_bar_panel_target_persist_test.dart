@@ -124,7 +124,9 @@ void main() {
     // 分类顺序：[临时, 工作, 休息]；拨到「休息」，停下自动写入。
     _categoryController(tester).jumpToItem(2);
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(
+      MenuBarTargetDial.settleDelay + const Duration(milliseconds: 100),
+    );
     await tester.pumpAndSettle();
 
     final prefs = await SharedPreferences.getInstance();

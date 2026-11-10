@@ -128,7 +128,9 @@ void main() {
     await tester.pump();
     expect(writtenCategory, isNull);
 
-    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(
+      MenuBarTargetDial.settleDelay + const Duration(milliseconds: 100),
+    );
     expect(writtenCategory?.id, 'c1');
     expect(writtenSub, '开会');
     await _unmount(tester);
@@ -147,7 +149,9 @@ void main() {
 
     _controller(tester, MenuBarTargetDial.categoryWheelKey).jumpToItem(1);
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(
+      MenuBarTargetDial.settleDelay + const Duration(milliseconds: 100),
+    );
 
     expect(writtenCategory?.id, 'c2');
     expect(writtenSub, isNull);
@@ -164,7 +168,9 @@ void main() {
 
     _controller(tester, MenuBarTargetDial.categoryWheelKey).jumpToItem(0);
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 900));
+    await tester.pump(
+      MenuBarTargetDial.settleDelay + const Duration(milliseconds: 200),
+    );
 
     expect(writes, 0);
     expect(_subItemCount(tester), 3);
@@ -203,7 +209,9 @@ void main() {
 
     _controller(tester, MenuBarTargetDial.subWheelKey).jumpToItem(1);
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(
+      MenuBarTargetDial.settleDelay + const Duration(milliseconds: 100),
+    );
     expect(writes, 0);
     await _unmount(tester);
   });

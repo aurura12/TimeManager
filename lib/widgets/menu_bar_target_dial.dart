@@ -38,7 +38,7 @@ class MenuBarTargetDial extends StatefulWidget {
   static const Key subWheelKey = ValueKey('menu-bar-dial-sub');
 
   static const String wholeCategoryLabel = '整个分类';
-  static const Duration settleDelay = Duration(milliseconds: 500);
+  static const Duration settleDelay = Duration(milliseconds: 800);
 
   static double get height => AppSizes.dialRowHeight * AppSizes.dialVisibleRows;
 
