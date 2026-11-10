@@ -66,20 +66,6 @@ class MenuBarSummary {
   bool get hasRecorded => recordedMinutes > 0;
 }
 
-/// 概览条里的一段：`left/width` 都是 0..1 的比例，直接喂给 LayoutBuilder。
-@foundation.immutable
-class MenuBarBarSegment {
-  const MenuBarBarSegment({
-    required this.span,
-    required this.left,
-    required this.width,
-  });
-
-  final MenuBarSpan span;
-  final double left;
-  final double width;
-}
-
 /// 把 144 个 10 分钟槽合并成连续记录段。
 ///
 /// 相邻槽只有在 [canJoinTimeSlots] 认为视觉与语义都一致时才合并，
@@ -167,18 +153,6 @@ MenuBarSummary buildMenuBarSummary({
     current: current,
     recordedMinutes: recordedMinutes,
   );
-}
-
-/// 概览条几何：把分钟换算成 0..1 的比例。
-List<MenuBarBarSegment> buildMenuBarBarSegments(List<MenuBarSpan> spans) {
-  return <MenuBarBarSegment>[
-    for (final span in spans)
-      MenuBarBarSegment(
-        span: span,
-        left: span.startMinute / menuBarMinutesPerDay,
-        width: span.minutes / menuBarMinutesPerDay,
-      ),
-  ];
 }
 
 /// 中文时长：`1小时30分钟` / `45分钟` / `0分钟`。

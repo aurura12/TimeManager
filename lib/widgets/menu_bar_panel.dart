@@ -9,19 +9,27 @@ import '../models/category.dart';
 import '../models/time_slot.dart';
 import '../providers/menu_bar_provider.dart';
 import '../providers/time_provider.dart';
+import '../services/app_identity_service.dart';
+import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/app_snack_bar.dart';
 import '../utils/menu_bar_summary.dart';
 import 'menu_bar_event_editor.dart';
 
-/// 菜单栏点开后的小面板：今日概览条 + 时间块列表。
+/// 菜单栏点开后的小面板：今日速览 + 可以直接刷格子的迷你时间轴。
 ///
-/// 只读：点块看详情，新增日程走 [MenuBarEventEditor]（由面板头部按钮打开）。
+/// 交互刻意贴近主界面：先在底部选分类，再在时间轴上点一格或拖一段，
+/// 松手即写入（一次手势 = 一条撤销记录）。已有时间块点开是只读详情，
+/// 拖过它们会直接覆盖，与记录页刷格子一致。
 class MenuBarPanel extends StatefulWidget {
   const MenuBarPanel({super.key, this.onOpenRecordAtDate});
 
   /// 详情里「在主窗口中查看」用。
   final ValueChanged<DateTime>? onOpenRecordAtDate;
+
+  /// 同一个进程内记住上次用的分类，避免每次打开面板都要重选。
+  static String? _lastCategoryId;
 
   @override
   State<MenuBarPanel> createState() => _MenuBarPanelState();
@@ -30,6 +38,8 @@ class MenuBarPanel extends StatefulWidget {
 class _MenuBarPanelState extends State<MenuBarPanel> {
   Timer? _clock;
   DateTime _now = DateTime.now();
+  String? _categoryId = MenuBarPanel._lastCategoryId;
+  String? _subLabel;
 
   @override
   void initState() {
@@ -46,6 +56,13 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
     super.dispose();
   }
 
+  Category? _resolveCategory(List<Category> categories) {
+    for (final category in categories) {
+      if (category.id == _categoryId) return category;
+    }
+    return null;
+  }
+
   void _hidePanel() {
     context.read<MenuBarProvider?>()?.hidePanel();
   }
@@ -60,18 +77,6 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
 
   void _quit() {
     context.read<MenuBarProvider?>()?.requestQuit();
-  }
-
-  Future<void> _addEvent() async {
-    final provider = context.read<TimeProvider?>();
-    if (provider == null) return;
-    final saved = await showMenuBarEventEditor(
-      context,
-      provider: provider,
-      date: DateTime.now(),
-    );
-    if (!mounted || !saved) return;
-    setState(() => _now = DateTime.now());
   }
 
   void _openSpan(MenuBarSpan span) {
@@ -97,16 +102,96 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
     );
   }
 
+  Future<void> _addEvent(TimeProvider provider) async {
+    final saved = await showMenuBarEventEditor(
+      context,
+      provider: provider,
+      date: DateTime.now(),
+    );
+    if (!mounted || !saved) return;
+    setState(() => _now = DateTime.now());
+  }
+
+  void _selectCategory(Category category) {
+    setState(() {
+      _categoryId = category.id;
+      _subLabel = null;
+      MenuBarPanel._lastCategoryId = category.id;
+    });
+  }
+
+  void _handleTapCell(
+    TimeProvider provider,
+    MenuBarSummary summary,
+    int index,
+  ) {
+    final minute = index * 10;
+    for (final span in summary.spans) {
+      if (span.containsMinute(minute)) {
+        _openSpan(span);
+        return;
+      }
+    }
+    final category = _resolveCategory(provider.categories);
+    if (category == null) {
+      showAppSnackBar(context, '先在下面选一个分类');
+      return;
+    }
+    _paint(provider, category, index, index);
+  }
+
+  void _paint(
+    TimeProvider provider,
+    Category category,
+    int startIndex,
+    int endIndex,
+  ) {
+    final blocked = provider.scheduleEditBlockedReason;
+    if (blocked != null) {
+      showAppSnackBar(context, blocked);
+      return;
+    }
+    final indices = <int>{
+      for (var index = startIndex; index <= endIndex; index++) index,
+    };
+    if (indices.isEmpty) return;
+    final date = DateTime(_now.year, _now.month, _now.day);
+    final dateKey = provider.dateKeyFor(date);
+    provider.assignCategoryToSlots(
+      indices,
+      category,
+      subLabel: _subLabel,
+      date: date,
+    );
+    final version = provider.editVersionOn(dateKey);
+    final label = _subLabel ?? category.name;
+    final range = formatMenuBarRange(startIndex * 10, (endIndex + 1) * 10);
+    showAppUndoSnackBar(
+      context,
+      message: '已记录 $range $label',
+      identityToken: AppIdentityService.identityStamp,
+      onUndo: () async {
+        if (!provider.undoLastChangeOnDate(dateKey, expectedVersion: version)) {
+          throw StateError('已有新的修改，撤销已失效');
+        }
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // 允许宿主没有注册 TimeProvider（部分测试/启动失败页）：按空数据渲染。
     final provider = context.watch<TimeProvider?>();
     final today = DateTime(_now.year, _now.month, _now.day);
+    final categories = provider?.categories ?? const <Category>[];
     final summary = buildMenuBarSummary(
       slots: provider?.slotsForDate(today) ?? const <TimeSlot>[],
       now: _now,
-      categories: provider?.categories ?? const <Category>[],
+      categories: categories,
     );
+    final selected = _resolveCategory(categories);
+    final blocked = provider?.scheduleEditBlockedReason;
+    final loading = provider == null || !provider.isInitialLoadFinished;
 
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
@@ -117,13 +202,32 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
         child: MenuBarPanelView(
           summary: summary,
           now: _now,
-          loading: provider == null || !provider.isInitialLoadFinished,
+          loading: loading,
+          categories: categories,
+          selectedCategoryId: selected?.id,
+          selectedSubLabel: _subLabel,
+          blockedReason: blocked,
+          canEdit: !loading && blocked == null,
           onOpenMainWindow: _openMainWindow,
           onOpenSettings: _openSettings,
           onQuit: _quit,
-          onSpanTap: _openSpan,
-          onAdd: provider == null ? null : _addEvent,
-          addBlockedReason: provider?.scheduleEditBlockedReason,
+          onOpenSpan: _openSpan,
+          onSelectCategory: _selectCategory,
+          onSelectSubLabel: (value) => setState(() => _subLabel = value),
+          onTapCell: provider == null
+              ? null
+              : (index) => _handleTapCell(provider, summary, index),
+          onPaintRange: provider == null
+              ? null
+              : (start, end) {
+                  final category = _resolveCategory(provider.categories);
+                  if (category == null) {
+                    showAppSnackBar(context, '先在下面选一个分类');
+                    return;
+                  }
+                  _paint(provider, category, start, end);
+                },
+          onPreciseAdd: provider == null ? null : () => _addEvent(provider),
         ),
       ),
     );
@@ -137,25 +241,39 @@ class MenuBarPanelView extends StatelessWidget {
     required this.summary,
     required this.now,
     required this.loading,
+    required this.categories,
+    this.selectedCategoryId,
+    this.selectedSubLabel,
+    this.blockedReason,
+    this.canEdit = false,
     this.onOpenMainWindow,
     this.onOpenSettings,
     this.onQuit,
-    this.onSpanTap,
-    this.onAdd,
-    this.addBlockedReason,
+    this.onOpenSpan,
+    this.onSelectCategory,
+    this.onSelectSubLabel,
+    this.onTapCell,
+    this.onPaintRange,
+    this.onPreciseAdd,
   });
 
   final MenuBarSummary summary;
   final DateTime now;
   final bool loading;
+  final List<Category> categories;
+  final String? selectedCategoryId;
+  final String? selectedSubLabel;
+  final String? blockedReason;
+  final bool canEdit;
   final VoidCallback? onOpenMainWindow;
   final VoidCallback? onOpenSettings;
   final VoidCallback? onQuit;
-  final ValueChanged<MenuBarSpan>? onSpanTap;
-  final VoidCallback? onAdd;
-
-  /// 非空时新增入口禁用，并把原因作为提示显示。
-  final String? addBlockedReason;
+  final ValueChanged<MenuBarSpan>? onOpenSpan;
+  final ValueChanged<Category>? onSelectCategory;
+  final ValueChanged<String>? onSelectSubLabel;
+  final ValueChanged<int>? onTapCell;
+  final void Function(int start, int end)? onPaintRange;
+  final VoidCallback? onPreciseAdd;
 
   static const List<String> _weekdayLabels = <String>[
     '一',
@@ -166,6 +284,13 @@ class MenuBarPanelView extends StatelessWidget {
     '六',
     '日',
   ];
+
+  Category? get _selectedCategory {
+    for (final category in categories) {
+      if (category.id == selectedCategoryId) return category;
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -186,21 +311,33 @@ class MenuBarPanelView extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildHeader(context),
-              const SizedBox(height: AppSpacing.md),
-              _DayOverviewBar(
-                summary: summary,
-                now: now,
-                onSpanTap: onSpanTap,
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                canEdit
+                    ? '选分类后拖动时间轴记录，点已有块看详情'
+                    : (blockedReason ?? '日程还没准备好'),
+                style: AppText.caption.copyWith(
+                  color: blockedReason == null
+                      ? Theme.of(context).colorScheme.onSurfaceVariant
+                      : Theme.of(context).colorScheme.error,
+                ),
               ),
               const SizedBox(height: AppSpacing.sm),
-              _buildHourTicks(context),
-              const SizedBox(height: AppSpacing.sm),
-              Divider(height: AppSizes.hairline),
               Expanded(
                 child: loading
                     ? const Center(child: CircularProgressIndicator())
-                    : _buildSpanList(context),
+                    : MenuBarTimeGrid(
+                        key: const ValueKey('menu-bar-time-grid'),
+                        summary: summary,
+                        now: now,
+                        enabled: canEdit,
+                        onTapCell: onTapCell,
+                        onPaintRange: onPaintRange,
+                      ),
               ),
+              const SizedBox(height: AppSpacing.sm),
+              _buildCategoryStrip(context),
+              const SizedBox(height: AppSpacing.sm),
               Divider(height: AppSizes.hairline),
               _buildFooter(context),
             ],
@@ -231,83 +368,74 @@ class MenuBarPanelView extends StatelessWidget {
             ],
           ),
         ),
-        if (onAdd != null)
+        if (onPreciseAdd != null)
           IconButton(
-            tooltip: addBlockedReason ?? '新增日程',
-            onPressed: addBlockedReason == null ? onAdd : null,
+            tooltip: '精细添加（名称 / 精确起止）',
+            onPressed: canEdit ? onPreciseAdd : null,
             icon: const Icon(Icons.add),
           ),
       ],
     );
   }
 
-  Widget _buildHourTicks(BuildContext context) {
+  Widget _buildCategoryStrip(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: <Widget>[
-        for (final hour in const <int>[0, 6, 12, 18, 24])
-          Text(
-            '$hour',
-            style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildSpanList(BuildContext context) {
-    if (summary.spans.isEmpty) {
-      return _buildEmptyState(context);
+    final selected = _selectedCategory;
+    if (categories.isEmpty) {
+      return Text(
+        '还没有分类，请先在主窗口里添加',
+        style: AppText.caption.copyWith(color: scheme.error),
+      );
     }
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-      itemCount: summary.spans.length,
-      itemBuilder: (context, index) {
-        final span = summary.spans[index];
-        return _SpanRow(
-          span: span,
-          onTap: onSpanTap == null ? null : () => onSpanTap!(span),
-        );
-      },
-    );
-  }
-
-  Widget _buildEmptyState(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.event_note_outlined,
-            size: AppSizes.iconButton,
-            color: scheme.onSurfaceVariant,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: AppSizes.chip,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: categories.length,
+            separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.sm),
+            itemBuilder: (context, index) {
+              final category = categories[index];
+              final isSelected = category.id == selected?.id;
+              return ChoiceChip(
+                selected: isSelected,
+                avatar: CircleAvatar(
+                  backgroundColor: category.color,
+                  radius: AppSizes.statusDot,
+                ),
+                label: Text(category.name),
+                onSelected: canEdit && onSelectCategory != null
+                    ? (_) => onSelectCategory!(category)
+                    : null,
+              );
+            },
           ),
-          const SizedBox(height: AppSpacing.sm),
-          Text('今天还没有记录', style: AppText.body),
+        ),
+        if (selected != null && selected.subCategories.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.xs),
-          Text(
-            onAdd == null ? '点右上角「＋」补一段' : '点下方「补一段」记录刚才做过的事',
-            style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
+          SizedBox(
+            height: AppSizes.chip,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: selected.subCategories.length,
+              separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.sm),
+              itemBuilder: (context, index) {
+                final sub = selected.subCategories[index];
+                return ChoiceChip(
+                  selected: selectedSubLabel == sub,
+                  label: Text(sub),
+                  onSelected: canEdit && onSelectSubLabel != null
+                      ? (_) => onSelectSubLabel!(sub)
+                      : null,
+                );
+              },
+            ),
           ),
-          if (addBlockedReason != null) ...[
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              addBlockedReason!,
-              textAlign: TextAlign.center,
-              style: AppText.caption.copyWith(color: scheme.error),
-            ),
-          ],
-          if (onAdd != null) ...[
-            const SizedBox(height: AppSpacing.md),
-            TextButton.icon(
-              onPressed: addBlockedReason == null ? onAdd : null,
-              icon: const Icon(Icons.add),
-              label: const Text('补一段'),
-            ),
-          ],
         ],
-      ),
+      ],
     );
   }
 
@@ -340,150 +468,237 @@ class MenuBarPanelView extends StatelessWidget {
   }
 }
 
-class _DayOverviewBar extends StatelessWidget {
-  const _DayOverviewBar({
+/// 迷你时间轴：10 分钟一格，60px/小时，鼠标滚轮滚动，鼠标拖拽刷格子。
+class MenuBarTimeGrid extends StatefulWidget {
+  const MenuBarTimeGrid({
+    super.key,
     required this.summary,
     required this.now,
-    this.onSpanTap,
+    required this.enabled,
+    this.onTapCell,
+    this.onPaintRange,
   });
 
   final MenuBarSummary summary;
   final DateTime now;
-  final ValueChanged<MenuBarSpan>? onSpanTap;
+  final bool enabled;
+  final ValueChanged<int>? onTapCell;
+  final void Function(int start, int end)? onPaintRange;
+
+  static const double pxPerMinute = 1;
+  static const double gutterWidth = 40;
+  static const int slotCount = 144;
+
+  @override
+  State<MenuBarTimeGrid> createState() => _MenuBarTimeGridState();
+}
+
+class _MenuBarTimeGridState extends State<MenuBarTimeGrid> {
+  late final ScrollController _scrollController;
+  int? _dragStart;
+  int? _dragEnd;
+
+  static const double _contentHeight =
+      MenuBarTimeGrid.slotCount * 10 * MenuBarTimeGrid.pxPerMinute;
+
+  @override
+  void initState() {
+    super.initState();
+    final nowMinute = widget.now.hour * 60 + widget.now.minute;
+    final offset = (nowMinute - 120).clamp(0, _contentHeight - 360).toDouble();
+    _scrollController = ScrollController(initialScrollOffset: offset);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  int _indexAt(double dy) {
+    final index = (dy / MenuBarTimeGrid.pxPerMinute / 10).floor();
+    return index.clamp(0, MenuBarTimeGrid.slotCount - 1);
+  }
+
+  void _start(Offset localPosition) {
+    final index = _indexAt(localPosition.dy);
+    setState(() {
+      _dragStart = index;
+      _dragEnd = index;
+    });
+  }
+
+  void _extend(Offset localPosition) {
+    if (_dragStart == null) return;
+    final index = _indexAt(localPosition.dy);
+    if (index == _dragEnd) return;
+    setState(() => _dragEnd = index);
+  }
+
+  void _finish() {
+    final start = _dragStart;
+    final end = _dragEnd;
+    setState(() {
+      _dragStart = null;
+      _dragEnd = null;
+    });
+    if (start == null || end == null) return;
+    widget.onPaintRange?.call(math.min(start, end), math.max(start, end));
+  }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final surfaces = AppSurfaces.of(context);
-    final segments = buildMenuBarBarSegments(summary.spans);
-    final nowFactor =
-        (now.hour * 60 + now.minute) / menuBarMinutesPerDay;
+    final nowMinute = widget.now.hour * 60 + widget.now.minute;
 
-    return SizedBox(
-      height: 44,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final width = constraints.maxWidth;
-          return Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Positioned.fill(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: surfaces.subtle,
-                    borderRadius: BorderRadius.circular(AppRadius.badge),
-                  ),
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: surfaces.subtle,
+        borderRadius: BorderRadius.circular(AppRadius.control),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppRadius.control),
+        child: Scrollbar(
+          controller: _scrollController,
+          child: SingleChildScrollView(
+            controller: _scrollController,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapUp: widget.enabled && widget.onTapCell != null
+                  ? (details) => widget.onTapCell!(
+                        _indexAt(details.localPosition.dy),
+                      )
+                  : null,
+              onPanStart:
+                  widget.enabled ? (details) => _start(details.localPosition) : null,
+              onPanUpdate: widget.enabled
+                  ? (details) => _extend(details.localPosition)
+                  : null,
+              onPanEnd: widget.enabled ? (_) => _finish() : null,
+              onPanCancel: widget.enabled
+                  ? () => setState(() {
+                        _dragStart = null;
+                        _dragEnd = null;
+                      })
+                  : null,
+              child: SizedBox(
+                height: _contentHeight,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final width = constraints.maxWidth;
+                    final dragStart = _dragStart;
+                    final dragEnd = _dragEnd;
+                    final selectionStart =
+                        dragStart == null || dragEnd == null
+                            ? null
+                            : math.min(dragStart, dragEnd);
+                    final selectionEnd =
+                        dragStart == null || dragEnd == null
+                            ? null
+                            : math.max(dragStart, dragEnd);
+
+                    return Stack(
+                      children: [
+                        for (var hour = 1; hour < 24; hour++)
+                          Positioned(
+                            top: hour * 60 * MenuBarTimeGrid.pxPerMinute,
+                            left: 0,
+                            right: 0,
+                            height: AppSizes.hairline,
+                            child: ColoredBox(
+                              color: scheme.outlineVariant.withValues(alpha: 0.4),
+                            ),
+                          ),
+                        for (var hour = 0; hour < 24; hour++)
+                          Positioned(
+                            top: hour * 60 * MenuBarTimeGrid.pxPerMinute - 7,
+                            left: 0,
+                            width: MenuBarTimeGrid.gutterWidth - 6,
+                            child: Text(
+                              '${hour.toString().padLeft(2, '0')}:00',
+                              textAlign: TextAlign.right,
+                              style: AppText.caption.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        for (final span in widget.summary.spans)
+                          Positioned(
+                            top: span.startMinute * MenuBarTimeGrid.pxPerMinute,
+                            left: MenuBarTimeGrid.gutterWidth,
+                            width: width -
+                                MenuBarTimeGrid.gutterWidth -
+                                AppSizes.statusDot,
+                            height: math.max(
+                              span.minutes * MenuBarTimeGrid.pxPerMinute,
+                              AppSizes.statusDot,
+                            ),
+                            child: _buildSpan(context, span),
+                          ),
+                        if (selectionStart != null && selectionEnd != null)
+                          Positioned(
+                            top: selectionStart *
+                                10 *
+                                MenuBarTimeGrid.pxPerMinute,
+                            left: MenuBarTimeGrid.gutterWidth,
+                            width: width - MenuBarTimeGrid.gutterWidth - 8,
+                            height: (selectionEnd - selectionStart + 1) *
+                                10 *
+                                MenuBarTimeGrid.pxPerMinute,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: scheme.primary.withValues(alpha: 0.22),
+                                borderRadius:
+                                    BorderRadius.circular(AppRadius.grid),
+                                border: Border.all(color: scheme.primary),
+                              ),
+                            ),
+                          ),
+                        Positioned(
+                          top: nowMinute * MenuBarTimeGrid.pxPerMinute,
+                          left: 0,
+                          right: 0,
+                          height: AppSizes.hairline * 1.5,
+                          child: ColoredBox(color: scheme.primary),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
-              for (final segment in segments)
-                Positioned(
-                  left: segment.left * width,
-                  width: math.max(segment.width * width, AppSizes.statusDot / 4),
-                  top: 0,
-                  bottom: 0,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: onSpanTap == null
-                        ? null
-                        : () => onSpanTap!(segment.span),
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: segment.span.color ?? scheme.primary,
-                        borderRadius: BorderRadius.circular(AppRadius.grid),
-                      ),
-                    ),
-                  ),
-                ),
-              Positioned(
-                left: nowFactor * (width - AppSizes.hairline),
-                top: -AppSpacing.xs,
-                bottom: -AppSpacing.xs,
-                width: AppSizes.hairline,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: scheme.primary,
-                    borderRadius: BorderRadius.circular(AppRadius.grid),
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
+            ),
+          ),
+        ),
       ),
     );
   }
-}
 
-class _SpanRow extends StatelessWidget {
-  const _SpanRow({required this.span, this.onTap});
-
-  final MenuBarSpan span;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildSpan(BuildContext context, MenuBarSpan span) {
     final scheme = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(AppRadius.control),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.sm,
-          vertical: AppSpacing.sm,
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: AppSizes.statusDot,
-              height: AppSizes.statusDot,
-              decoration: BoxDecoration(
-                color: span.color ?? scheme.primary,
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          span.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppText.body,
-                        ),
-                      ),
-                      if (span.isFromCalendar) ...[
-                        const SizedBox(width: AppSpacing.xs),
-                        Icon(
-                          Icons.event_outlined,
-                          size: AppSizes.statusDot + AppSpacing.xs,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    formatMenuBarRange(span.startMinute, span.endMinute),
-                    style: AppText.caption.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            Text(
-              formatMenuBarDuration(span.minutes),
-              style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
-            ),
-          ],
-        ),
+    final color = span.color ?? scheme.primary;
+    final showLabel = span.minutes >= 30;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(AppRadius.grid),
       ),
+      child: showLabel
+          ? Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.xs,
+                vertical: AppSpacing.xs / 2,
+              ),
+              child: Text(
+                span.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppText.badge.copyWith(
+                  color: AppSemanticColors.onColor(color),
+                ),
+              ),
+            )
+          : null,
     );
   }
 }

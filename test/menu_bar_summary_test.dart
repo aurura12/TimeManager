@@ -149,19 +149,6 @@ void main() {
     expect(summary.spans.single.color, Colors.red);
   });
 
-  test('概览条几何按 1440 分钟映射', () {
-    final slots = _day([
-      _slot(0, 0, label: '零点', categoryId: 'c1'),
-      _slot(12, 0, label: '中午', categoryId: 'c1'),
-    ]);
-    final segments = buildMenuBarBarSegments(buildMenuBarSpans(slots));
-    expect(segments, hasLength(2));
-    expect(segments.first.left, 0);
-    expect(segments.first.width, closeTo(10 / 1440, 0.0001));
-    expect(segments.last.left, closeTo(720 / 1440, 0.0001));
-    expect(segments.last.width, closeTo(10 / 1440, 0.0001));
-  });
-
   test('时长与区间格式化', () {
     expect(formatMenuBarDuration(0), '0分钟');
     expect(formatMenuBarDuration(45), '45分钟');
