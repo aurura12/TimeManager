@@ -161,4 +161,63 @@ void main() {
     provider.dispose();
     await tester.pump();
   });
+
+  testWidgets('触控板双指滑动：滚时间轴，不选格', (tester) async {
+    final provider = await _createProvider(tester);
+    provider.addCategory(
+      Category(id: 'work', name: '工作', color: Colors.blue),
+    );
+
+    tester.view.physicalSize = const Size(400, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      ChangeNotifierProvider<TimeProvider?>.value(
+        value: provider,
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: const Scaffold(
+            body: Center(
+              child: SizedBox(width: 400, height: 720, child: MenuBarPanel()),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 面板里只有时间轴是可滚动的，网格那层是 NeverScrollable 的 ListView。
+    final axis = tester
+        .widget<ListView>(find.byWidgetPredicate(
+          (widget) => widget is ListView && widget.physics == null,
+        ))
+        .controller!;
+    axis.jumpTo(100);
+    await tester.pump();
+    final before = axis.offset;
+
+    // macOS 触控板上双指滑动是 pan-zoom 事件，不是滚轮事件。
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.trackpad);
+    final center =
+        tester.getCenter(find.byKey(const ValueKey('menu-bar-time-grid')));
+    await gesture.panZoomStart(center);
+    await tester.pump();
+    await gesture.panZoomUpdate(center, pan: const Offset(0, -20));
+    await tester.pump();
+    await gesture.panZoomUpdate(center, pan: const Offset(0, -40));
+    await tester.pump();
+    await gesture.panZoomEnd();
+    await tester.pump();
+
+    expect(axis.offset, closeTo(before + 40, 1));
+    expect(
+      find.byType(MenuBarTargetDial),
+      findsNothing,
+      reason: '触控板滚动不能变成拖选',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    provider.dispose();
+    await tester.pump();
+  });
 }

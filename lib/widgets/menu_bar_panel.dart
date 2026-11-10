@@ -158,9 +158,20 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
 
   void _forwardPointerSignal(PointerSignalEvent event) {
     if (event is! PointerScrollEvent || !_axisController.hasClients) return;
+    _scrollAxisBy(event.scrollDelta.dy);
+  }
+
+  /// 触控板双指滑动（pan-zoom）转发：和滚轮一样推时间轴，
+  /// 否则面板网格上滚不动，还会被当成拖选。
+  void _forwardPanZoom(PointerPanZoomUpdateEvent event) {
+    if (!_axisController.hasClients) return;
+    _scrollAxisBy(-event.panDelta.dy);
+  }
+
+  void _scrollAxisBy(double dy) {
     final position = _axisController.position;
-    final target = (_axisController.offset + event.scrollDelta.dy)
-        .clamp(0.0, position.maxScrollExtent);
+    final target =
+        (_axisController.offset + dy).clamp(0.0, position.maxScrollExtent);
     if ((target - position.pixels).abs() < 0.5) return;
     _axisController.jumpTo(target);
   }
@@ -266,6 +277,7 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
           Expanded(
             child: Listener(
               onPointerSignal: _forwardPointerSignal,
+              onPointerPanZoomUpdate: _forwardPanZoom,
               onPointerDown: (_) {
                 if (!_pointerDown) setState(() => _pointerDown = true);
               },

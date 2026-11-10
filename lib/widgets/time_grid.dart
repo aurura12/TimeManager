@@ -20,6 +20,19 @@ import '../utils/time_slot_segment.dart';
 import 'current_time_marker.dart';
 import 'event_label_text.dart';
 
+/// 选格手势接受的设备：**故意不含 trackpad**。
+///
+/// macOS 触控板双指上下滑动是 pan-zoom 事件（不是滚轮事件），
+/// [PanGestureRecognizer] 会把它当成拖动，于是滚动变成拖选格子。
+/// 网格上滚动的转发由外层负责（记录页 / 菜单栏面板各自的 Listener）。
+const Set<PointerDeviceKind> _selectionDevices = <PointerDeviceKind>{
+  PointerDeviceKind.touch,
+  PointerDeviceKind.mouse,
+  PointerDeviceKind.stylus,
+  PointerDeviceKind.invertedStylus,
+  PointerDeviceKind.unknown,
+};
+
 /// 时间网格的渲染与手势层。
 ///
 /// 网格只订阅当前日期和时间块版本；拖选状态仍由 HomeScreen 持有，
@@ -453,6 +466,8 @@ class _TimeGridState extends State<TimeGrid> {
         }
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
+          // 触控板双指滑动交给外层滚时间轴，不能在这里变成拖选。
+          supportedDevices: _selectionDevices,
           onTapDown: (details) {
             if (_resize != null) return;
             if (_suppressTapOnce) {

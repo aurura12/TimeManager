@@ -3075,6 +3075,7 @@ class _DayGridState extends State<_DayGrid> {
   Widget build(BuildContext context) {
     // 网格自身不可滚动（时间轴驱动），鼠标滚轮事件由监听器转发给共享时间轴，
     // 从而光标停留在网格上时也能上下滚动（安卓无滚轮事件，不受影响）。
+    // 触控板双指滑动是另一类事件（pan-zoom），必须单独转发，否则网格上滚不动。
     return Listener(
       behavior: HitTestBehavior.opaque,
       onPointerSignal: (event) {
@@ -3084,6 +3085,12 @@ class _DayGridState extends State<_DayGrid> {
             axis.position.pointerScroll(event.scrollDelta.dy);
           }
         }
+      },
+      onPointerPanZoomUpdate: (event) {
+        final axis = widget.timeAxisController;
+        if (!axis.hasClients) return;
+        // 与拖动一个滚动列表等价：手指下滑（pan 为正）内容跟着下移，偏移变小。
+        axis.position.pointerScroll(-event.panDelta.dy);
       },
       child: TimeGrid(
         gridKey: _gridKey,
