@@ -33,13 +33,23 @@ List<TimeSlot> _day(List<TimeSlot> recorded) {
   return slots;
 }
 
-Future<void> _pump(WidgetTester tester, Widget child) async {
+Future<void> _pump(
+  WidgetTester tester,
+  Widget child, {
+  double width = 400,
+  double height = 720,
+  ThemeData? theme,
+}) async {
+  // 默认视口 800×600 会把 720 高的面板夹掉，坐标断言就不稳了。
+  tester.view.physicalSize = Size(width, height);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
   await tester.pumpWidget(
     MaterialApp(
-      theme: AppTheme.light(),
+      theme: theme ?? AppTheme.light(),
       home: Scaffold(
         body: Center(
-          child: SizedBox(width: 400, height: 720, child: child),
+          child: SizedBox(width: width, height: height, child: child),
         ),
       ),
     ),
@@ -122,6 +132,119 @@ void main() {
     );
 
     expect(find.text('远程视图只读，修改已忽略'), findsOneWidget);
+  });
+
+  testWidgets('转盘浮层叠在网格上，不占网格高度', (tester) async {
+    await _pump(
+      tester,
+      MenuBarPanelView(
+        summary: MenuBarSummary.empty,
+        now: DateTime(2026, 11, 10, 9),
+        grid: _fakeGrid(),
+        selectionStart: 12,
+        selectionEnd: 13,
+      ),
+    );
+    final withoutDial = tester.getSize(find.byKey(const ValueKey('fake-grid')));
+
+    await _pump(
+      tester,
+      MenuBarPanelView(
+        summary: MenuBarSummary.empty,
+        now: DateTime(2026, 11, 10, 9),
+        grid: _fakeGrid(),
+        dial: _fakeDial(),
+        gridScroll: ValueNotifier<double>(0),
+        selectionStart: 12,
+        selectionEnd: 13,
+      ),
+    );
+    final withDial = tester.getSize(find.byKey(const ValueKey('fake-grid')));
+
+    expect(withDial, withoutDial);
+    expect(find.byKey(const ValueKey('fake-dial')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('浮层跟着网格滚动走，选区滚出视口后隐藏', (tester) async {
+    final scroll = ValueNotifier<double>(0);
+    addTearDown(scroll.dispose);
+    await _pump(
+      tester,
+      MenuBarPanelView(
+        summary: MenuBarSummary.empty,
+        now: DateTime(2026, 11, 10, 9),
+        grid: _fakeGrid(),
+        dial: _fakeDial(),
+        gridScroll: scroll,
+        selectionStart: 12,
+        selectionEnd: 13,
+      ),
+    );
+    final gridRect = tester.getRect(find.byKey(const ValueKey('fake-grid')));
+    final dialRect = tester.getRect(find.byKey(const ValueKey('fake-dial')));
+    expect(gridRect.contains(dialRect.topLeft), isTrue);
+    expect(gridRect.contains(dialRect.bottomRight), isTrue);
+    expect(find.textContaining('已选 02:00-02:20'), findsOneWidget);
+
+    scroll.value = 20;
+    await tester.pump();
+    expect(
+      tester.getRect(find.byKey(const ValueKey('fake-dial'))).top,
+      closeTo(dialRect.top - 20, 0.01),
+    );
+
+    // 选区整段滚出视口：浮层不画，但 hint 行仍显示时间段。
+    scroll.value = 4000;
+    await tester.pump();
+    expect(find.byKey(const ValueKey('fake-dial')), findsNothing);
+    expect(find.textContaining('已选 02:00-02:20'), findsOneWidget);
+  });
+
+  testWidgets('浮层底色保持不透明（壁纸模式下也不透）', (tester) async {
+    await _pump(
+      tester,
+      MenuBarPanelView(
+        summary: MenuBarSummary.empty,
+        now: DateTime(2026, 11, 10, 9),
+        grid: _fakeGrid(),
+        dial: _fakeDial(),
+        gridScroll: ValueNotifier<double>(0),
+        selectionStart: 12,
+        selectionEnd: 13,
+      ),
+      theme: AppTheme.light(backgroundEnabled: true),
+    );
+    final material = tester.widget<Material>(
+      find
+          .ancestor(
+            of: find.byKey(const ValueKey('fake-dial')),
+            matching: find.byType(Material),
+          )
+          .first,
+    );
+    expect(material.color?.a, 1.0);
+  });
+
+  testWidgets('小视口（400×560）里浮层仍落在网格区域内', (tester) async {
+    await _pump(
+      tester,
+      MenuBarPanelView(
+        summary: MenuBarSummary.empty,
+        now: DateTime(2026, 11, 10, 9),
+        grid: _fakeGrid(),
+        dial: _fakeDial(),
+        gridScroll: ValueNotifier<double>(0),
+        selectionStart: 12,
+        selectionEnd: 13,
+      ),
+      height: 560,
+    );
+    final gridRect = tester.getRect(find.byKey(const ValueKey('fake-grid')));
+    final dialRect = tester.getRect(find.byKey(const ValueKey('fake-dial')));
+    expect(gridRect.contains(dialRect.topLeft), isTrue);
+    expect(gridRect.contains(dialRect.bottomRight), isTrue);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('有记录时显示今日合计', (tester) async {

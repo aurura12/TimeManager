@@ -1,3 +1,5 @@
+import 'dart:ui' show Rect;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:time_manager/utils/timeline_geometry.dart';
 
@@ -38,6 +40,65 @@ void main() {
       expect(row(8 + 45 * 10.5), 10);
       expect(row(-100), 0);
       expect(row(99999), 23);
+    });
+  });
+
+  group('timelineSelectionRect', () {
+    Rect rect(
+      int start,
+      int end, {
+      double offset = 0,
+      double width = 368,
+      double inset = 0,
+    }) =>
+        timelineSelectionRect(
+          startIndex: start,
+          endIndex: end,
+          contentWidth: width,
+          gridLeft: 55,
+          scrollOffset: offset,
+          rowExtent: 45,
+          topPadding: 8,
+          cellInset: inset,
+        );
+
+    test('单格取所在行与列的边界', () {
+      final r = rect(54, 54);
+      expect(r.left, closeTo(55, 1e-9));
+      expect(r.right, closeTo(55 + (368 - 55) / 6, 1e-9));
+      expect(r.top, closeTo(8 + 9 * 45, 1e-9));
+      expect(r.bottom, closeTo(8 + 10 * 45, 1e-9));
+    });
+
+    test('同行多格横向连成一段', () {
+      final r = rect(54, 56);
+      expect(r.left, closeTo(55, 1e-9));
+      expect(r.right, closeTo(55 + 3 * (368 - 55) / 6, 1e-9));
+    });
+
+    test('跨行时横向铺满整行', () {
+      final r = rect(4, 7);
+      expect(r.left, 55);
+      expect(r.right, 368);
+      expect(r.top, closeTo(8, 1e-9));
+      expect(r.bottom, closeTo(8 + 2 * 45, 1e-9));
+    });
+
+    test('起止反着选也按同一矩形算', () {
+      expect(rect(56, 54), rect(54, 56));
+    });
+
+    test('减去纵向滚动偏移', () {
+      final scrolled = rect(54, 55, offset: 300);
+      expect(scrolled.top, closeTo(rect(54, 55).top - 300, 1e-9));
+      expect(scrolled.bottom, closeTo(rect(54, 55).bottom - 300, 1e-9));
+    });
+
+    test('单元格内缩把相邻格子之间的缝留出来', () {
+      final r = rect(54, 54, inset: 1);
+      expect(r.left, closeTo(56, 1e-9));
+      expect(r.top, closeTo(8 + 9 * 45 + 1, 1e-9));
+      expect(r.height, closeTo(43, 1e-9));
     });
   });
 

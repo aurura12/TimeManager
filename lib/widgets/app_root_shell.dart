@@ -6,7 +6,7 @@ import 'menu_bar_panel.dart';
 
 /// 应用根壳：主界面与菜单栏面板共用一个 Flutter engine。
 ///
-/// 面板显示时主窗口只有 400×560，如果让 MainScreen 按这个宽度布局会触发
+/// 面板显示时主窗口只有 400×720，如果让 MainScreen 按这个宽度布局会触发
 /// overflow 并刷错误日志。这里用 [Offstage] 跳过绘制、用 [OverflowBox]
 /// 固定一个桌面尺寸，同时保持 widget 层级不变，避免 MainScreen 被重建
 /// （它的 Tab 状态、滚动位置与「那年今日」会话标记都要留着）。

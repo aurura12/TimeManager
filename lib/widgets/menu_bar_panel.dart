@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,17 +15,18 @@ import '../services/menu_bar_target_store.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/app_snack_bar.dart';
+import '../utils/menu_bar_dial_position.dart';
 import '../utils/menu_bar_summary.dart';
-import '../utils/motion.dart';
 import '../utils/timeline_geometry.dart';
 import 'menu_bar_target_dial.dart';
 import 'time_grid.dart';
 
-/// 菜单栏点开后的小面板：记录页同款时间网格 + 选时间后升起的双转盘。
+/// 菜单栏点开后的小面板：记录页同款时间网格 + 选时间后贴着选区弹出的双转盘。
 ///
 /// 复用记录页的 [TimeGrid]（45px 行高、一小时一行、6 个 10 分钟格），
-/// 选完时间段松手后底部升起「左右双竖转盘」：左分类、右子事件，
-/// 滚轮转动、停下自动写入；点中间项可立即写入。
+/// 选完时间段松手后在选区旁浮出「左右双竖转盘」：左分类、右子事件，
+/// 滚轮转动、停下自动写入；点中间项可立即写入。浮层不占底部高度，
+/// 所以网格始终是满视口高度，转盘一次能显示 7 行。
 class MenuBarPanel extends StatefulWidget {
   const MenuBarPanel({super.key});
 
@@ -43,6 +45,9 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
   final GlobalKey _gridKey = GlobalKey();
   final ScrollController _axisController = ScrollController();
   final ScrollController _gridController = ScrollController();
+
+  /// 网格纵向偏移：转盘浮层按它跟随滚动，选中的那几行滚出视口后浮层自然隐藏。
+  final ValueNotifier<double> _gridScrollOffset = ValueNotifier<double>(0);
   final MenuBarTargetStore _targetStore = MenuBarTargetStore();
   MenuBarTarget? _rememberedTarget;
 
@@ -73,10 +78,12 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
     _axisController.removeListener(_syncGridScroll);
     _axisController.dispose();
     _gridController.dispose();
+    _gridScrollOffset.dispose();
     super.dispose();
   }
 
   void _syncGridScroll() {
+    _gridScrollOffset.value = _axisController.offset;
     if (!_gridController.hasClients) return;
     final target = _axisController.offset;
     if ((_gridController.offset - target).abs() > 0.5) {
@@ -97,36 +104,13 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
       viewportExtent: position.viewportDimension,
       maxScrollExtent: position.maxScrollExtent,
     );
-    if ((position.pixels - target).abs() < 1) return;
-    _axisController.jumpTo(target);
-  }
-
-  /// 转盘升起后网格变矮，刚选中的行可能被裁到视口外，把它拉回来。
-  void _ensureSelectionVisible() {
-    if (!mounted || !_axisController.hasClients) return;
-    final start = _selectionStart;
-    final end = _selectionEnd;
-    if (start == null || end == null) return;
-    final firstRow = math.min(start, end) ~/ 6;
-    final lastRow = math.max(start, end) ~/ 6;
-    final position = _axisController.position;
-    if (!position.hasViewportDimension || position.viewportDimension <= 0) {
+    if ((position.pixels - target).abs() < 1) {
+      // 已经在位也要同步一次：首帧浮层不能停在 0 上。
+      _gridScrollOffset.value = position.pixels;
       return;
     }
-    final top = AppSpacing.sm + firstRow * AppSizes.gridRow;
-    final bottom = AppSpacing.sm + (lastRow + 1) * AppSizes.gridRow;
-    final viewTop = position.pixels;
-    final viewBottom = viewTop + position.viewportDimension;
-    double? target;
-    if (top < viewTop) {
-      target = top - AppSpacing.sm;
-    } else if (bottom > viewBottom) {
-      target = bottom - position.viewportDimension + AppSpacing.sm;
-    }
-    if (target == null) return;
-    _axisController.jumpTo(
-      target.clamp(0.0, position.maxScrollExtent),
-    );
+    _axisController.jumpTo(target);
+    _gridScrollOffset.value = target;
   }
 
   int _calculateIndex(Offset globalPosition) {
@@ -348,18 +332,17 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
           selectionEnd: _selectionEnd,
           blockedReason: blocked,
           grid: grid,
-          dial: _DialSlot(
-            visible: dialVisible,
-            childBuilder: (context) => MenuBarTargetDial(
-              key: ValueKey<String>('menu-bar-dial-$_selectionSerial'),
-              categories: categories,
-              initialTarget: _rememberedTarget,
-              enabled: blocked == null,
-              onWrite: (category, subLabel) =>
-                  _write(provider!, category, subLabel),
-            ),
-            onExpanded: _ensureSelectionVisible,
-          ),
+          gridScroll: _gridScrollOffset,
+          dial: dialVisible
+              ? MenuBarTargetDial(
+                  key: ValueKey<String>('menu-bar-dial-$_selectionSerial'),
+                  categories: categories,
+                  initialTarget: _rememberedTarget,
+                  enabled: blocked == null,
+                  onWrite: (category, subLabel) =>
+                      _write(provider, category, subLabel),
+                )
+              : null,
           onOpenMainWindow: _openMainWindow,
           onOpenSettings: _openSettings,
           onQuit: _quit,
@@ -370,90 +353,7 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
   }
 }
 
-/// 底部转盘槽位：从 0 高度展开/收起，收起动画结束后才销毁子组件。
-///
-/// 不用 AnimatedSize：子组件被替换成 shrink 后内容会先消失、高度再慢慢缩。
-class _DialSlot extends StatefulWidget {
-  const _DialSlot({
-    required this.visible,
-    required this.childBuilder,
-    this.onExpanded,
-  });
-
-  final bool visible;
-  final WidgetBuilder childBuilder;
-  final VoidCallback? onExpanded;
-
-  @override
-  State<_DialSlot> createState() => _DialSlotState();
-}
-
-class _DialSlotState extends State<_DialSlot>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  Widget? _child;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: AppMotion.transition,
-    );
-    if (widget.visible) {
-      _child = widget.childBuilder(context);
-      _controller.value = 1;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) widget.onExpanded?.call();
-      });
-    }
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _controller.duration = appMotionDuration(context);
-  }
-
-  @override
-  void didUpdateWidget(covariant _DialSlot oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.visible && !oldWidget.visible) {
-      _child = widget.childBuilder(context);
-      _controller.forward(from: 0).whenComplete(() {
-        if (mounted) widget.onExpanded?.call();
-      });
-    } else if (!widget.visible && oldWidget.visible) {
-      _controller.reverse().whenComplete(() {
-        if (mounted && !widget.visible) {
-          setState(() => _child = null);
-        }
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SizeTransition(
-      sizeFactor: CurvedAnimation(parent: _controller, curve: AppMotion.curve),
-      alignment: Alignment.topCenter,
-      child: _child == null
-          ? const SizedBox.shrink()
-          : Padding(
-              padding: const EdgeInsets.only(top: AppSpacing.sm),
-              child: _child,
-            ),
-    );
-  }
-}
-
-/// 纯入参的面板视图：网格与转盘槽位由调用方注入，方便测试外壳与交互。
+/// 纯入参的面板视图：网格与转盘浮层由调用方注入，方便测试外壳与交互。
 class MenuBarPanelView extends StatelessWidget {
   const MenuBarPanelView({
     super.key,
@@ -461,6 +361,7 @@ class MenuBarPanelView extends StatelessWidget {
     required this.now,
     required this.grid,
     this.dial,
+    this.gridScroll,
     this.selectionStart,
     this.selectionEnd,
     this.blockedReason,
@@ -474,6 +375,9 @@ class MenuBarPanelView extends StatelessWidget {
   final DateTime now;
   final Widget grid;
   final Widget? dial;
+
+  /// 网格纵向偏移（面板 state 的滚动值）；浮层按它跟随滚动。
+  final ValueListenable<double>? gridScroll;
   final int? selectionStart;
   final int? selectionEnd;
   final String? blockedReason;
@@ -516,8 +420,7 @@ class MenuBarPanelView extends StatelessWidget {
               const SizedBox(height: AppSpacing.xs),
               _buildHint(context),
               const SizedBox(height: AppSpacing.xs),
-              Expanded(child: grid),
-              if (dial != null) dial!,
+              Expanded(child: _buildTimelineArea(context)),
               const SizedBox(height: AppSpacing.sm),
               Divider(height: AppSizes.hairline),
               _buildFooter(context),
@@ -525,6 +428,87 @@ class MenuBarPanelView extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  /// 网格区域：转盘浮层叠在网格上方，按选区锚定并跟随滚动。
+  ///
+  /// 浮层放在网格这层 Stack 里（而不是整个面板），"夹在可视区内" 由
+  /// constraints 直接保证，不需要量 RenderBox；网格高度也不再因浮层变化。
+  Widget _buildTimelineArea(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bounds = constraints.biggest;
+
+        Widget overlay(double scrollOffset) {
+          final dialWidget = dial;
+          final start = selectionStart;
+          final end = selectionEnd;
+          if (dialWidget == null || start == null || end == null) {
+            return const SizedBox.shrink();
+          }
+          final selection = timelineSelectionRect(
+            startIndex: start,
+            endIndex: end,
+            contentWidth: bounds.width,
+            gridLeft: AppSizes.gridTimeAxis,
+            scrollOffset: scrollOffset,
+            rowExtent: AppSizes.gridRow,
+            topPadding: AppSpacing.sm,
+            cellInset: AppSizes.hairline,
+          );
+          if (!menuBarSelectionVisible(selection, bounds)) {
+            return const SizedBox.shrink();
+          }
+          final placement = placeMenuBarDial(
+            selection: selection,
+            bounds: bounds,
+            dialSize: const Size(
+              AppSizes.dialOverlayWidth,
+              AppSizes.dialOverlayHeight,
+            ),
+          );
+          // 视口矮到连一行都放不下时宁可不画，避免压扁成一条细缝。
+          if (placement.rect.height < AppSizes.dialRowHeight) {
+            return const SizedBox.shrink();
+          }
+          return Positioned.fromRect(
+            rect: placement.rect,
+            child: _buildDialOverlay(context, dialWidget),
+          );
+        }
+
+        final scroll = gridScroll;
+        // 显式钉住尺寸：Column 是 start 对齐（宽度约束松散），Stack 全用
+        // Positioned 子组件时不会被撑开，网格会拿到 0 宽。
+        return SizedBox(
+          width: bounds.width,
+          height: bounds.height,
+          child: Stack(
+            children: [
+              Positioned.fill(child: grid),
+              if (scroll == null)
+                overlay(0)
+              else
+                ValueListenableBuilder<double>(
+                  valueListenable: scroll,
+                  builder: (context, offset, _) => overlay(offset),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// 浮层底：必须不透明（壁纸模式下也不能透），圆角裁掉子组件的直角。
+  Widget _buildDialOverlay(BuildContext context, Widget child) {
+    return Material(
+      color: AppSurfaces.of(context).overlay,
+      elevation: AppSizes.dialOverlayElevation,
+      borderRadius: AppRadius.cardAll,
+      clipBehavior: Clip.antiAlias,
+      child: child,
     );
   }
 

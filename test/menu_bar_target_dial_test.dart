@@ -26,6 +26,7 @@ Future<void> _pump(
   WidgetTester tester, {
   MenuBarTarget? initialTarget,
   bool enabled = true,
+  List<Category>? categories,
   required void Function(Category, String?) onWrite,
 }) async {
   await tester.pumpWidget(
@@ -37,7 +38,7 @@ Future<void> _pump(
             width: 368,
             height: MenuBarTargetDial.height,
             child: MenuBarTargetDial(
-              categories: _categories,
+              categories: categories ?? _categories,
               initialTarget: initialTarget,
               enabled: enabled,
               onWrite: onWrite,
@@ -61,6 +62,12 @@ int? _subItemCount(WidgetTester tester) {
   );
   return (wheel.childDelegate as ListWheelChildBuilderDelegate).childCount;
 }
+
+Finder _cue({required bool above}) => find.byKey(
+      ValueKey<String>(
+        above ? 'menu-bar-dial-cue-above' : 'menu-bar-dial-cue-below',
+      ),
+    );
 
 Future<void> _unmount(WidgetTester tester) async {
   await tester.pumpWidget(const SizedBox.shrink());
@@ -213,6 +220,77 @@ void main() {
       MenuBarTargetDial.settleDelay + const Duration(milliseconds: 100),
     );
     expect(writes, 0);
+    await _unmount(tester);
+  });
+
+  testWidgets('一次显示 7 行', (tester) async {
+    await _pump(tester, onWrite: (_, __) {});
+
+    expect(MenuBarTargetDial.height, 308);
+    final wheel = tester.widget<ListWheelScrollView>(
+      find.byKey(MenuBarTargetDial.categoryWheelKey),
+    );
+    expect(wheel.itemExtent, 44);
+    expect(MenuBarTargetDial.height / wheel.itemExtent, 7);
+
+    // 只有 3 个分类，上下都没有被挤出去的项，不该出现方向提示。
+    expect(_cue(above: true), findsNothing);
+    expect(_cue(above: false), findsNothing);
+    await _unmount(tester);
+  });
+
+  testWidgets('子事件超过可见行数时按方向显示提示', (tester) async {
+    final categories = <Category>[
+      Category(
+        id: 'long',
+        name: '长列表',
+        color: const Color(0xFF4DA8EE),
+        subCategories: <String>[
+          '一', '二', '三', '四', '五', '六', '七', '八', '九',
+        ],
+      ),
+    ];
+    await _pump(tester, categories: categories, onWrite: (_, __) {});
+    final sub = _controller(tester, MenuBarTargetDial.subWheelKey);
+
+    // 第 0 项「整个分类」：只在下面还有项。
+    expect(_cue(above: true), findsNothing);
+    expect(_cue(above: false), findsOneWidget);
+
+    // 中间项（第 5 项）：上下都还有。
+    sub.jumpToItem(5);
+    await tester.pump();
+    expect(_cue(above: true), findsOneWidget);
+    expect(_cue(above: false), findsOneWidget);
+
+    // 最后一项：只在上面还有。
+    sub.jumpToItem(9);
+    await tester.pump();
+    expect(_cue(above: true), findsOneWidget);
+    expect(_cue(above: false), findsNothing);
+    await _unmount(tester);
+  });
+
+  testWidgets('方向提示不吃点击', (tester) async {
+    final categories = <Category>[
+      Category(
+        id: 'long',
+        name: '长列表',
+        color: const Color(0xFF4DA8EE),
+        subCategories: <String>[
+          '一', '二', '三', '四', '五', '六', '七', '八', '九',
+        ],
+      ),
+    ];
+    await _pump(tester, categories: categories, onWrite: (_, __) {});
+
+    await tester.tap(_cue(above: false), warnIfMissed: false);
+    await tester.pump();
+    // 点箭头不写入、也不改变选中项。
+    expect(
+      _controller(tester, MenuBarTargetDial.subWheelKey).selectedItem,
+      0,
+    );
     await _unmount(tester);
   });
 

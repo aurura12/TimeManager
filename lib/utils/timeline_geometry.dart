@@ -4,6 +4,8 @@
 /// 以前这些数字（45 / 8）散落在命中测试与初始滚动里，改行高就会一起错位。
 library;
 
+import 'dart:ui' show Rect;
+
 /// 一天中的分钟数（0..1440）。
 int minutesOfDayOf(DateTime time) => time.hour * 60 + time.minute;
 
@@ -37,6 +39,47 @@ int timelineRowAt(
 }) {
   final row = ((contentY - topPadding) / rowExtent).floor();
   return row.clamp(0, rowCount - 1);
+}
+
+/// 选区（槽位索引 0..143）在网格视口坐标里的外接矩形。
+///
+/// [contentWidth] 是含时间轴的整行宽度，[gridLeft] 是时间轴宽度（网格真正的
+/// 左边界），[scrollOffset] 是当前纵向偏移。跨行选区横向铺满整行——中间那些行
+/// 的格子全被选中了，只按首尾格子的列宽算会画出一条窄条。
+Rect timelineSelectionRect({
+  required int startIndex,
+  required int endIndex,
+  required double contentWidth,
+  required double gridLeft,
+  required double scrollOffset,
+  required double rowExtent,
+  required double topPadding,
+  double cellInset = 0,
+}) {
+  final from = startIndex <= endIndex ? startIndex : endIndex;
+  final to = startIndex <= endIndex ? endIndex : startIndex;
+  final firstRow = from ~/ slotsPerHour;
+  final lastRow = to ~/ slotsPerHour;
+  final cellWidth = (contentWidth - gridLeft) / slotsPerHour;
+
+  final double left;
+  final double right;
+  if (firstRow != lastRow) {
+    left = gridLeft;
+    right = contentWidth;
+  } else {
+    left = gridLeft + (from % slotsPerHour) * cellWidth;
+    right = gridLeft + ((to % slotsPerHour) + 1) * cellWidth;
+  }
+
+  final top = topPadding + firstRow * rowExtent - scrollOffset;
+  final bottom = topPadding + (lastRow + 1) * rowExtent - scrollOffset;
+  return Rect.fromLTRB(
+    left + cellInset,
+    top + cellInset,
+    right - cellInset,
+    bottom - cellInset,
+  );
 }
 
 /// 「滚到现在」的目标偏移：让当前时刻落在大约 [leadFraction] 视口处。

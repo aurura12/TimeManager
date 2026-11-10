@@ -104,11 +104,32 @@ abstract final class AppSizes {
   /// 菜单栏双转盘：单行高度（不小于最小触摸目标）
   static const double dialRowHeight = 44;
 
-  /// 菜单栏双转盘：可见行数（中间一行 + 上下各一行）
-  static const int dialVisibleRows = 3;
+  /// 菜单栏双转盘：可见行数（中间一行 + 上下各三行）
+  ///
+  /// 浮层不占面板底部高度，所以一次能看 7 行；上下还有隐藏项时由
+  /// 渐隐 + 箭头提示方向（见 [dialCueFade]）。
+  static const int dialVisibleRows = 7;
 
   /// 菜单栏双转盘：两列之间的间距
   static const double dialColumnGap = 8;
+
+  /// 菜单栏双转盘浮层宽度：两列并排，贴着选区弹出
+  static const double dialOverlayWidth = 264;
+
+  /// 菜单栏双转盘浮层高度（[dialVisibleRows] 行）
+  static const double dialOverlayHeight = dialRowHeight * dialVisibleRows;
+
+  /// 菜单栏双转盘浮层宽度下限：视口更窄时允许压到这个宽度
+  static const double dialOverlayMinWidth = 200;
+
+  /// 菜单栏双转盘浮层圆角与投影高度
+  static const double dialOverlayElevation = 8;
+
+  /// 菜单栏双转盘：上下「还有隐藏项」渐隐带高度
+  static const double dialCueFade = dialRowHeight / 2;
+
+  /// 菜单栏双转盘：方向箭头视觉尺寸（只做提示，不可点）
+  static const double dialCueIcon = 12;
 
   /// 分段控件高度
   static const double segmented = 36;

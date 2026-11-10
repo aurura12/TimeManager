@@ -232,7 +232,7 @@ iOS 会落进「移动端」分支（见「首次本地开发前提」），因�
 
 ## macOS 菜单栏常驻
 
-macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，默认开）：启动只出现状态栏图标，点图标弹 400×560 面板，关主窗口不退出。改这块前先读完本节。
+macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，默认开）：启动只出现状态栏图标，点图标弹 400×720 面板，关主窗口不退出。改这块前先读完本节。
 
 - **纯原生，零 pub 依赖**：工程已切 SPM（`macos/` 无 Podfile），`tray_manager` 只支持 CocoaPods，引入等于把构建系统退回去。全部实现在 `macos/Runner/AppDelegate.swift`（`MenuBarController` + `LaunchAtLogin`）；**刻意不新增 Swift 文件**，避免手改老式 pbxproj。
 - **启动时不能真的把窗口藏起来**：Flutter 只有在窗口进入屏幕后才会启动 Dart isolate；启动就 `orderOut` 会让 Dart 一直不跑（表现为进程活着、没有图标、Dart 收不到 `configure`）。正确做法是 `alphaValue = 0` + `orderFront(nil)` 先把窗口挂上但完全不可见，等 Dart `configure` 到达后再 `orderOut`；另有 15 秒安全网兜底显示窗口。
@@ -243,7 +243,11 @@ macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，
 - **启动安全网**：10 秒内没收到 Dart 的 `configure/getState` 就强制显示主窗口，避免「点了没反应」；调试时用 `TM_DISABLE_MENU_BAR=1` 强制普通窗口模式。
 - **Dart 侧**：`MenuBarService`（`time_manager/menu_bar`，2 秒超时）+ `MenuBarProvider`（可空注册）。bootstrap 先 `await menuBar.ready` 再 `runApp`，首帧就按正确窗口形态构建；通道失败回退普通窗口并写日志，不得阻塞启动。
 - **根布局**：`AppRootShell` 用 `Offstage + ExcludeFocus + TickerMode + OverflowBox(1200×800) + MediaQuery` 保住 `MainScreen`。面板只有 400 宽，让主界面按面板尺寸布局会 overflow 并刷错误日志。**层级必须恒定**，切换面板/主窗口只改参数，不能让 `MainScreen` 重建（Tab 状态、滚动位置、那年今日会话标记都要留）。
-- **面板 = 记录页同款网格 + 左右双转盘**：`MenuBarPanel` 复用 `TimeGrid` + 独立时间轴（45px 行高、`AppSpacing.sm` 顶部 padding、两个 `ScrollController` 同步），块样式/选中高亮与主界面一致。拖选/点选后**松手**（用 `Listener` 的 pointer down/up，不要用会被双击识别器延迟的 `onTapUp`），底部 `_DialSlot` 用 `SizeTransition` 展开 `MenuBarTargetDial`：左盘分类、右盘当前分类的子事件（第 0 项「整个分类」），滚轮/拖拽转动，**停下 800ms 自动写入**；转分类到有子事件的分类本身不写，等右盘停下；点中间项立即写。一次选区只写一次，`_pointerDown` 时丢弃旧转盘的延迟写入；展开后 `_ensureSelectionVisible` 把选区拉回视口。目标存本机 `app_menu_bar_target_v1`（`MenuBarTargetStore`，id + 名字双兜底），跨重启记住；无目标时跳过「临时」分类。`onRemoveSlot` 传空实现（面板不删数据），`onResizeTimeBlock` 不传。面板头部**没有**「＋」精细添加按钮（已按用户要求移除，别再加回来），网格与转盘是唯一录入入口；只读原因统一用 `scheduleEditBlockedReason`。**滚动条**：面板用 `ScrollConfiguration(scrollbars: false)` 关掉滚动条，滚动仍靠滚轮 / 触控板。
+- **面板 = 记录页同款网格 + 左右双转盘**：`MenuBarPanel` 复用 `TimeGrid` + 独立时间轴（45px 行高、`AppSpacing.sm` 顶部 padding、两个 `ScrollController` 同步），块样式/选中高亮与主界面一致。拖选/点选后**松手**（用 `Listener` 的 pointer down/up，不要用会被双击识别器延迟的 `onTapUp`），`MenuBarTargetDial` 以**锚定选区的浮层**弹出（264×308、7 行，不占底部高度，网格保持满高）：左盘分类、右盘当前分类的子事件（第 0 项「整个分类」），滚轮/拖拽转动，**停下 800ms 自动写入**；转分类到有子事件的分类本身不写，等右盘停下；点中间项立即写。一次选区只写一次，`_pointerDown` 时丢弃旧转盘的延迟写入。
+  - **落位**：`placeMenuBarDial`（`lib/utils/menu_bar_dial_position.dart`）按「右 → 左 → 下 → 上 → 夹进边界」选位置，选区矩形由 `timelineSelectionRect`（`lib/utils/timeline_geometry.dart`）从槽位索引 + `_gridScrollOffset` 算出，浮层放进网格那层 `Stack` 里，所以永远夹在可视区内、不需要量 RenderBox。面板内容区只有 368pt 宽，多数选区会落到上方/下方，这是既定取舍——不要把浮层缩窄去凑左右。
+  - **跟随滚动**：`_gridScrollOffset`（`ValueNotifier<double>`）由 `_syncGridScroll` / `_scrollToNow` 维护，选区滚出视口时浮层自动隐藏（hint 行仍显示时间段）。
+  - **方向提示**：可见行数 `AppSizes.dialVisibleRows`（7），上下还有隐藏项时叠一条「浮层底色 → 透明」的渐隐 + 小箭头（`IgnorePointer`，只做提示）。渐变的实色端必须用 `AppSurfaces.overlay`（浮层不透明），轮子本身不能有底色。
+  - **不要加回 `_ensureSelectionVisible`**：网格高度不再变化，自动滚动只会把锚点从用户刚点的位置挪走。目标存本机 `app_menu_bar_target_v1`（`MenuBarTargetStore`，id + 名字双兜底），跨重启记住；无目标时跳过「临时」分类。`onRemoveSlot` 传空实现（面板不删数据），`onResizeTimeBlock` 不传。面板头部**没有**「＋」精细添加按钮（已按用户要求移除，别再加回来），网格与转盘是唯一录入入口；只读原因统一用 `scheduleEditBlockedReason`。**滚动条**：面板用 `ScrollConfiguration(scrollbars: false)` 关掉滚动条，滚动仍靠滚轮 / 触控板。
 - **门控**：主界面不可见（面板打开或只剩图标）时，「那年今日」自动弹层与全局桌面快捷键必须让位（Esc 留给面板收起）；主窗口重新可见时补一次。
 - **登录项**：macOS 13+ `SMAppService.mainApp`，macOS 12 隐藏开关；注册失败或被系统要求批准时只提示并回滚，不阻塞启动。
 - **仅 macOS**：平台判定走 `lib/utils/platform_features.dart` 的 `supportsMenuBar`；Windows 托盘尚未实现。
@@ -340,7 +344,7 @@ Never commit them.
 - `test/day_change_boundary_test.dart` / `test/date_change_schedule_sync_test.dart` 的跨日用例 — 零点通知只发一次、隐藏页与后台暂停后补发、仅在仍停留在今天时推进日期、手动停在历史日期不被抢走
 - `test/target_desktop_ui_test.dart` — 桌面目标编辑表单、键盘保存/取消、数值与时间校验、子事件关联、周期天数与时长独立、右键删除、鼠标拖拽及浅深主题/窄窗口布局；桌面编辑入口统一走 `showTargetEditor`，移动端保留整页编辑
 - `test/wake_up_provider_test.dart` / `test/wake_up_card_test.dart` — 起床记录持久化、补填/修改/删除、未来时间校验、跨日与近 7 天平均、身份切换及保存失败保护；卡片每分钟重新计算经过时长，隐藏 Tab 或切后台停表，返回立即刷新
-- `test/menu_bar_summary_test.dart` / `menu_bar_provider_test.dart` / `menu_bar_panel_test.dart` / `menu_bar_panel_paint_test.dart` / `menu_bar_target_dial_test.dart` / `menu_bar_target_store_test.dart` / `menu_bar_panel_target_persist_test.dart` / `menu_bar_event_editor_test.dart` / `app_root_shell_test.dart` / `menu_bar_settings_test.dart` — 菜单栏常驻：分段与格式化、通道对账与回滚、面板空态/只读、双转盘初始定位/翻页/自动写入规则/点击写入、目标记忆与重启恢复、真实 Provider 上拖选写入、`MenuBarEventEditor` 补一段弹层的写入与撤销（该弹层当前无入口）、主界面在面板显示时不重建且无 overflow、设置开关与 macOS 13 以下隐藏登录项
+- `test/menu_bar_summary_test.dart` / `menu_bar_provider_test.dart` / `menu_bar_panel_test.dart` / `menu_bar_panel_paint_test.dart` / `menu_bar_target_dial_test.dart` / `menu_bar_target_store_test.dart` / `menu_bar_panel_target_persist_test.dart` / `menu_bar_dial_position_test.dart` / `menu_bar_event_editor_test.dart` / `app_root_shell_test.dart` / `menu_bar_settings_test.dart` — 菜单栏常驻：分段与格式化、通道对账与回滚、面板空态/只读、双转盘初始定位/翻页/自动写入规则/点击写入、目标记忆与重启恢复、真实 Provider 上拖选写入、**浮层落位（右/左/下/上/夹取、窄视口压缩、随机选区属性测试）与跟随滚动**、`MenuBarEventEditor` 补一段弹层的写入与撤销（该弹层当前无入口）、主界面在面板显示时不重建且无 overflow、设置开关与 macOS 13 以下隐藏登录项。`menu_bar_target_dial_test.dart` 另覆盖 7 行高度与上下方向提示（只在真有隐藏项时出现、不吃点击）；`menu_bar_panel_paint_test.dart` 用真实 `TestPointer` 发 `PointerScrollEvent` 验证浮层跟随网格滚动
 - `test/wake_up_history_screen_test.dart` — 起床历史入口、30 / 90 天边界、跨年全部记录、自选日期含首尾、单日与空时段、身份隔离、实时更新、窄屏大字与浅深壁纸主题
 - `test/wake_up_sync_test.dart` / `test/wake_up_gitee_service_test.dart` — 双端读改写与删除、离线重启恢复、旧记录迁移、SHA 冲突重试、损坏远端保护、上传期间编辑与身份切换、同步中心合并状态、自动刷新前后台边界与 Gitee 文档路径
 - `test/statistics_cache_test.dart` / `test/main_screen_lazy_loading_test.dart` — 趋势与分类缓存互不覆盖、词云按自然日复用、跨日边界、编辑/撤销/切身份失效，以及隐藏统计页零查询、返回刷新与筛选状态保活

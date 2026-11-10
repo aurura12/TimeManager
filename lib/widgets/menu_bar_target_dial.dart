@@ -15,6 +15,10 @@ import '../utils/motion.dart';
 /// 左右两个竖向转盘：左边分类、右边当前分类的子事件（第 0 项「整个分类」）。
 /// 中间是固定选中框，项从框里滑过；鼠标滚轮在哪个盘上就转哪个。
 ///
+/// 它由菜单栏面板作为「贴着选区的浮层」承载（面板负责落位与滚动跟随），
+/// 一次显示 [AppSizes.dialVisibleRows] 行；上下还有隐藏项时叠一条渐隐 + 小箭头
+/// 指出方向，那层只做提示、不吃点击。
+///
 /// 写入规则：
 /// - 转子事件盘停下 → 写入「分类 + 子事件」；
 /// - 转分类盘到一个没有子事件的分类 → 停下写入该分类；
@@ -40,7 +44,7 @@ class MenuBarTargetDial extends StatefulWidget {
   static const String wholeCategoryLabel = '整个分类';
   static const Duration settleDelay = Duration(milliseconds: 800);
 
-  static double get height => AppSizes.dialRowHeight * AppSizes.dialVisibleRows;
+  static double get height => AppSizes.dialOverlayHeight;
 
   @override
   State<MenuBarTargetDial> createState() => _MenuBarTargetDialState();
@@ -245,6 +249,8 @@ class _MenuBarTargetDialState extends State<MenuBarTargetDial> {
                 selectedIndex: _categoryIndex,
                 onSelected: _onCategoryChanged,
                 onTap: _tapCategory,
+                showAbove: _cueAbove(_categoryIndex),
+                showBelow: _cueBelow(_categoryIndex, categories.length),
               ),
             ),
             const SizedBox(width: AppSizes.dialColumnGap),
@@ -262,6 +268,8 @@ class _MenuBarTargetDialState extends State<MenuBarTargetDial> {
                   selectedIndex: _subIndex,
                   onSelected: _onSubChanged,
                   onTap: _tapSub,
+                  showAbove: _cueAbove(_subIndex),
+                  showBelow: _cueBelow(_subIndex, subItems.length),
                 ),
               ),
             ),
@@ -270,6 +278,17 @@ class _MenuBarTargetDialState extends State<MenuBarTargetDial> {
       ),
     );
   }
+
+  /// 选中项上方是否还有被挤出视野的项。
+  ///
+  /// 阈值是「可见行数的一半（向下取整）」，不是 0：7 行时上下各能露出 3 行，
+  /// 只有第 4 项开始才是真的看不见。改成 selectedIndex > 0 会让常驻箭头乱闪。
+  static int get _hiddenSpan => (AppSizes.dialVisibleRows - 1) ~/ 2;
+
+  static bool _cueAbove(int selectedIndex) => selectedIndex - _hiddenSpan > 0;
+
+  static bool _cueBelow(int selectedIndex, int itemCount) =>
+      (itemCount - 1 - selectedIndex) - _hiddenSpan > 0;
 
   Widget _buildWheel(
     BuildContext context, {
@@ -281,6 +300,8 @@ class _MenuBarTargetDialState extends State<MenuBarTargetDial> {
     required int selectedIndex,
     required ValueChanged<int> onSelected,
     required ValueChanged<int> onTap,
+    bool showAbove = false,
+    bool showBelow = false,
   }) {
     final scheme = Theme.of(context).colorScheme;
     final surfaces = AppSurfaces.of(context);
@@ -307,7 +328,7 @@ class _MenuBarTargetDialState extends State<MenuBarTargetDial> {
             key: wheelKey,
             controller: controller,
             itemExtent: AppSizes.dialRowHeight,
-            overAndUnderCenterOpacity: 0.35,
+            overAndUnderCenterOpacity: 0.5,
             physics: const FixedExtentScrollPhysics(),
             onSelectedItemChanged: onSelected,
             childDelegate: ListWheelChildBuilderDelegate(
@@ -321,7 +342,50 @@ class _MenuBarTargetDialState extends State<MenuBarTargetDial> {
               ),
             ),
           ),
+          // 上下还有被挤出去的项时，用渐隐 + 小箭头指出该往哪滚。
+          if (showAbove) _buildEdgeCue(context, top: true),
+          if (showBelow) _buildEdgeCue(context, top: false),
         ],
+      ),
+    );
+  }
+
+  /// 边缘方向提示：从浮层底色渐隐到透明，再叠一个只做提示的小箭头。
+  ///
+  /// 渐变的实色端必须与浮层底色同一个不透明色，否则会看出来是一块矩形；
+  /// 轮子本身不要画底色（只有中央选中带有），这层才能糊成"渐隐"。
+  Widget _buildEdgeCue(BuildContext context, {required bool top}) {
+    final scheme = Theme.of(context).colorScheme;
+    final surface = AppSurfaces.of(context).overlay;
+    return Positioned(
+      top: top ? 0 : null,
+      bottom: top ? null : 0,
+      left: 0,
+      right: 0,
+      child: IgnorePointer(
+        child: SizedBox(
+          key: ValueKey<String>(
+            top ? 'menu-bar-dial-cue-above' : 'menu-bar-dial-cue-below',
+          ),
+          height: AppSizes.dialCueFade,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: top ? Alignment.topCenter : Alignment.bottomCenter,
+                end: top ? Alignment.bottomCenter : Alignment.topCenter,
+                colors: <Color>[surface, surface.withValues(alpha: 0)],
+              ),
+            ),
+            child: Align(
+              alignment: Alignment(0, top ? -0.35 : 0.35),
+              child: Icon(
+                top ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                size: AppSizes.dialCueIcon,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

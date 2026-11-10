@@ -77,6 +77,20 @@ Future<TimeProvider> _createProvider(WidgetTester tester) async {
   return provider!;
 }
 
+/// 网格里一个不被浮层盖住的点：滚轮事件必须落在时间轴上，不能落在转盘上。
+Offset _pointOutside(Rect dial, Rect grid) {
+  final candidates = <Offset>[
+    Offset(grid.center.dx, grid.top + 12),
+    Offset(grid.center.dx, grid.bottom - 12),
+    Offset(grid.left + 20, grid.center.dy),
+    Offset(grid.right - 12, grid.bottom - 12),
+  ];
+  for (final point in candidates) {
+    if (!dial.contains(point)) return point;
+  }
+  return candidates.first;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -88,6 +102,9 @@ void main() {
     final today = DateTime.now();
     final day = DateTime(today.year, today.month, today.day);
 
+    tester.view.physicalSize = const Size(400, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     await tester.pumpWidget(
       ChangeNotifierProvider<TimeProvider?>.value(
         value: provider,
@@ -111,6 +128,23 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byType(MenuBarTargetDial), findsOneWidget);
+    // 浮层不再占底部高度：网格高度不因转盘出现而变化。
+    final gridRect = tester.getRect(
+      find.byKey(const ValueKey('menu-bar-time-grid')),
+    );
+    final dialRect = tester.getRect(find.byType(MenuBarTargetDial));
+    expect(dialRect.left, greaterThanOrEqualTo(gridRect.left));
+    expect(dialRect.bottom, lessThanOrEqualTo(gridRect.bottom));
+
+    // 滚轮在网格空白处仍然滚时间轴，浮层跟着选区一起移动。
+    final pointer = TestPointer(1, PointerDeviceKind.mouse);
+    await tester.sendEventToBinding(pointer.hover(_pointOutside(dialRect, gridRect)));
+    await tester.sendEventToBinding(pointer.scroll(const Offset(0, 120)));
+    await tester.pump();
+    final movedRect = tester.getRect(find.byType(MenuBarTargetDial));
+    expect(movedRect.top, isNot(closeTo(dialRect.top, 0.5)));
+    expect(find.textContaining('已选'), findsOneWidget);
+    expect(tester.takeException(), isNull);
 
     await tester.tap(find.text('工作'));
     await tester.pumpAndSettle();
