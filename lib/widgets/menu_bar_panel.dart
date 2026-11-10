@@ -12,6 +12,7 @@ import '../providers/time_provider.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/menu_bar_summary.dart';
+import 'menu_bar_event_editor.dart';
 
 /// 菜单栏点开后的小面板：今日概览条 + 时间块列表。
 ///
@@ -59,6 +60,18 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
 
   void _quit() {
     context.read<MenuBarProvider?>()?.quit();
+  }
+
+  Future<void> _addEvent() async {
+    final provider = context.read<TimeProvider?>();
+    if (provider == null) return;
+    final saved = await showMenuBarEventEditor(
+      context,
+      provider: provider,
+      date: DateTime.now(),
+    );
+    if (!mounted || !saved) return;
+    setState(() => _now = DateTime.now());
   }
 
   void _openSpan(MenuBarSpan span) {
@@ -109,6 +122,8 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
           onOpenSettings: _openSettings,
           onQuit: _quit,
           onSpanTap: _openSpan,
+          onAdd: provider == null ? null : _addEvent,
+          addBlockedReason: provider?.scheduleEditBlockedReason,
         ),
       ),
     );
@@ -126,6 +141,8 @@ class MenuBarPanelView extends StatelessWidget {
     this.onOpenSettings,
     this.onQuit,
     this.onSpanTap,
+    this.onAdd,
+    this.addBlockedReason,
   });
 
   final MenuBarSummary summary;
@@ -135,6 +152,10 @@ class MenuBarPanelView extends StatelessWidget {
   final VoidCallback? onOpenSettings;
   final VoidCallback? onQuit;
   final ValueChanged<MenuBarSpan>? onSpanTap;
+  final VoidCallback? onAdd;
+
+  /// 非空时新增入口禁用，并把原因作为提示显示。
+  final String? addBlockedReason;
 
   static const List<String> _weekdayLabels = <String>[
     '一',
@@ -204,6 +225,12 @@ class MenuBarPanelView extends StatelessWidget {
             ],
           ),
         ),
+        if (onAdd != null)
+          IconButton(
+            tooltip: addBlockedReason ?? '新增日程',
+            onPressed: addBlockedReason == null ? onAdd : null,
+            icon: const Icon(Icons.add),
+          ),
       ],
     );
   }
@@ -254,9 +281,25 @@ class MenuBarPanelView extends StatelessWidget {
           Text('今天还没有记录', style: AppText.body),
           const SizedBox(height: AppSpacing.xs),
           Text(
-            '点右上角「＋」补一段',
+            onAdd == null ? '点右上角「＋」补一段' : '点下方「补一段」记录刚才做过的事',
             style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
           ),
+          if (addBlockedReason != null) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              addBlockedReason!,
+              textAlign: TextAlign.center,
+              style: AppText.caption.copyWith(color: scheme.error),
+            ),
+          ],
+          if (onAdd != null) ...[
+            const SizedBox(height: AppSpacing.md),
+            TextButton.icon(
+              onPressed: addBlockedReason == null ? onAdd : null,
+              icon: const Icon(Icons.add),
+              label: const Text('补一段'),
+            ),
+          ],
         ],
       ),
     );

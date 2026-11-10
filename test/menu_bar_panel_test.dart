@@ -136,6 +136,46 @@ void main() {
     expect(quit, 1);
   });
 
+  testWidgets('有新增回调时显示两个入口', (tester) async {
+    var added = 0;
+    await _pump(
+      tester,
+      MenuBarPanelView(
+        summary: MenuBarSummary.empty,
+        now: DateTime(2026, 11, 10, 9),
+        loading: false,
+        onAdd: () => added++,
+      ),
+    );
+
+    await tester.tap(find.byTooltip('新增日程'));
+    await tester.pump();
+    expect(added, 1);
+
+    await tester.tap(find.text('补一段'));
+    await tester.pump();
+    expect(added, 2);
+  });
+
+  testWidgets('只读状态禁用新增并说明原因', (tester) async {
+    var added = 0;
+    await _pump(
+      tester,
+      MenuBarPanelView(
+        summary: MenuBarSummary.empty,
+        now: DateTime(2026, 11, 10, 9),
+        loading: false,
+        onAdd: () => added++,
+        addBlockedReason: '远程视图只读，修改已忽略',
+      ),
+    );
+
+    expect(find.text('远程视图只读，修改已忽略'), findsOneWidget);
+    await tester.tap(find.byTooltip('远程视图只读，修改已忽略'));
+    await tester.pump();
+    expect(added, 0);
+  });
+
   testWidgets('加载中不闪空态', (tester) async {
     await _pump(
       tester,

@@ -845,6 +845,12 @@ class TimeProvider with ChangeNotifier {
     return null;
   }
 
+  /// 当前是否禁止编辑日程；null 表示可编辑。
+  ///
+  /// 只读判断给界面用（禁用入口 + 说明原因），不做副作用；
+  /// 真正写入前仍由 [assignCategoryToSlots] 内部再校验一次。
+  String? get scheduleEditBlockedReason => _scheduleMutationBlockedMessage();
+
   bool _allowScheduleMutation() {
     final message = _scheduleMutationBlockedMessage();
     if (message == null) return true;
