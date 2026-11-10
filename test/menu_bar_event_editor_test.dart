@@ -112,6 +112,22 @@ Future<void> _teardown(
   await tester.pump();
 }
 
+
+/// 分类 chip 在横向列表里，可能有一部分在可视区外；先滚到可见再点，
+/// 避免 hit test 落空（否则会刷一条 warnIfMissed 警告）。
+Future<void> _tapVisible(WidgetTester tester, String text) async {
+  // 直接点 chip 本身，避免点到字形的命中区（部分 chip 的文字不在命中路径里，
+  // 会刷 warnIfMissed 警告）。
+  var chip = find.widgetWithText(ChoiceChip, text);
+  if (chip.evaluate().isEmpty) {
+    chip = find.widgetWithText(ActionChip, text);
+  }
+  await tester.ensureVisible(chip);
+  await tester.pumpAndSettle();
+  await tester.tap(chip);
+  await tester.pump();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -133,8 +149,7 @@ void main() {
     expect(find.text('09:00'), findsOneWidget);
     expect(find.text('10:00'), findsOneWidget);
 
-    await tester.tap(find.text('工作'));
-    await tester.pump();
+    await _tapVisible(tester, '工作');
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
 
@@ -164,10 +179,8 @@ void main() {
       DateTime(day.year, day.month, day.day, 9, 3),
     );
 
-    await tester.tap(find.text('工作'));
-    await tester.pump();
-    await tester.tap(find.text('开会'));
-    await tester.pump();
+    await _tapVisible(tester, '工作');
+    await _tapVisible(tester, '开会');
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
 
@@ -195,8 +208,7 @@ void main() {
       DateTime(day.year, day.month, day.day, 9, 3),
     );
 
-    await tester.tap(find.text('工作'));
-    await tester.pump();
+    await _tapVisible(tester, '工作');
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
     expect(
