@@ -46,7 +46,7 @@ Future<void> _pump(WidgetTester tester, Widget child) async {
       theme: AppTheme.light(),
       home: Scaffold(
         body: Center(
-          child: SizedBox(width: 400, height: 560, child: child),
+          child: SizedBox(width: 400, height: 680, child: child),
         ),
       ),
     ),
@@ -54,7 +54,7 @@ Future<void> _pump(WidgetTester tester, Widget child) async {
 }
 
 void main() {
-  testWidgets('空数据也能看到时间轴与分类', (tester) async {
+  testWidgets('空数据也能看到全天格子与分类', (tester) async {
     await _pump(
       tester,
       MenuBarPanelView(
@@ -63,17 +63,18 @@ void main() {
         loading: false,
         categories: _categories,
         canEdit: true,
-        onSelectCategory: (_) {},
-        onTapCell: (_) {},
-        onPaintRange: (_, __) {},
+        onSelectRange: (_, __) {},
+        onWriteTarget: (_, __) {},
       ),
     );
 
     expect(find.text('11月10日 周二'), findsOneWidget);
     expect(find.text('今日已记录 0分钟'), findsOneWidget);
     expect(find.byKey(const ValueKey('menu-bar-time-grid')), findsOneWidget);
-    expect(find.widgetWithText(ChoiceChip, '工作'), findsOneWidget);
-    expect(find.widgetWithText(ChoiceChip, '休息'), findsOneWidget);
+    expect(find.widgetWithText(ActionChip, '工作'), findsOneWidget);
+    expect(find.widgetWithText(ActionChip, '开会'), findsOneWidget);
+    expect(find.widgetWithText(ActionChip, '休息'), findsOneWidget);
+    expect(find.text('在时间轴上拖选一段（或点一格），再点分类'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -97,8 +98,8 @@ void main() {
     expect(find.byKey(const ValueKey('menu-bar-time-grid')), findsOneWidget);
   });
 
-  testWidgets('点分类会回调并显示子事件', (tester) async {
-    Category? picked;
+  testWidgets('选中范围后点分类/子事件会回报写入目标', (tester) async {
+    final writes = <({Category category, String? subLabel})>[];
     await _pump(
       tester,
       MenuBarPanelView(
@@ -106,21 +107,28 @@ void main() {
         now: DateTime(2026, 11, 10, 9),
         loading: false,
         categories: _categories,
-        selectedCategoryId: 'c1',
+        selectionStart: 54,
+        selectionEnd: 55,
         canEdit: true,
-        onSelectCategory: (category) => picked = category,
+        onWriteTarget: (category, subLabel) =>
+            writes.add((category: category, subLabel: subLabel)),
       ),
     );
 
-    await tester.tap(find.widgetWithText(ChoiceChip, '休息'));
-    await tester.pump();
-    expect(picked?.id, 'c2');
+    expect(find.text('已选 09:00-09:20 · 点分类写入'), findsOneWidget);
 
-    expect(find.widgetWithText(ChoiceChip, '开会'), findsOneWidget);
+    await tester.tap(find.widgetWithText(ActionChip, '工作'));
+    await tester.tap(find.widgetWithText(ActionChip, '开会'));
+    await tester.pump();
+
+    expect(writes, hasLength(2));
+    expect(writes.first.category.id, 'c1');
+    expect(writes.first.subLabel, isNull);
+    expect(writes.last.subLabel, '开会');
   });
 
   testWidgets('只读时禁用分类并显示原因', (tester) async {
-    var picked = 0;
+    var wrote = 0;
     await _pump(
       tester,
       MenuBarPanelView(
@@ -130,16 +138,16 @@ void main() {
         categories: _categories,
         blockedReason: '远程视图只读，修改已忽略',
         canEdit: false,
-        onSelectCategory: (_) => picked++,
+        onWriteTarget: (_, __) => wrote++,
       ),
     );
 
     expect(find.text('远程视图只读，修改已忽略'), findsOneWidget);
-    final chip = tester.widget<ChoiceChip>(
-      find.widgetWithText(ChoiceChip, '工作'),
+    final chip = tester.widget<ActionChip>(
+      find.widgetWithText(ActionChip, '工作'),
     );
-    expect(chip.onSelected, isNull);
-    expect(picked, 0);
+    expect(chip.onPressed, isNull);
+    expect(wrote, 0);
   });
 
   testWidgets('没有分类时给出入口说明', (tester) async {
@@ -189,7 +197,7 @@ void main() {
     expect(add, 1);
   });
 
-  testWidgets('在时间轴上拖动会回报选中范围', (tester) async {
+  testWidgets('在格子上拖动会回报选中范围', (tester) async {
     int? start;
     int? end;
     await _pump(
@@ -200,7 +208,7 @@ void main() {
         loading: false,
         categories: _categories,
         canEdit: true,
-        onPaintRange: (from, to) {
+        onSelectRange: (from, to) {
           start = from;
           end = to;
         },
@@ -209,7 +217,7 @@ void main() {
 
     await tester.drag(
       find.byKey(const ValueKey('menu-bar-time-grid')),
-      const Offset(0, 60),
+      const Offset(0, 50),
       kind: PointerDeviceKind.mouse,
     );
     await tester.pumpAndSettle();
@@ -219,7 +227,7 @@ void main() {
     expect(end!, greaterThanOrEqualTo(start!));
   });
 
-  testWidgets('加载中不渲染时间轴', (tester) async {
+  testWidgets('加载中不渲染格子', (tester) async {
     await _pump(
       tester,
       MenuBarPanelView(

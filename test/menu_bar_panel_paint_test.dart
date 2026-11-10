@@ -79,7 +79,7 @@ Future<TimeProvider> _createProvider(WidgetTester tester) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('选分类后拖动时间轴会写入当天记录', (tester) async {
+  testWidgets('拖选后点分类会写入当天记录', (tester) async {
     final provider = await _createProvider(tester);
     provider.addCategory(
       Category(id: 'work', name: '工作', color: Colors.blue),
@@ -94,7 +94,7 @@ void main() {
           theme: AppTheme.light(),
           home: const Scaffold(
             body: Center(
-              child: SizedBox(width: 400, height: 560, child: MenuBarPanel()),
+              child: SizedBox(width: 400, height: 680, child: MenuBarPanel()),
             ),
           ),
         ),
@@ -102,14 +102,14 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.widgetWithText(ChoiceChip, '工作'));
-    await tester.pump();
-
+    // 先在格子上拖选一段时间，再点分类写入（与记录页一致）。
     await tester.drag(
       find.byKey(const ValueKey('menu-bar-time-grid')),
       const Offset(0, 40),
       kind: PointerDeviceKind.mouse,
     );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ActionChip, '工作'));
     await tester.pumpAndSettle();
 
     final recorded = provider

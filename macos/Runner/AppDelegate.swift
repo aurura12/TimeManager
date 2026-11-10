@@ -57,7 +57,7 @@ final class MenuBarController: NSObject, NSWindowDelegate {
   }
 
   private enum Metrics {
-    static let panelSize = NSSize(width: 400, height: 560)
+    static let panelSize = NSSize(width: 400, height: 680)
     static let anchorGap: CGFloat = 6
     static let screenMargin: CGFloat = 8
     static let cornerRadius: CGFloat = 16
