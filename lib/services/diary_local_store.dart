@@ -184,14 +184,23 @@ class DiaryLocalStore {
   /// 自动推送用它做前置判断：没有待上传内容时直接短路，避免每次回前台都
   /// 触发一次远端列表请求。调用方应传当前身份——另一个身份的草稿这次也推
   /// 不了，扫到它只会白跑一次远端列表、把状态灯点亮。
+  /// 正文为空的草稿不算待上传（[loadDrafts] 同样会跳过）：用户清空正文后
+  /// pending 标记可能残留，只看标记会让自动推送空跑一次同步，而那条分支会
+  /// 顺手刷新整份日记索引。
   static Future<bool> hasPendingDraftFor(DiaryKind? kind) async {
     final prefs = await SharedPreferences.getInstance();
-    final prefix = kind == null
-        ? 'diary_draft_pending_'
-        : 'diary_draft_pending_${kind.code}_';
-    for (final key in prefs.getKeys()) {
-      if (!key.startsWith(prefix)) continue;
-      if (prefs.getBool(key) == true) return true;
+    final kinds = kind == null ? DiaryKind.values : <DiaryKind>[kind];
+    for (final candidate in kinds) {
+      final pendingPrefix = 'diary_draft_pending_${candidate.code}_';
+      final bodyPrefix = 'diary_draft_${candidate.code}_';
+      for (final key in prefs.getKeys()) {
+        if (!key.startsWith(pendingPrefix)) continue;
+        if (prefs.getBool(key) != true) continue;
+        final body = prefs.getString(
+          '$bodyPrefix${key.substring(pendingPrefix.length)}',
+        );
+        if (body != null && body.trim().isNotEmpty) return true;
+      }
     }
     return false;
   }

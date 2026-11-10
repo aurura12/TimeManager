@@ -576,6 +576,11 @@ class _DiaryScreenState extends State<DiaryScreen> with WidgetsBindingObserver {
           _kind, _selectedDate, _startedAt!);
     }
     final saved = bodySaved && startedSaved;
+    // 正文清空后没有可上传内容；pending 标记留着会让自动推送每次回前台都
+    // 空跑一次同步，并顺带刷新整份日记索引。
+    if (bodySaved && _bodyController.text.trim().isEmpty) {
+      await DiaryLocalStore.clearDraftPending(_kind, _selectedDate);
+    }
     if (_localSaveFailed != !saved) {
       if (mounted) {
         setState(() => _localSaveFailed = !saved);

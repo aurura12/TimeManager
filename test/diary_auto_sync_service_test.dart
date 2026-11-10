@@ -55,6 +55,26 @@ void main() {
     expect(runs, 0);
   });
 
+  test('只有 pending 标记、正文为空的草稿不会触发自动上传', () async {
+    // 清空正文后 pending 标记会残留；若只看标记，回前台的补推会空跑一次
+    // 同步，并在「没有草稿」分支里刷新整份日记索引。
+    await DiaryLocalStore.markDraftPending(
+      DiaryKind.g,
+      DateTime(2026, 10, 2),
+    );
+    await DiaryLocalStore.saveDraftBody(DiaryKind.g, DateTime(2026, 10, 2), '');
+    var runs = 0;
+    final service = DiaryAutoSyncService(
+      syncRunner: () async {
+        runs++;
+        return const SyncOperationResult.success();
+      },
+    );
+
+    expect(await service.flush(), isNull);
+    expect(runs, 0);
+  });
+
   test('没有待上传草稿时直接短路，不触发远端同步', () async {    var runs = 0;
     final service = DiaryAutoSyncService(
       pendingChecker: () async => false,

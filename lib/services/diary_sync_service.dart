@@ -83,8 +83,13 @@ class DiarySyncService {
   final DiaryCacheUpdater _cacheUpdater;
   final DiaryCacheRefresher _cacheRefresher;
 
-  Future<SyncOperationResult> sync() {
-    return SyncOperationLock.instance.run(SyncModule.diary, _syncInternal);
+  /// [refreshWhenNoDrafts] 为 false 时，没有可上传草稿就直接返回，不刷新
+  /// 远端索引：自动推送只由草稿变化触发，不该在回前台时重建整份索引。
+  Future<SyncOperationResult> sync({bool refreshWhenNoDrafts = true}) {
+    return SyncOperationLock.instance.run(
+      SyncModule.diary,
+      () => _syncInternal(refreshWhenNoDrafts: refreshWhenNoDrafts),
+    );
   }
 
   /// 冲突处理的另一半：**用本地内容覆盖远端**。
@@ -275,7 +280,9 @@ class DiarySyncService {
     return const SyncOperationResult.success(message: '已用本地内容覆盖远端');
   }
 
-  Future<SyncOperationResult> _syncInternal() async {
+  Future<SyncOperationResult> _syncInternal({
+    bool refreshWhenNoDrafts = true,
+  }) async {
     await AppIdentityService.load();
     final kind = AppIdentityService.personKind;
     if (kind == null) {
@@ -293,6 +300,9 @@ class DiarySyncService {
     if (drafts.isEmpty) {
       // 没有明确待上传草稿时只刷新远端索引，不主动创建历史本地草稿对应的
       // 文件。这样“全部重试”不会把用户从未主动推送过的旧草稿批量发布。
+      if (!refreshWhenNoDrafts) {
+        return const SyncOperationResult.success(message: '没有待上传的日记');
+      }
       await _cacheRefresher(token);
       return const SyncOperationResult.success(message: '日记索引已刷新，没有待上传草稿');
     }

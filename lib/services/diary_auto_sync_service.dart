@@ -116,7 +116,10 @@ class DiaryAutoSyncService {
     return result;
   }
 
-  static Future<SyncOperationResult> _runSync() => DiarySyncService().sync();
+  // 自动推送只负责把草稿推上去；没有草稿时不该顺带刷新整份日记索引，
+  // 否则回前台的补推会变成一次全量索引重建（带进度条）。
+  static Future<SyncOperationResult> _runSync() =>
+      DiarySyncService().sync(refreshWhenNoDrafts: false);
 
   @visibleForTesting
   static void resetForTesting() {

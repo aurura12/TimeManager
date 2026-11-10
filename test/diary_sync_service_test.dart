@@ -98,6 +98,34 @@ void main() {
     );
   });
 
+  test('自动推送路径在没有草稿时不会刷新远端索引', () async {
+    var refreshCalls = 0;
+    final service = DiarySyncService(
+      tokenLoader: () async => 'token',
+      cacheUpdater: (_, __, ___) async {},
+      cacheRefresher: (_) async => refreshCalls++,
+    );
+
+    final result = await service.sync(refreshWhenNoDrafts: false);
+
+    expect(result.status, SyncModuleStatus.success);
+    expect(refreshCalls, 0);
+  });
+
+  test('同步中心的批量同步没有草稿时仍会刷新远端索引', () async {
+    var refreshCalls = 0;
+    final service = DiarySyncService(
+      tokenLoader: () async => 'token',
+      cacheUpdater: (_, __, ___) async {},
+      cacheRefresher: (_) async => refreshCalls++,
+    );
+
+    final result = await service.sync();
+
+    expect(result.status, SyncModuleStatus.success);
+    expect(refreshCalls, 1);
+  });
+
   test('远端正文已经一致时不会重复创建提交', () async {
     await saveDraft('同一篇内容');
     final remote = '''
