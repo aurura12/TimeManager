@@ -57,18 +57,15 @@ void main() {
     var opened = 0;
     var settings = 0;
     var quit = 0;
-    var add = 0;
     await _pump(
       tester,
       MenuBarPanelView(
         summary: MenuBarSummary.empty,
         now: DateTime(2026, 11, 10, 9, 5),
         grid: _fakeGrid(),
-        canEdit: true,
         onOpenMainWindow: () => opened++,
         onOpenSettings: () => settings++,
         onQuit: () => quit++,
-        onPreciseAdd: () => add++,
       ),
     );
 
@@ -81,13 +78,12 @@ void main() {
     await tester.tap(find.text('打开主窗口'));
     await tester.tap(find.byTooltip('设置'));
     await tester.tap(find.byTooltip('退出时间块'));
-    await tester.tap(find.byTooltip('精细添加（名称 / 精确起止）'));
     await tester.pump();
 
     expect(opened, 1);
     expect(settings, 1);
     expect(quit, 1);
-    expect(add, 1);
+    expect(find.byTooltip('精细添加（名称 / 精确起止）'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -102,7 +98,6 @@ void main() {
         dial: _fakeDial(),
         selectionStart: 54,
         selectionEnd: 55,
-        canEdit: true,
         onClearSelection: () => cleared++,
       ),
     );
@@ -115,7 +110,7 @@ void main() {
     expect(cleared, 1);
   });
 
-  testWidgets('只读时显示原因并禁用精细添加', (tester) async {
+  testWidgets('只读时显示原因', (tester) async {
     await _pump(
       tester,
       MenuBarPanelView(
@@ -123,16 +118,10 @@ void main() {
         now: DateTime(2026, 11, 10, 9),
         grid: _fakeGrid(),
         blockedReason: '远程视图只读，修改已忽略',
-        canEdit: false,
-        onPreciseAdd: () {},
       ),
     );
 
     expect(find.text('远程视图只读，修改已忽略'), findsOneWidget);
-    final button = tester.widget<IconButton>(
-      find.widgetWithIcon(IconButton, Icons.add),
-    );
-    expect(button.onPressed, isNull);
   });
 
   testWidgets('有记录时显示今日合计', (tester) async {
@@ -146,7 +135,6 @@ void main() {
         summary: summary,
         now: DateTime(2026, 11, 10, 9, 10),
         grid: _fakeGrid(),
-        canEdit: true,
       ),
     );
 

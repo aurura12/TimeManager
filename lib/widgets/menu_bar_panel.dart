@@ -17,7 +17,6 @@ import '../utils/app_snack_bar.dart';
 import '../utils/menu_bar_summary.dart';
 import '../utils/motion.dart';
 import '../utils/timeline_geometry.dart';
-import 'menu_bar_event_editor.dart';
 import 'menu_bar_target_dial.dart';
 import 'time_grid.dart';
 
@@ -201,16 +200,6 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
     context.read<MenuBarProvider?>()?.requestQuit();
   }
 
-  Future<void> _addEvent(TimeProvider provider) async {
-    final saved = await showMenuBarEventEditor(
-      context,
-      provider: provider,
-      date: DateTime.now(),
-    );
-    if (!mounted || !saved) return;
-    setState(() => _now = DateTime.now());
-  }
-
   void _write(TimeProvider provider, Category category, String? subLabel) {
     // 用户已经开始新的拖选：旧转盘的延迟写入直接丢弃，避免写到错误的范围。
     if (_pointerDown) return;
@@ -358,7 +347,6 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
           selectionStart: _selectionStart,
           selectionEnd: _selectionEnd,
           blockedReason: blocked,
-          canEdit: !loading && blocked == null,
           grid: grid,
           dial: _DialSlot(
             visible: dialVisible,
@@ -376,7 +364,6 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
           onOpenSettings: _openSettings,
           onQuit: _quit,
           onClearSelection: _clearSelection,
-          onPreciseAdd: provider == null ? null : () => _addEvent(provider),
         ),
       ),
     );
@@ -477,12 +464,10 @@ class MenuBarPanelView extends StatelessWidget {
     this.selectionStart,
     this.selectionEnd,
     this.blockedReason,
-    this.canEdit = false,
     this.onOpenMainWindow,
     this.onOpenSettings,
     this.onQuit,
     this.onClearSelection,
-    this.onPreciseAdd,
   });
 
   final MenuBarSummary summary;
@@ -492,12 +477,10 @@ class MenuBarPanelView extends StatelessWidget {
   final int? selectionStart;
   final int? selectionEnd;
   final String? blockedReason;
-  final bool canEdit;
   final VoidCallback? onOpenMainWindow;
   final VoidCallback? onOpenSettings;
   final VoidCallback? onQuit;
   final VoidCallback? onClearSelection;
-  final VoidCallback? onPreciseAdd;
 
   static const List<String> _weekdayLabels = <String>[
     '一',
@@ -547,31 +530,18 @@ class MenuBarPanelView extends StatelessWidget {
 
   Widget _buildHeader(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Row(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '${now.month}月${now.day}日 周${_weekdayLabels[now.weekday - 1]}',
-                style: AppText.sectionTitle,
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                '今日已记录 ${formatMenuBarDuration(summary.recordedMinutes)}',
-                style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
-              ),
-            ],
-          ),
+        Text(
+          '${now.month}月${now.day}日 周${_weekdayLabels[now.weekday - 1]}',
+          style: AppText.sectionTitle,
         ),
-        if (onPreciseAdd != null)
-          IconButton(
-            tooltip: '精细添加（名称 / 精确起止）',
-            onPressed: canEdit ? onPreciseAdd : null,
-            icon: const Icon(Icons.add),
-          ),
+        const SizedBox(height: AppSpacing.xs),
+        Text(
+          '今日已记录 ${formatMenuBarDuration(summary.recordedMinutes)}',
+          style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
+        ),
       ],
     );
   }
