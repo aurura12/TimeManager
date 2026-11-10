@@ -235,6 +235,8 @@ iOS 会落进「移动端」分支（见「首次本地开发前提」），因�
 macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，默认开）：启动只出现状态栏图标，点图标弹 400×560 面板，关主窗口不退出。改这块前先读完本节。
 
 - **纯原生，零 pub 依赖**：工程已切 SPM（`macos/` 无 Podfile），`tray_manager` 只支持 CocoaPods，引入等于把构建系统退回去。全部实现在 `macos/Runner/AppDelegate.swift`（`MenuBarController` + `LaunchAtLogin`）；**刻意不新增 Swift 文件**，避免手改老式 pbxproj。
+- **启动时不能真的把窗口藏起来**：Flutter 只有在窗口进入屏幕后才会启动 Dart isolate；启动就 `orderOut` 会让 Dart 一直不跑（表现为进程活着、没有图标、Dart 收不到 `configure`）。正确做法是 `alphaValue = 0` + `orderFront(nil)` 先把窗口挂上但完全不可见，等 Dart `configure` 到达后再 `orderOut`；另有 15 秒安全网兜底显示窗口。
+- **不要调 `super.applicationDidFinishLaunching`**：FlutterMacOS 的 `FlutterAppDelegate` 没有实现它，`super` 会抛 `doesNotRecognizeSelector`，异常被 AppKit 吞掉，override 后面的代码整段不执行（曾导致整个菜单栏功能静默失效）。`applicationWillFinishLaunching` 的 super 是安全的。
 - **窗口双形态**：复用同一个 `MainFlutterWindow`。进面板前保存 `styleMask/frame/level/collectionBehavior/...`，切 `borderless` + `.statusBar` 层级 + 圆角裁切，`orderOut` 隐藏；退出面板按保存值还原。**绝不新建第二个窗口或 engine**——那会得到两份 Provider 和不同步的状态。
 - **激活策略**：`Info.plist` 的 `LSUIElement=true`；启动按镜像键 `tm.menuBar.enabled` 设 `.accessory`，打开主窗口再升 `.regular` 恢复 Dock 图标与应用菜单。镜像键只服务「下次启动要不要露 Dock」，用户偏好在 Dart；两边不一致时以 Dart 的 `configure` 为准。
 - **关窗不退出**：`windowShouldClose` 改成 `orderOut`，`applicationShouldTerminateAfterLastWindowClosed` 在常驻模式下返回 false；应用菜单、状态栏右键菜单与面板里的「设置」都走现有 `desktop_commands openSettings`。

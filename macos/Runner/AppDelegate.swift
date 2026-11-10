@@ -11,12 +11,14 @@ class AppDelegate: FlutterAppDelegate {
   }
 
   override func applicationWillFinishLaunching(_ notification: Notification) {
+    // 启动前先定激活策略，避免关闭常驻时 Dock 图标晚一拍出现。
     MenuBarController.shared.prepareActivationPolicy()
     super.applicationWillFinishLaunching(notification)
   }
 
   override func applicationDidFinishLaunching(_ notification: Notification) {
-    super.applicationDidFinishLaunching(notification)
+    // FlutterAppDelegate（macOS）没有实现 applicationDidFinishLaunching，
+    // 调 super 会触发 doesNotRecognizeSelector 并把后续逻辑整段跳过。
     guard let window = mainFlutterWindow else { return }
     // 窗口位置恢复交给菜单栏控制器统一裁决，避免系统恢复出一个
     // 「菜单栏常驻模式下不该出现」的主窗口。
@@ -66,7 +68,7 @@ final class MenuBarController: NSObject, NSWindowDelegate {
     static let screenMargin: CGFloat = 8
     static let cornerRadius: CGFloat = 16
     static let toggleGuard: TimeInterval = 0.25
-    static let startupSafetyDelay: TimeInterval = 10
+    static let startupSafetyDelay: TimeInterval = 15
   }
 
   private struct SavedWindowState {
@@ -153,8 +155,12 @@ final class MenuBarController: NSObject, NSWindowDelegate {
     if isEnabled {
       isMainWindowVisible = false
       createStatusItem()
+      // Flutter 只有在窗口进入屏幕后才会启动 Dart isolate；完全 orderOut
+      // 会让 Dart 一直不跑，直到安全网把窗口显示出来。这里用 alpha=0
+      // 把窗口挂到屏幕上（不可见、不抢焦点），等 Dart configure 到达后
+      // 再 orderOut。
       window.alphaValue = 0
-      window.orderOut(nil)
+      window.orderFront(nil)
       scheduleStartupSafetyNet()
     } else {
       isMainWindowVisible = true
@@ -392,6 +398,9 @@ final class MenuBarController: NSObject, NSWindowDelegate {
 
   private func applyActivationPolicy(regular: Bool) {
     let policy: NSApplication.ActivationPolicy = regular ? .regular : .accessory
+    // LSUIElement 的 App 启动时已经是 accessory；重复设置会返回 false，
+    // 这不是失败，不要记成错误日志。
+    if NSApp.activationPolicy() == policy { return }
     if !NSApp.setActivationPolicy(policy) {
       NSLog("[时间块] 切换激活策略失败：\(policy == .regular ? "regular" : "accessory")")
     }
