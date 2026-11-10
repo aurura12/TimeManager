@@ -101,6 +101,15 @@ abstract final class AppSizes {
   /// 模板 / 分类 chip 高度
   static const double chip = 30;
 
+  /// 菜单栏双转盘：单行高度（不小于最小触摸目标）
+  static const double dialRowHeight = 44;
+
+  /// 菜单栏双转盘：可见行数（中间一行 + 上下各一行）
+  static const int dialVisibleRows = 3;
+
+  /// 菜单栏双转盘：两列之间的间距
+  static const double dialColumnGap = 8;
+
   /// 分段控件高度
   static const double segmented = 36;
 

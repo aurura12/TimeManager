@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:time_manager/models/category.dart';
 import 'package:time_manager/models/time_slot.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'package:time_manager/utils/menu_bar_summary.dart';
@@ -34,11 +33,6 @@ List<TimeSlot> _day(List<TimeSlot> recorded) {
   return slots;
 }
 
-final _categories = <Category>[
-  Category(id: 'c1', name: '工作', color: const Color(0xFF4DA8EE), subCategories: ['开会']),
-  Category(id: 'c2', name: '休息', color: const Color(0xFF96B462)),
-];
-
 Future<void> _pump(WidgetTester tester, Widget child) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -52,32 +46,93 @@ Future<void> _pump(WidgetTester tester, Widget child) async {
   );
 }
 
-Widget _fakeGrid() => const SizedBox.expand(
-      key: ValueKey('fake-grid'),
+Widget _fakeGrid() => const SizedBox.expand(key: ValueKey('fake-grid'));
+Widget _fakeDial() => const SizedBox(
+      key: ValueKey('fake-dial'),
+      height: 132,
     );
 
 void main() {
-  testWidgets('空数据也能看到外壳与分类', (tester) async {
+  testWidgets('没有选区时不显示转盘，提示拖选', (tester) async {
+    var opened = 0;
+    var settings = 0;
+    var quit = 0;
+    var add = 0;
     await _pump(
       tester,
       MenuBarPanelView(
         summary: MenuBarSummary.empty,
         now: DateTime(2026, 11, 10, 9, 5),
-        categories: _categories,
         grid: _fakeGrid(),
         canEdit: true,
-        onWriteTarget: (_, __) {},
+        onOpenMainWindow: () => opened++,
+        onOpenSettings: () => settings++,
+        onQuit: () => quit++,
+        onPreciseAdd: () => add++,
       ),
     );
 
     expect(find.text('11月10日 周二'), findsOneWidget);
     expect(find.text('今日已记录 0分钟'), findsOneWidget);
+    expect(find.text('在格子上拖选一段（或点一格），松手后拨动事件'), findsOneWidget);
     expect(find.byKey(const ValueKey('fake-grid')), findsOneWidget);
-    expect(find.widgetWithText(ActionChip, '工作'), findsOneWidget);
-    expect(find.widgetWithText(ActionChip, '开会'), findsOneWidget);
-    expect(find.widgetWithText(ActionChip, '休息'), findsOneWidget);
-    expect(find.text('在格子上拖选一段（或点一格），再点分类'), findsOneWidget);
+    expect(find.byKey(const ValueKey('fake-dial')), findsNothing);
+
+    await tester.tap(find.text('打开主窗口'));
+    await tester.tap(find.byTooltip('设置'));
+    await tester.tap(find.byTooltip('退出时间块'));
+    await tester.tap(find.byTooltip('精细添加（名称 / 精确起止）'));
+    await tester.pump();
+
+    expect(opened, 1);
+    expect(settings, 1);
+    expect(quit, 1);
+    expect(add, 1);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('选中后显示范围、转盘与清除入口', (tester) async {
+    var cleared = 0;
+    await _pump(
+      tester,
+      MenuBarPanelView(
+        summary: MenuBarSummary.empty,
+        now: DateTime(2026, 11, 10, 9),
+        grid: _fakeGrid(),
+        dial: _fakeDial(),
+        selectionStart: 54,
+        selectionEnd: 55,
+        canEdit: true,
+        onClearSelection: () => cleared++,
+      ),
+    );
+
+    expect(find.text('已选 09:00-09:20 · 滚轮选事件，停下即记录'), findsOneWidget);
+    expect(find.byKey(const ValueKey('fake-dial')), findsOneWidget);
+
+    await tester.tap(find.text('清除'));
+    await tester.pump();
+    expect(cleared, 1);
+  });
+
+  testWidgets('只读时显示原因并禁用精细添加', (tester) async {
+    await _pump(
+      tester,
+      MenuBarPanelView(
+        summary: MenuBarSummary.empty,
+        now: DateTime(2026, 11, 10, 9),
+        grid: _fakeGrid(),
+        blockedReason: '远程视图只读，修改已忽略',
+        canEdit: false,
+        onPreciseAdd: () {},
+      ),
+    );
+
+    expect(find.text('远程视图只读，修改已忽略'), findsOneWidget);
+    final button = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.add),
+    );
+    expect(button.onPressed, isNull);
   });
 
   testWidgets('有记录时显示今日合计', (tester) async {
@@ -90,112 +145,12 @@ void main() {
       MenuBarPanelView(
         summary: summary,
         now: DateTime(2026, 11, 10, 9, 10),
-        categories: _categories,
         grid: _fakeGrid(),
         canEdit: true,
       ),
     );
 
     expect(find.text('今日已记录 20分钟'), findsOneWidget);
-  });
-
-  testWidgets('选中范围后点分类/子事件会回报写入目标', (tester) async {
-    final writes = <({Category category, String? subLabel})>[];
-    await _pump(
-      tester,
-      MenuBarPanelView(
-        summary: MenuBarSummary.empty,
-        now: DateTime(2026, 11, 10, 9),
-        categories: _categories,
-        grid: _fakeGrid(),
-        selectionStart: 54,
-        selectionEnd: 55,
-        canEdit: true,
-        onWriteTarget: (category, subLabel) =>
-            writes.add((category: category, subLabel: subLabel)),
-      ),
-    );
-
-    expect(find.text('已选 09:00-09:20 · 点分类写入'), findsOneWidget);
-
-    await tester.tap(find.widgetWithText(ActionChip, '工作'));
-    await tester.tap(find.widgetWithText(ActionChip, '开会'));
-    await tester.pump();
-
-    expect(writes, hasLength(2));
-    expect(writes.first.category.id, 'c1');
-    expect(writes.first.subLabel, isNull);
-    expect(writes.last.subLabel, '开会');
-  });
-
-  testWidgets('只读时禁用分类并显示原因', (tester) async {
-    var wrote = 0;
-    await _pump(
-      tester,
-      MenuBarPanelView(
-        summary: MenuBarSummary.empty,
-        now: DateTime(2026, 11, 10, 9),
-        categories: _categories,
-        grid: _fakeGrid(),
-        blockedReason: '远程视图只读，修改已忽略',
-        canEdit: false,
-        onWriteTarget: (_, __) => wrote++,
-      ),
-    );
-
-    expect(find.text('远程视图只读，修改已忽略'), findsOneWidget);
-    final chip = tester.widget<ActionChip>(
-      find.widgetWithText(ActionChip, '工作'),
-    );
-    expect(chip.onPressed, isNull);
-    expect(wrote, 0);
-  });
-
-  testWidgets('没有分类时给出入口说明', (tester) async {
-    await _pump(
-      tester,
-      MenuBarPanelView(
-        summary: MenuBarSummary.empty,
-        now: DateTime(2026, 11, 10, 9),
-        categories: const <Category>[],
-        grid: _fakeGrid(),
-        canEdit: true,
-      ),
-    );
-
-    expect(find.text('还没有分类，请先在主窗口里添加'), findsOneWidget);
-  });
-
-  testWidgets('底部按钮都会回调', (tester) async {
-    var opened = 0;
-    var settings = 0;
-    var quit = 0;
-    var add = 0;
-    await _pump(
-      tester,
-      MenuBarPanelView(
-        summary: MenuBarSummary.empty,
-        now: DateTime(2026, 11, 10, 9),
-        categories: _categories,
-        grid: _fakeGrid(),
-        canEdit: true,
-        onOpenMainWindow: () => opened++,
-        onOpenSettings: () => settings++,
-        onQuit: () => quit++,
-        onPreciseAdd: () => add++,
-      ),
-    );
-
-    await tester.tap(find.text('打开主窗口'));
-    await tester.tap(find.byTooltip('设置'));
-    await tester.tap(find.byTooltip('退出时间块'));
-    await tester.tap(find.byTooltip('精细添加（名称 / 精确起止）'));
-    await tester.pump();
-
-    expect(opened, 1);
-    expect(settings, 1);
-    expect(quit, 1);
-    expect(add, 1);
   });
 
   testWidgets('没有 TimeProvider 时显示加载态', (tester) async {

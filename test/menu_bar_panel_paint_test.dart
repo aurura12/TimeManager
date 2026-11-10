@@ -9,6 +9,7 @@ import 'package:time_manager/models/category.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/theme/app_theme.dart';
 import 'package:time_manager/widgets/menu_bar_panel.dart';
+import 'package:time_manager/widgets/menu_bar_target_dial.dart';
 
 class _FakeGoogleSignInPlatform extends GoogleSignInPlatform {
   @override
@@ -79,7 +80,7 @@ Future<TimeProvider> _createProvider(WidgetTester tester) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('拖选后点分类会写入当天记录', (tester) async {
+  testWidgets('拖选后转盘升起，点中间项写入当天记录', (tester) async {
     final provider = await _createProvider(tester);
     provider.addCategory(
       Category(id: 'work', name: '工作', color: Colors.blue),
@@ -102,14 +103,16 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 先在格子上拖选一段时间，再点分类写入（与记录页一致）。
+    // 先在格子上拖选一段时间，松手后转盘升起；点中间的分类立即写入。
     await tester.drag(
       find.byKey(const ValueKey('menu-bar-time-grid')),
       const Offset(0, 40),
       kind: PointerDeviceKind.mouse,
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ActionChip, '工作'));
+    expect(find.byType(MenuBarTargetDial), findsOneWidget);
+
+    await tester.tap(find.text('工作'));
     await tester.pumpAndSettle();
 
     final recorded = provider

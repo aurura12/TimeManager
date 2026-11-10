@@ -10,19 +10,22 @@ import '../models/category.dart';
 import '../providers/menu_bar_provider.dart';
 import '../providers/time_provider.dart';
 import '../services/app_identity_service.dart';
+import '../services/menu_bar_target_store.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/app_snack_bar.dart';
 import '../utils/menu_bar_summary.dart';
+import '../utils/motion.dart';
 import '../utils/timeline_geometry.dart';
 import 'menu_bar_event_editor.dart';
+import 'menu_bar_target_dial.dart';
 import 'time_grid.dart';
 
-/// 菜单栏点开后的小面板：记录页同款的时间网格 + 分类目标。
+/// 菜单栏点开后的小面板：记录页同款时间网格 + 选时间后升起的双转盘。
 ///
-/// 直接复用记录页的 [TimeGrid]（45px 行高、一小时一行、6 个 10 分钟格），
-/// 所以块、文字、圆角和选中高亮都与主界面一致。交互也一致：拖选一段
-/// （或点一格），再点下方分类/子事件写入；一次选择一条撤销。
+/// 复用记录页的 [TimeGrid]（45px 行高、一小时一行、6 个 10 分钟格），
+/// 选完时间段松手后底部升起「左右双竖转盘」：左分类、右子事件，
+/// 滚轮转动、停下自动写入；点中间项可立即写入。
 class MenuBarPanel extends StatefulWidget {
   const MenuBarPanel({super.key});
 
@@ -35,10 +38,16 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
   DateTime _now = DateTime.now();
   int? _selectionStart;
   int? _selectionEnd;
+  int _selectionSerial = 0;
+  bool _pointerDown = false;
 
   final GlobalKey _gridKey = GlobalKey();
   final ScrollController _axisController = ScrollController();
   final ScrollController _gridController = ScrollController();
+  final MenuBarTargetStore _targetStore = MenuBarTargetStore();
+  MenuBarTarget? _rememberedTarget;
+
+  bool get _hasSelection => _selectionStart != null && _selectionEnd != null;
 
   @override
   void initState() {
@@ -50,6 +59,13 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
     _axisController.addListener(_syncGridScroll);
     // 打开时把「现在」放在视口上 1/3，和记录页一致。
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToNow());
+    unawaited(_loadRememberedTarget());
+  }
+
+  Future<void> _loadRememberedTarget() async {
+    final target = await _targetStore.load();
+    if (!mounted || target == null) return;
+    setState(() => _rememberedTarget = target);
   }
 
   @override
@@ -86,6 +102,34 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
     _axisController.jumpTo(target);
   }
 
+  /// 转盘升起后网格变矮，刚选中的行可能被裁到视口外，把它拉回来。
+  void _ensureSelectionVisible() {
+    if (!mounted || !_axisController.hasClients) return;
+    final start = _selectionStart;
+    final end = _selectionEnd;
+    if (start == null || end == null) return;
+    final firstRow = math.min(start, end) ~/ 6;
+    final lastRow = math.max(start, end) ~/ 6;
+    final position = _axisController.position;
+    if (!position.hasViewportDimension || position.viewportDimension <= 0) {
+      return;
+    }
+    final top = AppSpacing.sm + firstRow * AppSizes.gridRow;
+    final bottom = AppSpacing.sm + (lastRow + 1) * AppSizes.gridRow;
+    final viewTop = position.pixels;
+    final viewBottom = viewTop + position.viewportDimension;
+    double? target;
+    if (top < viewTop) {
+      target = top - AppSpacing.sm;
+    } else if (bottom > viewBottom) {
+      target = bottom - position.viewportDimension + AppSpacing.sm;
+    }
+    if (target == null) return;
+    _axisController.jumpTo(
+      target.clamp(0.0, position.maxScrollExtent),
+    );
+  }
+
   int _calculateIndex(Offset globalPosition) {
     final box = _gridKey.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) return 0;
@@ -107,6 +151,7 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
         _selectionStart = null;
         _selectionEnd = null;
       } else {
+        _selectionSerial++;
         _selectionStart = index;
         _selectionEnd = index;
       }
@@ -116,6 +161,7 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
   void _handlePanStart(Offset globalPosition) {
     final index = _calculateIndex(globalPosition);
     setState(() {
+      _selectionSerial++;
       _selectionStart = index;
       _selectionEnd = index;
     });
@@ -166,12 +212,11 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
   }
 
   void _write(TimeProvider provider, Category category, String? subLabel) {
+    // 用户已经开始新的拖选：旧转盘的延迟写入直接丢弃，避免写到错误的范围。
+    if (_pointerDown) return;
     final start = _selectionStart;
     final end = _selectionEnd;
-    if (start == null || end == null) {
-      showAppSnackBar(context, '先在时间轴上拖选一段');
-      return;
-    }
+    if (start == null || end == null) return;
     final blocked = provider.scheduleEditBlockedReason;
     if (blocked != null) {
       showAppSnackBar(context, blocked);
@@ -191,6 +236,16 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
     final label = subLabel ?? category.name;
     final range = formatMenuBarRange(from * 10, (to + 1) * 10);
     _clearSelection();
+
+    // 记住这次目标；写偏好失败只影响下次默认位置，不影响已写入的时间块。
+    final target = MenuBarTarget(
+      categoryId: category.id,
+      categoryName: category.name,
+      subLabel: subLabel,
+    );
+    _rememberedTarget = target;
+    unawaited(_targetStore.save(target));
+
     showAppUndoSnackBar(
       context,
       message: '已记录 $range $label',
@@ -238,6 +293,15 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
           Expanded(
             child: Listener(
               onPointerSignal: _forwardPointerSignal,
+              onPointerDown: (_) {
+                if (!_pointerDown) setState(() => _pointerDown = true);
+              },
+              onPointerUp: (_) {
+                if (_pointerDown) setState(() => _pointerDown = false);
+              },
+              onPointerCancel: (_) {
+                if (_pointerDown) setState(() => _pointerDown = false);
+              },
               child: TimeGrid(
                 gridKey: _gridKey,
                 date: today,
@@ -273,6 +337,8 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
     );
     final blocked = provider?.scheduleEditBlockedReason;
     final loading = provider == null || !provider.isInitialLoadFinished;
+    final dialVisible =
+        !loading && blocked == null && _hasSelection && !_pointerDown;
 
     final grid = loading
         ? const Center(child: CircularProgressIndicator())
@@ -289,19 +355,27 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
         child: MenuBarPanelView(
           summary: summary,
           now: _now,
-          categories: categories,
           selectionStart: _selectionStart,
           selectionEnd: _selectionEnd,
           blockedReason: blocked,
           canEdit: !loading && blocked == null,
           grid: grid,
+          dial: _DialSlot(
+            visible: dialVisible,
+            childBuilder: (context) => MenuBarTargetDial(
+              key: ValueKey<String>('menu-bar-dial-$_selectionSerial'),
+              categories: categories,
+              initialTarget: _rememberedTarget,
+              enabled: blocked == null,
+              onWrite: (category, subLabel) =>
+                  _write(provider!, category, subLabel),
+            ),
+            onExpanded: _ensureSelectionVisible,
+          ),
           onOpenMainWindow: _openMainWindow,
           onOpenSettings: _openSettings,
           onQuit: _quit,
           onClearSelection: _clearSelection,
-          onWriteTarget: provider == null
-              ? null
-              : (category, subLabel) => _write(provider, category, subLabel),
           onPreciseAdd: provider == null ? null : () => _addEvent(provider),
         ),
       ),
@@ -309,14 +383,97 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
   }
 }
 
-/// 纯入参的面板视图：网格由调用方注入，方便测试外壳与交互。
+/// 底部转盘槽位：从 0 高度展开/收起，收起动画结束后才销毁子组件。
+///
+/// 不用 AnimatedSize：子组件被替换成 shrink 后内容会先消失、高度再慢慢缩。
+class _DialSlot extends StatefulWidget {
+  const _DialSlot({
+    required this.visible,
+    required this.childBuilder,
+    this.onExpanded,
+  });
+
+  final bool visible;
+  final WidgetBuilder childBuilder;
+  final VoidCallback? onExpanded;
+
+  @override
+  State<_DialSlot> createState() => _DialSlotState();
+}
+
+class _DialSlotState extends State<_DialSlot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  Widget? _child;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: AppMotion.transition,
+    );
+    if (widget.visible) {
+      _child = widget.childBuilder(context);
+      _controller.value = 1;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.onExpanded?.call();
+      });
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _controller.duration = appMotionDuration(context);
+  }
+
+  @override
+  void didUpdateWidget(covariant _DialSlot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.visible && !oldWidget.visible) {
+      _child = widget.childBuilder(context);
+      _controller.forward(from: 0).whenComplete(() {
+        if (mounted) widget.onExpanded?.call();
+      });
+    } else if (!widget.visible && oldWidget.visible) {
+      _controller.reverse().whenComplete(() {
+        if (mounted && !widget.visible) {
+          setState(() => _child = null);
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizeTransition(
+      sizeFactor: CurvedAnimation(parent: _controller, curve: AppMotion.curve),
+      alignment: Alignment.topCenter,
+      child: _child == null
+          ? const SizedBox.shrink()
+          : Padding(
+              padding: const EdgeInsets.only(top: AppSpacing.sm),
+              child: _child,
+            ),
+    );
+  }
+}
+
+/// 纯入参的面板视图：网格与转盘槽位由调用方注入，方便测试外壳与交互。
 class MenuBarPanelView extends StatelessWidget {
   const MenuBarPanelView({
     super.key,
     required this.summary,
     required this.now,
-    required this.categories,
     required this.grid,
+    this.dial,
     this.selectionStart,
     this.selectionEnd,
     this.blockedReason,
@@ -325,14 +482,13 @@ class MenuBarPanelView extends StatelessWidget {
     this.onOpenSettings,
     this.onQuit,
     this.onClearSelection,
-    this.onWriteTarget,
     this.onPreciseAdd,
   });
 
   final MenuBarSummary summary;
   final DateTime now;
-  final List<Category> categories;
   final Widget grid;
+  final Widget? dial;
   final int? selectionStart;
   final int? selectionEnd;
   final String? blockedReason;
@@ -341,7 +497,6 @@ class MenuBarPanelView extends StatelessWidget {
   final VoidCallback? onOpenSettings;
   final VoidCallback? onQuit;
   final VoidCallback? onClearSelection;
-  final void Function(Category category, String? subLabel)? onWriteTarget;
   final VoidCallback? onPreciseAdd;
 
   static const List<String> _weekdayLabels = <String>[
@@ -379,8 +534,7 @@ class MenuBarPanelView extends StatelessWidget {
               _buildHint(context),
               const SizedBox(height: AppSpacing.xs),
               Expanded(child: grid),
-              const SizedBox(height: AppSpacing.sm),
-              _buildCategoryTargets(context),
+              if (dial != null) dial!,
               const SizedBox(height: AppSpacing.sm),
               Divider(height: AppSizes.hairline),
               _buildFooter(context),
@@ -435,7 +589,7 @@ class MenuBarPanelView extends StatelessWidget {
         children: [
           Expanded(
             child: Text(
-              '已选 ${formatMenuBarRange(selectionStart! * 10, (selectionEnd! + 1) * 10)} · 点分类写入',
+              '已选 ${formatMenuBarRange(selectionStart! * 10, (selectionEnd! + 1) * 10)} · 滚轮选事件，停下即记录',
               style: AppText.caption.copyWith(color: scheme.primary),
             ),
           ),
@@ -455,46 +609,8 @@ class MenuBarPanelView extends StatelessWidget {
       );
     }
     return Text(
-      '在格子上拖选一段（或点一格），再点分类',
+      '在格子上拖选一段（或点一格），松手后拨动事件',
       style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
-    );
-  }
-
-  Widget _buildCategoryTargets(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    if (categories.isEmpty) {
-      return Text(
-        '还没有分类，请先在主窗口里添加',
-        style: AppText.caption.copyWith(color: scheme.error),
-      );
-    }
-    final targets = <({Category category, String? subLabel})>[
-      for (final category in categories) ...[
-        (category: category, subLabel: null),
-        for (final sub in category.subCategories)
-          (category: category, subLabel: sub),
-      ],
-    ];
-    return SizedBox(
-      height: AppSizes.chip,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: targets.length,
-        separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.sm),
-        itemBuilder: (context, index) {
-          final target = targets[index];
-          return ActionChip(
-            avatar: CircleAvatar(
-              backgroundColor: target.category.color,
-              radius: AppSizes.statusDot,
-            ),
-            label: Text(target.subLabel ?? target.category.name),
-            onPressed: canEdit && onWriteTarget != null
-                ? () => onWriteTarget!(target.category, target.subLabel)
-                : null,
-          );
-        },
-      ),
     );
   }
 
