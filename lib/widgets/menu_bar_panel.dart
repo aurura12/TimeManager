@@ -170,9 +170,11 @@ class MenuBarPanelView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final surfaces = AppSurfaces.of(context);
-    return Material(
-      color: context.wallpaperFill(surfaces.panel),
-      child: SafeArea(
+    // 用 Scaffold 而不是 Material：撤销提示条要挂在面板自己的 Scaffold 上，
+    // 否则会落到被 Offstage 隐藏的主界面里，用户看不到。
+    return Scaffold(
+      backgroundColor: context.wallpaperFill(surfaces.panel),
+      body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(
             AppSpacing.lg,
