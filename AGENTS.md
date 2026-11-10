@@ -13,6 +13,7 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
 - **本机提醒（写日记 / 打卡 / 时间块）** → 见「提醒的硬约束」（历史上两次实现都因静默失效被删）
 - **日程自动同步（无感）** → 见「日程自动同步（无感）」，轮询 / 基线记账 / 并发互斥 / **待同步队列的身份归属** 全在里面
 - **背景图（壁纸）** → 见「背景图（壁纸，仅本机）」，本地图片路径绝不进同步或备份
+- **菜单栏常驻（macOS）** → 见「macOS 菜单栏常驻」，窗口双形态 / 激活策略 / 面板只读 + 新增 都在里面
 - **同步 / 身份分片 / 跨身份数据** → 见「远端文档布局」与「分类不带默认种子 + 「临时」仅本机」；切身份文案差异见「待同步队列的身份归属」
 - **视觉（配色 / 间距 / 字号 / 圆角）** → 见「Conventions」，规范在 `docs/design-system.md`，改后必跑 `test/visual_system_test.dart`
 
@@ -28,7 +29,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
 
 ## Architecture
 
-- **Entry**: `lib/main.dart` → `MainScreen` (默认 6-tab bottom nav: 记录/日记/出行/打卡/目标/我的，Android / Windows / macOS 均支持自定义显示与排序)。启动时初始化 `AppLogService` 全局错误捕获，并对 MIUI 设备应用 SSL 修复的 `HttpOverrides`。
+- **Entry**: `lib/main.dart` → `AppRootShell`（主界面常驻壳，菜单栏面板显示时按住 `MainScreen` 不重建）→ `MainScreen` (默认 6-tab bottom nav: 记录/日记/出行/打卡/目标/我的，Android / Windows / macOS 均支持自定义显示与排序)。启动时初始化 `AppLogService` 全局错误捕获，并对 MIUI 设备应用 SSL 修复的 `HttpOverrides`。
 - **State**: `lib/providers/`
   - `main_tab_provider.dart` → `MainTabProvider` — 本机导航偏好（`app_main_tabs_v1`），与身份无关、不进同步/备份。入口「我的 → 设置 → 操作与布局 → 底部标签」，至少显示两个标签且保留「我的」；`MainTabId` 的稳定身份与显示顺序分离，排序/隐藏不能交换或销毁已构建页面的状态。启动先读偏好，再按可见顺序懒构建首个页面
   - `time_provider.dart` → `TimeProvider` (~11500 行) — 核心业务状态：时间块、分类、目标、模板、撤销栈、统计缓存、增量保存、Google 日历同步、日程(schedule)同步、已删除事件关系
@@ -38,11 +39,12 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
   - `target_stats_cache.dart` → `TargetStatsCache` (47 行) — 目标统计内存缓存，按日期失效
   - `wake_up_provider.dart` → `WakeUpProvider` — 目标页起床记录：每个自然日一条、精确到分钟，最近 7 天平均只计已记录日期。卡片「查看更多」进入 `WakeUpHistoryScreen`，可按最近 30 天 / 90 天 / 全部 / 自选日期查看平均、最早、最晚起床时间、趋势与每日明细；`recordsInRange` 按自然日含首尾筛选、日期倒序返回当前身份记录。应用入口全局创建，隐藏目标页也继续同步；本机经 `WakeUpLocalStore` 按身份保存数据与待上传标记，远端经 `WakeUpGiteeService` 双向同步。切身份清空旧视图，异步保存保留原身份归属、旧响应不能混入新身份；保存成功后才更新显示。目前不进 JSON 备份
   - `background_image_provider.dart` → `BackgroundImageProvider` — 背景图（壁纸）本机状态：图片路径 / 开关 / 照片不透明度 / 表面不透明度。**刻意独立于业务数据 Provider：本地图片路径绝不进同步或备份快照**（`lib/services/` 与 `lib/models/` 均不引用它）。契约见「数据流与关键模式」的背景图一节
+  - `menu_bar_provider.dart` → `MenuBarProvider` — 菜单栏常驻的本机状态（开关 / 面板可见 / 主窗口可见 / 登录项），原生为权威、这里保存镜像；`isMainSurfaceActive` 供「那年今日」与快捷键门控。用可空泛型注册，缺 Provider 的宿主按普通窗口处理。契约见「macOS 菜单栏常驻」
   - `now_marker_provider.dart` → `NowMarkerProvider` — 记录页「现在」小圆点的显示开关（`app_now_marker_v1`，默认显示），**本机设置、独立于身份、不进同步或备份**；入口在「我的 → 设置 → 操作与布局 → 当前时刻标记」
   - `event_label_style_provider.dart` → `EventLabelStyleProvider` — 事件名显示偏好（`app_event_label_style_v1`，默认两行），**本机设置、独立于身份、不进同步或备份**；只决定 `EventLabelText` 渲染 1 行还是 2 行，名字被截断时靠长按（手机）/ 悬停（桌面）看全名。设置入口是 `EventLabelSettingsScreen`
   - `haptics_provider.dart` → `HapticsProvider` — 触感反馈总开关（`app_haptics_v1`，默认开启），**本机设置、独立于身份、不进同步或备份**。所有震动只能经 `lib/utils/haptics.dart` 的 `playHaptic(context, HapticStrength.*)` 发出（它读这个开关、吞掉平台通道异常），不要在页面里直接调 `HapticFeedback`；设置入口在「我的 → 设置 → 操作与布局 → 触感反馈」
   - `on_this_day_popup_provider.dart` → `OnThisDayPopupProvider` — 「那年今日」启动自动弹出开关（`app_on_this_day_popup_v1`，默认自动弹出），**本机设置、独立于身份、不进同步或备份**；只决定 `MainScreen._tryShowOnThisDay` 是否自动弹层，「记录回顾 → 那年今日」的手动入口不受影响。设置入口在「我的 → 记录回顾 → 自动弹出」
-- **Models**: `lib/models/` (37 个文件)
+- **Models**: `lib/models/` (38 个文件)
   - 时间记录：`TimeSlot`, `Category`, `CalendarBlock`, `ScheduleTemplate`, `VoiceScheduleDraft`, `ScheduleSyncProgress`
   - 打卡系统：`CheckInGoal`, `CheckInRecord`, `CheckInDocument`, `CheckInViewFilter`
   - 目标系统：`Target`、`TargetProgress` / `TargetPeriodRange`（`target_progress.dart`，统一进度计算的结果模型）
@@ -57,7 +59,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
   - 分类生命周期：`DeletedEventRelation`（已删除事件的父子关系，仅本地持久化，见"数据流与关键模式"）
   - 工具：`CoordTransform`
 - **Screens**: `lib/screens/` (28 个) — `MainScreen`, `HomeScreen`, `DiaryScreen`, `TravelScreen`, `CheckInScreen`, `TargetScreen`, `ProfileScreen`, plus `DailyReviewScreen`, `WordCloudScreen`, `EventDetailScreen`, `TargetDetailScreen`, `AddTargetScreen`, `GlobalSearchScreen`, `GlobalSearchDetailScreen`, `DiarySearchScreen`, `AddCheckInGoalScreen`, `CheckInDetailScreen`, `CheckInArchiveScreen`, `CheckInMapScreen` (flutter_map 地图), `DiaryConflictScreen` (日记冲突逐块对比/合并), `SyncCenterScreen`, `AppLogScreen`, `OnThisDayScreen`, `WakeUpHistoryScreen` (起床历史), `MainTabSettingsScreen` (底部标签设置), `DesktopLayoutSettingsScreen` (桌面布局设置), `DesktopShortcutSettingsScreen` (快捷键设置), `EventLabelSettingsScreen` (事件名显示设置，从「我的 → 设置」进入)
-- **Services**: `lib/services/` (68 个文件)，主要板块：
+- **Services**: `lib/services/` (70 个文件)，主要板块：
   - **Google 身份 & 日历**：`GoogleCalendarService` (OAuth 2.0 + 事件同步)、`calendarEventToBlock`（`google_calendar_event_parser.dart`）、`HomeWidgetService` (Android 桌面小组件)、`HomeWidgetActionRouter` (小组件深链接路由)、`AppIdentityService` (手动/Google 双身份)、`AppUserIdentityStore` (身份信息本地存储)、`GoogleSessionStore`
   - **Git 同步（Gitee/GitHub 双平台）**：`GitHubContentsApi`、`GiteeContentsApi`、`contents_api_common.dart`（`ContentsTreeEntry` / `ContentsDirectoryResult` 等公共类型）、`DiaryGitHubService`/`DiaryGiteeService`、`DiarySyncService` (列表/拉取/推送编排)、`TravelGitHubService`/`TravelGiteeService`、`CheckInGitHubService`/`CheckInGiteeService`、`PendingGoogleDaySyncResult`（待同步状态）
   - **同步中心**：`SyncCenterOperations` + `SyncCenterController`（`sync_center_service.dart`，统一同步入口 / 重试 / 拉取远端）、`SyncStatusCoordinator` + `SharedPreferencesSyncStatusStore`/`InMemorySyncStatusStore`（`sync_status_coordinator.dart`，跨页同步状态）、`SyncOperationLock`（互斥）、`RemoteSyncSettings`、`DiaryAutoSyncService`（`diary_auto_sync_service.dart`，日记自动上传的触发与去重）；日记冲突时模块卡片提供「去处理冲突」，从 `SyncModuleState.details` 里的远端路径解析日期，跳 `DiaryScreen(initialKind/initialDate/openConflictOnLoad)` 直达当天冲突页
@@ -70,10 +72,11 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
   - **语音建日程**：`VoiceScheduleParser` (自然语言解析)、`VoiceScheduleSlotPlanner` (10 分钟槽位规划)，UI 在 `lib/widgets/voice_schedule_sheet.dart`
   - **应用日志**：`AppLogService` (全局错误捕获)、`AppLogStore` (持久化)、`AppLogExportService` (导出)
   - **提醒（仅 Android）**：`ReminderPlatform`（插件全局只初始化一次 + 时区 + 按 payload 分发点击路由）、`ReminderBackend`（插件薄封装）、`DiaryReminderService`（每天固定时间提醒写日记，单一实例）、`CheckInReminderService`（每个打卡目标一份，多实例）、`TimeBlockReminderService`（按当天时间块开始时刻提醒，一次性排程 + 3 天窗口）、`DiaryReminderDiagnostics`（把原生触发事件导入运行日志）。原生埋点在本地 fork 里，见 `third_party/flutter_local_notifications/FORK.md`
+  - **菜单栏常驻**：`MenuBarService`（`time_manager/menu_bar` 通道封装 + 2 秒超时，抽象接口供测试注入 Fake）
   - **工具**：`DataBackupService` (JSON 导入导出)、`OnThisDayService` (当年今日回顾)、`UpdateService`、`calendar_slot_refresh.dart`（`shouldClearCalendarSlotForRefresh`）、`TransactionalPreferenceString`（单键偏好串行读写 + 失败回滚进程内缓存）、`WindowsLegacyPreferencesMigration`
   - 各数据域有对应的 `*_local_store.dart` 本地存储封装
-- **Widgets**: `lib/widgets/` (38 个) — `DatePickerPanel`, `TemplateBar`, `TimeGrid`, `BrushModeCard` (刷子模式)、`DataFailureBanner` (数据故障横幅：初始化失败 / 本地保存失败，挂在 `MainScreen` 内容区顶部)、`CalendarSyncStatusBadge`, `SyncStatusButton` (页面同步状态灯：正常不占位、同步中转圈、异常红/黄点，点击进同步中心), `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, `DesktopShortcutHost` (桌面快捷键)、`DailyReviewChatSheet`, `TargetStatsSection`, `showTimeBlockReminderLeadSheet` (时间块提醒的提前量选择), `showTimeWheelSheet` (时/分滚轮面板，替代 `showTimePicker`)、`BackgroundImageLayer` / `BackgroundImagePreview` (背景图：全窗口壁纸层 + 设置预览)、OnThisDay 相关组件 (`showOnThisDaySheet`, `OnThisDayYearCard`)、打卡照片与地图相关组件 (`CheckInPhotoSheet`, `CheckInPhotoThumb`, `CheckInPhotoViewer`, `CheckInMapPreview`)、导航组件 (`MainTabNavigation`, `MainTabActivity`)、目标组件 (`DesktopTargetCard`, `TargetCalendarDay` 目标月历、`TargetProgressIndicator`)、跨日 (`DayChangeBoundary` 可见时定到零点并在跨日 / 回前台 / 重新可见时回调，`TargetDayRefresh` 沿用同一计时方式)、出行桌面组件 (`TravelDesktopCalendar`, `TravelRecordTable` / `TravelMonthlyTable`, `TravelDateDetails`)、起床组件 (`WakeUpCard`, `WakeUpChart`)、颜色选择 (`ColorPickerPanel`, `showThemeColorSheet`)、事件名文本 (`EventLabelText`：按 `EventLabelStyle` 渲染 1/2 行，只在真被省略时才挂 Tooltip，手机长按 / 桌面悬停看全名)、`CurrentTimeMarker` (今天这一列的「现在」小圆点，每分钟刷新、随滚动移动，不拦手势)
-- **Utils**: `lib/utils/` (20 个) — `adaptive` (平台自适应)、`app_lifecycle` (`isAppBackgroundedLifecycleState`：只有 `paused` / `hidden` / `detached` 算后台，桌面最小化走 `hidden`)、`calendar_time_range`、`desktop_selection`、`haptics` (`playHaptic` / `HapticStrength`：触感唯一入口，读本机开关并吞平台异常)、`local_day_range`、`platform_features` (按平台开关功能)、`schedule_view_dates`、`time_block_resize` (拖动时间块边界调时长的纯函数)、`time_slot_segment`、`timeline_geometry` (分钟 ↔ 时间轴 y / 「滚到现在」偏移)、`swipe_navigation` (左右滑切日判定)、`diary_remote_path_utils` (远端日记文件名里的日期解析与排序)、`diary_markdown` (剥 front matter / 比较用正文归一)、`text_diff` (行级 LCS 差异与逐块合并)、`map_tile_config` (地图瓦片配置)、`app_snack_bar` (撤销提示条唯一入口：撤销窗口内普通提示排队后补发，不能顶掉撤销)、`confirm_dialog` (`showConfirmDialog`，`destructive` 走 error 配色)、`keyboard_dismiss` (`dismissKeyboardOnTapOutside`：手机 `TextField.onTapOutside` 为空时框架刻意不失焦，必须显式挂)、`motion` (`appMotionDuration`：把系统「减弱动态效果」统一折成零时长)
+- **Widgets**: `lib/widgets/` (43 个) — `DatePickerPanel`, `TemplateBar`, `TimeGrid`, `BrushModeCard` (刷子模式)、`DataFailureBanner` (数据故障横幅：初始化失败 / 本地保存失败，挂在 `MainScreen` 内容区顶部)、`CalendarSyncStatusBadge`, `SyncStatusButton` (页面同步状态灯：正常不占位、同步中转圈、异常红/黄点，点击进同步中心), `VoiceScheduleSheet`, `ScheduleSyncProgressBanner`, `ProfileSettingsDrawer`, `DesktopShortcutHost` (桌面快捷键)、`DailyReviewChatSheet`, `TargetStatsSection`, `showTimeBlockReminderLeadSheet` (时间块提醒的提前量选择), `showTimeWheelSheet` (时/分滚轮面板，替代 `showTimePicker`)、`BackgroundImageLayer` / `BackgroundImagePreview` (背景图：全窗口壁纸层 + 设置预览)、OnThisDay 相关组件 (`showOnThisDaySheet`, `OnThisDayYearCard`)、打卡照片与地图相关组件 (`CheckInPhotoSheet`, `CheckInPhotoThumb`, `CheckInPhotoViewer`, `CheckInMapPreview`)、导航组件 (`MainTabNavigation`, `MainTabActivity`)、目标组件 (`DesktopTargetCard`, `TargetCalendarDay` 目标月历、`TargetProgressIndicator`)、跨日 (`DayChangeBoundary` 可见时定到零点并在跨日 / 回前台 / 重新可见时回调，`TargetDayRefresh` 沿用同一计时方式)、出行桌面组件 (`TravelDesktopCalendar`, `TravelRecordTable` / `TravelMonthlyTable`, `TravelDateDetails`)、起床组件 (`WakeUpCard`, `WakeUpChart`)、颜色选择 (`ColorPickerPanel`, `showThemeColorSheet`)、事件名文本 (`EventLabelText`：按 `EventLabelStyle` 渲染 1/2 行，只在真被省略时才挂 Tooltip，手机长按 / 桌面悬停看全名)、`CurrentTimeMarker` (今天这一列的「现在」小圆点，每分钟刷新、随滚动移动，不拦手势)、菜单栏组件 (`AppRootShell` 主界面常驻壳、`MenuBarPanel` 24 小时概览条 + 今日块列表 + 只读详情、`MenuBarEventEditor` 补一段弹层、`MenuBarSettingsTiles` 常驻/登录项开关)
+- **Utils**: `lib/utils/` (22 个) — `adaptive` (平台自适应)、`app_lifecycle` (`isAppBackgroundedLifecycleState`：只有 `paused` / `hidden` / `detached` 算后台，桌面最小化走 `hidden`)、`calendar_time_range`、`desktop_selection`、`haptics` (`playHaptic` / `HapticStrength`：触感唯一入口，读本机开关并吞平台异常)、`local_day_range`、`platform_features` (按平台开关功能)、`schedule_view_dates`、`time_block_resize` (拖动时间块边界调时长的纯函数)、`time_slot_segment`、`timeline_geometry` (分钟 ↔ 时间轴 y / 「滚到现在」偏移)、`swipe_navigation` (左右滑切日判定)、`diary_remote_path_utils` (远端日记文件名里的日期解析与排序)、`diary_markdown` (剥 front matter / 比较用正文归一)、`text_diff` (行级 LCS 差异与逐块合并)、`map_tile_config` (地图瓦片配置)、`app_snack_bar` (撤销提示条唯一入口：撤销窗口内普通提示排队后补发，不能顶掉撤销)、`confirm_dialog` (`showConfirmDialog`，`destructive` 走 error 配色)、`keyboard_dismiss` (`dismissKeyboardOnTapOutside`：手机 `TextField.onTapOutside` 为空时框架刻意不失焦，必须显式挂)、`motion` (`appMotionDuration`：把系统「减弱动态效果」统一折成零时长)、`menu_bar_summary` (今日分段 / 概览条 0..1 几何 / 中文时长)
 - **Theme**: `lib/theme/` — `app_tokens.dart` (间距/圆角/控件高度/文字层级)、`app_theme.dart` (`ColorScheme` + `AppSurfaces` 表面层级扩展 + `AppWallpaperTheme` 壁纸扩展 + `context.wallpaperFill()`/`adaptSemanticFill()` + 全套组件主题)、`app_semantic_colors.dart` (身份色/分类色/图表色/奖牌色/状态色白名单)、`background_image_contrast.dart` (`BackgroundImageContrast` 背景图对比度与 sRGB 逐通道合成)、`app_scroll_behavior.dart` (`AppScrollBehavior`：桌面端纵向列表常显滚动条，移动端不变)。规范见 `docs/design-system.md`
 - **Config**: `lib/config/` — API keys and service configs (`.gitignore`d，**无 .example.dart 模板**，结构需直接查看引用方代码)
 
@@ -227,6 +230,22 @@ iOS 会落进「移动端」分支（见「首次本地开发前提」），因�
 - **相机 / 相册 / 定位**的 `Info.plist` 权限说明已配齐；新增权限时同步补 `NS*UsageDescription`
 - 验证 iOS 改动：`flutter run -d "iPhone 17"`（模拟器，免签名）或真机；桌面小组件、应用内更新这类 Android 专属路径在日志里应无相关错误
 
+## macOS 菜单栏常驻
+
+macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，默认开）：启动只出现状态栏图标，点图标弹 400×560 面板，关主窗口不退出。改这块前先读完本节。
+
+- **纯原生，零 pub 依赖**：工程已切 SPM（`macos/` 无 Podfile），`tray_manager` 只支持 CocoaPods，引入等于把构建系统退回去。全部实现在 `macos/Runner/AppDelegate.swift`（`MenuBarController` + `LaunchAtLogin`）；**刻意不新增 Swift 文件**，避免手改老式 pbxproj。
+- **窗口双形态**：复用同一个 `MainFlutterWindow`。进面板前保存 `styleMask/frame/level/collectionBehavior/...`，切 `borderless` + `.statusBar` 层级 + 圆角裁切，`orderOut` 隐藏；退出面板按保存值还原。**绝不新建第二个窗口或 engine**——那会得到两份 Provider 和不同步的状态。
+- **激活策略**：`Info.plist` 的 `LSUIElement=true`；启动按镜像键 `tm.menuBar.enabled` 设 `.accessory`，打开主窗口再升 `.regular` 恢复 Dock 图标与应用菜单。镜像键只服务「下次启动要不要露 Dock」，用户偏好在 Dart；两边不一致时以 Dart 的 `configure` 为准。
+- **关窗不退出**：`windowShouldClose` 改成 `orderOut`，`applicationShouldTerminateAfterLastWindowClosed` 在常驻模式下返回 false；应用菜单、状态栏右键菜单与面板里的「设置」都走现有 `desktop_commands openSettings`。
+- **启动安全网**：10 秒内没收到 Dart 的 `configure/getState` 就强制显示主窗口，避免「点了没反应」；调试时用 `TM_DISABLE_MENU_BAR=1` 强制普通窗口模式。
+- **Dart 侧**：`MenuBarService`（`time_manager/menu_bar`，2 秒超时）+ `MenuBarProvider`（可空注册）。bootstrap 先 `await menuBar.ready` 再 `runApp`，首帧就按正确窗口形态构建；通道失败回退普通窗口并写日志，不得阻塞启动。
+- **根布局**：`AppRootShell` 用 `Offstage + ExcludeFocus + TickerMode + OverflowBox(1200×800) + MediaQuery` 保住 `MainScreen`。面板只有 400 宽，让主界面按面板尺寸布局会 overflow 并刷错误日志。**层级必须恒定**，切换面板/主窗口只改参数，不能让 `MainScreen` 重建（Tab 状态、滚动位置、那年今日会话标记都要留）。
+- **面板只读 + 只新增**：`MenuBarPanel` 展示 24 小时概览条与今日块列表；点块看只读详情，新增走 `MenuBarEventEditor` → `TimeProvider.assignCategoryToSlots(date:)`，复用既有撤销 / 墓碑 / 落盘 / 同步链路；只读原因用 `scheduleEditBlockedReason`，不要在面板里另写判断。
+- **门控**：主界面不可见（面板打开或只剩图标）时，「那年今日」自动弹层与全局桌面快捷键必须让位（Esc 留给面板收起）；主窗口重新可见时补一次。
+- **登录项**：macOS 13+ `SMAppService.mainApp`，macOS 12 隐藏开关；注册失败或被系统要求批准时只提示并回滚，不阻塞启动。
+- **仅 macOS**：平台判定走 `lib/utils/platform_features.dart` 的 `supportsMenuBar`；Windows 托盘尚未实现。
+
 ## 构建与发布
 
 `scripts/build_android.sh` 的默认行为不只是构建，成功后还会 **git commit + push**：
@@ -304,7 +323,7 @@ Never commit them.
 
 ## Testing
 
-- `test/` 有 144 个 dart 测试文件（另有 `test/support/` 下 3 个共用 Fake）+ 3 个 bash 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`、`publish_android_release_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集）+ 1 个 PowerShell 测试（`publish_windows_release_script_test.ps1`，macOS/Linux 用 `pwsh` 运行；不联网、不构建、不发布），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
+- `test/` 有 150 个 dart 测试文件（另有 `test/support/` 下 3 个共用 Fake）+ 3 个 bash 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`、`publish_android_release_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集）+ 1 个 PowerShell 测试（`publish_windows_release_script_test.ps1`，macOS/Linux 用 `pwsh` 运行；不联网、不构建、不发布），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
 - `test/background_image_contrast_test.dart` / `background_image_provider_test.dart` — 背景图对比度契约与 Provider 状态（不透明度只在 commit 时落盘、启动清失效路径、超限/取消属正常结果）
 - `test/visual_system_test.dart` — 视觉系统守护测试：对比度计算、主题一致性、令牌使用约束与源码守卫（页面无颜色 / 圆角 / 字号字面量，字号一律走 `AppText.*`；改 `lib/theme/` 或页面配色时必跑）
 - `test/widget_test.dart` — smoke test + platform channel mock 模板：`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道、`tester.runAsync` 真实 IO。新写 widget 测试可参照此文件搭建环境
@@ -319,6 +338,7 @@ Never commit them.
 - `test/day_change_boundary_test.dart` / `test/date_change_schedule_sync_test.dart` 的跨日用例 — 零点通知只发一次、隐藏页与后台暂停后补发、仅在仍停留在今天时推进日期、手动停在历史日期不被抢走
 - `test/target_desktop_ui_test.dart` — 桌面目标编辑表单、键盘保存/取消、数值与时间校验、子事件关联、周期天数与时长独立、右键删除、鼠标拖拽及浅深主题/窄窗口布局；桌面编辑入口统一走 `showTargetEditor`，移动端保留整页编辑
 - `test/wake_up_provider_test.dart` / `test/wake_up_card_test.dart` — 起床记录持久化、补填/修改/删除、未来时间校验、跨日与近 7 天平均、身份切换及保存失败保护；卡片每分钟重新计算经过时长，隐藏 Tab 或切后台停表，返回立即刷新
+- `test/menu_bar_summary_test.dart` / `menu_bar_provider_test.dart` / `menu_bar_panel_test.dart` / `menu_bar_event_editor_test.dart` / `app_root_shell_test.dart` / `menu_bar_settings_test.dart` — 菜单栏常驻：分段与概览条几何、通道对账与回滚、面板空态/列表/详情、补一段与撤销、主界面在面板显示时不重建且无 overflow、设置开关与 macOS 13 以下隐藏登录项
 - `test/wake_up_history_screen_test.dart` — 起床历史入口、30 / 90 天边界、跨年全部记录、自选日期含首尾、单日与空时段、身份隔离、实时更新、窄屏大字与浅深壁纸主题
 - `test/wake_up_sync_test.dart` / `test/wake_up_gitee_service_test.dart` — 双端读改写与删除、离线重启恢复、旧记录迁移、SHA 冲突重试、损坏远端保护、上传期间编辑与身份切换、同步中心合并状态、自动刷新前后台边界与 Gitee 文档路径
 - `test/statistics_cache_test.dart` / `test/main_screen_lazy_loading_test.dart` — 趋势与分类缓存互不覆盖、词云按自然日复用、跨日边界、编辑/撤销/切身份失效，以及隐藏统计页零查询、返回刷新与筛选状态保活
