@@ -174,9 +174,10 @@ class MenuBarProvider extends ChangeNotifier {
     await _service.openLoginItemsSettings();
   }
 
-  Future<void> quit() async {
+  /// 面板上的「退出」：先落盘，再终止。与状态栏菜单走同一条路径。
+  Future<void> requestQuit() async {
     if (!_supported) return;
-    await _service.quit();
+    await _flushAndQuit();
   }
 
   /// 登录项失败的可读原因，交给设置页提示。

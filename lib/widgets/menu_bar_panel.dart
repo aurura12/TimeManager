@@ -59,7 +59,7 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
   }
 
   void _quit() {
-    context.read<MenuBarProvider?>()?.quit();
+    context.read<MenuBarProvider?>()?.requestQuit();
   }
 
   Future<void> _addEvent() async {
@@ -187,7 +187,11 @@ class MenuBarPanelView extends StatelessWidget {
             children: [
               _buildHeader(context),
               const SizedBox(height: AppSpacing.md),
-              _DayOverviewBar(summary: summary, now: now),
+              _DayOverviewBar(
+                summary: summary,
+                now: now,
+                onSpanTap: onSpanTap,
+              ),
               const SizedBox(height: AppSpacing.sm),
               _buildHourTicks(context),
               const SizedBox(height: AppSpacing.sm),
@@ -337,10 +341,15 @@ class MenuBarPanelView extends StatelessWidget {
 }
 
 class _DayOverviewBar extends StatelessWidget {
-  const _DayOverviewBar({required this.summary, required this.now});
+  const _DayOverviewBar({
+    required this.summary,
+    required this.now,
+    this.onSpanTap,
+  });
 
   final MenuBarSummary summary;
   final DateTime now;
+  final ValueChanged<MenuBarSpan>? onSpanTap;
 
   @override
   Widget build(BuildContext context) {
@@ -372,10 +381,16 @@ class _DayOverviewBar extends StatelessWidget {
                   width: math.max(segment.width * width, AppSizes.statusDot / 4),
                   top: 0,
                   bottom: 0,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: segment.span.color ?? scheme.primary,
-                      borderRadius: BorderRadius.circular(AppRadius.grid),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: onSpanTap == null
+                        ? null
+                        : () => onSpanTap!(segment.span),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: segment.span.color ?? scheme.primary,
+                        borderRadius: BorderRadius.circular(AppRadius.grid),
+                      ),
                     ),
                   ),
                 ),

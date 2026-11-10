@@ -274,8 +274,9 @@ final class MenuBarController: NSObject, NSWindowDelegate {
       return
     }
     channel.invokeMethod("quitRequested", arguments: nil)
-    // Dart 负责落盘；3 秒没回就强退，不能卡住用户。
-    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+    // Dart 负责落盘（切后台写盘 + 补推最多约 5 秒）；8 秒没回就强退，
+    // 不能为了等网络把用户卡在退不掉的状态。
+    DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
       NSApp.terminate(nil)
     }
   }
