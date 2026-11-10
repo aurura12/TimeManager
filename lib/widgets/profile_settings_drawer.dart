@@ -23,6 +23,7 @@ import '../screens/event_label_settings_screen.dart';
 import '../screens/desktop_shortcut_settings_screen.dart';
 import '../providers/desktop_shortcut_provider.dart';
 import '../providers/desktop_layout_provider.dart';
+import '../providers/menu_bar_provider.dart';
 import '../screens/desktop_layout_settings_screen.dart';
 import '../services/app_log_service.dart';
 import '../services/data_backup_service.dart';
@@ -37,6 +38,7 @@ import '../screens/on_this_day_screen.dart';
 import '../services/google_calendar_service.dart';
 import '../services/sync_center_service.dart';
 import '../services/app_identity_service.dart';
+import 'menu_bar_settings_tiles.dart';
 import '../models/diary_kind.dart';
 import '../theme/app_semantic_colors.dart';
 import 'time_block_reminder_lead_sheet.dart';
@@ -240,6 +242,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
         '桌面布局',
       if (isDesktop && context.read<DesktopShortcutProvider?>() != null)
         '键盘快捷键',
+      if (context.read<MenuBarProvider?>()?.supported ?? false) '菜单栏',
       '底部标签',
     ].join(' · ');
     // 同步入口的副标题统一看全局模块状态，不再只显示日程待同步天数。
@@ -598,6 +601,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           ..._buildEventLabelStyleItem(context),
           ..._buildNowMarkerItem(context),
           ..._buildHapticsItem(context),
+          const MenuBarSettingsTiles(),
         ],
       _ProfileDrawerSection.appearance => [
           ListTile(
