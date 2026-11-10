@@ -8,6 +8,7 @@ import '../models/main_tab_id.dart';
 import '../models/global_search_result.dart';
 import '../models/schedule_sync_progress.dart';
 import '../providers/main_tab_provider.dart';
+import '../providers/menu_bar_provider.dart';
 import '../providers/desktop_layout_provider.dart';
 import '../providers/on_this_day_popup_provider.dart';
 import '../providers/time_provider.dart';
@@ -112,6 +113,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   late final OnThisDayPopupProvider? _onThisDayPopup;
   late final SyncStatusCoordinator? _syncCoordinator;
   late final DiaryAutoSyncService _diaryAutoSync;
+  MenuBarProvider? _menuBar;
 
   @override
   void initState() {
@@ -123,6 +125,10 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _syncCoordinator = context.read<SyncStatusCoordinator?>();
     // 可空泛型：没有注册该 Provider 的宿主（部分测试）按默认「自动弹出」处理。
     _onThisDayPopup = context.read<OnThisDayPopupProvider?>();
+    // 菜单栏面板/仅图标时主界面不可交互，自动弹层必须让位；
+    // 主窗口重新可见时再补一次。
+    _menuBar = context.read<MenuBarProvider?>();
+    _menuBar?.addListener(_onMenuBarStateChanged);
     // 日记上传不依赖日记页是否打开：冷启动和回前台都补推一次遗留草稿。
     _diaryAutoSync = DiaryAutoSyncService();
     _timeProvider.addListener(_tryShowOnThisDay);
@@ -170,6 +176,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _timeProvider.removeListener(_tryShowOnThisDay);
     _timeProvider.removeListener(_seedTimeBlockReminderPlan);
     _onThisDayPopup?.removeListener(_tryShowOnThisDay);
+    _menuBar?.removeListener(_onMenuBarStateChanged);
     _mainTabProvider.removeListener(_onTabSettingsChanged);
     WidgetsBinding.instance.removeObserver(this);
     _shortcutFocus.dispose();
@@ -274,7 +281,15 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
   }
 
+  void _onMenuBarStateChanged() {
+    if (_menuBar?.isMainSurfaceActive ?? true) {
+      _tryShowOnThisDay();
+    }
+  }
+
   Future<void> _tryShowOnThisDay() async {
+    // 面板显示或只剩菜单栏图标时，主界面不是当前可交互表面。
+    if (!(_menuBar?.isMainSurfaceActive ?? true)) return;
     // 用户选了「仅手动查看」→ 不自动弹层（「记录回顾 → 那年今日」仍可查看）
     if (!(_onThisDayPopup?.autoShow ?? true)) return;
     // 正在检查中 → 跳过（防并发：notifyListeners 多次触发时防止弹两次）

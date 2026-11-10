@@ -875,9 +875,17 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
       builder: (context, child) => DesktopShortcutHost(
         pageScoped: false,
         onOpenSettings: () => _mainScreenKey.currentState?.openSettings(),
-        isAvailable: (action) =>
-            action == DesktopShortcutActionType.escape ||
-            _rootRouteTracker.topRoute?.isFirst == true,
+        isAvailable: (action) {
+          // 菜单栏面板或只剩图标时，快捷键不能作用到不可见的主界面。
+          // Esc 例外：面板自身用 Esc 收起。
+          final menuBar = context.read<MenuBarProvider?>();
+          if (action != DesktopShortcutActionType.escape &&
+              !(menuBar?.isMainSurfaceActive ?? true)) {
+            return false;
+          }
+          return action == DesktopShortcutActionType.escape ||
+              _rootRouteTracker.topRoute?.isFirst == true;
+        },
         onOpenSearch: () {
           final navigator = rootNavigatorKey.currentState;
           if (navigator == null) return;
