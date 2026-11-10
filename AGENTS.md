@@ -243,7 +243,7 @@ macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，
 - **启动安全网**：10 秒内没收到 Dart 的 `configure/getState` 就强制显示主窗口，避免「点了没反应」；调试时用 `TM_DISABLE_MENU_BAR=1` 强制普通窗口模式。
 - **Dart 侧**：`MenuBarService`（`time_manager/menu_bar`，2 秒超时）+ `MenuBarProvider`（可空注册）。bootstrap 先 `await menuBar.ready` 再 `runApp`，首帧就按正确窗口形态构建；通道失败回退普通窗口并写日志，不得阻塞启动。
 - **根布局**：`AppRootShell` 用 `Offstage + ExcludeFocus + TickerMode + OverflowBox(1200×800) + MediaQuery` 保住 `MainScreen`。面板只有 400 宽，让主界面按面板尺寸布局会 overflow 并刷错误日志。**层级必须恒定**，切换面板/主窗口只改参数，不能让 `MainScreen` 重建（Tab 状态、滚动位置、那年今日会话标记都要留）。
-- **面板 = 记录页同款网格**：`MenuBarPanel` 直接复用 `TimeGrid` + 一条独立时间轴（45px 行高、`AppSpacing.sm` 顶部 padding、两个 `ScrollController` 同步），所以块、文字、圆角、选中高亮与主界面完全一致。交互也一致：拖选一段（或点一格）→ 点底部「分类 / 子事件」目标 → `assignCategoryToSlots(date:)`，一次选择一条撤销；打开时用 `timelineScrollOffsetForNow` 定位到当前时间。`onRemoveSlot` 传空实现（面板不删数据），`onResizeTimeBlock` 不传（无把手）。`＋` 保留给自定义名称 / 精确起止的表单；只读原因统一用 `scheduleEditBlockedReason`。
+- **面板 = 记录页同款网格**：`MenuBarPanel` 直接复用 `TimeGrid` + 一条独立时间轴（45px 行高、`AppSpacing.sm` 顶部 padding、两个 `ScrollController` 同步），所以块、文字、圆角、选中高亮与主界面完全一致。交互也一致：拖选一段（或点一格）→ 点底部「分类 / 子事件」目标 → `assignCategoryToSlots(date:)`，一次选择一条撤销；打开时用 `timelineScrollOffsetForNow` 定位到当前时间。`onRemoveSlot` 传空实现（面板不删数据），`onResizeTimeBlock` 不传（无把手）。`＋` 保留给自定义名称 / 精确起止的表单；只读原因统一用 `scheduleEditBlockedReason`。**滚动条**：面板用 `ScrollConfiguration(scrollbars: false)` 关掉滚动条（桌面常显条 + 显式 `Scrollbar` 会叠成左右两条），滚动仍靠滚轮 / 触控板。
 - **门控**：主界面不可见（面板打开或只剩图标）时，「那年今日」自动弹层与全局桌面快捷键必须让位（Esc 留给面板收起）；主窗口重新可见时补一次。
 - **登录项**：macOS 13+ `SMAppService.mainApp`，macOS 12 隐藏开关；注册失败或被系统要求批准时只提示并回滚，不阻塞启动。
 - **仅 macOS**：平台判定走 `lib/utils/platform_features.dart` 的 `supportsMenuBar`；Windows 托盘尚未实现。

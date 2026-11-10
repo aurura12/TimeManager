@@ -217,8 +217,10 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
   }
 
   Widget _buildRecordGrid(BuildContext context, DateTime today, bool canEdit) {
-    return Scrollbar(
-      controller: _axisController,
+    // 桌面主题默认给纵向列表常显滚动条；这里显式关掉，否则时间轴
+    // 自己的条和显式 Scrollbar 会在两侧各画一条。滚动仍然可用。
+    return ScrollConfiguration(
+      behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
       child: Row(
         key: const ValueKey('menu-bar-time-grid'),
         crossAxisAlignment: CrossAxisAlignment.stretch,
