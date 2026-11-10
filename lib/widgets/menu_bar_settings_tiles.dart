@@ -25,7 +25,7 @@ class MenuBarSettingsTiles extends StatelessWidget {
           title: const Text('菜单栏常驻'),
           subtitle: Text(
             menuBar.enabled
-                ? '启动后只显示菜单栏图标，点图标查看今日速览'
+                ? '启动后保留 Dock 图标，点菜单栏图标查看今日速览'
                 : '关闭后恢复普通窗口模式，关窗即退出',
           ),
           value: menuBar.enabled,

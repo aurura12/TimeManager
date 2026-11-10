@@ -238,7 +238,7 @@ macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，
 - **启动时不能真的把窗口藏起来**：Flutter 只有在窗口进入屏幕后才会启动 Dart isolate；启动就 `orderOut` 会让 Dart 一直不跑（表现为进程活着、没有图标、Dart 收不到 `configure`）。正确做法是 `alphaValue = 0` + `orderFront(nil)` 先把窗口挂上但完全不可见，等 Dart `configure` 到达后再 `orderOut`；另有 15 秒安全网兜底显示窗口。
 - **不要调 `super.applicationDidFinishLaunching`**：FlutterMacOS 的 `FlutterAppDelegate` 没有实现它，`super` 会抛 `doesNotRecognizeSelector`，异常被 AppKit 吞掉，override 后面的代码整段不执行（曾导致整个菜单栏功能静默失效）。`applicationWillFinishLaunching` 的 super 是安全的。
 - **窗口双形态**：复用同一个 `MainFlutterWindow`。进面板前保存 `styleMask/frame/level/collectionBehavior/...`，切 `borderless` + `.statusBar` 层级 + 圆角裁切，`orderOut` 隐藏；退出面板按保存值还原。**绝不新建第二个窗口或 engine**——那会得到两份 Provider 和不同步的状态。
-- **激活策略**：`Info.plist` 的 `LSUIElement=true`；启动按镜像键 `tm.menuBar.enabled` 设 `.accessory`，打开主窗口再升 `.regular` 恢复 Dock 图标与应用菜单。镜像键只服务「下次启动要不要露 Dock」，用户偏好在 Dart；两边不一致时以 Dart 的 `configure` 为准。
+- **Dock 图标常驻**：应用始终是普通 `.regular` 形态（`Info.plist` 不再设 `LSUIElement`），关主窗口只 `orderOut`，Dock 图标保留，点它走 `applicationShouldHandleReopen` 重新打开主窗口。**不要再切 `.accessory`**：那会让 Dock 图标消失（用户明确要求保留原图标）。镜像键 `tm.menuBar.enabled` 现在只决定「启动时主窗口是否隐藏」，用户偏好在 Dart。
 - **关窗不退出**：`windowShouldClose` 改成 `orderOut`，`applicationShouldTerminateAfterLastWindowClosed` 在常驻模式下返回 false；应用菜单、状态栏右键菜单与面板里的「设置」都走现有 `desktop_commands openSettings`。
 - **启动安全网**：10 秒内没收到 Dart 的 `configure/getState` 就强制显示主窗口，避免「点了没反应」；调试时用 `TM_DISABLE_MENU_BAR=1` 强制普通窗口模式。
 - **Dart 侧**：`MenuBarService`（`time_manager/menu_bar`，2 秒超时）+ `MenuBarProvider`（可空注册）。bootstrap 先 `await menuBar.ready` 再 `runApp`，首帧就按正确窗口形态构建；通道失败回退普通窗口并写日志，不得阻塞启动。

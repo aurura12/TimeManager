@@ -10,12 +10,6 @@ class AppDelegate: FlutterAppDelegate {
       .invokeMethod("openSettings", arguments: nil)
   }
 
-  override func applicationWillFinishLaunching(_ notification: Notification) {
-    // 启动前先定激活策略，避免关闭常驻时 Dock 图标晚一拍出现。
-    MenuBarController.shared.prepareActivationPolicy()
-    super.applicationWillFinishLaunching(notification)
-  }
-
   override func applicationDidFinishLaunching(_ notification: Notification) {
     // FlutterAppDelegate（macOS）没有实现 applicationDidFinishLaunching，
     // 调 super 会触发 doesNotRecognizeSelector 并把后续逻辑整段跳过。
@@ -129,11 +123,6 @@ final class MenuBarController: NSObject, NSWindowDelegate {
   }
 
   // MARK: 启动
-
-  /// 在窗口创建之前决定激活策略，避免 Dock 图标先出现再消失。
-  func prepareActivationPolicy() {
-    applyActivationPolicy(regular: !isEnabled)
-  }
 
   func start(
     window: NSWindow,
@@ -381,7 +370,6 @@ final class MenuBarController: NSObject, NSWindowDelegate {
     hidePanel()
     exitPanelMode()
     isMainWindowVisible = true
-    applyActivationPolicy(regular: true)
     window.alphaValue = 1
     activateApp()
     window.makeKeyAndOrderFront(nil)
@@ -392,18 +380,7 @@ final class MenuBarController: NSObject, NSWindowDelegate {
     guard let window else { return }
     window.orderOut(nil)
     isMainWindowVisible = false
-    applyActivationPolicy(regular: false)
     notifyDart()
-  }
-
-  private func applyActivationPolicy(regular: Bool) {
-    let policy: NSApplication.ActivationPolicy = regular ? .regular : .accessory
-    // LSUIElement 的 App 启动时已经是 accessory；重复设置会返回 false，
-    // 这不是失败，不要记成错误日志。
-    if NSApp.activationPolicy() == policy { return }
-    if !NSApp.setActivationPolicy(policy) {
-      NSLog("[时间块] 切换激活策略失败：\(policy == .regular ? "regular" : "accessory")")
-    }
   }
 
   private func activateApp() {

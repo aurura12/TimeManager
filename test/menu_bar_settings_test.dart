@@ -117,7 +117,7 @@ void main() {
 
     expect(find.text('菜单栏常驻'), findsOneWidget);
     expect(find.text('登录时自动启动'), findsOneWidget);
-    expect(find.text('启动后只显示菜单栏图标，点图标查看今日速览'), findsOneWidget);
+    expect(find.text('启动后保留 Dock 图标，点菜单栏图标查看今日速览'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
