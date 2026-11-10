@@ -41,6 +41,7 @@ import 'services/time_block_reminder_service.dart';
 import 'services/windows_legacy_preferences_migration.dart';
 import 'utils/local_day_range.dart';
 import 'utils/time_block_reminder_plan.dart';
+import 'widgets/app_root_shell.dart';
 import 'widgets/desktop_shortcut_host.dart';
 import 'widgets/background_image_layer.dart';
 
@@ -904,7 +905,11 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
           child: child ?? const SizedBox.shrink(),
         ),
       ),
-      home: MainScreen(key: _mainScreenKey),
+      home: AppRootShell(
+        onOpenRecordAtDate: (date) =>
+            _mainScreenKey.currentState?.openRecordAtDate(date),
+        child: MainScreen(key: _mainScreenKey),
+      ),
     );
   }
 }
