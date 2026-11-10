@@ -913,11 +913,7 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
           child: child ?? const SizedBox.shrink(),
         ),
       ),
-      home: AppRootShell(
-        onOpenRecordAtDate: (date) =>
-            _mainScreenKey.currentState?.openRecordAtDate(date),
-        child: MainScreen(key: _mainScreenKey),
-      ),
+      home: AppRootShell(child: MainScreen(key: _mainScreenKey)),
     );
   }
 }

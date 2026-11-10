@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/category.dart';
-import '../models/time_slot.dart';
 import '../providers/menu_bar_provider.dart';
 import '../providers/time_provider.dart';
 import '../services/app_identity_service.dart';
@@ -14,18 +14,17 @@ import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
 import '../utils/app_snack_bar.dart';
 import '../utils/menu_bar_summary.dart';
+import '../utils/timeline_geometry.dart';
 import 'menu_bar_event_editor.dart';
+import 'time_grid.dart';
 
-/// 菜单栏点开后的小面板：一整天的格子 + 分类目标。
+/// 菜单栏点开后的小面板：记录页同款的时间网格 + 分类目标。
 ///
-/// 交互与记录页一致：在格子上拖选一段时间（或点一格），再点下方分类写入。
-/// 一次选择 = 一次写入 = 一条撤销；格子按 24 行 × 6 列排布，整天的
-/// 分布一屏可见，不用再滚动找时间。
+/// 直接复用记录页的 [TimeGrid]（45px 行高、一小时一行、6 个 10 分钟格），
+/// 所以块、文字、圆角和选中高亮都与主界面一致。交互也一致：拖选一段
+/// （或点一格），再点下方分类/子事件写入；一次选择一条撤销。
 class MenuBarPanel extends StatefulWidget {
-  const MenuBarPanel({super.key, this.onOpenRecordAtDate});
-
-  /// 详情里「在主窗口中查看」用。
-  final ValueChanged<DateTime>? onOpenRecordAtDate;
+  const MenuBarPanel({super.key});
 
   @override
   State<MenuBarPanel> createState() => _MenuBarPanelState();
@@ -37,6 +36,10 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
   int? _selectionStart;
   int? _selectionEnd;
 
+  final GlobalKey _gridKey = GlobalKey();
+  final ScrollController _axisController = ScrollController();
+  final ScrollController _gridController = ScrollController();
+
   @override
   void initState() {
     super.initState();
@@ -44,16 +47,100 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
       if (!mounted) return;
       setState(() => _now = DateTime.now());
     });
+    _axisController.addListener(_syncGridScroll);
+    // 打开时把「现在」放在视口上 1/3，和记录页一致。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToNow());
   }
 
   @override
   void dispose() {
     _clock?.cancel();
+    _axisController.removeListener(_syncGridScroll);
+    _axisController.dispose();
+    _gridController.dispose();
     super.dispose();
   }
 
-  void _hidePanel() {
-    context.read<MenuBarProvider?>()?.hidePanel();
+  void _syncGridScroll() {
+    if (!_gridController.hasClients) return;
+    final target = _axisController.offset;
+    if ((_gridController.offset - target).abs() > 0.5) {
+      _gridController.jumpTo(target);
+    }
+  }
+
+  void _scrollToNow() {
+    if (!mounted || !_axisController.hasClients) return;
+    final position = _axisController.position;
+    if (!position.hasViewportDimension || position.viewportDimension <= 0) {
+      return;
+    }
+    final target = timelineScrollOffsetForNow(
+      minutesOfDay: minutesOfDayOf(_now),
+      rowExtent: AppSizes.gridRow,
+      topPadding: AppSpacing.sm,
+      viewportExtent: position.viewportDimension,
+      maxScrollExtent: position.maxScrollExtent,
+    );
+    if ((position.pixels - target).abs() < 1) return;
+    _axisController.jumpTo(target);
+  }
+
+  int _calculateIndex(Offset globalPosition) {
+    final box = _gridKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return 0;
+    final localOffset = box.globalToLocal(globalPosition);
+    final row = timelineRowAt(
+      localOffset.dy + _axisController.offset,
+      rowExtent: AppSizes.gridRow,
+      topPadding: AppSpacing.sm,
+    );
+    final column =
+        (localOffset.dx / (box.size.width / 6)).floor().clamp(0, 5);
+    return row * 6 + column;
+  }
+
+  void _handleTapDown(Offset globalPosition) {
+    final index = _calculateIndex(globalPosition);
+    setState(() {
+      if (_selectionStart == index && _selectionEnd == index) {
+        _selectionStart = null;
+        _selectionEnd = null;
+      } else {
+        _selectionStart = index;
+        _selectionEnd = index;
+      }
+    });
+  }
+
+  void _handlePanStart(Offset globalPosition) {
+    final index = _calculateIndex(globalPosition);
+    setState(() {
+      _selectionStart = index;
+      _selectionEnd = index;
+    });
+  }
+
+  void _handlePanUpdate(Offset globalPosition) {
+    final index = _calculateIndex(globalPosition);
+    if (index == _selectionEnd) return;
+    setState(() => _selectionEnd = index);
+  }
+
+  void _forwardPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_axisController.hasClients) return;
+    final position = _axisController.position;
+    final target = (_axisController.offset + event.scrollDelta.dy)
+        .clamp(0.0, position.maxScrollExtent);
+    if ((target - position.pixels).abs() < 0.5) return;
+    _axisController.jumpTo(target);
+  }
+
+  void _clearSelection() {
+    setState(() {
+      _selectionStart = null;
+      _selectionEnd = null;
+    });
   }
 
   void _openMainWindow() {
@@ -66,43 +153,6 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
 
   void _quit() {
     context.read<MenuBarProvider?>()?.requestQuit();
-  }
-
-  void _selectRange(int start, int end) {
-    setState(() {
-      _selectionStart = math.min(start, end);
-      _selectionEnd = math.max(start, end);
-    });
-  }
-
-  void _clearSelection() {
-    setState(() {
-      _selectionStart = null;
-      _selectionEnd = null;
-    });
-  }
-
-  void _openSpan(MenuBarSpan span) {
-    final today = DateTime.now();
-    showModalBottomSheet<void>(
-      context: context,
-      useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: AppRadius.rCard),
-      ),
-      builder: (sheetContext) => _SpanDetailSheet(
-        span: span,
-        onOpenRecord: widget.onOpenRecordAtDate == null
-            ? null
-            : () {
-                Navigator.of(sheetContext).pop();
-                _openMainWindow();
-                widget.onOpenRecordAtDate?.call(
-                  DateTime(today.year, today.month, today.day),
-                );
-              },
-      ),
-    );
   }
 
   Future<void> _addEvent(TimeProvider provider) async {
@@ -127,17 +177,19 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
       showAppSnackBar(context, blocked);
       return;
     }
+    final from = math.min(start, end);
+    final to = math.max(start, end);
     final date = DateTime(_now.year, _now.month, _now.day);
     final dateKey = provider.dateKeyFor(date);
     provider.assignCategoryToSlots(
-      <int>{for (var index = start; index <= end; index++) index},
+      <int>{for (var index = from; index <= to; index++) index},
       category,
       subLabel: subLabel,
       date: date,
     );
     final version = provider.editVersionOn(dateKey);
     final label = subLabel ?? category.name;
-    final range = formatMenuBarRange(start * 10, (end + 1) * 10);
+    final range = formatMenuBarRange(from * 10, (to + 1) * 10);
     _clearSelection();
     showAppUndoSnackBar(
       context,
@@ -151,6 +203,61 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
     );
   }
 
+  Widget _buildTimeLabelRow(BuildContext context, int hour) {
+    return Container(
+      height: AppSizes.gridRow,
+      alignment: Alignment.center,
+      child: Text(
+        '${hour.toString().padLeft(2, '0')}:00',
+        style: AppText.gridLabel.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRecordGrid(BuildContext context, DateTime today, bool canEdit) {
+    return Scrollbar(
+      controller: _axisController,
+      child: Row(
+        key: const ValueKey('menu-bar-time-grid'),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: AppSizes.gridTimeAxis,
+            child: ListView.builder(
+              controller: _axisController,
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+              itemCount: 24,
+              itemExtent: AppSizes.gridRow,
+              itemBuilder: (context, hour) => _buildTimeLabelRow(context, hour),
+            ),
+          ),
+          Expanded(
+            child: Listener(
+              onPointerSignal: _forwardPointerSignal,
+              child: TimeGrid(
+                gridKey: _gridKey,
+                date: today,
+                clock: () => _now,
+                controller: _gridController,
+                dragStartIndex: _selectionStart,
+                dragEndIndex: _selectionEnd,
+                onTapDown: _handleTapDown,
+                onPanStart: _handlePanStart,
+                onPanUpdate: _handlePanUpdate,
+                onRemoveSlot: (_) {
+                  // 面板里不做删除；删除仍回主界面。
+                },
+                readOnly: !canEdit,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // 允许宿主没有注册 TimeProvider（部分测试/启动失败页）：按空数据渲染。
@@ -158,33 +265,37 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
     final today = DateTime(_now.year, _now.month, _now.day);
     final categories = provider?.categories ?? const <Category>[];
     final summary = buildMenuBarSummary(
-      slots: provider?.slotsForDate(today) ?? const <TimeSlot>[],
+      slots: provider?.slotsForDate(today) ?? const [],
       now: _now,
       categories: categories,
     );
     final blocked = provider?.scheduleEditBlockedReason;
     final loading = provider == null || !provider.isInitialLoadFinished;
 
+    final grid = loading
+        ? const Center(child: CircularProgressIndicator())
+        : _buildRecordGrid(context, today, blocked == null);
+
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.escape): _hidePanel,
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          context.read<MenuBarProvider?>()?.hidePanel();
+        },
       },
       child: Focus(
         autofocus: true,
         child: MenuBarPanelView(
           summary: summary,
           now: _now,
-          loading: loading,
           categories: categories,
           selectionStart: _selectionStart,
           selectionEnd: _selectionEnd,
           blockedReason: blocked,
           canEdit: !loading && blocked == null,
+          grid: grid,
           onOpenMainWindow: _openMainWindow,
           onOpenSettings: _openSettings,
           onQuit: _quit,
-          onOpenSpan: _openSpan,
-          onSelectRange: _selectRange,
           onClearSelection: _clearSelection,
           onWriteTarget: provider == null
               ? null
@@ -196,14 +307,14 @@ class _MenuBarPanelState extends State<MenuBarPanel> {
   }
 }
 
-/// 纯入参的面板视图，方便在 400×700 的测试视口里直接泵。
+/// 纯入参的面板视图：网格由调用方注入，方便测试外壳与交互。
 class MenuBarPanelView extends StatelessWidget {
   const MenuBarPanelView({
     super.key,
     required this.summary,
     required this.now,
-    required this.loading,
     required this.categories,
+    required this.grid,
     this.selectionStart,
     this.selectionEnd,
     this.blockedReason,
@@ -211,8 +322,6 @@ class MenuBarPanelView extends StatelessWidget {
     this.onOpenMainWindow,
     this.onOpenSettings,
     this.onQuit,
-    this.onOpenSpan,
-    this.onSelectRange,
     this.onClearSelection,
     this.onWriteTarget,
     this.onPreciseAdd,
@@ -220,8 +329,8 @@ class MenuBarPanelView extends StatelessWidget {
 
   final MenuBarSummary summary;
   final DateTime now;
-  final bool loading;
   final List<Category> categories;
+  final Widget grid;
   final int? selectionStart;
   final int? selectionEnd;
   final String? blockedReason;
@@ -229,8 +338,6 @@ class MenuBarPanelView extends StatelessWidget {
   final VoidCallback? onOpenMainWindow;
   final VoidCallback? onOpenSettings;
   final VoidCallback? onQuit;
-  final ValueChanged<MenuBarSpan>? onOpenSpan;
-  final void Function(int start, int end)? onSelectRange;
   final VoidCallback? onClearSelection;
   final void Function(Category category, String? subLabel)? onWriteTarget;
   final VoidCallback? onPreciseAdd;
@@ -269,20 +376,7 @@ class MenuBarPanelView extends StatelessWidget {
               const SizedBox(height: AppSpacing.xs),
               _buildHint(context),
               const SizedBox(height: AppSpacing.xs),
-              Expanded(
-                child: loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : MenuBarTimeGrid(
-                        key: const ValueKey('menu-bar-time-grid'),
-                        summary: summary,
-                        now: now,
-                        selectionStart: selectionStart,
-                        selectionEnd: selectionEnd,
-                        enabled: canEdit,
-                        onTapSpan: onOpenSpan,
-                        onSelectRange: onSelectRange,
-                      ),
-              ),
+              Expanded(child: grid),
               const SizedBox(height: AppSpacing.sm),
               _buildCategoryTargets(context),
               const SizedBox(height: AppSpacing.sm),
@@ -359,7 +453,7 @@ class MenuBarPanelView extends StatelessWidget {
       );
     }
     return Text(
-      '在时间轴上拖选一段（或点一格），再点分类',
+      '在格子上拖选一段（或点一格），再点分类',
       style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
     );
   }
@@ -425,388 +519,6 @@ class MenuBarPanelView extends StatelessWidget {
             onPressed: onQuit,
             icon: const Icon(Icons.power_settings_new),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 24 行 × 6 列的全天格子：一行一小时、一格 10 分钟。
-///
-/// 高度自适应可用空间，所以不管面板多高都能一屏看完全天。鼠标拖拽
-/// 划选、点一格单选；有记录的位置点开详情。绘制用 CustomPaint，
-/// 144 个格子不会产生 144 个 widget。
-class MenuBarTimeGrid extends StatefulWidget {
-  const MenuBarTimeGrid({
-    super.key,
-    required this.summary,
-    required this.now,
-    this.selectionStart,
-    this.selectionEnd,
-    this.enabled = false,
-    this.onTapSpan,
-    this.onSelectRange,
-  });
-
-  final MenuBarSummary summary;
-  final DateTime now;
-  final int? selectionStart;
-  final int? selectionEnd;
-  final bool enabled;
-  final ValueChanged<MenuBarSpan>? onTapSpan;
-  final void Function(int start, int end)? onSelectRange;
-
-  static const double gutterWidth = 22;
-  static const int slotCount = 144;
-
-  @override
-  State<MenuBarTimeGrid> createState() => _MenuBarTimeGridState();
-}
-
-class _MenuBarTimeGridState extends State<MenuBarTimeGrid> {
-  int? _dragStart;
-  int? _dragEnd;
-
-  bool get _hasSelection =>
-      widget.selectionStart != null && widget.selectionEnd != null;
-
-  int _indexAt(Offset position, double cellWidth, double rowHeight) {
-    final column = ((position.dx - MenuBarTimeGrid.gutterWidth) / cellWidth)
-        .floor()
-        .clamp(0, 5);
-    final row = (position.dy / rowHeight).floor().clamp(0, 23);
-    return row * 6 + column;
-  }
-
-  MenuBarSpan? _spanAt(int index) {
-    final minute = index * 10;
-    for (final span in widget.summary.spans) {
-      if (span.containsMinute(minute)) return span;
-    }
-    return null;
-  }
-
-  void _start(Offset position, double cellWidth, double rowHeight) {
-    final index = _indexAt(position, cellWidth, rowHeight);
-    setState(() {
-      _dragStart = index;
-      _dragEnd = index;
-    });
-  }
-
-  void _extend(Offset position, double cellWidth, double rowHeight) {
-    if (_dragStart == null) return;
-    final index = _indexAt(position, cellWidth, rowHeight);
-    if (index == _dragEnd) return;
-    setState(() => _dragEnd = index);
-  }
-
-  void _finish() {
-    final start = _dragStart;
-    final end = _dragEnd;
-    setState(() {
-      _dragStart = null;
-      _dragEnd = null;
-    });
-    if (start == null || end == null) return;
-    widget.onSelectRange?.call(math.min(start, end), math.max(start, end));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final surfaces = AppSurfaces.of(context);
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: surfaces.subtle,
-        borderRadius: BorderRadius.circular(AppRadius.control),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(AppRadius.control),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final width = constraints.maxWidth;
-            final height = constraints.maxHeight;
-            final rowHeight = height / 24;
-            final cellWidth = (width - MenuBarTimeGrid.gutterWidth) / 6;
-
-            final dragStart = _dragStart;
-            final dragEnd = _dragEnd;
-            final previewStart =
-                dragStart == null || dragEnd == null ? null : math.min(dragStart, dragEnd);
-            final previewEnd =
-                dragStart == null || dragEnd == null ? null : math.max(dragStart, dragEnd);
-
-            return GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTapUp: !widget.enabled
-                  ? null
-                  : (details) {
-                      final index = _indexAt(
-                        details.localPosition,
-                        cellWidth,
-                        rowHeight,
-                      );
-                      final span = _spanAt(index);
-                      if (span != null) {
-                        widget.onTapSpan?.call(span);
-                        return;
-                      }
-                      widget.onSelectRange?.call(index, index);
-                    },
-              onPanStart: widget.enabled
-                  ? (details) => _start(
-                        details.localPosition,
-                        cellWidth,
-                        rowHeight,
-                      )
-                  : null,
-              onPanUpdate: widget.enabled
-                  ? (details) => _extend(
-                        details.localPosition,
-                        cellWidth,
-                        rowHeight,
-                      )
-                  : null,
-              onPanEnd: widget.enabled ? (_) => _finish() : null,
-              onPanCancel: widget.enabled
-                  ? () => setState(() {
-                        _dragStart = null;
-                        _dragEnd = null;
-                      })
-                  : null,
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: CustomPaint(
-                      painter: _MenuBarGridPainter(
-                        summary: widget.summary,
-                        now: widget.now,
-                        cellWidth: cellWidth,
-                        rowHeight: rowHeight,
-                        gutter: MenuBarTimeGrid.gutterWidth,
-                        lineColor: scheme.outlineVariant.withValues(alpha: 0.45),
-                        primaryColor: scheme.primary,
-                        selectionStart: previewStart ?? widget.selectionStart,
-                        selectionEnd: previewEnd ?? widget.selectionEnd,
-                        showSelection: previewStart != null || _hasSelection,
-                      ),
-                    ),
-                  ),
-                  for (var hour = 0; hour < 24; hour += 2)
-                    Positioned(
-                      top: hour * rowHeight - 6,
-                      left: 0,
-                      width: MenuBarTimeGrid.gutterWidth - 6,
-                      child: Text(
-                        hour.toString().padLeft(2, '0'),
-                        textAlign: TextAlign.right,
-                        style: AppText.caption.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
-
-class _MenuBarGridPainter extends CustomPainter {
-  _MenuBarGridPainter({
-    required this.summary,
-    required this.now,
-    required this.cellWidth,
-    required this.rowHeight,
-    required this.gutter,
-    required this.lineColor,
-    required this.primaryColor,
-    required this.selectionStart,
-    required this.selectionEnd,
-    required this.showSelection,
-  });
-
-  final MenuBarSummary summary;
-  final DateTime now;
-  final double cellWidth;
-  final double rowHeight;
-  final double gutter;
-  final Color lineColor;
-  final Color primaryColor;
-  final int? selectionStart;
-  final int? selectionEnd;
-  final bool showSelection;
-
-  Rect _rectForMinute(int minute) {
-    final row = minute ~/ 60;
-    final column = (minute % 60) ~/ 10;
-    return Rect.fromLTWH(
-      gutter + column * cellWidth + 0.5,
-      row * rowHeight + 0.5,
-      cellWidth - 1,
-      rowHeight - 1,
-    );
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final linePaint = Paint()
-      ..color = lineColor
-      ..strokeWidth = 1;
-    for (var hour = 1; hour < 24; hour++) {
-      final y = hour * rowHeight;
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), linePaint);
-    }
-    for (var column = 0; column <= 6; column++) {
-      final x = gutter + column * cellWidth;
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), linePaint);
-    }
-
-    final radius = Radius.circular(AppRadius.grid);
-    for (final span in summary.spans) {
-      final paint = Paint()..color = span.color ?? primaryColor;
-      for (var minute = span.startMinute;
-          minute < span.endMinute;
-          minute += 10) {
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(_rectForMinute(minute), radius),
-          paint,
-        );
-      }
-    }
-
-    if (showSelection && selectionStart != null && selectionEnd != null) {
-      final fill = Paint()..color = primaryColor.withValues(alpha: 0.22);
-      final border = Paint()
-        ..color = primaryColor
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1;
-      for (var index = selectionStart!; index <= selectionEnd!; index++) {
-        final rect = _rectForMinute(index * 10);
-        final rrect = RRect.fromRectAndRadius(rect, radius);
-        canvas.drawRRect(rrect, fill);
-        canvas.drawRRect(rrect, border);
-      }
-    }
-
-    final nowMinute = now.hour * 60 + now.minute;
-    final nowY = (nowMinute / 60) * rowHeight;
-    canvas.drawLine(
-      Offset(0, nowY),
-      Offset(size.width, nowY),
-      Paint()
-        ..color = primaryColor
-        ..strokeWidth = 1.5,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _MenuBarGridPainter oldDelegate) {
-    return oldDelegate.summary != summary ||
-        oldDelegate.now != now ||
-        oldDelegate.selectionStart != selectionStart ||
-        oldDelegate.selectionEnd != selectionEnd ||
-        oldDelegate.showSelection != showSelection ||
-        oldDelegate.cellWidth != cellWidth ||
-        oldDelegate.rowHeight != rowHeight ||
-        oldDelegate.lineColor != lineColor ||
-        oldDelegate.primaryColor != primaryColor;
-  }
-}
-
-class _SpanDetailSheet extends StatelessWidget {
-  const _SpanDetailSheet({required this.span, this.onOpenRecord});
-
-  final MenuBarSpan span;
-  final VoidCallback? onOpenRecord;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: AppSpacing.sheet,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: AppSizes.statusDot,
-                height: AppSizes.statusDot,
-                decoration: BoxDecoration(
-                  color: span.color ?? scheme.primary,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: AppSpacing.sm),
-              Expanded(
-                child: Text(
-                  span.label,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.sectionTitle,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.md),
-          _DetailRow(
-            label: '时间',
-            value: formatMenuBarRange(span.startMinute, span.endMinute),
-          ),
-          _DetailRow(label: '时长', value: formatMenuBarDuration(span.minutes)),
-          if (span.isFromCalendar)
-            const _DetailRow(label: '来源', value: 'Google 日历'),
-          const SizedBox(height: AppSpacing.lg),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('关闭'),
-              ),
-              if (onOpenRecord != null) ...[
-                const SizedBox(width: AppSpacing.sm),
-                FilledButton(
-                  onPressed: onOpenRecord,
-                  child: const Text('在主窗口中查看'),
-                ),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DetailRow extends StatelessWidget {
-  const _DetailRow({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-      child: Row(
-        children: [
-          SizedBox(
-            width: AppSizes.gridTimeAxis,
-            child: Text(
-              label,
-              style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
-            ),
-          ),
-          Expanded(child: Text(value, style: AppText.body)),
         ],
       ),
     );

@@ -11,16 +11,9 @@ import 'menu_bar_panel.dart';
 /// 固定一个桌面尺寸，同时保持 widget 层级不变，避免 MainScreen 被重建
 /// （它的 Tab 状态、滚动位置与「那年今日」会话标记都要留着）。
 class AppRootShell extends StatelessWidget {
-  const AppRootShell({
-    super.key,
-    required this.child,
-    this.onOpenRecordAtDate,
-  });
+  const AppRootShell({super.key, required this.child});
 
   final Widget child;
-
-  /// 面板里「在主窗口中查看」用：定位到指定日期。
-  final ValueChanged<DateTime>? onOpenRecordAtDate;
 
   /// 离屏时主界面按这个尺寸布局：必须大于面板，且是桌面布局的常规宽度。
   static const Size detachedLayoutSize = Size(1200, 800);
@@ -56,10 +49,7 @@ class AppRootShell extends StatelessWidget {
             ),
           ),
         ),
-        if (panelVisible)
-          Positioned.fill(
-            child: MenuBarPanel(onOpenRecordAtDate: onOpenRecordAtDate),
-          ),
+        if (panelVisible) const Positioned.fill(child: MenuBarPanel()),
       ],
     );
   }

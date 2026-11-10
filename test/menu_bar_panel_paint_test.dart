@@ -94,13 +94,13 @@ void main() {
           theme: AppTheme.light(),
           home: const Scaffold(
             body: Center(
-              child: SizedBox(width: 400, height: 680, child: MenuBarPanel()),
+              child: SizedBox(width: 400, height: 720, child: MenuBarPanel()),
             ),
           ),
         ),
       ),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     // 先在格子上拖选一段时间，再点分类写入（与记录页一致）。
     await tester.drag(

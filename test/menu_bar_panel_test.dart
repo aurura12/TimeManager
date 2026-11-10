@@ -1,4 +1,3 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:time_manager/models/category.dart';
@@ -46,35 +45,38 @@ Future<void> _pump(WidgetTester tester, Widget child) async {
       theme: AppTheme.light(),
       home: Scaffold(
         body: Center(
-          child: SizedBox(width: 400, height: 680, child: child),
+          child: SizedBox(width: 400, height: 720, child: child),
         ),
       ),
     ),
   );
 }
 
+Widget _fakeGrid() => const SizedBox.expand(
+      key: ValueKey('fake-grid'),
+    );
+
 void main() {
-  testWidgets('空数据也能看到全天格子与分类', (tester) async {
+  testWidgets('空数据也能看到外壳与分类', (tester) async {
     await _pump(
       tester,
       MenuBarPanelView(
         summary: MenuBarSummary.empty,
         now: DateTime(2026, 11, 10, 9, 5),
-        loading: false,
         categories: _categories,
+        grid: _fakeGrid(),
         canEdit: true,
-        onSelectRange: (_, __) {},
         onWriteTarget: (_, __) {},
       ),
     );
 
     expect(find.text('11月10日 周二'), findsOneWidget);
     expect(find.text('今日已记录 0分钟'), findsOneWidget);
-    expect(find.byKey(const ValueKey('menu-bar-time-grid')), findsOneWidget);
+    expect(find.byKey(const ValueKey('fake-grid')), findsOneWidget);
     expect(find.widgetWithText(ActionChip, '工作'), findsOneWidget);
     expect(find.widgetWithText(ActionChip, '开会'), findsOneWidget);
     expect(find.widgetWithText(ActionChip, '休息'), findsOneWidget);
-    expect(find.text('在时间轴上拖选一段（或点一格），再点分类'), findsOneWidget);
+    expect(find.text('在格子上拖选一段（或点一格），再点分类'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -88,14 +90,13 @@ void main() {
       MenuBarPanelView(
         summary: summary,
         now: DateTime(2026, 11, 10, 9, 10),
-        loading: false,
         categories: _categories,
+        grid: _fakeGrid(),
         canEdit: true,
       ),
     );
 
     expect(find.text('今日已记录 20分钟'), findsOneWidget);
-    expect(find.byKey(const ValueKey('menu-bar-time-grid')), findsOneWidget);
   });
 
   testWidgets('选中范围后点分类/子事件会回报写入目标', (tester) async {
@@ -105,8 +106,8 @@ void main() {
       MenuBarPanelView(
         summary: MenuBarSummary.empty,
         now: DateTime(2026, 11, 10, 9),
-        loading: false,
         categories: _categories,
+        grid: _fakeGrid(),
         selectionStart: 54,
         selectionEnd: 55,
         canEdit: true,
@@ -134,8 +135,8 @@ void main() {
       MenuBarPanelView(
         summary: MenuBarSummary.empty,
         now: DateTime(2026, 11, 10, 9),
-        loading: false,
         categories: _categories,
+        grid: _fakeGrid(),
         blockedReason: '远程视图只读，修改已忽略',
         canEdit: false,
         onWriteTarget: (_, __) => wrote++,
@@ -156,8 +157,8 @@ void main() {
       MenuBarPanelView(
         summary: MenuBarSummary.empty,
         now: DateTime(2026, 11, 10, 9),
-        loading: false,
         categories: const <Category>[],
+        grid: _fakeGrid(),
         canEdit: true,
       ),
     );
@@ -175,8 +176,8 @@ void main() {
       MenuBarPanelView(
         summary: MenuBarSummary.empty,
         now: DateTime(2026, 11, 10, 9),
-        loading: false,
         categories: _categories,
+        grid: _fakeGrid(),
         canEdit: true,
         onOpenMainWindow: () => opened++,
         onOpenSettings: () => settings++,
@@ -197,46 +198,9 @@ void main() {
     expect(add, 1);
   });
 
-  testWidgets('在格子上拖动会回报选中范围', (tester) async {
-    int? start;
-    int? end;
-    await _pump(
-      tester,
-      MenuBarPanelView(
-        summary: MenuBarSummary.empty,
-        now: DateTime(2026, 11, 10, 9),
-        loading: false,
-        categories: _categories,
-        canEdit: true,
-        onSelectRange: (from, to) {
-          start = from;
-          end = to;
-        },
-      ),
-    );
-
-    await tester.drag(
-      find.byKey(const ValueKey('menu-bar-time-grid')),
-      const Offset(0, 50),
-      kind: PointerDeviceKind.mouse,
-    );
-    await tester.pumpAndSettle();
-
-    expect(start, isNotNull);
-    expect(end, isNotNull);
-    expect(end!, greaterThanOrEqualTo(start!));
-  });
-
-  testWidgets('加载中不渲染格子', (tester) async {
-    await _pump(
-      tester,
-      MenuBarPanelView(
-        summary: MenuBarSummary.empty,
-        now: DateTime(2026, 11, 10, 9),
-        loading: true,
-        categories: _categories,
-      ),
-    );
+  testWidgets('没有 TimeProvider 时显示加载态', (tester) async {
+    await _pump(tester, const MenuBarPanel());
+    await tester.pump();
 
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
     expect(find.byKey(const ValueKey('menu-bar-time-grid')), findsNothing);
