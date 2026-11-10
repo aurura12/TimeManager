@@ -31,6 +31,12 @@ bool supportsHomeWidgetFor({required bool android}) => android;
 bool get supportsHomeWidget =>
     supportsHomeWidgetFor(android: Platform.isAndroid);
 
+/// macOS 菜单栏常驻（NSStatusItem + 窗口双形态）。Windows 托盘以后再做，
+/// iOS / Android 没有桌面菜单栏。
+bool supportsMenuBarFor({required bool macos}) => macos;
+
+bool get supportsMenuBar => supportsMenuBarFor(macos: Platform.isMacOS);
+
 /// 应用内自更新通道：Android（APK）、Windows（EXE）、macOS（DMG）都有安装包，
 /// **iOS 没有**——iOS 只能通过 Xcode / App Store 更新，无法下载安装包自更新。
 bool supportsInAppUpdateFor({required bool ios}) => !ios;

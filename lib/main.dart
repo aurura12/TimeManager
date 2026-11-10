@@ -17,6 +17,7 @@ import 'providers/haptics_provider.dart';
 import 'providers/on_this_day_popup_provider.dart';
 import 'providers/desktop_shortcut_provider.dart';
 import 'providers/desktop_layout_provider.dart';
+import 'providers/menu_bar_provider.dart';
 import 'package:time_manager/theme/app_semantic_colors.dart';
 import 'package:time_manager/theme/app_scroll_behavior.dart';
 import 'package:time_manager/theme/app_theme.dart';
@@ -480,6 +481,15 @@ Future<void> _initializeAndRunApplication({
     }());
   }
 
+  // 菜单栏常驻：先完成状态对账再建首帧，避免主界面先在 400 宽的
+  // 面板窗口里布局一次。失败时 provider 内部会回退并强制显示主窗口。
+  final menuBarProvider = MenuBarProvider();
+  try {
+    await menuBarProvider.ready.timeout(const Duration(seconds: 2));
+  } on Object {
+    // ready 自己已兜底，这里只防极端情况下卡住启动。
+  }
+
   runApp(
     MultiProvider(
       providers: [
@@ -540,6 +550,9 @@ Future<void> _initializeAndRunApplication({
         ),
         ChangeNotifierProvider(create: (_) => DesktopShortcutProvider()),
         ChangeNotifierProvider(create: (_) => DesktopLayoutProvider()),
+        // 用可空泛型注册：缺 Provider 的宿主（部分测试）读 null 并当作
+        // 「没有菜单栏模式」，不会因为缺 Provider 直接抛异常。
+        ChangeNotifierProvider<MenuBarProvider?>.value(value: menuBarProvider),
         ChangeNotifierProvider<BackgroundImageProvider>(
           create: (_) {
             final provider = BackgroundImageProvider();
@@ -641,6 +654,11 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
   @override
   void initState() {
     super.initState();
+    // 菜单栏「退出」要求先落盘再终止进程。
+    final menuBar = context.read<MenuBarProvider?>();
+    menuBar?.onQuitRequested = () async {
+      await context.read<TimeProvider>().onAppBackgrounded();
+    };
     if (Platform.isMacOS) {
       _desktopCommands.setMethodCallHandler((call) async {
         if (call.method == 'openSettings') {
