@@ -326,7 +326,11 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       if (entries.isEmpty) {
         // 往年同日无任何数据就不弹；同一天后续的 notify 也不再重扫。
-        _onThisDayCheckedEmptyDateKey = todayKey;
+        // 但日记索引还没加载完时结果可能不完整（只覆盖本地草稿），
+        // 这时不缓存，等索引就绪后的 notify 再补查一次。
+        if (DiarySearchService.isLoaded) {
+          _onThisDayCheckedEmptyDateKey = todayKey;
+        }
         return;
       }
 
