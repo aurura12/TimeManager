@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import '../utils/platform_features.dart';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -87,6 +88,11 @@ class HomeScreenState extends State<HomeScreen> {
   Set<int> _brushStrokeIndices = <int>{};
   bool _isBrushPointerDown = false;
 
+  /// 刷子手势的预览状态：逐格移动时只让网格层重建，不 setState 整页
+  /// （整页重建包含顶栏、事件栏和三列网格，低端机上会明显掉帧）。
+  final ValueNotifier<_BrushStrokePreview> _brushPreview =
+      ValueNotifier<_BrushStrokePreview>(_BrushStrokePreview.none);
+
   bool _isDatePickerVisible = false;
 
   bool get _isBrushMode => _brushCategoryId != null;
@@ -108,13 +114,6 @@ class HomeScreenState extends State<HomeScreen> {
 
   bool _isSameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
-
-  /// 只在刷子手势发生的那个日期上画预览，避免 Windows 三列串写/串画
-  Set<int> _brushPreviewFor(DateTime date) {
-    final strokeDate = _brushStrokeDate;
-    if (!_isBrushMode || strokeDate == null) return const <int>{};
-    return _isSameDay(strokeDate, date) ? _brushStrokeIndices : const <int>{};
-  }
 
   @override
   void initState() {
@@ -155,6 +154,7 @@ class HomeScreenState extends State<HomeScreen> {
     _scrollController.dispose();
     _gridScrollController.dispose();
     _categoryScrollController.dispose();
+    _brushPreview.dispose();
     super.dispose();
   }
 
@@ -340,11 +340,12 @@ class HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  /// 清掉一次刷子手势的临时状态（不写数据）。必须在 setState 里调用。
+  /// 清掉一次刷子手势的临时状态（不写数据）。
   void _endBrushStroke() {
     _brushStrokeDate = null;
     _brushStrokeIndices = <int>{};
     _isBrushPointerDown = false;
+    _brushPreview.value = _BrushStrokePreview.none;
   }
 
   /// 事件 / 子事件的统一点击入口。
@@ -386,11 +387,13 @@ class HomeScreenState extends State<HomeScreen> {
 
   void _brushStart(DateTime date, int index) {
     if (!_isBrushMode) return;
-    setState(() {
-      _isBrushPointerDown = true;
-      _brushStrokeDate = date;
-      _brushStrokeIndices = <int>{index};
-    });
+    _isBrushPointerDown = true;
+    _brushStrokeDate = date;
+    _brushStrokeIndices = <int>{index};
+    _brushPreview.value = _BrushStrokePreview(
+      date: date,
+      indices: _brushStrokeIndices,
+    );
     // 落笔这一格也给一次手感，拖动过程中由 _brushExtend 逐格补
     playHaptic(context, HapticStrength.selection);
   }
@@ -400,9 +403,11 @@ class HomeScreenState extends State<HomeScreen> {
     final strokeDate = _brushStrokeDate;
     if (strokeDate == null || !_isSameDay(strokeDate, date)) return;
     if (_brushStrokeIndices.contains(index)) return;
-    setState(() {
-      _brushStrokeIndices = <int>{..._brushStrokeIndices, index};
-    });
+    _brushStrokeIndices = <int>{..._brushStrokeIndices, index};
+    _brushPreview.value = _BrushStrokePreview(
+      date: strokeDate,
+      indices: _brushStrokeIndices,
+    );
     // 每刷进新的一格一次「嗒」，同一格内移动不重复震
     playHaptic(context, HapticStrength.selection);
   }
@@ -554,8 +559,7 @@ class HomeScreenState extends State<HomeScreen> {
                                                 date: prevDate,
                                                 clock: widget.clock,
                                                 brushMode: _isBrushMode,
-                                                brushPreviewIndices:
-                                                    _brushPreviewFor(prevDate),
+                                                brushPreview: _brushPreview,
                                                 onBrushIndexDown: _brushStart,
                                                 onBrushIndexMove: _brushExtend,
                                                 onBrushEnd: (_) =>
@@ -595,9 +599,7 @@ class HomeScreenState extends State<HomeScreen> {
                                                 date: currentDate,
                                                 clock: widget.clock,
                                                 brushMode: _isBrushMode,
-                                                brushPreviewIndices:
-                                                    _brushPreviewFor(
-                                                        currentDate),
+                                                brushPreview: _brushPreview,
                                                 onBrushIndexDown: _brushStart,
                                                 onBrushIndexMove: _brushExtend,
                                                 onBrushEnd: (_) =>
@@ -637,8 +639,7 @@ class HomeScreenState extends State<HomeScreen> {
                                                 date: nextDate,
                                                 clock: widget.clock,
                                                 brushMode: _isBrushMode,
-                                                brushPreviewIndices:
-                                                    _brushPreviewFor(nextDate),
+                                                brushPreview: _brushPreview,
                                                 onBrushIndexDown: _brushStart,
                                                 onBrushIndexMove: _brushExtend,
                                                 onBrushEnd: (_) =>
@@ -679,40 +680,46 @@ class HomeScreenState extends State<HomeScreen> {
                               Expanded(
                                 child: ValueChangeTransition(
                                   value: currentDate,
-                                  child: TimeGrid(
-                                    gridKey: _gridKey,
-                                    clock: widget.clock,
-                                    controller: _gridScrollController,
-                                    dragStartIndex: _selectionStart,
-                                    dragEndIndex: _selectionEnd,
-                                    brushMode: _isBrushMode,
-                                    brushPreviewIndices: _brushStrokeIndices,
-                                    onBrushPointerDown: _isBrushMode
-                                        ? (position) => _brushStart(currentDate,
-                                            _calculateIndex(position))
-                                        : null,
-                                    onBrushPointerMove: _isBrushMode
-                                        ? (position) => _brushExtend(
-                                            currentDate,
-                                            _calculateIndex(position))
-                                        : null,
-                                    onBrushPointerUp: _isBrushMode
-                                        ? _finishBrushStroke
-                                        : null,
-                                    onBrushPointerCancel: _isBrushMode
-                                        ? _cancelBrushStroke
-                                        : null,
-                                    onTapDown: (position) => _handleSelect(
-                                        position, currentDate,
-                                        isClick: true),
-                                    onPanStart: (position) => _handleSelect(
-                                        position, currentDate,
-                                        isStart: true),
-                                    onPanUpdate: (position) =>
-                                        _handleSelect(position, currentDate),
-                                    readOnly: isRemoteViewEnabled,
-                                    onResizeTimeBlock: _handleResizeTimeBlock,
-                                    onRemoveSlot: _removeSlot,
+                                  child: ValueListenableBuilder<
+                                      _BrushStrokePreview>(
+                                    valueListenable: _brushPreview,
+                                    builder: (context, preview, _) => TimeGrid(
+                                      gridKey: _gridKey,
+                                      clock: widget.clock,
+                                      controller: _gridScrollController,
+                                      dragStartIndex: _selectionStart,
+                                      dragEndIndex: _selectionEnd,
+                                      brushMode: _isBrushMode,
+                                      brushPreviewIndices:
+                                          preview.forDate(currentDate),
+                                      onBrushPointerDown: _isBrushMode
+                                          ? (position) => _brushStart(
+                                              currentDate,
+                                              _calculateIndex(position))
+                                          : null,
+                                      onBrushPointerMove: _isBrushMode
+                                          ? (position) => _brushExtend(
+                                              currentDate,
+                                              _calculateIndex(position))
+                                          : null,
+                                      onBrushPointerUp: _isBrushMode
+                                          ? _finishBrushStroke
+                                          : null,
+                                      onBrushPointerCancel: _isBrushMode
+                                          ? _cancelBrushStroke
+                                          : null,
+                                      onTapDown: (position) => _handleSelect(
+                                          position, currentDate,
+                                          isClick: true),
+                                      onPanStart: (position) => _handleSelect(
+                                          position, currentDate,
+                                          isStart: true),
+                                      onPanUpdate: (position) =>
+                                          _handleSelect(position, currentDate),
+                                      readOnly: isRemoteViewEnabled,
+                                      onResizeTimeBlock: _handleResizeTimeBlock,
+                                      onRemoveSlot: _removeSlot,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -2924,6 +2931,30 @@ class _DayHeader extends StatelessWidget {
   }
 }
 
+/// 刷子手势的预览状态（不可变）：只记录归属日期与已覆盖槽位。
+///
+/// 逐格移动时通过 [ValueNotifier] 通知网格层，避免整页 setState。
+class _BrushStrokePreview {
+  const _BrushStrokePreview({this.date, this.indices = const <int>{}});
+
+  static const none = _BrushStrokePreview();
+
+  final DateTime? date;
+  final Set<int> indices;
+
+  /// 只在手势发生的那个日期上画预览，避免 Windows 三列串写/串画。
+  Set<int> forDate(DateTime value) {
+    final strokeDate = date;
+    if (strokeDate == null || indices.isEmpty) return const <int>{};
+    if (strokeDate.year != value.year ||
+        strokeDate.month != value.month ||
+        strokeDate.day != value.day) {
+      return const <int>{};
+    }
+    return indices;
+  }
+}
+
 class _DayGrid extends StatefulWidget {
   final DateTime date;
   final ScrollController timeAxisController;
@@ -2944,7 +2975,9 @@ class _DayGrid extends StatefulWidget {
   /// 刷子模式：本列自己把触摸位置换算成「日期 + 槽位索引」再上报，
   /// 所以昨天/今天/明天不会串数据。
   final bool brushMode;
-  final Set<int> brushPreviewIndices;
+
+  /// 刷子预览只驱动本列网格重建：父页面逐格移动时不再 setState 整页。
+  final ValueListenable<_BrushStrokePreview> brushPreview;
 
   /// 测试注入的时钟，继续往下透传给「现在」标记。
   final DateTime Function()? clock;
@@ -2965,7 +2998,7 @@ class _DayGrid extends StatefulWidget {
     required this.onResizeTimeBlock,
     this.readOnly = false,
     this.brushMode = false,
-    this.brushPreviewIndices = const <int>{},
+    required this.brushPreview,
     this.clock,
     required this.onBrushIndexDown,
     required this.onBrushIndexMove,
@@ -2986,6 +3019,7 @@ class _DayGridState extends State<_DayGrid> {
     super.initState();
     // 共享时间轴滚动时保持网格对齐
     widget.timeAxisController.addListener(_syncFromTimeAxis);
+    widget.brushPreview.addListener(_onBrushPreviewChanged);
     // 首帧定位到共享时间轴当前位置
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_gridScrollController.hasClients) {
@@ -3001,6 +3035,10 @@ class _DayGridState extends State<_DayGrid> {
       oldWidget.timeAxisController.removeListener(_syncFromTimeAxis);
       widget.timeAxisController.addListener(_syncFromTimeAxis);
     }
+    if (oldWidget.brushPreview != widget.brushPreview) {
+      oldWidget.brushPreview.removeListener(_onBrushPreviewChanged);
+      widget.brushPreview.addListener(_onBrushPreviewChanged);
+    }
     if (oldWidget.date != widget.date) {
       // 选中范围由父页面统一持有；日期变化时只需重新对齐滚动位置。
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -3014,8 +3052,14 @@ class _DayGridState extends State<_DayGrid> {
   @override
   void dispose() {
     widget.timeAxisController.removeListener(_syncFromTimeAxis);
+    widget.brushPreview.removeListener(_onBrushPreviewChanged);
     _gridScrollController.dispose();
     super.dispose();
+  }
+
+  /// 预览变化只重建本列，不走父页面的整页 setState。
+  void _onBrushPreviewChanged() {
+    if (mounted) setState(() {});
   }
 
   void _syncFromTimeAxis() {
@@ -3112,7 +3156,7 @@ class _DayGridState extends State<_DayGrid> {
             ? widget.dragEndIndex
             : null,
         brushMode: widget.brushMode,
-        brushPreviewIndices: widget.brushPreviewIndices,
+        brushPreviewIndices: widget.brushPreview.value.forDate(widget.date),
         onBrushPointerDown: widget.brushMode
             ? (position) =>
                 widget.onBrushIndexDown(widget.date, _calculateIndex(position))
