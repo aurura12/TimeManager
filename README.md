@@ -2,7 +2,7 @@
 
 个人时间管理应用。以 10 分钟为粒度记录全天时间块，并整合日记、出行、打卡、目标、AI 复盘与多端同步。
 
-Flutter 实现，中文界面（英文为降级），支持 Android、Windows 桌面、macOS 与 iOS（移植进行中，真机构建需 macOS + Xcode）。
+Flutter 实现，中文界面（英文为降级），支持 Android、Windows 桌面、macOS 与 iOS（真机构建需 macOS + Xcode，iOS 编译、真机安装与调试连接均已验证）。
 
 当前版本：`1.167.0+2056`
 
@@ -64,9 +64,9 @@ lib/
   main.dart              入口，全局错误捕获与平台初始化
   providers/             状态层：TimeProvider（核心业务）、ThemeModeProvider、MainTabProvider（导航偏好）、TargetStatsCache、BackgroundImageProvider（背景图）
   models/                数据模型（时间块、分类、打卡、目标、出行、日记、同步状态、提醒等）
-  screens/               页面（27 个）
-  services/              业务服务（67 个）：Google 日历、Git 同步、打卡、AI、语音、日志、提醒等
-  widgets/               可复用组件（35 个）
+  screens/               页面（28 个）
+  services/              业务服务（71 个）：Google 日历、Git 同步、打卡、AI、语音、日志、提醒等
+  widgets/               可复用组件（44 个）
   utils/                 平台自适应、日期范围、槽位分段等工具
   theme/                 设计令牌与主题（app_tokens / app_theme / app_semantic_colors / background_image_contrast）
   config/                密钥配置（.gitignore，需本地创建）
@@ -159,7 +159,7 @@ $env:GITEE_TOKEN = '你的 Gitee Token'
 
 ## 测试
 
-`test/` 含 113 个 dart 测试文件，覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离、写日记提醒与打卡提醒等核心逻辑。
+`test/` 含 156 个 dart 测试文件，覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离、写日记提醒与打卡提醒等核心逻辑。
 
 - `test/widget_test.dart` — smoke test 与平台通道 mock 模板（`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道）
 - `test/visual_system_test.dart` — 视觉系统守护测试，改动 `lib/theme/` 或页面配色时必须运行
