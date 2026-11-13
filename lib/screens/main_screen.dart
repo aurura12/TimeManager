@@ -104,6 +104,9 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   // 那年今日弹窗状态
   String? _onThisDayShownDateKey; // 本次会话已弹过的日期（跨午夜时重置）
+  // 本次会话已经检查过、但当天没有可回顾数据的日期。不记下来的话，
+  // 之后每次 notifyListeners 都会重扫一遍历史数据（含整份出行记录解析）。
+  String? _onThisDayCheckedEmptyDateKey;
   bool _onThisDayChecking = false; // 正在检查中（防并发重复触发）
   bool _reminderSourceReady = false; // 时间块数据是否已就绪（用于识别就绪边沿）
   static const _lastShownDateKey = 'on_this_day_last_shown_date';
@@ -307,6 +310,8 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
       // 本次会话已弹过同一天 → 跳过
       if (_onThisDayShownDateKey == todayKey) return;
+      // 本次会话已检查过、确认没有可回顾数据 → 不再重复扫描
+      if (_onThisDayCheckedEmptyDateKey == todayKey) return;
 
       // 今天已经弹过就不再弹（跨会话持久化判断）
       final prefs = await SharedPreferences.getInstance();
@@ -319,7 +324,11 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       // 收集三数据源（时间记录 + 日记 + 出行），任一有数据就弹
       final entries = await OnThisDayService.collectEntries(provider);
       if (!mounted) return;
-      if (entries.isEmpty) return; // 往年同日无任何数据就不弹
+      if (entries.isEmpty) {
+        // 往年同日无任何数据就不弹；同一天后续的 notify 也不再重扫。
+        _onThisDayCheckedEmptyDateKey = todayKey;
+        return;
+      }
 
       // 记录本次会话已弹，避免重复触发
       _onThisDayShownDateKey = todayKey;
