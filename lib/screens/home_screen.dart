@@ -79,6 +79,10 @@ class HomeScreenState extends State<HomeScreen> {
   int? _selectionEnd;
   DateTime? _selectionDate;
 
+  /// 选区高亮的预览状态：拖选时只让网格层重建，不 setState 整页。
+  final ValueNotifier<_SlotSelection> _selectionPreview =
+      ValueNotifier<_SlotSelection>(_SlotSelection.none);
+
   // --- 刷子模式 ---
   // 当前没有选中时间格时点事件进入刷子模式：之后点击/拖动网格直接写入该事件。
   String? _brushCategoryId;
@@ -155,6 +159,7 @@ class HomeScreenState extends State<HomeScreen> {
     _gridScrollController.dispose();
     _categoryScrollController.dispose();
     _brushPreview.dispose();
+    _selectionPreview.dispose();
     super.dispose();
   }
 
@@ -237,34 +242,58 @@ class HomeScreenState extends State<HomeScreen> {
     return row * 6 + col;
   }
 
+  /// 把权威选区字段同步给只驱动网格高亮的 notifier；值没变就不通知。
+  void _syncSelectionPreview() {
+    final start = _selectionStart;
+    final end = _selectionEnd;
+    final date = _selectionDate;
+    final next = start == null || end == null || date == null
+        ? _SlotSelection.none
+        : _SlotSelection(start: start, end: end, date: date);
+    if (next.sameAs(_selectionPreview.value)) return;
+    _selectionPreview.value = next;
+  }
+
   void _handleSelect(Offset globalPosition, DateTime date,
       {bool isClick = false, bool isStart = false}) {
     final currentIndex = _calculateIndex(globalPosition);
 
-    setState(() {
-      if (isClick) {
-        // --- 逻辑修复：点击切换 ---
-        // 如果当前已经选中了东西，且点击的是选中的范围，则清空
-        if (_selectionStart == currentIndex && _selectionEnd == currentIndex) {
-          _selectionStart = null;
-          _selectionEnd = null;
-          _selectionDate = null;
-        } else {
-          // 否则，单选当前格子
-          _selectionStart = currentIndex;
-          _selectionEnd = currentIndex;
-          _selectionDate = date;
-        }
+    if (isClick) {
+      // --- 逻辑修复：点击切换 ---
+      // 如果当前已经选中了东西，且点击的是选中的范围，则清空
+      if (_selectionStart == currentIndex && _selectionEnd == currentIndex) {
+        _selectionStart = null;
+        _selectionEnd = null;
+        _selectionDate = null;
       } else {
-        // --- 逻辑修复：滑动逻辑 ---
-        if (isStart) {
-          // 每次重新开始滑动时，重置起始点和终点为当前点
-          _selectionStart = currentIndex;
-        }
+        // 否则，单选当前格子
+        _selectionStart = currentIndex;
         _selectionEnd = currentIndex;
         _selectionDate = date;
       }
-    });
+    } else {
+      // --- 逻辑修复：滑动逻辑 ---
+      if (isStart) {
+        // 每次重新开始滑动时，重置起始点和终点为当前点
+        _selectionStart = currentIndex;
+      } else if (_selectionEnd == currentIndex &&
+          _selectionDate != null &&
+          _isSameDay(_selectionDate!, date)) {
+        // 同一格内移动不重复通知网格，拖选时省掉大量无意义重建。
+        return;
+      }
+      _selectionEnd = currentIndex;
+      _selectionDate = date;
+    }
+    _syncSelectionPreview();
+  }
+
+  /// 桌面三列各自上报选区；高亮由 [_selectionPreview] 驱动，无需整页 setState。
+  void _updateSelection(DateTime date, int start, int end) {
+    _selectionStart = start;
+    _selectionEnd = end;
+    _selectionDate = date;
+    _syncSelectionPreview();
   }
 
   /// 拖拽时间块边界后提交：一次手势只写一次，撤销栈也只多一条。
@@ -315,6 +344,7 @@ class HomeScreenState extends State<HomeScreen> {
       _selectionEnd = null;
       _selectionDate = null;
     });
+    _syncSelectionPreview();
   }
 
   void _switchBrushTarget(Category category, {String? subLabel}) {
@@ -568,17 +598,9 @@ class HomeScreenState extends State<HomeScreen> {
                                                     _cancelBrushStroke(),
                                                 timeAxisController:
                                                     _scrollController,
-                                                dragStartIndex: _selectionStart,
-                                                dragEndIndex: _selectionEnd,
-                                                selectionDate: _selectionDate,
+                                                selection: _selectionPreview,
                                                 onSelectionChanged:
-                                                    (date, start, end) {
-                                                  setState(() {
-                                                    _selectionDate = date;
-                                                    _selectionStart = start;
-                                                    _selectionEnd = end;
-                                                  });
-                                                },
+                                                    _updateSelection,
                                                 onSelectionCleared:
                                                     _clearSelection,
                                                 readOnly: isRemoteViewEnabled,
@@ -608,17 +630,9 @@ class HomeScreenState extends State<HomeScreen> {
                                                     _cancelBrushStroke(),
                                                 timeAxisController:
                                                     _scrollController,
-                                                dragStartIndex: _selectionStart,
-                                                dragEndIndex: _selectionEnd,
-                                                selectionDate: _selectionDate,
+                                                selection: _selectionPreview,
                                                 onSelectionChanged:
-                                                    (date, start, end) {
-                                                  setState(() {
-                                                    _selectionDate = date;
-                                                    _selectionStart = start;
-                                                    _selectionEnd = end;
-                                                  });
-                                                },
+                                                    _updateSelection,
                                                 onSelectionCleared:
                                                     _clearSelection,
                                                 readOnly: isRemoteViewEnabled,
@@ -648,17 +662,9 @@ class HomeScreenState extends State<HomeScreen> {
                                                     _cancelBrushStroke(),
                                                 timeAxisController:
                                                     _scrollController,
-                                                dragStartIndex: _selectionStart,
-                                                dragEndIndex: _selectionEnd,
-                                                selectionDate: _selectionDate,
+                                                selection: _selectionPreview,
                                                 onSelectionChanged:
-                                                    (date, start, end) {
-                                                  setState(() {
-                                                    _selectionDate = date;
-                                                    _selectionStart = start;
-                                                    _selectionEnd = end;
-                                                  });
-                                                },
+                                                    _updateSelection,
                                                 onSelectionCleared:
                                                     _clearSelection,
                                                 readOnly: isRemoteViewEnabled,
@@ -683,42 +689,49 @@ class HomeScreenState extends State<HomeScreen> {
                                   child: ValueListenableBuilder<
                                       _BrushStrokePreview>(
                                     valueListenable: _brushPreview,
-                                    builder: (context, preview, _) => TimeGrid(
-                                      gridKey: _gridKey,
-                                      clock: widget.clock,
-                                      controller: _gridScrollController,
-                                      dragStartIndex: _selectionStart,
-                                      dragEndIndex: _selectionEnd,
-                                      brushMode: _isBrushMode,
-                                      brushPreviewIndices:
-                                          preview.forDate(currentDate),
-                                      onBrushPointerDown: _isBrushMode
-                                          ? (position) => _brushStart(
-                                              currentDate,
-                                              _calculateIndex(position))
-                                          : null,
-                                      onBrushPointerMove: _isBrushMode
-                                          ? (position) => _brushExtend(
-                                              currentDate,
-                                              _calculateIndex(position))
-                                          : null,
-                                      onBrushPointerUp: _isBrushMode
-                                          ? _finishBrushStroke
-                                          : null,
-                                      onBrushPointerCancel: _isBrushMode
-                                          ? _cancelBrushStroke
-                                          : null,
-                                      onTapDown: (position) => _handleSelect(
-                                          position, currentDate,
-                                          isClick: true),
-                                      onPanStart: (position) => _handleSelect(
-                                          position, currentDate,
-                                          isStart: true),
-                                      onPanUpdate: (position) =>
-                                          _handleSelect(position, currentDate),
-                                      readOnly: isRemoteViewEnabled,
-                                      onResizeTimeBlock: _handleResizeTimeBlock,
-                                      onRemoveSlot: _removeSlot,
+                                    builder: (context, brush, _) =>
+                                        ValueListenableBuilder<_SlotSelection>(
+                                      valueListenable: _selectionPreview,
+                                      builder: (context, selection, _) =>
+                                          TimeGrid(
+                                        gridKey: _gridKey,
+                                        clock: widget.clock,
+                                        controller: _gridScrollController,
+                                        dragStartIndex: selection.start,
+                                        dragEndIndex: selection.end,
+                                        brushMode: _isBrushMode,
+                                        brushPreviewIndices:
+                                            brush.forDate(currentDate),
+                                        onBrushPointerDown: _isBrushMode
+                                            ? (position) => _brushStart(
+                                                currentDate,
+                                                _calculateIndex(position))
+                                            : null,
+                                        onBrushPointerMove: _isBrushMode
+                                            ? (position) => _brushExtend(
+                                                currentDate,
+                                                _calculateIndex(position))
+                                            : null,
+                                        onBrushPointerUp: _isBrushMode
+                                            ? _finishBrushStroke
+                                            : null,
+                                        onBrushPointerCancel: _isBrushMode
+                                            ? _cancelBrushStroke
+                                            : null,
+                                        onTapDown: (position) => _handleSelect(
+                                            position, currentDate,
+                                            isClick: true),
+                                        onPanStart: (position) => _handleSelect(
+                                            position, currentDate,
+                                            isStart: true),
+                                        onPanUpdate: (position) =>
+                                            _handleSelect(
+                                                position, currentDate),
+                                        readOnly: isRemoteViewEnabled,
+                                        onResizeTimeBlock:
+                                            _handleResizeTimeBlock,
+                                        onRemoveSlot: _removeSlot,
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -1338,6 +1351,7 @@ class HomeScreenState extends State<HomeScreen> {
         _selectionEnd = null;
         _selectionDate = null;
       });
+      _syncSelectionPreview();
     } else {
       showAppSnackBar(
         context,
@@ -1364,6 +1378,7 @@ class HomeScreenState extends State<HomeScreen> {
         _selectionEnd = null;
         _selectionDate = null;
       });
+      _syncSelectionPreview();
     } else {
       showAppSnackBar(
         context,
@@ -2395,11 +2410,10 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   void _clearSelection() {
-    setState(() {
-      _selectionStart = null;
-      _selectionEnd = null;
-      _selectionDate = null;
-    });
+    _selectionStart = null;
+    _selectionEnd = null;
+    _selectionDate = null;
+    _syncSelectionPreview();
   }
 
   /// 切日期 / 选日期前的统一收尾：退出刷子模式并清掉待分配的时间选择。
@@ -2413,6 +2427,7 @@ class HomeScreenState extends State<HomeScreen> {
       _selectionEnd = null;
       _selectionDate = null;
     });
+    _syncSelectionPreview();
   }
 
   void _showDatePicker() {
@@ -2931,6 +2946,20 @@ class _DayHeader extends StatelessWidget {
   }
 }
 
+/// 待分配选区（不可变）：拖选期间只驱动网格高亮，不参与业务判断。
+class _SlotSelection {
+  const _SlotSelection({this.start, this.end, this.date});
+
+  static const none = _SlotSelection();
+
+  final int? start;
+  final int? end;
+  final DateTime? date;
+
+  bool sameAs(_SlotSelection other) =>
+      start == other.start && end == other.end && date == other.date;
+}
+
 /// 刷子手势的预览状态（不可变）：只记录归属日期与已覆盖槽位。
 ///
 /// 逐格移动时通过 [ValueNotifier] 通知网格层，避免整页 setState。
@@ -2958,9 +2987,9 @@ class _BrushStrokePreview {
 class _DayGrid extends StatefulWidget {
   final DateTime date;
   final ScrollController timeAxisController;
-  final int? dragStartIndex;
-  final int? dragEndIndex;
-  final DateTime? selectionDate;
+
+  /// 待分配选区：由父页面统一持有，逐列判断是否落在本列日期上。
+  final ValueListenable<_SlotSelection> selection;
   final void Function(DateTime date, int startIndex, int endIndex)
       onSelectionChanged;
   final VoidCallback onSelectionCleared;
@@ -2989,9 +3018,7 @@ class _DayGrid extends StatefulWidget {
   const _DayGrid({
     required this.date,
     required this.timeAxisController,
-    required this.dragStartIndex,
-    required this.dragEndIndex,
-    required this.selectionDate,
+    required this.selection,
     required this.onSelectionChanged,
     required this.onSelectionCleared,
     required this.onRemoveSlot,
@@ -3019,7 +3046,8 @@ class _DayGridState extends State<_DayGrid> {
     super.initState();
     // 共享时间轴滚动时保持网格对齐
     widget.timeAxisController.addListener(_syncFromTimeAxis);
-    widget.brushPreview.addListener(_onBrushPreviewChanged);
+    widget.brushPreview.addListener(_onPreviewChanged);
+    widget.selection.addListener(_onPreviewChanged);
     // 首帧定位到共享时间轴当前位置
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_gridScrollController.hasClients) {
@@ -3036,8 +3064,12 @@ class _DayGridState extends State<_DayGrid> {
       widget.timeAxisController.addListener(_syncFromTimeAxis);
     }
     if (oldWidget.brushPreview != widget.brushPreview) {
-      oldWidget.brushPreview.removeListener(_onBrushPreviewChanged);
-      widget.brushPreview.addListener(_onBrushPreviewChanged);
+      oldWidget.brushPreview.removeListener(_onPreviewChanged);
+      widget.brushPreview.addListener(_onPreviewChanged);
+    }
+    if (oldWidget.selection != widget.selection) {
+      oldWidget.selection.removeListener(_onPreviewChanged);
+      widget.selection.addListener(_onPreviewChanged);
     }
     if (oldWidget.date != widget.date) {
       // 选中范围由父页面统一持有；日期变化时只需重新对齐滚动位置。
@@ -3052,13 +3084,14 @@ class _DayGridState extends State<_DayGrid> {
   @override
   void dispose() {
     widget.timeAxisController.removeListener(_syncFromTimeAxis);
-    widget.brushPreview.removeListener(_onBrushPreviewChanged);
+    widget.brushPreview.removeListener(_onPreviewChanged);
+    widget.selection.removeListener(_onPreviewChanged);
     _gridScrollController.dispose();
     super.dispose();
   }
 
-  /// 预览变化只重建本列，不走父页面的整页 setState。
-  void _onBrushPreviewChanged() {
+  /// 刷子/选区预览变化只重建本列，不走父页面的整页 setState。
+  void _onPreviewChanged() {
     if (mounted) setState(() {});
   }
 
@@ -3093,12 +3126,13 @@ class _DayGridState extends State<_DayGrid> {
   void _handleSelect(Offset globalPosition,
       {bool isClick = false, bool isStart = false}) {
     final currentIndex = _calculateIndex(globalPosition);
+    final current = widget.selection.value;
     final selection = DesktopSelection(
-      start: widget.dragStartIndex,
-      end: widget.dragEndIndex,
+      start: current.start,
+      end: current.end,
     );
-    final isSelectionForThisDate = widget.selectionDate != null &&
-        selection.appliesTo(widget.selectionDate!, widget.date);
+    final isSelectionForThisDate =
+        current.date != null && selection.appliesTo(current.date!, widget.date);
 
     if (isClick &&
         isSelectionForThisDate &&
@@ -3109,10 +3143,20 @@ class _DayGridState extends State<_DayGrid> {
 
     final startIndex = isStart || isClick
         ? currentIndex
-        : (isSelectionForThisDate && widget.dragStartIndex != null
-            ? widget.dragStartIndex!
+        : (isSelectionForThisDate && current.start != null
+            ? current.start!
             : currentIndex);
     widget.onSelectionChanged(widget.date, startIndex, currentIndex);
+  }
+
+  /// 父页面持有的选区是否落在本列日期上；不是则本列不画高亮。
+  _SlotSelection? get _selectionForThisDate {
+    final value = widget.selection.value;
+    final date = value.date;
+    if (date == null || value.start == null || value.end == null) return null;
+    final applies = DesktopSelection(start: value.start, end: value.end)
+        .appliesTo(date, widget.date);
+    return applies ? value : null;
   }
 
   @override
@@ -3141,20 +3185,8 @@ class _DayGridState extends State<_DayGrid> {
         date: widget.date,
         clock: widget.clock,
         controller: _gridScrollController,
-        dragStartIndex: widget.selectionDate != null &&
-                DesktopSelection(
-                  start: widget.dragStartIndex,
-                  end: widget.dragEndIndex,
-                ).appliesTo(widget.selectionDate!, widget.date)
-            ? widget.dragStartIndex
-            : null,
-        dragEndIndex: widget.selectionDate != null &&
-                DesktopSelection(
-                  start: widget.dragStartIndex,
-                  end: widget.dragEndIndex,
-                ).appliesTo(widget.selectionDate!, widget.date)
-            ? widget.dragEndIndex
-            : null,
+        dragStartIndex: _selectionForThisDate?.start,
+        dragEndIndex: _selectionForThisDate?.end,
         brushMode: widget.brushMode,
         brushPreviewIndices: widget.brushPreview.value.forDate(widget.date),
         onBrushPointerDown: widget.brushMode
