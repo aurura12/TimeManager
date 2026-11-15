@@ -36,7 +36,7 @@ class DataBackupService {
       final fileName =
           'time_manager_backup_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.json';
 
-      final path = await FilePicker.saveFile(
+      final target = await FilePicker.saveFile(
         dialogTitle: '导出备份',
         fileName: fileName,
         bytes: utf8.encode(jsonStr),
@@ -44,11 +44,12 @@ class DataBackupService {
         allowedExtensions: ['json'],
       );
 
-      if (path == null) {
+      if (target == null) {
         return BackupFileResult.cancelled();
       }
       AppLogService.instance.info('备份导出成功', source: 'backup');
-      return BackupFileResult.success(path);
+      // v13 起 saveFile 返回 Uri（部分平台可能是 content:// 而非本地路径）。
+      return BackupFileResult.success(target.toString());
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         '备份导出失败',
@@ -67,10 +68,9 @@ class DataBackupService {
       final picked = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['json'],
-        withData: true,
       );
 
-      if (picked == null || picked.files.isEmpty) {
+      if (picked.isEmpty) {
         return (
           result: BackupFileResult.cancelled(),
           preview: null,
@@ -78,8 +78,10 @@ class DataBackupService {
         );
       }
 
-      final file = picked.files.first;
-      if (file.size > TimeProvider.maxBackupFileBytes) {
+      final file = picked.first;
+      final reportedSize = file.lengthSync();
+      if (reportedSize != null &&
+          reportedSize > TimeProvider.maxBackupFileBytes) {
         return (
           result: BackupFileResult.error(
             '备份文件过大（上限 ${TimeProvider.maxBackupFileBytes ~/ (1024 * 1024)} MB）',
@@ -89,8 +91,8 @@ class DataBackupService {
         );
       }
 
-      final bytes = file.bytes;
-      if (bytes == null || bytes.isEmpty) {
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
         AppLogService.instance.warning(
           '备份文件内容为空或无法读取',
           source: 'backup',

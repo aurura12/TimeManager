@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -135,9 +134,11 @@ void main() {
     });
     final provider = BackgroundImageProvider(
       applicationSupportDirectory: () async => temporary,
-      imagePicker: () async => FilePickerResult(<PlatformFile>[
-        PlatformFile(name: 'selected.png', size: 4, path: source.path),
-      ]),
+      imagePicker: () async => (
+        name: 'selected.png',
+        size: 4,
+        path: source.path,
+      ),
       clock: () => fixedClock,
     );
     addTearDown(provider.dispose);
@@ -170,13 +171,11 @@ void main() {
     expect(await provider.pickAndApply(), BackgroundImagePickResult.cancelled);
 
     final oversizedProvider = BackgroundImageProvider(
-      imagePicker: () async => FilePickerResult(<PlatformFile>[
-        PlatformFile(
-          name: 'large.png',
-          size: BackgroundImageProvider.maxPhotoBytes + 1,
-          path: '/not-read/large.png',
-        ),
-      ]),
+      imagePicker: () async => (
+        name: 'large.png',
+        size: BackgroundImageProvider.maxPhotoBytes + 1,
+        path: '/not-read/large.png',
+      ),
     );
     addTearDown(oversizedProvider.dispose);
     expect(

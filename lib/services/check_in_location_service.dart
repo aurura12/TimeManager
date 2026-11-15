@@ -210,10 +210,13 @@ class CheckInLocationService {
 
     String? locationName;
     try {
-      final placemarks = await placemarkFromCoordinates(
-        position.latitude,
-        position.longitude,
-      ).timeout(const Duration(seconds: 3));
+      // geocoding 5 起改为实例 API，不再提供顶层函数。
+      final placemarks = await Geocoding()
+          .placemarkFromCoordinates(
+            position.latitude,
+            position.longitude,
+          )
+          .timeout(const Duration(seconds: 3));
       if (placemarks.isNotEmpty) {
         final p = placemarks.first;
         locationName = [

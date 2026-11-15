@@ -75,7 +75,7 @@ class AppLogExportService {
     try {
       final fileName =
           'time_manager_logs_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.txt';
-      final path = await FilePicker.saveFile(
+      final target = await FilePicker.saveFile(
         dialogTitle: '导出运行日志',
         fileName: fileName,
         bytes: utf8.encode(format(entries)),
@@ -83,9 +83,10 @@ class AppLogExportService {
         allowedExtensions: ['txt'],
       );
 
-      if (path == null) return AppLogExportResult.cancelled();
+      if (target == null) return AppLogExportResult.cancelled();
       AppLogService.instance.info('运行日志导出成功', source: 'app_log_export');
-      return AppLogExportResult.success(path);
+      // v13 起 saveFile 返回 Uri（部分平台可能是 content:// 而非本地路径）。
+      return AppLogExportResult.success(target.toString());
     } catch (error, stackTrace) {
       AppLogService.instance.error(
         '运行日志导出失败',

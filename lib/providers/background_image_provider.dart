@@ -6,6 +6,11 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// 系统图片选择器返回的单张图片信息。
+///
+/// 只保留复制流程需要的字段，业务层因此不直接依赖 file_picker 的具体类型。
+typedef PickedImage = ({String name, String? path, int? size});
+
 /// Result of selecting and copying a local background image.
 enum BackgroundImagePickResult {
   applied,
@@ -23,7 +28,7 @@ class BackgroundImageProvider extends ChangeNotifier {
   BackgroundImageProvider({
     Future<SharedPreferences> Function()? preferencesLoader,
     Future<Directory> Function()? applicationSupportDirectory,
-    Future<FilePickerResult?> Function()? imagePicker,
+    Future<PickedImage?> Function()? imagePicker,
     DateTime Function()? clock,
   })  : _preferencesLoader = preferencesLoader ?? SharedPreferences.getInstance,
         _applicationSupportDirectory =
@@ -50,7 +55,7 @@ class BackgroundImageProvider extends ChangeNotifier {
 
   final Future<SharedPreferences> Function() _preferencesLoader;
   final Future<Directory> Function() _applicationSupportDirectory;
-  final Future<FilePickerResult?> Function() _imagePicker;
+  final Future<PickedImage?> Function() _imagePicker;
   final DateTime Function() _clock;
 
   String? _path;
@@ -140,17 +145,17 @@ class BackgroundImageProvider extends ChangeNotifier {
   }
 
   Future<BackgroundImagePickResult> pickAndApply() async {
-    FilePickerResult? selection;
+    PickedImage? selection;
     try {
       selection = await _imagePicker();
     } on Object {
       return BackgroundImagePickResult.failed;
     }
-    if (selection == null || selection.files.isEmpty) {
+    if (selection == null) {
       return BackgroundImagePickResult.cancelled;
     }
 
-    final selected = selection.files.first;
+    final selected = selection;
     final sourcePath = selected.path;
     if (sourcePath == null || sourcePath.isEmpty) {
       return BackgroundImagePickResult.unavailable;
@@ -160,7 +165,8 @@ class BackgroundImageProvider extends ChangeNotifier {
     try {
       // Check picker metadata and the actual temporary file before copying any
       // bytes. The second check also covers providers with stale metadata.
-      if (selected.size > maxPhotoBytes) {
+      final reportedSize = selected.size;
+      if (reportedSize != null && reportedSize > maxPhotoBytes) {
         return BackgroundImagePickResult.tooLarge;
       }
       if (!await source.exists()) return BackgroundImagePickResult.unavailable;
@@ -304,12 +310,10 @@ class BackgroundImageProvider extends ChangeNotifier {
     if (previousPath != null) await _deleteQuietly(File(previousPath));
   }
 
-  static Future<FilePickerResult?> _pickImageFile() {
-    return FilePicker.pickFiles(
-      type: FileType.image,
-      allowMultiple: false,
-      withData: false,
-    );
+  static Future<PickedImage?> _pickImageFile() async {
+    final file = await FilePicker.pickFile(type: FileType.image);
+    if (file == null) return null;
+    return (name: file.name, path: file.path, size: file.lengthSync());
   }
 
   static String _safeExtension(String fileName) {
