@@ -260,8 +260,13 @@ class HomeScreenState extends State<HomeScreen> {
 
     if (isClick) {
       // --- 逻辑修复：点击切换 ---
-      // 如果当前已经选中了东西，且点击的是选中的范围，则清空
-      if (_selectionStart == currentIndex && _selectionEnd == currentIndex) {
+      // 只有「点在自己那个日期、那一格上」才是取消；和桌面端 _DayGrid 的
+      // 判定保持一致，避免日期对不上时把别的时间段的选中态误清掉。
+      final isSelectionForThisDate =
+          _selectionDate != null && _isSameDay(_selectionDate!, date);
+      if (isSelectionForThisDate &&
+          _selectionStart == currentIndex &&
+          _selectionEnd == currentIndex) {
         _selectionStart = null;
         _selectionEnd = null;
         _selectionDate = null;
