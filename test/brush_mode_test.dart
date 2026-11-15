@@ -796,6 +796,32 @@ void main() {
     await _drainPendingSync(tester);
   });
 
+  testWidgets('刷子逐格移动只重建笔画所在的那一列', (tester) async {
+    final provider = await _pumpHome(tester);
+    await _tapCategory(tester, '学习');
+    final geometry = _gridGeometry(tester, provider, _prevColumn);
+
+    // 落笔这一格会让笔画列重建，先按下再取基准，只看「逐格移动」这一段。
+    final gesture = await tester.startGesture(_visiblePoint(geometry, 54));
+    await tester.pump();
+    final before = tester.widgetList<TimeGrid>(find.byType(TimeGrid)).toList();
+    expect(before, hasLength(3), reason: '桌面端应有三列网格');
+
+    await gesture.moveTo(_visiblePoint(geometry, 55));
+    await tester.pump();
+
+    final after = tester.widgetList<TimeGrid>(find.byType(TimeGrid)).toList();
+    // 重建会生成新的 TimeGrid 实例；另外两列的预览结果没变，应保持同一个对象。
+    expect(identical(after[_prevColumn], before[_prevColumn]), isFalse);
+    expect(identical(after[_todayColumn], before[_todayColumn]), isTrue,
+        reason: '今天列不该跟着笔画重建');
+    expect(identical(after[2], before[2]), isTrue, reason: '明天列不该跟着笔画重建');
+
+    await gesture.up();
+    await tester.pump();
+    await _drainPendingSync(tester);
+  });
+
   testWidgets('临时事件仍然要求先选时间', (tester) async {
     final provider = await _pumpHome(tester);
     final revision = provider.slotsRevision;

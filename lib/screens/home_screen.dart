@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import '../utils/platform_features.dart';
 
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart' show ValueListenable, setEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -3045,6 +3045,12 @@ class _DayGridState extends State<_DayGrid> {
   final GlobalKey _gridKey = GlobalKey();
   final ScrollController _gridScrollController = ScrollController();
 
+  // 上次真正画到本列的预览值（本列不适用的选区记为 null）。父页面逐格移动时
+  // 三列都会收到通知，靠它把「与本列无关」的那两次通知挡掉。
+  int? _shownSelectionStart;
+  int? _shownSelectionEnd;
+  Set<int> _shownBrushIndices = const <int>{};
+
   @override
   void initState() {
     super.initState();
@@ -3052,6 +3058,7 @@ class _DayGridState extends State<_DayGrid> {
     widget.timeAxisController.addListener(_syncFromTimeAxis);
     widget.brushPreview.addListener(_onPreviewChanged);
     widget.selection.addListener(_onPreviewChanged);
+    _rememberShownPreview();
     // 首帧定位到共享时间轴当前位置
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_gridScrollController.hasClients) {
@@ -3076,6 +3083,8 @@ class _DayGridState extends State<_DayGrid> {
       widget.selection.addListener(_onPreviewChanged);
     }
     if (oldWidget.date != widget.date) {
+      // 换日期后「本列该画什么」整体变了，基准值要跟着重置。
+      _rememberShownPreview();
       // 选中范围由父页面统一持有；日期变化时只需重新对齐滚动位置。
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_gridScrollController.hasClients) {
@@ -3094,9 +3103,29 @@ class _DayGridState extends State<_DayGrid> {
     super.dispose();
   }
 
+  /// 记下当前「本列实际会画出来的预览」，作为下一次比较的基准。
+  void _rememberShownPreview() {
+    final selection = _selectionForThisDate;
+    _shownSelectionStart = selection?.start;
+    _shownSelectionEnd = selection?.end;
+    _shownBrushIndices = widget.brushPreview.value.forDate(widget.date);
+  }
+
   /// 刷子/选区预览变化只重建本列，不走父页面的整页 setState。
+  ///
+  /// 通知是三列共享的，但一次手势只影响其中一列：本列该画的东西没变就直接跳过，
+  /// 免得逐格移动时另外两列陪着重建。
   void _onPreviewChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final selection = _selectionForThisDate;
+    final brushIndices = widget.brushPreview.value.forDate(widget.date);
+    if (selection?.start == _shownSelectionStart &&
+        selection?.end == _shownSelectionEnd &&
+        setEquals(brushIndices, _shownBrushIndices)) {
+      return;
+    }
+    _rememberShownPreview();
+    setState(() {});
   }
 
   void _syncFromTimeAxis() {
