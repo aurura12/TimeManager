@@ -40,8 +40,6 @@ class DataBackupService {
         dialogTitle: '导出备份',
         fileName: fileName,
         bytes: utf8.encode(jsonStr),
-        type: FileType.custom,
-        allowedExtensions: ['json'],
       );
 
       if (target == null) {

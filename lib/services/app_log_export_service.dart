@@ -79,8 +79,6 @@ class AppLogExportService {
         dialogTitle: '导出运行日志',
         fileName: fileName,
         bytes: utf8.encode(format(entries)),
-        type: FileType.custom,
-        allowedExtensions: ['txt'],
       );
 
       if (target == null) return AppLogExportResult.cancelled();
