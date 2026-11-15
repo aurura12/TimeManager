@@ -29,6 +29,14 @@ class DiarySearchService {
   @visibleForTesting
   static Future<void> Function(File file, String content)? writeTextForTesting;
 
+  /// Test-only hook：直接摆布「已加载 / 仍在同步」两个标记，用来验证
+  /// [isFullyIndexed] 这类只读判定，不做任何真实的读写。
+  @visibleForTesting
+  static void setLoadStateForTesting({bool? loaded, bool? loading}) {
+    if (loaded != null) _loaded = loaded;
+    if (loading != null) _loading = loading;
+  }
+
   /// 索引进度（0.0 ~ 1.0），通过 addListener 监听变化
   static final ValueNotifier<double> progress = ValueNotifier(0);
   static int _totalToSync = 0;
@@ -36,6 +44,13 @@ class DiarySearchService {
 
   static bool get isLoaded => _loaded;
   static bool get isLoading => _loading;
+
+  /// 索引真正就绪：磁盘索引读完，且后台的远程增量同步也已经结束。
+  ///
+  /// 只看 [isLoaded] 不够：`_loadFromDisk()` 读完磁盘就把它置为 true，而
+  /// `_syncFromRemote()` 可能还在跑，此时命中范围只覆盖旧索引。
+  static bool get isFullyIndexed => _loaded && !_loading;
+
   static bool get hasData => _cache.isNotEmpty;
 
   static Future<String> _getCacheDir() async {

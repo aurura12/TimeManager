@@ -85,4 +85,26 @@ void main() {
     expect(DiarySearchService.getCachedContent('g', date), '旧的乖乖日记');
     expect(DiarySearchService.getCachedContent('j', date), '旧的晶晶日记');
   });
+
+  group('isFullyIndexed', () {
+    tearDown(() {
+      DiarySearchService.setLoadStateForTesting(loaded: false, loading: false);
+    });
+
+    test('磁盘索引读完但远程同步还在跑时不算就绪', () {
+      DiarySearchService.setLoadStateForTesting(loaded: true, loading: true);
+
+      expect(DiarySearchService.isLoaded, isTrue);
+      expect(DiarySearchService.isFullyIndexed, isFalse,
+          reason: '远程增量未结束时索引可能只覆盖旧数据，不能据此判定「查不到」');
+    });
+
+    test('未加载与完全就绪两种状态', () {
+      DiarySearchService.setLoadStateForTesting(loaded: false, loading: false);
+      expect(DiarySearchService.isFullyIndexed, isFalse);
+
+      DiarySearchService.setLoadStateForTesting(loaded: true, loading: false);
+      expect(DiarySearchService.isFullyIndexed, isTrue);
+    });
+  });
 }
