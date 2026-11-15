@@ -2956,8 +2956,15 @@ class _SlotSelection {
   final int? end;
   final DateTime? date;
 
-  bool sameAs(_SlotSelection other) =>
-      start == other.start && end == other.end && date == other.date;
+  /// 只比年月日：选区日期可能带时分秒（来自 provider 的 currentDate），
+  /// 用 `DateTime ==` 会把同一天判成两个选区，白白多通知一次网格重建。
+  bool sameAs(_SlotSelection other) {
+    if (start != other.start || end != other.end) return false;
+    final a = date;
+    final b = other.date;
+    if (a == null || b == null) return a == b;
+    return DesktopSelection.isSameDay(a, b);
+  }
 }
 
 /// 刷子手势的预览状态（不可变）：只记录归属日期与已覆盖槽位。
@@ -2975,12 +2982,9 @@ class _BrushStrokePreview {
   Set<int> forDate(DateTime value) {
     final strokeDate = date;
     if (strokeDate == null || indices.isEmpty) return const <int>{};
-    if (strokeDate.year != value.year ||
-        strokeDate.month != value.month ||
-        strokeDate.day != value.day) {
-      return const <int>{};
-    }
-    return indices;
+    return DesktopSelection.isSameDay(strokeDate, value)
+        ? indices
+        : const <int>{};
   }
 }
 

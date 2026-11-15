@@ -15,4 +15,20 @@ void main() {
     expect(selection.isSingleCellAt(12), isTrue);
     expect(selection.isSingleCellAt(13), isFalse);
   });
+
+  test('sameday comparison ignores time of day', () {
+    final morning = DateTime(2026, 8, 20, 7, 30, 15);
+    final night = DateTime(2026, 8, 20, 23, 59);
+
+    expect(DesktopSelection.isSameDay(morning, night), isTrue);
+    expect(DesktopSelection.isSameDay(morning, DateTime(2026, 8, 21, 7, 30)),
+        isFalse);
+    expect(DesktopSelection.isSameDay(DateTime(2025, 8, 20, 7, 30), morning),
+        isFalse);
+
+    // appliesTo 复用同一判定：选区日期带时分秒也不该串到别的列
+    const selection = DesktopSelection(start: 1, end: 2);
+    expect(selection.appliesTo(night, morning), isTrue);
+    expect(selection.appliesTo(night, DateTime(2026, 8, 21)), isFalse);
+  });
 }
