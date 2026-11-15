@@ -4,9 +4,8 @@ import 'dart:io';
 import 'dart:ui';
 
 import 'package:home_widget/home_widget.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/background_image_provider.dart';
@@ -861,11 +860,9 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
         surfaceOpacity: backgroundImage.surfaceOpacity,
       ),
       themeMode: themeSettings.themeMode,
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
+      // material_ui 自带的 delegates 已含 Cupertino 与 Widgets 两套，
+      // 与 flutter_localizations 的旧三件套类型不兼容，不能混用。
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
       supportedLocales: const [
         Locale('zh', 'CN'),
         Locale('en', 'US'),

@@ -3,7 +3,7 @@ import 'dart:io';
 import '../utils/platform_features.dart';
 
 import 'package:flutter/foundation.dart' show ValueListenable, setEquals;
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
@@ -25,6 +25,7 @@ import '../widgets/day_change_boundary.dart';
 import '../widgets/date_picker_panel.dart';
 import '../widgets/desktop_shortcut_host.dart';
 import '../widgets/event_label_text.dart';
+import '../widgets/legacy_material_bridge.dart';
 import '../widgets/motion_transitions.dart';
 import '../widgets/sync_status_button.dart';
 import '../widgets/template_bar.dart';
@@ -1089,7 +1090,7 @@ class HomeScreenState extends State<HomeScreen> {
           .clamp(
               1, provider.categories.isEmpty ? 1 : provider.categories.length);
       final tileWidth = (available - (columns - 1) * AppSpacing.sm) / columns;
-      return ReorderableWrap(
+      final wrap = ReorderableWrap(
         // 不能传 controller：与 ignorePrimaryScrollController 同时出现会让
         // reorderables 走「裸 Wrap」分支、丢掉 SingleChildScrollView，导致
         // 展开分组撑高后无法滚动（桌面端）。留空由包内部自建滚动视图。
@@ -1098,6 +1099,8 @@ class HomeScreenState extends State<HomeScreen> {
         spacing: AppSpacing.sm,
         runSpacing: AppSpacing.xs,
         needsLongPressDraggable: false,
+        // 默认反馈会套旧 material 的 Material，拖动时子项里的 InkWell 会断言。
+        buildDraggableFeedback: materialUiDraggableFeedback,
         onReorder: provider.reorderCategories,
         footer: SizedBox(
           width: available,
@@ -1121,6 +1124,9 @@ class HomeScreenState extends State<HomeScreen> {
             ),
         ],
       );
+
+      // reorderables 仍在读旧的 MaterialLocalizations，必须包一层兼容桥。
+      return LegacyMaterialBridge(child: wrap);
     });
   }
 

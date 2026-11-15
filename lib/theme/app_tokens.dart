@@ -8,7 +8,7 @@
 /// 规则见 `docs/design-system.md`。
 library;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// 间距。手机版只用这一套：4 / 8 / 12 / 16 / 24。
 abstract final class AppSpacing {

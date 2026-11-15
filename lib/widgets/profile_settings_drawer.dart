@@ -4,7 +4,7 @@ import 'dart:io';
 import '../utils/app_snack_bar.dart';
 import '../utils/platform_features.dart';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import '../models/diary_reminder.dart';
 import '../models/time_block_reminder.dart';
 import '../models/google_calendar_user.dart';

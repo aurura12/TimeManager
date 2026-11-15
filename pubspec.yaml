@@ -12,6 +12,9 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
+  # Flutter 3.50 起 flutter/material.dart 已弃用，界面组件库改用官方迁移包。
+  # 旧 material 的第三方面板（reorderables）靠 LegacyMaterialBridge 兼容。
+  material_ui: ^1.11.0
   provider: ^6.1.1
   google_sign_in: ^7.2.0
   googleapis: ^16.0.0

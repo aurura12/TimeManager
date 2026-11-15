@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:time_manager/models/check_in_goal.dart';
 import 'package:time_manager/services/check_in_location_service.dart';

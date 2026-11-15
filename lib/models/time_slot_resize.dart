@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// 时间块缩放（拖拽边界调整时长）的请求模型。
 ///

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// 事件名文本：按本机偏好渲染一行或两行，放不下时可查看完整名称。
 ///

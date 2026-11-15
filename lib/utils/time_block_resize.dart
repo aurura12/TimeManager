@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../models/time_slot.dart';
 import '../models/time_slot_resize.dart';

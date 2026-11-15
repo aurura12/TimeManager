@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../models/on_this_day_entry.dart';
 import 'on_this_day_year_card.dart';
