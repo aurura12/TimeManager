@@ -16,8 +16,9 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
 - **菜单栏常驻（macOS）** → 见「macOS 菜单栏常驻」，窗口双形态 / 激活策略 / 面板只读 + 新增 都在里面
 - **同步 / 身份分片 / 跨身份数据** → 见「远端文档布局」与「分类不带默认种子 + 「临时」仅本机」；切身份文案差异见「待同步队列的身份归属」
 - **视觉（配色 / 间距 / 字号 / 圆角）** → 见「Conventions」，规范在 `docs/design-system.md`，改后必跑 `test/visual_system_test.dart`
+- **界面导入 / 组件库** → 一律用 material_ui，见「界面组件库（material_ui）」；旧 material 导入会让 analyze 报 deprecated、打包脚本直接中断
 
-**按需跳转**：下文依次为「Architecture → 数据流与关键模式 → Commands → iOS 平台约束 / macOS 菜单栏常驻 → 构建与发布 → Config Files / Key Dependencies → Testing → Conventions」。改具体功能前，先回到上面的风险区索引找到对应小节。
+**按需跳转**：下文依次为「Architecture → 数据流与关键模式 → Commands → iOS 平台约束 / macOS 菜单栏常驻 → 构建与发布 → Config Files / Key Dependencies → Testing → 界面组件库（material_ui） → Conventions」。改具体功能前，先回到上面的风险区索引找到对应小节。
 
 ## 首次本地开发前提
 
@@ -25,7 +26,7 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
 2. `flutter pub get` 安装依赖
 3. `flutter run`（移动端）或 `flutter run -d windows`（桌面）
 
-Android 构建必须用 JDK 17（详见「环境要求」），用系统默认的 JDK 25 会失败。
+Android 构建需要 JDK 21（详见「环境要求」），用系统默认的 JDK 25 会失败；本机 `JAVA_HOME` 可能仍指向 17，跑 release 前显式切换。
 
 iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只能完成工程生成与代码适配。`lib/utils/platform_features.dart` 只把 Windows / macOS 判定为桌面端，**iOS 会落进移动端分支**（`supportsCameraCapture` / `updateAssetSuffix` 等按移动端处理）——因此凡是 Android / 桌面独占的能力都必须用该文件显式判定并加守卫，不能只在 UI 上按「移动端 / 桌面端」二分。已按此补的守卫：`supportsHomeWidget`（桌面小组件仅 Android）、`supportsInAppUpdate`（应用内更新仅 Android / Windows / macOS，iOS 无通道）。详见「iOS 平台约束」。
 
@@ -212,7 +213,8 @@ scripts/installer.iss              # Inno Setup 6.3+ 打 Windows 安装包（上
 
 ### 环境要求
 
-- **Android 构建需要 JDK 17**（Temurin）。Gradle 版本在 `android/gradle/wrapper/gradle-wrapper.properties` 固定为 8.14，它无法在 JDK 25 下运行——用系统默认的 JDK 25 会构建失败
+- **Android 构建需要 JDK 21**（Temurin）。当前构建链为 Gradle 9.5.0 / AGP 9.3.1 / KGP 2.4.20，插件走 AGP 9 内置 Kotlin（`android/gradle.properties` 的 `android.builtInKotlin=true`，不要改成 false）。release 的 lint 调用 Java 21 API（`List.removeLast()`），在 JDK 17 上会崩，debug 构建不受影响；本机 `JAVA_HOME` 可能仍指向 17，跑 release 前显式切到 21。不要用 Android Studio 自带的 JBR 25
+- 插件自己 `apply plugin: 'kotlin-android'` 会与内置 Kotlin 冲突直接报错；看到 “plugins that apply Kotlin Gradle Plugin” 警告时先查该插件是否支持 AGP 9
 - `flutter.sdk` / `sdk.dir` 写在 `android/local.properties`（本机绝对路径，勿提交改动）
 - 升级 Flutter 要在 SDK 目录里执行 `flutter upgrade`，在项目目录直接跑会刷新项目的 `pubspec.lock`
 - **macOS 端刻意关掉了 Impeller**：`macos/Runner/Info.plist` 里 `FLTEnableImpeller=false`，退回 Skia。原因是 Flutter 3.47 起 macOS 默认 Impeller + SDF 文字，会偶发字体 / 图标缺字形（显示成方框，重启才恢复）。这是临时规避，**不要当成遗留调试开关清掉**，等上游修复后再删
@@ -295,7 +297,7 @@ macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，
 `scripts/publish_all_release.bat`（由 `publish_all_release.ps1` 实现）是**一键双端发布**入口，把 Android 与 Windows 合成一步，同样无需 Bash、jq 或 curl：
 
 - 默认**版本号 +1**（次版本 +1、patch 归零、构建号 +1）、构建前跑 `flutter analyze` + `flutter test`、构建成功后代提交并推送 `pubspec.yaml`；`--skip-bump` / `--skip-tests` / `--no-git` 可关掉
-- 依次构建 Windows x64 安装包（Inno Setup 6.3+）和 Android arm64-v8a APK（`flutter build apk --release --target-platform android-arm64 --split-per-abi`，**需要 JDK 17**），产出 `dist/time_manager_setup_<版本>.exe` 与 `dist/time_manager-v<版本>-arm64-v8a.apk` 及各自 `.sha256`
+- 依次构建 Windows x64 安装包（Inno Setup 6.3+）和 Android arm64-v8a APK（`flutter build apk --release --target-platform android-arm64 --split-per-abi`，**需要 JDK 21**），产出 `dist/time_manager_setup_<版本>.exe` 与 `dist/time_manager-v<版本>-arm64-v8a.apk` 及各自 `.sha256`
 - 版本号只写一次，两端用同一版本构建；tag = 版本名（不带 `v`、不带 `+build`），上传到**同一个** Gitee Release，顺序为 APK 的 sha→apk、EXE 的 sha→exe
 - `--skip-android` / `--skip-windows` 只发单端；`--check-notes` 才与线上最新说明查重（默认不查）；`--dry-run` 只看计划；`--skip-build`（配 `--apk` / `--exe`）可跳过构建直接上传
 - 回滚边界与 Windows 脚本一致：只有构建失败 / 中断才回滚版本号；构建成功后上传失败保留产物与版本号。是自带一份实现的独立脚本，改 Gitee 协议时需与 `publish_windows_release.ps1` 一起改
@@ -333,7 +335,7 @@ Never commit them.
 
 ## Testing
 
-- `test/` 有 156 个 dart 测试文件（另有 `test/support/` 下 3 个共用 Fake）+ 3 个 bash 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`、`publish_android_release_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集）+ 1 个 PowerShell 测试（`publish_windows_release_script_test.ps1`，macOS/Linux 用 `pwsh` 运行；不联网、不构建、不发布），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
+- `test/` 有 157 个 dart 测试文件（另有 `test/support/` 下 3 个共用 Fake）+ 3 个 bash 脚本测试（`update_macos_script_test.sh`、`update_metadata_script_test.sh`、`publish_android_release_script_test.sh`，用 `bash test/<脚本>.sh` 运行，`flutter test` 不会收集）+ 1 个 PowerShell 测试（`publish_windows_release_script_test.ps1`，macOS/Linux 用 `pwsh` 运行；不联网、不构建、不发布），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
 - `test/background_image_contrast_test.dart` / `background_image_provider_test.dart` — 背景图对比度契约与 Provider 状态（不透明度只在 commit 时落盘、启动清失效路径、超限/取消属正常结果）
 - `test/visual_system_test.dart` — 视觉系统守护测试：对比度计算、主题一致性、令牌使用约束与源码守卫（页面无颜色 / 圆角 / 字号字面量，字号一律走 `AppText.*`；改 `lib/theme/` 或页面配色时必跑）
 - `test/widget_test.dart` — smoke test + platform channel mock 模板：`_FakeGoogleSignInPlatform`、`SharedPreferences.setMockInitialValues`、mock `home_widget`/`flutter_secure_storage`/`path_provider` 通道、`tester.runAsync` 真实 IO。新写 widget 测试可参照此文件搭建环境
@@ -362,6 +364,17 @@ Never commit them.
 - 写提醒相关的 widget 测试要注意：抽屉是长 `ListView`，懒构建会让折叠线以下的条目根本不挂载，需要把测试视口调高；另外 `AppIdentityService.load()` 每次都会重读偏好，测试里的身份必须放在偏好键 `schedule_user_kind` 里，靠 `adoptManualKind` 设进去会被覆盖
 - 测滚轮用 `tester.drag(finder, Offset(0, -44))` 拖动一格；换主题重跑时**必须先把面板关掉**，否则 `pumpWidget` 会复用 Navigator 状态，上一轮的弹层还在、下一次点击落不到按钮上
 - 无 CI 流程配置
+
+## 界面组件库（material_ui）
+
+Flutter 3.50 起 `package:flutter/material.dart` 整体弃用，界面库统一到 `material_ui`（`pubspec.yaml` 的 `material_ui: ^1.11.0`）。改界面代码前先读这一节：
+
+- 新代码一律 `import 'package:material_ui/material_ui.dart';`；Cupertino 对应 `package:cupertino_ui/cupertino_ui.dart`
+- **禁止**再导入 `package:flutter/material.dart`、`package:flutter/cupertino.dart`、`package:flutter_localizations/flutter_localizations.dart`：`test/material_import_guard_test.dart` 会扫描 `lib/` 与 `test/` 并直接失败
+- 本地化代理用 material_ui 自带的 `GlobalMaterialLocalizations.delegates`（`lib/main.dart`），它已含 Cupertino 与 Widgets 两套
+- 新旧库的类同名但不是同一类型，同一文件混用会大面积 ambiguous，运行期还会找不到 `MaterialLocalizations`；不要为单个控件混回旧库
+- `lib/widgets/legacy_material_bridge.dart` 是唯一兼容层，只给仍读旧库的 `reorderables`（`ReorderableWrap`）用。退出条件：reorderables 发布基于 material_ui 的版本后，删掉该文件与 `home_screen.dart` 里唯一那处包裹
+- **`flutter analyze` 必须保持 0 issue**：任何 info（包括 `@Deprecated` 用法）都会让 `scripts/build_android.sh` / `scripts/update_macos.sh`（`set -Eeuo pipefail`）在构建前中断
 
 ## Conventions
 
