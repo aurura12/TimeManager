@@ -6318,8 +6318,14 @@ class TimeProvider with ChangeNotifier {
     }
     // 后台过夜后回到前台：仍停留在“今天”的话直接推进到新的一天，
     // 后面的日程刷新才会落在正确的可见日期上。
-    advanceToTodayIfNeeded();
+    final advancedToToday = advanceToTodayIfNeeded();
     _ensureScheduleAutoRefreshTimer();
+    // 同一天回前台不会经过 goToDate，这里补一次刷新，让小组件的 now 线与
+    // 「当前」跟上；跨日的刷新已由 goToDate 内部完成。身份切换进行中不刷，
+    // 等 _loadData 收尾后再写，避免先落一份旧身份的数据。
+    if (!advancedToToday && !_scheduleIdentityMutationInProgress) {
+      await _refreshHomeWidget();
+    }
     await refreshSchedulesFromRemoteInBackground();
     if (_isDisposed || _initializationFailed) return;
     await pullCategoriesFromGitee();
