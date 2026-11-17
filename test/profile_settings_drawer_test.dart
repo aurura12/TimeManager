@@ -10,6 +10,7 @@ import 'package:time_manager/providers/now_marker_provider.dart';
 import 'package:time_manager/providers/theme_mode_provider.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/screens/app_log_screen.dart';
+import 'package:time_manager/screens/changelog_screen.dart';
 import 'package:time_manager/screens/main_tab_settings_screen.dart';
 import 'package:time_manager/services/app_identity_service.dart';
 import 'package:time_manager/theme/app_theme.dart';
@@ -308,6 +309,31 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+
+  testWidgets('opens the changelog from the app group', (tester) async {
+    final provider = await createIdentityProvider(tester);
+    addTearDown(provider.dispose);
+    await openDrawerWith(tester, provider, desktop: true);
+    final scaffold = tester.state<ScaffoldState>(find.byType(Scaffold));
+
+    await tester.ensureVisible(find.text('关于应用'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('关于应用'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('更新日志'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('更新日志'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ChangelogScreen), findsOneWidget);
+    expect(scaffold.isDrawerOpen, isFalse);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(scaffold.isDrawerOpen, isFalse);
+    expect(ModalRoute.of(scaffold.context)!.willHandlePopInternally, isFalse);
+    expect(tester.takeException(), isNull);
+  });
   for (final appearance in [
     ('light', AppTheme.light()),
     ('dark', AppTheme.dark()),

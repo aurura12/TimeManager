@@ -43,20 +43,24 @@ void main() {
   test('ignores text before the first heading and blank input', () {
     expect(parseChangelog(''), isEmpty);
     expect(parseChangelog('   \n\n'), isEmpty);
-    expect(parseChangelog('更新日志\n\n## 1.0.0+1（2026-01-01）\n\n- 内容。').single.label,
+    expect(
+        parseChangelog('更新日志\n\n## 1.0.0+1（2026-01-01）\n\n- 内容。').single.label,
         '1.0.0+1');
   });
 
   test('repository changelog covers every version and stays ordered', () {
-    final entries = parseChangelog(File('docs/release-notes.md').readAsStringSync());
+    final entries =
+        parseChangelog(File('docs/release-notes.md').readAsStringSync());
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    final version =
-        RegExp(r'^version:\s*([^\s#]+)', multiLine: true).firstMatch(pubspec)!.group(1);
+    final version = RegExp(r'^version:\s*([^\s#]+)', multiLine: true)
+        .firstMatch(pubspec)!
+        .group(1);
 
     expect(entries.length, greaterThanOrEqualTo(56));
     expect(entries.first.label, version,
         reason: '最新一条必须与 pubspec.yaml 的 version 一致');
-    expect(entries.map((entry) => entry.label).toSet(), hasLength(entries.length),
+    expect(
+        entries.map((entry) => entry.label).toSet(), hasLength(entries.length),
         reason: '同一个版本+构建号只能出现一次');
 
     for (var i = 0; i < entries.length; i++) {

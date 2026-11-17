@@ -31,6 +31,7 @@ import '../services/diary_reminder_service.dart';
 import '../services/time_block_reminder_service.dart';
 import '../services/update_service.dart';
 import '../screens/app_log_screen.dart';
+import '../screens/changelog_screen.dart';
 import '../screens/main_tab_settings_screen.dart';
 import '../screens/sync_center_screen.dart';
 import '../screens/word_cloud_screen.dart';
@@ -696,6 +697,13 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
               trailing: const Icon(Icons.chevron_right),
               onTap: () => _checkForUpdate(context),
             ),
+          ListTile(
+            leading: const Icon(Icons.history_edu_outlined),
+            title: const Text('更新日志'),
+            subtitle: const Text('查看每个版本改了什么'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _openScreen(const ChangelogScreen()),
+          ),
           ListTile(
             leading: const Icon(Icons.receipt_long_outlined),
             title: const Text('运行日志'),
@@ -1524,6 +1532,10 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     }
 
     final updateInfo = result.info!;
+    // Release 正文的首行是版本标题，弹窗本身已经显示版本号，去掉避免残留 ##。
+    final notes = updateInfo.releaseNotes
+        .replaceFirst(RegExp(r'^##[^\n]*\n+'), '')
+        .trim();
 
     // 显示更新内容弹窗
     final confirmed = await showDialog<bool>(
@@ -1534,14 +1546,14 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (updateInfo.releaseNotes.isNotEmpty) ...[
+            if (notes.isNotEmpty) ...[
               const Text('更新内容：',
                   style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               Container(
                 constraints: const BoxConstraints(maxHeight: 200),
                 child: SingleChildScrollView(
-                  child: Text(updateInfo.releaseNotes),
+                  child: Text(notes),
                 ),
               ),
             ] else

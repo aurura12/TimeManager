@@ -1,7 +1,7 @@
 name: time_manager
 description: "A new Flutter project."
 publish_to: "none"
-version: 1.178.0+2067
+version: 1.179.0+2068
 
 # 添加下面这段环境配置
 environment:
@@ -61,6 +61,9 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    # 更新日志页直接读取这份文件，同时它也是发布脚本的 Release 说明来源。
+    - docs/release-notes.md
 
 flutter_launcher_icons:
   android: "launcher_icon"
