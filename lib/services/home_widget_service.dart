@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:home_widget/home_widget.dart';
 import '../models/time_slot.dart';
+import '../utils/platform_features.dart';
 
 /// Android 桌面小组件数据桥接
 class HomeWidgetService {
@@ -149,6 +150,21 @@ class HomeWidgetService {
       daySpanHours * 60,
     );
 
+    await HomeWidget.updateWidget(qualifiedAndroidName: androidProvider);
+  }
+
+  /// 小组件外观（两套调色板 + 当前解析结果）的存储键。
+  static const String widgetThemeKey = 'widget_theme';
+
+  /// 把 App 当前外观写到原生并触发一次重绘。
+  ///
+  /// 与 [updateFromDay] 分开：主题变化不必重算数据，数据变化也不该重写主题。
+  static Future<void> updateAppearance(
+    String themeJson, {
+    bool? supported,
+  }) async {
+    if (!(supported ?? supportsHomeWidget)) return;
+    await HomeWidget.saveWidgetData<String>(widgetThemeKey, themeJson);
     await HomeWidget.updateWidget(qualifiedAndroidName: androidProvider);
   }
 

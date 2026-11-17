@@ -3,11 +3,14 @@ package com.example.time_manager
 import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.widget.RemoteViews
@@ -54,6 +57,11 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
         val dayStartMinutes = widgetData.getInt("widget_day_start_minutes", 7 * 60)
         val daySpanMinutes = widgetData.getInt("widget_day_span_minutes", 17 * 60)
         val pendingSync = widgetData.getBoolean("widget_pending_sync", false)
+        val theme =
+            WidgetTheme.parse(
+                widgetData.getString("widget_theme", null),
+                isNightMode(context),
+            )
         val actionStatus = widgetData.getString("widget_action_status", "")?.trim().orEmpty()
         val actionStatusAt = widgetData.getLong("widget_action_status_at", 0L)
         val actionStatusError = widgetData.getBoolean("widget_action_status_error", false)
@@ -78,6 +86,8 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
                     daySpanMinutes,
                     bitmapWidth,
                     bitmapHeight,
+                    theme.track,
+                    theme.nowLine,
                 )
 
             val views =
@@ -114,10 +124,6 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
                     )
 
                     setTextViewText(R.id.widget_action_status, actionStatus)
-                    setTextColor(
-                        R.id.widget_action_status,
-                        if (actionStatusError) STATUS_ERROR_COLOR else STATUS_SUCCESS_COLOR,
-                    )
                     setViewVisibility(
                         R.id.widget_action_status,
                         if (showActionStatus && !compact) View.VISIBLE else View.GONE,
@@ -141,6 +147,7 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
                         actionPendingIntent(context, ACTION_SYNC_CENTER),
                     )
                 }
+            applyTheme(views, theme, actionStatusError)
             appWidgetManager.updateAppWidget(widgetId, views)
         }
     }
@@ -160,10 +167,6 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
         private const val ACTION_SYNC_CENTER = "sync_center"
         private const val COMPACT_HEIGHT_THRESHOLD_DP = 180
         private const val ACTION_STATUS_TTL_MS = 10 * 60 * 1000L
-        private const val STATUS_SUCCESS_COLOR = 0xFF558B2F.toInt()
-        private const val STATUS_ERROR_COLOR = 0xFFC62828.toInt()
-        private const val EMPTY_COLOR = 0xFFBDBDBD.toInt()
-        private const val NOW_LINE_COLOR = 0xFFFFFFFF.toInt()
         private const val TEXT_MIN_PADDING_PX = 10f
         private const val WIDGET_HORIZONTAL_PADDING_DP = 20f
 
@@ -179,6 +182,83 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
                 .appendQueryParameter("action", action)
                 .build(),
         )
+
+        /** 把配色套到 RemoteViews 上：卡片底/描边换资源，其余直接设颜色。 */
+        private fun applyTheme(
+            views: RemoteViews,
+            theme: WidgetTheme,
+            statusIsError: Boolean,
+        ) {
+            views.setInt(
+                R.id.widget_container,
+                "setBackgroundResource",
+                if (theme.dark) R.drawable.widget_background_dark else R.drawable.widget_background,
+            )
+
+            views.setTextColor(R.id.widget_date, theme.title)
+            views.setTextColor(R.id.widget_stats, theme.stats)
+            views.setTextColor(R.id.widget_current, theme.body)
+            views.setTextColor(R.id.widget_next, theme.secondary)
+            views.setTextColor(R.id.widget_top_categories, theme.secondary)
+            views.setTextColor(R.id.widget_axis_start, theme.axis)
+            views.setTextColor(R.id.widget_axis_12, theme.axis)
+            views.setTextColor(R.id.widget_axis_18, theme.axis)
+            views.setTextColor(R.id.widget_axis_end, theme.axis)
+            views.setTextColor(
+                R.id.widget_action_status,
+                if (statusIsError) theme.statusError else theme.statusSuccess,
+            )
+
+            // 徽章本来就是方角纯色，直接换底色即可。
+            views.setInt(R.id.widget_pending_sync, "setBackgroundColor", theme.chipBackground)
+            views.setTextColor(R.id.widget_pending_sync, theme.chipText)
+
+            val actionIds =
+                intArrayOf(
+                    R.id.widget_action_search,
+                    R.id.widget_action_sync,
+                    R.id.widget_action_today,
+                )
+            val tint = actionTint(theme)
+            for (id in actionIds) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    // 平铺 tint 保留 8dp 圆角与按压态，颜色跟着主题色走。
+                    views.setColorStateList(id, "setBackgroundTintList", tint)
+                } else {
+                    // API 31 以下没法设置 ColorStateList：退回静态 selector，
+                    // 浅/深对得上，但不跟随自定义主题色。
+                    views.setInt(
+                        id,
+                        "setBackgroundResource",
+                        if (theme.dark) {
+                            R.drawable.widget_action_background_dark
+                        } else {
+                            R.drawable.widget_action_background
+                        },
+                    )
+                }
+                views.setTextColor(id, theme.actionText)
+            }
+        }
+
+        private fun actionTint(theme: WidgetTheme) =
+            ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_pressed), intArrayOf()),
+                intArrayOf(theme.actionPressed, theme.actionBackground),
+            )
+
+        private fun isNightMode(context: Context): Boolean {
+            val uiMode = context.resources.configuration.uiMode
+            return (uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        }
+
+        /** 分段色块上的文字：白/黑取对比度更高的一方（同 AppSemanticColors.onColor）。 */
+        private fun readableTextOn(background: Int): Int {
+            val luminance = Color.luminance(background)
+            val onWhite = 1.05 / (luminance + 0.05)
+            val onBlack = (luminance + 0.05) / 0.05
+            return if (onWhite >= onBlack) Color.WHITE else Color.BLACK
+        }
 
         private fun isCompactWidget(options: Bundle): Boolean {
             val heightDp = options.getInt(
@@ -218,13 +298,15 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
             daySpanMinutes: Int,
             width: Int,
             height: Int,
+            trackColor: Int,
+            nowLineColor: Int,
         ): Bitmap {
             val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
             val rectPaint = Paint(Paint.ANTI_ALIAS_FLAG)
             val dayEndMinutes = dayStartMinutes + daySpanMinutes
 
-            rectPaint.color = EMPTY_COLOR
+            rectPaint.color = trackColor
             canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), rectPaint)
 
             val textSize = (height * 0.42f).coerceIn(16f, 26f)
@@ -251,6 +333,8 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
                 rectPaint.color = segment.color
                 canvas.drawRect(left, 0f, right, height.toFloat(), rectPaint)
 
+                // 分段色板里有浅金、浅青，固定白字只有 2:1 左右；按底色取白/黑。
+                textPaint.color = readableTextOn(segment.color)
                 val label = segment.label
                 val textWidth = textPaint.measureText(label)
                 if (textWidth + TEXT_MIN_PADDING_PX <= right - left) {
@@ -264,7 +348,7 @@ class TimeManagerWidgetProvider : HomeWidgetProvider() {
                 if (nowMinutes in dayStartMinutes..dayEndMinutes) {
                     val x =
                         ((nowMinutes - dayStartMinutes).toFloat() / daySpanMinutes) * width
-                    rectPaint.color = NOW_LINE_COLOR
+                    rectPaint.color = nowLineColor
                     rectPaint.strokeWidth = 3f
                     canvas.drawLine(x, 0f, x, height.toFloat(), rectPaint)
                 }

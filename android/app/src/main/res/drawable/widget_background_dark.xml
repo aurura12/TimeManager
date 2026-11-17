@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 深色卡片：AppSurfaces.card = #1B1F1C，描边是 outlineVariant 的静态近似。
+     刻意不用 drawable-night：小组件跟的是 App 外观模式，不是系统夜色。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#1B1F1C" />
+    <corners android:radius="16dp" />
+    <stroke
+        android:width="1dp"
+        android:color="#3A403B" />
+</shape>

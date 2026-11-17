@@ -852,7 +852,7 @@ void main() {
       'lib/widgets/check_in_photo_sheet.dart',
       'lib/widgets/check_in_map_preview.dart',
     };
-    // 桌面小组件的配色方案本轮不在范围内
+    // 桌面小组件只剩时间轴分段色板还是字面量（语义装饰，不随主题，见 design-system 3.6）
     const literalColorAllowed = <String>{
       'lib/services/home_widget_service.dart',
     };

@@ -43,6 +43,7 @@ import 'utils/time_block_reminder_plan.dart';
 import 'widgets/app_root_shell.dart';
 import 'widgets/desktop_shortcut_host.dart';
 import 'widgets/background_image_layer.dart';
+import 'widgets/home_widget_appearance_sync.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -906,8 +907,12 @@ class _TimeManagerAppState extends State<TimeManagerApp> {
           navigator.pop();
           return true;
         },
-        child: BackgroundImageLayer(
-          child: child ?? const SizedBox.shrink(),
+        child: HomeWidgetAppearanceSync(
+          seedColor: themeSettings.themeColor,
+          followsSystem: themeSettings.themeMode == ThemeMode.system,
+          child: BackgroundImageLayer(
+            child: child ?? const SizedBox.shrink(),
+          ),
         ),
       ),
       home: AppRootShell(child: MainScreen(key: _mainScreenKey)),

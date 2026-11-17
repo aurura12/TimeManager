@@ -2,7 +2,7 @@
 
 第 4 项「统一视觉系统」的落地规范。目标不是把某个页面做好看，而是让**页面不再各自定义颜色、圆角、间距和按钮样式**。
 
-范围：手机版（Android / iPhone 尺寸）。Windows / macOS / iPad / 桌面小组件 / 原生 Android Widget 不在本轮范围。
+范围：手机版（Android / iPhone 尺寸）。Windows / macOS / iPad 不在本轮范围；Android 桌面小组件的配色见 3.6。
 
 不改业务逻辑，不改数据结构。
 
@@ -84,7 +84,7 @@ Container(color: surfaces.card, ...)
 - 统计图表颜色 —— `AppSemanticColors.chart`
 - 地图与照片查看器颜色
 - 词云颜色 —— `AppSemanticColors.wordCloud`
-- 桌面小组件专用颜色（`home_widget_service.dart`，本轮不动）
+- 桌面小组件时间轴分段色板（`home_widget_service.dart` 的 `_timelinePalette`，语义装饰，不随主题变化）
 - 状态色 —— `danger` `warning` `success` `info`
 - Google 日历导入色 —— `calendarImport`
 
@@ -247,6 +247,32 @@ Container(color: context.adaptSemanticFill(goal.color))
 逐通道合成，**不依赖渲染器的 blend mode**）。这个安全上限随主题与界面不透明度变化，
 **不要**在各页面自行推算照片不透明度。
 
+### 3.6 Android 桌面小组件
+
+小组件不是 Flutter 页面，但配色规则与页面一致：**跟 App 外观（浅/深 + 主题色），不跟系统夜色**。
+配色由 `lib/services/home_widget_theme.dart` 的 `HomeWidgetTheme.paletteFor`
+从 `AppTheme.themeFor(brightness, seedColor:)` + `AppSurfaces.forColorScheme` 派生，
+序列化成 `widget_theme` 交给原生；Kotlin / XML 里不再另写一套色值。
+
+| 元素 | 角色 |
+| --- | --- |
+| 卡片底 / 描边 | `AppSurfaces.card` / 近似 `outlineVariant`（`widget_background` 与 `widget_background_dark` 两份 drawable） |
+| 日期、「当前」 | `onSurface` |
+| 「接下来」、分类摘要 | `onSurfaceVariant` |
+| 统计行 | `AppSemanticColors.brand`（语义色，不随主题色） |
+| 时间轴刻度 | `onSurfaceVariant` 75% 合成到卡片底 |
+| 待同步徽章 | `tint(warning, card, 0.18)` / `onTint(...)` |
+| 快捷入口 | `primaryContainer` / `onPrimaryContainer`（按下态朝文字色压 12%） |
+| 时间轴空轨 | `AppSurfaces.gridEmpty` |
+| 「现在」竖线 | `scheme.error`（与 `CurrentTimeMarker` 一致） |
+| 动作反馈 | `readableOn(success, card)` / `readableOn(danger, card)` |
+| 时间轴分段色块 | `_timelinePalette`：唯一不随主题变化的装饰色板；段上文字按 `onColor` 取白/黑 |
+
+两处实现限制：
+
+- 卡片底/描边用两份显式 drawable 互换，**不要**改成 `drawable-night`：系统夜色与 App 外观可以不一致（App 强制浅色 + 系统深色时必须仍是浅卡）。
+- 快捷入口的运行时 tint 走 `RemoteViews.setColorStateList`，仅 API 31+；更低版本退回静态 selector（浅/深正确，但不跟随主题色）。
+
 ---
 
 ## 四、圆角
@@ -318,6 +344,7 @@ Container(color: context.adaptSemanticFill(goal.color))
 - [ ] 删除 / 警告颜色（亮红 `danger` 在白底只有 3.34:1，当文字必须压深）
 - [ ] 输入框使用 `surfaces.subtle`；弹窗、底部弹层、PopupMenu 使用不透明的 `surfaces.overlay`
 - [ ] 带缓存/记忆化的组件：缓存里是否混进了与主题相关的量（如词云曾把文字色存进布局缓存）
+- [ ] 改桌面小组件配色后跑 `test/home_widget_theme_test.dart` 与 `test/home_widget_appearance_sync_test.dart`（见 3.6）
 - [ ] 小屏幕上没有按钮或文字溢出（360×640 是基准尺寸）
 - [ ] 新增的过渡是否复用了 `AppMotion` 与 `widgets/motion_transitions.dart`，没有在页面里写 `Duration` 字面量
 - [ ] 系统「减弱动态效果」下是否一步到位（统一由 `appMotionDuration` 降级）
@@ -364,7 +391,7 @@ Container(color: context.adaptSemanticFill(goal.color))
 
 - `Colors.white` 允许：`check_in_photo_viewer.dart`、`check_in_photo_sheet.dart`、
   `check_in_map_preview.dart`（白色叠在图片 / 地图上）
-- 颜色字面量允许：`services/home_widget_service.dart`（桌面小组件，本轮范围外）
+- 颜色字面量允许：`services/home_widget_service.dart`（只剩时间轴分段色板 `_timelinePalette`，见 3.6）
 
 背景图另有专门的测试：`test/background_image_contrast_test.dart`（`composite` / 对比度 /
 `safePhotoOpacity` / `readableForeground`）与 `test/background_image_provider_test.dart`

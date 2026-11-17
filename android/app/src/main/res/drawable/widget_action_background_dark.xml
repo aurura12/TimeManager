@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 深色下的快捷入口（仅 API < 31 使用：那一档没法给 RemoteViews 设置
+     ColorStateList，只能用静态 selector）。API 31+ 走 setBackgroundTintList。 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape>
+            <solid android:color="#3A4A30" />
+            <corners android:radius="8dp" />
+        </shape>
+    </item>
+    <item>
+        <shape>
+            <solid android:color="#2E3A26" />
+            <corners android:radius="8dp" />
+        </shape>
+    </item>
+</selector>
