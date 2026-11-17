@@ -1835,6 +1835,9 @@ class TimeProvider with ChangeNotifier {
         _googleIdentityId = null;
         _scheduleUser = DiaryKind.g;
         _hasSelectedScheduleUser = false;
+        // 退出登录只清空内存数据、不走 _loadData，这里补一次刷新让小组件
+        // 立刻回到空态，而不是留着上一个人的一天。
+        await _refreshHomeWidget();
         notifyListeners();
         return;
       }
@@ -10552,6 +10555,9 @@ class TimeProvider with ChangeNotifier {
     if (_removeDeletedRelationsForLiveLabels()) {
       _categoriesDirty = true;
     }
+    // 身份切换（含失败回滚）与备份恢复都会整体换掉 _dailySlots，而小组件的
+    // prefs 是全局的：这里不重绘，小组件会继续显示上一个身份的一天。
+    await _refreshHomeWidget();
   }
 
   /// 移动子分类到另一个分类
