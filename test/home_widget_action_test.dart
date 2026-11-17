@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -120,12 +122,85 @@ void main() {
         'widget_timeline_blocks',
         'widget_pending_sync',
         'widget_is_today',
+        'widget_date_epoch_day',
+        'widget_text_by_slot',
         'widget_now_minutes',
         'widget_day_start_minutes',
         'widget_day_span_minutes',
       });
       expect(savedIds, isNot(contains(HomeWidgetService.widgetThemeKey)));
-      expect(calls.where((call) => call.method == 'updateWidget'), hasLength(1));
+      expect(
+          calls.where((call) => call.method == 'updateWidget'), hasLength(1));
+
+      Object? savedValue(String id) => calls
+          .firstWhere((call) =>
+              call.method == 'saveWidgetData' &&
+              (call.arguments as Map)['id'] == id)
+          .arguments['data'];
+      // 原生用 LocalDate.toEpochDay 比对"数据是哪天"，两边必须同口径。
+      expect(savedValue('widget_date_epoch_day'), 20599);
+    });
+
+    test('预计算每个槽位的当前/接下来文案，并保留凌晨时段', () async {
+      final calls = <MethodCall>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        const MethodChannel('home_widget'),
+        (call) async {
+          calls.add(call);
+          return null;
+        },
+      );
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(
+          const MethodChannel('home_widget'),
+          null,
+        ),
+      );
+
+      final slots = List<TimeSlot>.generate(
+        144,
+        (index) => TimeSlot(hour: index ~/ 6, minute10: index % 6),
+      );
+      // 02:00-02:20「深夜」+ 09:00-09:20「工作」
+      for (final index in [12, 13]) {
+        slots[index]
+          ..recorded = true
+          ..label = '深夜';
+      }
+      for (final index in [54, 55]) {
+        slots[index]
+          ..recorded = true
+          ..label = '工作';
+      }
+
+      await HomeWidgetService.updateFromDay(
+        slots: slots,
+        date: DateTime(2026, 5, 26),
+        pendingSync: false,
+      );
+
+      Object? savedValue(String id) => calls
+          .firstWhere((call) =>
+              call.method == 'saveWidgetData' &&
+              (call.arguments as Map)['id'] == id)
+          .arguments['data'];
+
+      final textBySlot =
+          json.decode(savedValue('widget_text_by_slot') as String) as List;
+      expect(textBySlot, hasLength(144));
+      expect(textBySlot[12], ['当前：深夜', '接下来：工作 09:00']);
+      expect(textBySlot[55], ['当前：工作', '接下来：无']);
+      expect(textBySlot[100], ['当前：未记录', '接下来：无']);
+
+      // 时间轴数据不再裁掉 7:00 之前的时段，原生绘制时自行裁剪。
+      final blocks =
+          json.decode(savedValue('widget_timeline_blocks') as String) as List;
+      final firstBlock = blocks.first as Map<String, dynamic>;
+      expect(firstBlock['s'], 120);
+      expect(firstBlock['e'], 140);
+      expect(firstBlock['l'], '深夜');
     });
   });
 
@@ -156,7 +231,8 @@ void main() {
           .map((call) => (call.arguments as Map)['id'] as String)
           .toSet();
       expect(savedIds, {HomeWidgetService.widgetThemeKey});
-      expect(calls.where((call) => call.method == 'updateWidget'), hasLength(1));
+      expect(
+          calls.where((call) => call.method == 'updateWidget'), hasLength(1));
     });
 
     test('非 Android 不碰通道', () async {

@@ -126,6 +126,7 @@ class HomeWidgetService {
     }
 
     final timelineBlocks = _timelineBlocksJson(slots);
+    final textBySlot = _textBySlotJson(slots);
 
     await HomeWidget.saveWidgetData<String>('widget_date', dateLabel);
     await HomeWidget.saveWidgetData<String>('widget_stats', statsText);
@@ -137,6 +138,11 @@ class HomeWidgetService {
         'widget_timeline_blocks', timelineBlocks);
     await HomeWidget.saveWidgetData<bool>('widget_pending_sync', pendingSync);
     await HomeWidget.saveWidgetData<bool>('widget_is_today', isToday);
+    await HomeWidget.saveWidgetData<int>(
+      'widget_date_epoch_day',
+      epochDayOf(date),
+    );
+    await HomeWidget.saveWidgetData<String>('widget_text_by_slot', textBySlot);
     await HomeWidget.saveWidgetData<int>(
       'widget_now_minutes',
       isToday ? now.hour * 60 + now.minute : -1,
@@ -258,17 +264,17 @@ class HomeWidgetService {
     return '接下来：无';
   }
 
-  /// 连续时段 JSON，供原生时间轴绘制色块与名称
+  /// 连续时段 JSON，供原生时间轴绘制色块与名称。
+  ///
+  /// 这里不做 7:00-24:00 的裁剪：App 网格是全天 24 小时，凌晨记录也是真实数据；
+  /// 原生绘制时间轴时会按 [dayStartHour, dayEndHour] 自行裁剪。
   static String _timelineBlocksJson(List<TimeSlot> slots) {
     final blocks = _timelineBlocksWithPalette(slots);
-    final dayStartMin = dayStartHour * 60;
-    final dayEndMin = dayEndHour * 60;
 
     final list = <Map<String, dynamic>>[];
     for (final block in blocks) {
       final startMin = _slotIndexToMinutes(block.startIndex);
       final endMin = _slotIndexToMinutes(block.endIndex + 1);
-      if (endMin <= dayStartMin || startMin >= dayEndMin) continue;
       list.add({
         's': startMin,
         'e': endMin,
@@ -307,6 +313,27 @@ class HomeWidgetService {
       }
     }
     return blocks;
+  }
+
+  /// 数据所属的本地日历日序号，与原生 `LocalDate.toEpochDay()` 同口径。
+  ///
+  /// 必须按 UTC 的 y/m/d 计算：直接用本地时刻的毫秒数除以一天会带上时区偏移，
+  /// 在东八区会把日期算到前一天。
+  static int epochDayOf(DateTime date) =>
+      DateTime.utc(date.year, date.month, date.day)
+          .difference(DateTime.utc(1970, 1, 1))
+          .inDays;
+
+  /// 每个 10 分钟槽位的「当前 / 接下来」文案，供原生按实际时刻查表。
+  ///
+  /// 原生在没有 App 参与的重绘里也要推进这两行文字；预先算好可以避免在 Kotlin
+  /// 里重写一遍补零与「未记录 / 无」等文案，否则两边必然漂移。
+  static String _textBySlotJson(List<TimeSlot> slots) {
+    final list = <List<String>>[];
+    for (var i = 0; i < slots.length; i++) {
+      list.add([_formatCurrent(slots, i), _formatNext(slots, i)]);
+    }
+    return json.encode(list);
   }
 
   static bool _isSameDay(DateTime a, DateTime b) =>
