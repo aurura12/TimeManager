@@ -87,7 +87,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
 
 - **时间粒度**：全天 144 个 10 分钟槽位 (`hour=0..23`, `minute10=0..5`)
 - **跨日自动推进**：`TimeProvider` 用构造时的「今天」基线判断是否跨日；`advanceToTodayIfNeeded()` **只在用户仍停留在此前那个今天时**才把 `_currentDate` 推进到新的一天，手动翻到历史日期时不抢视图（导航被身份切换 / 覆盖恢复挡住时返回 false，等下次检查重试）。触发点：回前台（`onAppResumed`）+ 记录 / 日记 / 出行 / 打卡 / 我的页的 `DayChangeBoundary`（可见且前台时定到零点，跨日 / 回前台 / 重新可见时补检，隐藏页暂停）。日记和出行只在自己选中的正是旧「今天」时跟着翻页；记录页翻页时清掉旧日期的待分配选择与刷子状态，避免把数据写进昨天。路由页同样接 `DayChangeBoundary`：每日复盘把新的一天补到日期条顶部（用户停在历史日期时不抢视图；程序化滚动期间按 `_anchoringSelection` 屏蔽滚动反推选中日期），全局搜索的相对区间（近 7 天 / 30 天 / 一年）在跨日后重算，全部与自定义区间不动
-- **空槽位兜底**：`slotsForDate` 在初始化失败或身份 / 覆盖事务进行中会返回**空列表**（`time_provider.dart:1901-1903`），`TimeGrid` 遇到长度不足的列表只画空行、绝不下标取槽位；失败原因由壳层 `DataFailureBanner`（顶部横幅 + 查看日志）说明。删掉这条兜底，初始化失败会直接红屏而不是提示
+- **空槽位兜底**：`slotsForDate`（`lib/providers/time_provider.dart:2054`）在日程未就绪（`!_isScheduleReady`，`:2056`）或身份 / 覆盖事务进行中返回**空列表**，初始化未完成时返回 144 个初始空槽；`TimeGrid` 遇到长度不足的列表只画空行、绝不下标取槽位。失败原因由壳层 `DataFailureBanner`（顶部横幅 + 查看日志）说明。删掉这条兜底，初始化失败会直接红屏而不是提示
 - **持久化分层**：
   - 时间块/分类/目标/模板 → `SharedPreferences`（JSON 序列化）
   - 敏感 Token → `FlutterSecureStorage`
@@ -175,7 +175,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
 
 ```bash
 flutter pub get                    # 安装依赖
-flutter analyze                    # 静态检查 (flutter_lints，无自定义规则)
+flutter analyze                    # 静态检查 (flutter_lints，无自定义规则；作用域见下)
 flutter test                       # 运行所有测试
 flutter test test/widget_test.dart # 运行单个测试文件
 flutter test test/foo_test.dart --plain-name "测试用例名"  # 运行单个测试用例
@@ -213,6 +213,8 @@ scripts/publish_windows_release.bat # Windows x64 构建 + Inno Setup 打包 + �
 scripts/publish_all_release.bat    # 一键：版本号 +1、构建并发布 Android + Windows 到同一个 Gitee Release（PowerShell 5.1+，见「构建与发布」）
 scripts/installer.iss              # Inno Setup 6.3+ 打 Windows 安装包（上传 Gitee release）
 ```
+
+`flutter analyze` 的实际作用域是 `lib/` 与 `test/`（其余见 `analysis_options.yaml` 的 `analyzer.exclude`），0 issue 是 `scripts/*` 的构建门禁。
 
 ### 环境要求
 
