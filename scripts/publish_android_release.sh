@@ -83,6 +83,30 @@ log() {
   echo "[$APP_NAME] $*"
 }
 
+# 只取说明文件的最新一段（第一个 "## " 标题到下一个标题之前）。
+# docs/release-notes.md 会累积全部历史版本，但 Release 正文只应展示本版内容；
+# 没有 "## " 标题的旧格式文件整份返回，兼容历史说明文件。
+first_release_notes_section() {
+  local headings start end
+  headings="$(grep -n '^## ' "$1" | cut -d: -f1 || true)"
+  if [[ -z "$headings" ]]; then
+    start=1
+    end=""
+  else
+    start="$(printf '%s\n' "$headings" | sed -n '1p')"
+    end="$(printf '%s\n' "$headings" | sed -n '2p')"
+  fi
+
+  {
+    if [[ -z "$end" ]]; then
+      sed -n "${start},\$p" "$1"
+    else
+      sed -n "${start},$((end - 1))p" "$1"
+    fi
+  } | awk 'NF { last = NR } { lines[NR] = $0 }
+             END { for (i = 1; i <= last; i++) print lines[i] }'
+}
+
 resolve_path() {
   case "$1" in
     /*) printf '%s\n' "$1" ;;
@@ -216,7 +240,7 @@ guard_stale_release_notes() {
   [[ -n "$NOTES_FILE" ]] || return 0
 
   local notes_body
-  notes_body="$(<"$NOTES_FILE")"
+  notes_body="$(first_release_notes_section "$NOTES_FILE")"
 
   log "检查 Release 说明是否与线上最新版本重复"
   api_call GET "$GITEE_API_BASE/releases?per_page=100"
@@ -283,7 +307,8 @@ create_release_or_get_id() {
 
   local release_name="$APP_NAME"
   local release_body
-  release_body="$(<"$NOTES_FILE")"
+  release_body="$(first_release_notes_section "$NOTES_FILE")"
+  [[ -n "$release_body" ]] || die "Release 说明第一段为空：$NOTES_FILE"
 
   log "创建 Gitee Release：$RELEASE_TAG"
   api_call POST "$GITEE_API_BASE/releases" \

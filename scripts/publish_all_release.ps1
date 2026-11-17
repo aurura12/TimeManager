@@ -56,6 +56,25 @@ Android 构建需要 JDK 17；Windows 构建需要 Flutter（含 Visual Studio C
 '@)
 }
 
+function ConvertTo-LatestReleaseNotes([string] $Text) {
+    # 只取说明文件的最新一段（第一个 "## " 标题到下一个标题之前）。
+    # docs/release-notes.md 会累积全部历史版本，但 Release 正文只应展示本版内容；
+    # 没有 "## " 标题的旧格式文件整份返回，兼容历史说明文件。
+    $text = $Text.TrimStart([char]0xFEFF) -replace "`r`n", "`n" -replace "`r", "`n"
+    $lines = $text -split "`n"
+    $start = -1
+    $end = $lines.Count
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^## ') {
+            if ($start -lt 0) { $start = $i } else { $end = $i; break }
+        }
+    }
+    if ($start -lt 0) { $start = 0 }
+    while ($end -gt $start -and $lines[$end - 1].Trim().Length -eq 0) { $end-- }
+    if ($end -le $start) { return '' }
+    return (($lines[$start..($end - 1)] | ForEach-Object { $_.TrimEnd() }) -join "`n")
+}
+
 function Resolve-ReleasePath([string] $Path) {
     if (-not [IO.Path]::IsPathRooted($Path)) { $Path = Join-Path $script:repoRoot $Path }
     return [IO.Path]::GetFullPath($Path)
@@ -437,8 +456,8 @@ function Invoke-AllRelease([string[]] $PublishArgs) {
         $doWindows = -not $skipWindows
         $notesFile = Resolve-ReleasePath $notesFile
         if (-not [IO.File]::Exists($notesFile)) { throw "找不到 Release 说明文件：$notesFile" }
-        $notes = [IO.File]::ReadAllText($notesFile)
-        if ([string]::IsNullOrWhiteSpace($notes)) { throw "Release 说明不能为空：$notesFile" }
+        $notes = ConvertTo-LatestReleaseNotes ([IO.File]::ReadAllText($notesFile, [Text.UTF8Encoding]::new($false)))
+        if ([string]::IsNullOrWhiteSpace($notes)) { throw "Release 说明第一段为空：$notesFile" }
         $original = Get-AppVersion
         $version = $original.Value
         if (-not $skipBuild -and -not $skipBump) { $version = $original.Next }

@@ -289,7 +289,7 @@ macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，
 `scripts/publish_android_release.sh` 在构建之上发布到 Gitee Release：
 
 - 发布仓库默认 `zhou-jiaqi10/time_manager_releases`（`GITEE_OWNER` / `GITEE_REPO` 可覆盖）。**必须与 `lib/services/update_service.dart` 保持一致**，改发布仓库要两边一起改
-- Release 说明文件固定为 `docs/release-notes.md`（`--notes-file` 覆盖）
+- Release 说明文件固定为 `docs/release-notes.md`（`--notes-file` 覆盖）；文件会累积全部历史版本，脚本只把**最新一段**（首个 `## ` 标题到下一个标题之前）作为 Release 正文；没有 `## ` 标题的旧格式文件整份提交
 - 发布前会用本地说明与**线上最新 Release 的说明查重**：完全相同就拒绝发布（提示先更新说明，`--allow-stale-notes` 可跳过）——查重在构建**之前**做，防止忘了更新说明还白跑一次构建；复用当前版本 tag 重传附件时不查重
 - 上传顺序是**先 `.sha256` 后 APK**，避免手机在发布过程中拿到缺校验摘要的安装包
 - 默认**跳过** `flutter analyze` + `flutter test`，发布前想再检查一次要显式加 `--run-tests`
@@ -433,7 +433,7 @@ Flutter 3.50 起 `package:flutter/material.dart` 整体弃用，界面库统一�
 
 - Code and UI text are in Chinese
 - **格式化只碰自己改的文件**：仓库当前不是 `dart format` 干净状态（`dart format lib test` 会重排近百个文件），**不要跑全仓库格式化**。只对本次动过的文件跑 `dart format <file>`，提交前确认 diff 里没有无关文件被重排；格式化若牵连大段无关代码，就按周围现有风格手写。行宽用默认 80（`analysis_options.yaml` 没有 formatter 配置），`flutter analyze` 仍是 0 issue 的硬门禁
-- **版本号三处同步**：改版本时同时更新 `pubspec.yaml` 的 `version`、`README.md` 顶部「当前版本」与 `docs/release-notes.md` 首行。发布脚本按 `pubspec.yaml` 命名产物，并按 `docs/release-notes.md` 与线上最新 Release 查重；三处不一致会导致说明落后或 README 版本对不上安装包
+- **版本号三处同步**：改版本时同时更新 `pubspec.yaml` 的 `version`、`README.md` 顶部「当前版本」与 `docs/release-notes.md` 首个标题行（`## x.y.z+build（YYYY-MM-DD）`）。发布脚本按 `pubspec.yaml` 命名产物，并按 `docs/release-notes.md` 与线上最新 Release 查重；三处不一致会导致说明落后或 README 版本对不上安装包
 - Config files with secrets are always `.gitignore`d — never commit
 - 平台差异化功能通过 `lib/utils/platform_features.dart` 控制（如拍照仅限移动端、桌面小组件仅 Android、应用内更新不支持 iOS，见「iOS 平台约束」）
 - 触感反馈统一走 `lib/utils/haptics.dart` 的 `playHaptic(context, HapticStrength.*)`，**不要在页面 / 组件里直接调 `HapticFeedback`**：只有 helper 知道本机开关，并且会吞掉桌面端没有实现的通道异常（否则 `unawaited` 的失败会灌进 `AppLogService`）。连续动作（刷格、拖边界）用 `selection`，一次性确认（提交、删除）用 `light`，庆祝性成功（打卡）用 `medium`
@@ -441,5 +441,5 @@ Flutter 3.50 起 `package:flutter/material.dart` 整体弃用，界面库统一�
 - 桌面小组件配色跟随 App 外观（浅/深 + 主题色）：一律由 `lib/services/home_widget_theme.dart` 派生后写进 `widget_theme`，不要在 Kotlin / drawable 里另抄一套；唯一允许保留字面量的是时间轴分段色板 `_timelinePalette`（见 `docs/design-system.md` 3.6）
 - 动效统一走 `lib/theme/app_tokens.dart` 的 `AppMotion`（200ms 单档 + `easeInOutCubic`；透明度过渡别用 `easeOutCubic`，它前 100ms 就走完 90%，看起来只是闪一下）与 `lib/widgets/motion_transitions.dart` 的三个组件（`ValueChangeTransition` 切 Tab / 切日期、`ListItemEntrance` 新增条目、`ListItemRemoval` 删除收高）；**页面里不写时长/曲线字面量，也不自己搭 `FadeTransition` / `AnimationController`**（`test/motion_test.dart` 有源码守卫）。降级统一用 `appMotionDuration()`，只淡入不位移（时间网格必须与时间轴像素对齐）。规范见 `docs/design-system.md` 第十节
 - 同步动作只放在同步中心：页面顶栏只挂 `SyncStatusButton`（正常不占位、同步中转圈、异常红/黄点，点击进 `SyncCenterScreen(initialModule:)`），不要再往页面加同步 / 拉取按钮。需要新方向时扩展 `SyncCenterOperations` 的 `operations`（上传）或 `pulls`（拉取远端），并让页面只上报状态
-- 设计文档在 `docs/superpowers/{plans,specs}/`、已完结问题归档在 `docs/archive/`——这些目录**仅本地存在、被 `docs/*` 规则 gitignore**（`.gitignore` 只放行 `docs/design-system.md` 与 `docs/release-notes.md`），按需创建，**不要在 git 里找它们**。视觉规范在 `docs/design-system.md`；`docs/release-notes.md` 是两个发布脚本默认的 Release 说明来源，发版前必须先更新（否则发布查重会拒绝）。根目录只保留 `AGENTS.md` 与 `README.md`（`待修复问题.md` 已删除，问题清单不再放在根目录）
+- 设计文档在 `docs/superpowers/{plans,specs}/`、已完结问题归档在 `docs/archive/`——这些目录**仅本地存在、被 `docs/*` 规则 gitignore**（`.gitignore` 只放行 `docs/design-system.md` 与 `docs/release-notes.md`），按需创建，**不要在 git 里找它们**。视觉规范在 `docs/design-system.md`；`docs/release-notes.md` 是两个发布脚本默认的 Release 说明来源，发版前必须先更新（否则发布查重会拒绝），同时它还是 App 内「更新日志」页的 asset（`pubspec.yaml` 的 `assets:` 引用），**移动或改名会静默 404**。根目录只保留 `AGENTS.md` 与 `README.md`（`待修复问题.md` 已删除，问题清单不再放在根目录）
 - `third_party/` 下是 vendored 的第三方插件 fork，已在 `analysis_options.yaml` 里整体 exclude，不参与本项目的静态检查；升级上游时按该目录下 `FORK.md` 的步骤重做

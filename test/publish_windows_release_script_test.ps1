@@ -231,6 +231,25 @@ try {
     Pass '--check-notes stops before build when notes are identical'
 
     Reset-Fixture
+    $firstSection = "## 1.114.3+32（2026-10-30）`r`n`r`n- 最新一段说明。"
+    $secondSection = "## 1.114.0+31（2026-10-29）`r`n`r`n- 历史一段说明。"
+    [IO.File]::WriteAllText((Join-Path $script:repoRoot 'docs/release-notes.md'), "$firstSection`r`n`r`n$secondSection`r`n", [Text.UTF8Encoding]::new($false))
+    Add-NewReleaseResponses '1.114.3'
+    Invoke-WindowsRelease @()
+    $multiCreate = $script:handler.Requests | Where-Object { $_.Method -eq 'POST' -and $_.Url.EndsWith('/releases') }
+    $multiForm = [Uri]::UnescapeDataString($multiCreate.Body.Replace('+', ' '))
+    Assert-True ($multiForm.Contains('最新一段说明')) 'release body must include the newest section'
+    Assert-True (-not $multiForm.Contains('历史一段说明')) 'release body must not include older sections'
+    Pass 'only the newest release-notes section is published'
+
+    Reset-Fixture
+    [IO.File]::WriteAllText((Join-Path $script:repoRoot 'docs/release-notes.md'), "$firstSection`r`n`r`n$secondSection`r`n", [Text.UTF8Encoding]::new($false))
+    Add-NotesResponse $firstSection
+    Assert-Fails { Invoke-WindowsRelease @('--check-notes') } '完全相同'
+    Assert-Equal 1 $script:handler.Requests.Count 'notes guard must compare only the newest section'
+    Pass '--check-notes compares the newest section, not the whole history'
+
+    Reset-Fixture
     Add-Response 200 '[]'
     Add-Response 200 '[{"id":222,"tag_name":"1.114.3"}]'
     Add-Response 200 '[{"name":"android-release.apk"},{"name":"time_manager_setup_1.114.3.exe.sha256"}]'

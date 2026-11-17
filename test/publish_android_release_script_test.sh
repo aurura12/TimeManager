@@ -32,14 +32,20 @@ set -Eeuo pipefail
 METHOD="GET"
 URL=""
 FORM_FILE=""
+DATA_ARGS=()
 ARGS=("$@")
 for ((i = 0; i < ${#ARGS[@]}; i++)); do
   case "${ARGS[$i]}" in
     --request) METHOD="${ARGS[$((i + 1))]}" ;;
     --form) FORM_FILE="${ARGS[$((i + 1))]}" ;;
+    --data-urlencode) DATA_ARGS+=("${ARGS[$((i + 1))]}") ;;
     http://*|https://*) URL="${ARGS[$i]}" ;;
   esac
 done
+
+if [[ ${#DATA_ARGS[@]} -gt 0 && -n "${REQUEST_LOG:-}" ]]; then
+  printf '%s\n' "${DATA_ARGS[@]}" >> "$REQUEST_LOG"
+fi
 
 BODY='{}'
 CODE=200
@@ -76,8 +82,10 @@ run_publish() {
   GITEE_TOKEN=dummy-token \
   GITEE_OWNER=test-owner \
   GITEE_REPO=test-repo \
+  REQUEST_LOG="${REQUEST_LOG:-}" \
   PATH="$FAKE_BIN:$PATH" \
-    bash "$SCRIPT_PATH" --skip-build --artifact "$FAKE_APK" --notes-file "$NOTES_FILE" "$@"
+    bash "$SCRIPT_PATH" --skip-build --artifact "$FAKE_APK" \
+      --notes-file "${PUBLISH_NOTES_FILE:-$NOTES_FILE}" "$@"
 }
 
 echo "=== 用例 1：说明与线上最新版本相同 → 拒绝发布 ==="
@@ -101,5 +109,58 @@ echo "=== 用例 3：--allow-stale-notes 绕过查重 ==="
 export RELEASES_JSON="$(make_releases_json "$NOTES_TEXT")"
 OUT="$(run_publish --allow-stale-notes 2>&1)"
 grep -q "Android 发布完成" <<<"$OUT"
+
+echo "=== 用例 4：多版本说明只提交最新一段 ==="
+MULTI_NOTES_FILE="$TEST_ROOT/release-notes-multi.md"
+FIRST_SECTION='## 1.109.0+99（2026-10-03）
+
+- 本版新增内容：第一段。'
+SECOND_SECTION='## 1.108.0+98（2026-10-02）
+
+- 旧版本内容：第二段。'
+printf '%s\n\n%s\n' "$FIRST_SECTION" "$SECOND_SECTION" > "$MULTI_NOTES_FILE"
+export RELEASES_JSON="$(make_releases_json '本次更新：
+
+- 线上最新说明。')"
+REQUEST_LOG="$TEST_ROOT/requests-4.log"
+: > "$REQUEST_LOG"
+export REQUEST_LOG
+export PUBLISH_NOTES_FILE="$MULTI_NOTES_FILE"
+OUT="$(run_publish 2>&1)"
+grep -q '第一段' "$REQUEST_LOG" || {
+  echo '最新一段没有提交' >&2
+  exit 1
+}
+if grep -q '第二段' "$REQUEST_LOG"; then
+  echo '历史版本段也被提交了' >&2
+  exit 1
+fi
+
+echo "=== 用例 5：线上说明等于最新一段 → 拒绝发布 ==="
+export RELEASES_JSON="$(make_releases_json "$FIRST_SECTION")"
+if OUT="$(run_publish 2>&1)"; then
+  echo '最新一段与线上重复时未拒绝发布' >&2
+  exit 1
+fi
+grep -q "完全相同" <<<"$OUT"
+
+echo "=== 用例 6：说明文件以空行开头仍能取到第一段 ==="
+printf '\n\n%s\n\n%s\n' "$FIRST_SECTION" "$SECOND_SECTION" > "$MULTI_NOTES_FILE"
+export RELEASES_JSON="$(make_releases_json '本次更新：
+
+- 另一份线上说明。')"
+REQUEST_LOG="$TEST_ROOT/requests-6.log"
+: > "$REQUEST_LOG"
+OUT="$(run_publish 2>&1)"
+grep -q '第一段' "$REQUEST_LOG" || {
+  echo '开头有空行时没有取到最新一段' >&2
+  exit 1
+}
+if grep -q '第二段' "$REQUEST_LOG"; then
+  echo '开头有空行时把历史段也提交了' >&2
+  exit 1
+fi
+unset PUBLISH_NOTES_FILE
+unset REQUEST_LOG
 
 printf 'publish release notes guard test passed\n'
