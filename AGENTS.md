@@ -434,6 +434,7 @@ Flutter 3.50 起 `package:flutter/material.dart` 整体弃用，界面库统一�
 - Code and UI text are in Chinese
 - **格式化只碰自己改的文件**：仓库当前不是 `dart format` 干净状态（`dart format lib test` 会重排近百个文件），**不要跑全仓库格式化**。只对本次动过的文件跑 `dart format <file>`，提交前确认 diff 里没有无关文件被重排；格式化若牵连大段无关代码，就按周围现有风格手写。行宽用默认 80（`analysis_options.yaml` 没有 formatter 配置），`flutter analyze` 仍是 0 issue 的硬门禁
 - **版本号三处同步**：改版本时同时更新 `pubspec.yaml` 的 `version`、`README.md` 顶部「当前版本」与 `docs/release-notes.md` 首个标题行（`## x.y.z+build（YYYY-MM-DD）`）。发布脚本按 `pubspec.yaml` 命名产物，并按 `docs/release-notes.md` 与线上最新 Release 查重；三处不一致会导致说明落后或 README 版本对不上安装包
+- **更新日志格式**：`docs/release-notes.md` 按版本倒序，每版标题固定 `## x.y.z+build（YYYY-MM-DD）`，正文 1-3 条 `- ` 条目，章节之间一个空行，文件首行就是最新章节。它同时是 App「更新日志」页的 asset，`test/changelog_parser_test.dart` 会校验条数、倒序、每版条目数与首条版本
 - Config files with secrets are always `.gitignore`d — never commit
 - 平台差异化功能通过 `lib/utils/platform_features.dart` 控制（如拍照仅限移动端、桌面小组件仅 Android、应用内更新不支持 iOS，见「iOS 平台约束」）
 - 触感反馈统一走 `lib/utils/haptics.dart` 的 `playHaptic(context, HapticStrength.*)`，**不要在页面 / 组件里直接调 `HapticFeedback`**：只有 helper 知道本机开关，并且会吞掉桌面端没有实现的通道异常（否则 `unawaited` 的失败会灌进 `AppLogService`）。连续动作（刷格、拖边界）用 `selection`，一次性确认（提交、删除）用 `light`，庆祝性成功（打卡）用 `medium`
