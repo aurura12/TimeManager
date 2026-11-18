@@ -82,6 +82,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
 - **Utils**: `lib/utils/` — `adaptive` (平台自适应)、`app_lifecycle` (`isAppBackgroundedLifecycleState`：只有 `paused` / `hidden` / `detached` 算后台，桌面最小化走 `hidden`)、`calendar_time_range`、`desktop_selection`、`haptics` (`playHaptic` / `HapticStrength`：触感唯一入口，读本机开关并吞平台异常)、`local_day_range`、`platform_features` (按平台开关功能)、`schedule_view_dates`、`time_block_resize` (拖动时间块边界调时长的纯函数)、`time_slot_segment`、`timeline_geometry` (分钟 ↔ 时间轴 y / 「滚到现在」偏移)、`swipe_navigation` (左右滑切日判定)、`diary_remote_path_utils` (远端日记文件名里的日期解析与排序)、`diary_markdown` (剥 front matter / 比较用正文归一)、`text_diff` (行级 LCS 差异与逐块合并)、`map_tile_config` (地图瓦片配置)、`app_snack_bar` (撤销提示条唯一入口：撤销窗口内普通提示排队后补发，不能顶掉撤销)、`confirm_dialog` (`showConfirmDialog`，`destructive` 走 error 配色)、`keyboard_dismiss` (`dismissKeyboardOnTapOutside`：手机 `TextField.onTapOutside` 为空时框架刻意不失焦，必须显式挂)、`motion` (`appMotionDuration`：把系统「减弱动态效果」统一折成零时长)、`menu_bar_summary` (今日分段 / 概览条 0..1 几何 / 中文时长)
 - **Theme**: `lib/theme/` — `app_tokens.dart` (间距/圆角/控件高度/文字层级)、`app_theme.dart` (`ColorScheme` + `AppSurfaces` 表面层级扩展 + `AppWallpaperTheme` 壁纸扩展 + `context.wallpaperFill()`/`adaptSemanticFill()` + 全套组件主题)、`app_semantic_colors.dart` (身份色/分类色/图表色/奖牌色/状态色白名单)、`background_image_contrast.dart` (`BackgroundImageContrast` 背景图对比度与 sRGB 逐通道合成)、`app_scroll_behavior.dart` (`AppScrollBehavior`：桌面端纵向列表常显滚动条，移动端不变)。规范见 `docs/design-system.md`
 - **Config**: `lib/config/` — API keys and service configs (`.gitignore`d，**无 .example.dart 模板**，结构需直接查看引用方代码)
+- **新增代码落点**：跨页面共享的状态放 `lib/providers/`（只有需要 `notifyListeners` 的才配 Provider，只在本页用的状态留在 `State` 里）；远端 / 磁盘 / 平台通道等外部 IO 与协议细节放 `lib/services/`，**不要写进 screen**；纯计算与格式化放 `lib/utils/`（要能被单测直接调用）；两处以上复用的控件放 `lib/widgets/`，只服务单个页面的私有组件留在该页文件内；颜色 / 间距 / 字号只从 `lib/theme/` 取，不新增字面量
 
 ## 数据流与关键模式
 
@@ -277,7 +278,7 @@ macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，
 `scripts/build_android.sh` 的默认行为不只是构建，成功后还会 **git commit + push**：
 
 1. 获取依赖并跑 `flutter analyze`；默认不跑 `flutter test`，需要时加 `--run-tests`
-2. 自动递增版本号：次版本 +1、patch 归零、构建号 +1（如 `1.114.0+32` → `1.115.0+33`）
+2. 自动递增版本号：次版本 +1、patch 归零、构建号 +1（与 `pubspec.yaml` 的 `x.y.z+build` 一一对应，不写死示例）
 3. 构建 Android arm64-v8a release APK
 4. 把带版本号的 APK 和同名 `.sha256` 复制到 `dist/`
 5. 只提交 `pubspec.yaml` 的版本号变更并 push 到当前分支的上游（不会把其他未提交改动带进这次提交）
@@ -432,6 +433,7 @@ Flutter 3.50 起 `package:flutter/material.dart` 整体弃用，界面库统一�
 ## Conventions
 
 - Code and UI text are in Chinese
+- **提交**：一次功能修改 / 一个缺陷修复**单独一次提交**，不相关改动不混进同一个 commit（需要整体回滚或 review 时才发现攒批的代价）。信息沿用仓库现有风格：`fix:` / `feat:` / `chore:` / `docs:` / `test:` / `refactor:` / `perf:` 前缀 + 中文描述，写清「改了什么 + 为什么」。仓库没有 CI，提交前在本地跑 `flutter analyze`（0 issue）与「改动 → 必跑测试」表里对应的用例；手工 bump 版本时提交里只带 `pubspec.yaml`
 - **格式化只碰自己改的文件**：仓库当前不是 `dart format` 干净状态（`dart format lib test` 会重排近百个文件），**不要跑全仓库格式化**。只对本次动过的文件跑 `dart format <file>`，提交前确认 diff 里没有无关文件被重排；格式化若牵连大段无关代码，就按周围现有风格手写。行宽用默认 80（`analysis_options.yaml` 没有 formatter 配置），`flutter analyze` 仍是 0 issue 的硬门禁
 - **版本号三处同步**：改版本时同时更新 `pubspec.yaml` 的 `version`、`README.md` 顶部「当前版本」与 `docs/release-notes.md` 首个标题行（`## x.y.z+build（YYYY-MM-DD）`）。发布脚本按 `pubspec.yaml` 命名产物，并按 `docs/release-notes.md` 与线上最新 Release 查重；三处不一致会导致说明落后或 README 版本对不上安装包
 - **更新日志格式**：`docs/release-notes.md` 按版本倒序，每版标题固定 `## x.y.z+build（YYYY-MM-DD）`，正文 1-3 条 `- ` 条目，章节之间一个空行，文件首行就是最新章节。它同时是 App「更新日志」页的 asset，`test/changelog_parser_test.dart` 会校验条数、倒序、每版条目数与首条版本
