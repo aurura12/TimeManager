@@ -349,6 +349,7 @@ macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，
 - `logger` — 日志
 - `flutter_local_notifications` — 本地通知（**经 `dependency_overrides` 指向 `third_party/flutter_local_notifications` 的本地 fork**，用于给写日记提醒的原生触发埋点；改动见该目录下 `FORK.md`）+ `timezone` / `flutter_timezone` — 时区
 - `flutter_slidable` / `reorderables` — 列表滑动操作与拖拽排序
+- `lunar` — 农历 / 节气 / 节日换算（桌面出行单月日历），纯 Dart、零传递依赖
 - `url_launcher` / `package_info_plus` — 外链与版本信息
 
 ## Testing
