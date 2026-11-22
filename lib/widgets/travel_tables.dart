@@ -157,7 +157,8 @@ class _TravelRecordTableState extends State<TravelRecordTable> {
               textScale)
           .clamp(0.0, constraints.maxWidth / 3);
 
-      Widget divider(int which, {String rowKey = ''}) => _TravelColumnDivider(
+      Widget divider(int which, {String rowKey = '', VoidCallback? onTap}) =>
+          _TravelColumnDivider(
             key: ValueKey(rowKey.isEmpty
                 ? 'travel-column-divider-$which'
                 : 'travel-column-divider-$which-$rowKey'),
@@ -165,6 +166,7 @@ class _TravelRecordTableState extends State<TravelRecordTable> {
             active: _activeDivider == which,
             showRestingLine: rowKey.isEmpty,
             tooltip: rowKey.isEmpty ? '拖动调整列宽；双击恢复默认' : null,
+            onTap: onTap,
             onDragStart: () => _beginDrag(which, layout),
             onDragUpdate: (dx) => _updateDrag(which, dx),
             onDragEnd: _endDrag,
@@ -178,6 +180,7 @@ class _TravelRecordTableState extends State<TravelRecordTable> {
         required Widget event,
         Widget? actions,
         String rowKey = '',
+        VoidCallback? onDividerTap,
       }) {
         if (!resizable) {
           return Row(
@@ -195,9 +198,9 @@ class _TravelRecordTableState extends State<TravelRecordTable> {
         return Row(
           children: [
             SizedBox(width: layout.date, child: date),
-            divider(1, rowKey: rowKey),
+            divider(1, rowKey: rowKey, onTap: onDividerTap),
             SizedBox(width: layout.location, child: location),
-            divider(2, rowKey: rowKey),
+            divider(2, rowKey: rowKey, onTap: onDividerTap),
             Expanded(child: event),
             const SizedBox(width: AppSpacing.sm),
             SizedBox(width: AppSizes.minTapTarget, child: actions),
@@ -264,6 +267,8 @@ class _TravelRecordTableState extends State<TravelRecordTable> {
                             ),
                             child: columns(
                               rowKey: record.dateKey,
+                              onDividerTap: () =>
+                                  widget.onSelectDate(record.date),
                               date: Text(
                                 record.dateKey,
                                 style: AppText.body.copyWith(color: foreground),
@@ -321,6 +326,7 @@ class _TravelColumnDivider extends StatefulWidget {
     required this.onDragCancel,
     this.showRestingLine = false,
     this.tooltip,
+    this.onTap,
     this.onReset,
   });
 
@@ -330,6 +336,9 @@ class _TravelColumnDivider extends StatefulWidget {
   final ValueChanged<double> onDragUpdate;
   final VoidCallback onDragEnd;
   final VoidCallback onDragCancel;
+
+  /// 点列缝仍按点击该行处理（分隔条盖住了原来的行点击区域）。
+  final VoidCallback? onTap;
 
   /// 表头显示静止淡线；行内不显示，避免几十条竖线。
   final bool showRestingLine;
@@ -357,7 +366,11 @@ class _TravelColumnDividerState extends State<_TravelColumnDivider> {
       onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        // 鼠标命中的 slop 只有 1px，按 down 起算让第一次 update 带上完整位移，
+        // 拖动结果与指针严格对齐（start 会把 slop 吃掉）。
+        dragStartBehavior: DragStartBehavior.down,
         supportedDevices: _columnResizeDevices,
+        onTap: widget.onTap,
         onHorizontalDragStart: (_) => widget.onDragStart(),
         onHorizontalDragUpdate: (details) =>
             widget.onDragUpdate(details.delta.dx),

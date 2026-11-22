@@ -139,6 +139,7 @@ Future<void> _pumpResizableTable(
   Brightness brightness = Brightness.light,
   bool wallpaper = false,
   TextScaler textScaler = TextScaler.noScaling,
+  ValueChanged<DateTime>? onSelectDate,
 }) async {
   double? dateWidth;
   double? locationWidth;
@@ -148,7 +149,7 @@ Future<void> _pumpResizableTable(
       builder: (context, setState) => TravelRecordTable(
         records: _records,
         selectedDateKey: '2026-10-15',
-        onSelectDate: (_) {},
+        onSelectDate: onSelectDate ?? (_) {},
         actionsBuilder: (_) => const SizedBox.shrink(),
         dateColumnWidth: dateWidth,
         locationColumnWidth: locationWidth,
@@ -536,6 +537,19 @@ void main() {
             actionsBuilder: (_) => const SizedBox.shrink(),
           ));
       expect(find.byKey(divider1), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('点列缝仍会选中该行', (tester) async {
+      final committed = <List<double?>>[];
+      DateTime? selected;
+      await _pumpResizableTable(tester,
+          committed: committed, onSelectDate: (date) => selected = date);
+      await tester.tap(
+          find.byKey(const ValueKey('travel-column-divider-1-2026-10-15')),
+          kind: PointerDeviceKind.mouse);
+      await tester.pumpAndSettle();
+      expect(selected, DateTime(2026, 10, 15));
       expect(tester.takeException(), isNull);
     });
 
