@@ -198,6 +198,15 @@ abstract final class AppSizes {
   static const double desktopTravelDateColumnWidth = 144;
   static const double desktopTravelCountColumnWidth = 104;
   static const double desktopTravelRowHeight = 64;
+
+  /// 出行表格桌面拖拽列宽：日期 / 地点 / 事件三列的最小宽度（显示时再乘文字缩放）。
+  static const double travelDateColumnMinWidth = 96;
+  static const double travelLocationColumnMinWidth = 72;
+  static const double travelEventColumnMinWidth = 120;
+
+  /// 未拖动时地点 / 事件按 2:3 分配剩余宽度，与旧的 Expanded(flex: 2/3) 等价。
+  static const int travelLocationFlex = 2;
+  static const int travelEventFlex = 3;
   static const double desktopTravelDetailsBreakpoint = 1280;
   static const double desktopTravelThreeMonthBreakpoint = 760;
   static const double desktopTravelTwoMonthBreakpoint = 540;

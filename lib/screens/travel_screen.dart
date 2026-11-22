@@ -50,6 +50,12 @@ class _TravelScreenState extends State<TravelScreen> {
   /// 只作缓存、不触发重建，供 [build] 之外的导航吸附使用。
   int _visibleMonthCount = TravelDesktopCalendar.maxMultiMonthCount;
   _TravelViewMode _viewMode = _TravelViewMode.table;
+
+  /// 桌面表格的列宽，只在本机本次运行内有效：切视图、切主 Tab 都保留，
+  /// 重启回默认；不写 SharedPreferences，也不进同步或备份。
+  double? _tableDateColumnWidth;
+  double? _tableLocationColumnWidth;
+
   TravelRecordsDocument _document = const TravelRecordsDocument(records: []);
   String? _token;
   bool _loading = true;
@@ -895,6 +901,17 @@ class _TravelScreenState extends State<TravelScreen> {
     );
   }
 
+  void _handleTableColumnWidthsChanged(double? dateWidth, double? locationWidth) {
+    if (_tableDateColumnWidth == dateWidth &&
+        _tableLocationColumnWidth == locationWidth) {
+      return;
+    }
+    setState(() {
+      _tableDateColumnWidth = dateWidth;
+      _tableLocationColumnWidth = locationWidth;
+    });
+  }
+
   Widget _buildTableView() {
     final colorScheme = Theme.of(context).colorScheme;
     final rows = _document.records;
@@ -944,6 +961,9 @@ class _TravelScreenState extends State<TravelScreen> {
         if (!mounted || _removingDateKey != record.dateKey) return;
         setState(() => _removingDateKey = null);
       },
+      dateColumnWidth: _tableDateColumnWidth,
+      locationColumnWidth: _tableLocationColumnWidth,
+      onColumnWidthsChanged: _handleTableColumnWidthsChanged,
     );
   }
 
