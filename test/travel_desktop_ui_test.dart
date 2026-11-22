@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -128,6 +129,59 @@ Widget _calendar({
     multiMonth: multiMonth,
     onToggleMultiMonth: onToggleMultiMonth,
   );
+}
+
+
+Future<void> _pumpResizableTable(
+  WidgetTester tester, {
+  required List<List<double?>> committed,
+  Size size = const Size(1400, 900),
+  Brightness brightness = Brightness.light,
+  bool wallpaper = false,
+  TextScaler textScaler = TextScaler.noScaling,
+}) async {
+  double? dateWidth;
+  double? locationWidth;
+  await _pump(
+    tester,
+    StatefulBuilder(
+      builder: (context, setState) => TravelRecordTable(
+        records: _records,
+        selectedDateKey: '2026-10-15',
+        onSelectDate: (_) {},
+        actionsBuilder: (_) => const SizedBox.shrink(),
+        dateColumnWidth: dateWidth,
+        locationColumnWidth: locationWidth,
+        onColumnWidthsChanged: (date, location) {
+          committed.add(<double?>[date, location]);
+          setState(() {
+            dateWidth = date;
+            locationWidth = location;
+          });
+        },
+      ),
+    ),
+    size: size,
+    brightness: brightness,
+    wallpaper: wallpaper,
+    textScaler: textScaler,
+  );
+}
+
+Future<void> _mouseDragBy(
+  WidgetTester tester,
+  Finder finder,
+  Offset offset,
+) async {
+  final gesture = await tester.startGesture(
+    tester.getCenter(finder),
+    kind: PointerDeviceKind.mouse,
+  );
+  await tester.pump();
+  await gesture.moveBy(offset);
+  await tester.pump();
+  await gesture.up();
+  await tester.pumpAndSettle();
 }
 
 void main() {
@@ -385,4 +439,114 @@ void main() {
     expect(find.text(_records[2].event), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  group('出行表格拖拽列宽', () {
+    const divider1 = ValueKey('travel-column-divider-1');
+    const divider2 = ValueKey('travel-column-divider-2');
+
+    testWidgets('拖动表头分隔条只在松手后提交', (tester) async {
+      final committed = <List<double?>>[];
+      await _pumpResizableTable(tester, committed: committed);
+      final start1 = tester.getCenter(find.byKey(divider1));
+      final start2 = tester.getCenter(find.byKey(divider2));
+
+      final gesture =
+          await tester.startGesture(start1, kind: PointerDeviceKind.mouse);
+      await tester.pump();
+      await gesture.moveBy(const Offset(40, 0));
+      await tester.pump();
+
+      expect(tester.getCenter(find.byKey(divider1)).dx,
+          closeTo(start1.dx + 40, 1.5));
+      expect(tester.getCenter(find.byKey(divider2)).dx,
+          closeTo(start2.dx, 0.01));
+      expect(committed, isEmpty, reason: '拖动期间不能写回宿主');
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(committed, hasLength(1));
+      expect(committed.single[0], isNotNull);
+      expect(committed.single[1], isNotNull);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('表头与每一行的分隔条逐像素对齐', (tester) async {
+      final committed = <List<double?>>[];
+      await _pumpResizableTable(tester, committed: committed);
+      const rowDivider =
+          ValueKey('travel-column-divider-1-2026-10-15');
+      final header = tester.getRect(find.byKey(divider1));
+      final row = tester.getRect(find.byKey(rowDivider));
+      expect(row.left, closeTo(header.left, 0.01));
+      expect(row.width, closeTo(header.width, 0.01));
+
+      await _mouseDragBy(tester, find.byKey(divider1), const Offset(60, 0));
+      final headerAfter = tester.getRect(find.byKey(divider1));
+      final rowAfter = tester.getRect(find.byKey(rowDivider));
+      expect(rowAfter.left, closeTo(headerAfter.left, 0.01));
+    });
+
+    testWidgets('双击表头分隔条恢复默认列宽', (tester) async {
+      final committed = <List<double?>>[];
+      await _pumpResizableTable(tester, committed: committed);
+      final original = tester.getCenter(find.byKey(divider1)).dx;
+      await _mouseDragBy(tester, find.byKey(divider1), const Offset(60, 0));
+      expect(tester.getCenter(find.byKey(divider1)).dx,
+          greaterThan(original + 40));
+
+      final center = tester.getCenter(find.byKey(divider1));
+      await tester.tapAt(center, kind: PointerDeviceKind.mouse);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tapAt(center, kind: PointerDeviceKind.mouse);
+      await tester.pumpAndSettle();
+
+      expect(committed.last, <double?>[null, null]);
+      expect(tester.getCenter(find.byKey(divider1)).dx, closeTo(original, 0.5));
+    });
+
+    testWidgets('窄桌面窗口拖宽后事件列仍可见且不溢出', (tester) async {
+      final committed = <List<double?>>[];
+      await _pumpResizableTable(tester, committed: committed,
+          size: const Size(800, 700));
+      await _mouseDragBy(tester, find.byKey(divider1), const Offset(160, 0));
+      expect(find.text(_records[1].event), findsOneWidget);
+      expect(committed, hasLength(1));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('窄于断点时保持旧布局，不渲染分隔条', (tester) async {
+      final committed = <List<double?>>[];
+      await _pumpResizableTable(tester, committed: committed,
+          size: const Size(600, 700));
+      expect(find.byKey(divider1), findsNothing);
+      expect(find.byKey(divider2), findsNothing);
+      final date = tester.getRect(find.text('2026-10-15'));
+      final location = tester.getRect(find.text('北航 北邮'));
+      expect(date.right, lessThan(location.left));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('未接回调时仍是旧的 flex 布局', (tester) async {
+      await _pump(
+          tester,
+          TravelRecordTable(
+            records: _records,
+            selectedDateKey: '2026-10-15',
+            onSelectDate: (_) {},
+            actionsBuilder: (_) => const SizedBox.shrink(),
+          ));
+      expect(find.byKey(divider1), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('深色壁纸主题下拖动不抛异常', (tester) async {
+      final committed = <List<double?>>[];
+      await _pumpResizableTable(tester, committed: committed,
+          brightness: Brightness.dark, wallpaper: true);
+      await _mouseDragBy(tester, find.byKey(divider2), const Offset(-40, 0));
+      expect(committed, hasLength(1));
+      expect(tester.takeException(), isNull);
+    });
+  });
+
 }
