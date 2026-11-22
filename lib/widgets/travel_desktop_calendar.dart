@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../models/travel_record.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_tokens.dart';
+import '../utils/lunar_day_label.dart';
 
 /// 桌面出行月历按可用区域排布多个月份（最多 6 个、最多 3 列），
 /// 并保留单月详细视图。格子沿用移动端的干净样式。
@@ -549,6 +550,14 @@ class TravelDesktopCalendar extends StatelessWidget {
                           weeks)
                       .clamp(AppSizes.desktopTravelCalendarCellHeight * scale,
                           double.infinity);
+              // 一次算好整屏（含上下月补齐格）的农历文案：格子重建很频繁，
+              // 不要让每一格各自换算。
+              final dates = List<DateTime>.generate(
+                weeks * 7,
+                (index) =>
+                    DateTime(firstCell.year, firstCell.month, firstCell.day + index),
+              );
+              final lunarLabels = lunarDayLabelsForDates(dates);
               return GridView.builder(
                 primary: false,
                 padding: EdgeInsets.zero,
@@ -558,15 +567,15 @@ class TravelDesktopCalendar extends StatelessWidget {
                   mainAxisSpacing: AppSpacing.xs,
                   crossAxisSpacing: AppSpacing.xs,
                 ),
-                itemCount: weeks * 7,
+                itemCount: dates.length,
                 itemBuilder: (context, index) {
-                  final date = DateTime(
-                      firstCell.year, firstCell.month, firstCell.day + index);
+                  final date = dates[index];
                   final key = _dateKey(date);
                   return _buildDay(
                     context,
                     date: date,
                     record: recordsByDate[key],
+                    lunarLabel: lunarLabels[key]!,
                     selected: key == selectedKey,
                     today: key == todayKey,
                   );
@@ -583,6 +592,7 @@ class TravelDesktopCalendar extends StatelessWidget {
     BuildContext context, {
     required DateTime date,
     required TravelRecord? record,
+    required LunarDayLabel lunarLabel,
     required bool selected,
     required bool today,
   }) {
@@ -593,10 +603,18 @@ class TravelDesktopCalendar extends StatelessWidget {
         : inMonth
             ? scheme.onSurface
             : scheme.onSurfaceVariant;
+    // 选中格底色是 primaryContainer，小字跟随日号取色；非本月保持弱化，
+    // 节日 / 节气在本月用 onSurface 提一档，但不抢日号。
+    final lunarColor = selected
+        ? foreground
+        : inMonth && lunarLabel.emphasized
+            ? scheme.onSurface
+            : scheme.onSurfaceVariant;
     return Semantics(
       selected: selected,
       button: true,
-      label: DateFormat('yyyy年M月d日').format(date),
+      label:
+          '${DateFormat('yyyy年M月d日').format(date)}，${lunarLabel.semanticText}',
       child: Material(
         key: ValueKey('travel-calendar-day-${_dateKey(date)}'),
         color: selected
@@ -618,8 +636,16 @@ class TravelDesktopCalendar extends StatelessWidget {
               children: [
                 Text('${date.day}',
                     style: AppText.sectionTitle.copyWith(color: foreground)),
+                ExcludeSemantics(
+                  child: Text(
+                    lunarLabel.text,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.badge.copyWith(color: lunarColor),
+                  ),
+                ),
                 if (record != null && inMonth) ...[
-                  const SizedBox(height: AppSpacing.md),
+                  const SizedBox(height: AppSpacing.xs),
                   Tooltip(
                     message: record.location,
                     child: Text(record.location,

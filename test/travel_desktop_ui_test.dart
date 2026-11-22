@@ -307,6 +307,23 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('单月日期格显示农历，节日节气优先于农历日', (tester) async {
+    await _pump(
+        tester,
+        _calendar(
+            selectedDate: DateTime(2026, 10, 5), onSelectDate: (_) {}));
+    Finder inDay(String dateKey, String text) => find.descendant(
+          of: find.byKey(ValueKey('travel-calendar-day-$dateKey')),
+          matching: find.text(text),
+        );
+    expect(inDay('2026-10-15', '初六'), findsOneWidget, reason: '普通日子显示农历日');
+    expect(inDay('2026-10-10', '九月'), findsOneWidget, reason: '初一显示农历月份');
+    expect(inDay('2026-10-01', '国庆节'), findsOneWidget, reason: '公历节日优先');
+    expect(inDay('2026-10-18', '重阳节'), findsOneWidget, reason: '农历节日优先');
+    expect(inDay('2026-10-23', '霜降'), findsOneWidget, reason: '节气优先');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('多月视图按窗口大小自适应月份数量且不出现半截行', (tester) async {
     final boundary = GlobalKey();
     const allMonths = [
@@ -335,6 +352,8 @@ void main() {
         find.byKey(const ValueKey('travel-calendar-day-2026-10-05')));
     expect(recordDay.color, isNot(Colors.transparent),
         reason: '有记录的日期要用高亮底色标记，而不是透明格');
+    expect(find.text('霜降'), findsNothing, reason: '多月小格不放农历');
+    expect(find.text('初六'), findsNothing, reason: '多月小格不放农历');
     await _capture(tester, boundary, 'travel_calendar_multi_month');
     expect(tester.takeException(), isNull);
 

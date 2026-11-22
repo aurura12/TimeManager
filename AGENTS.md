@@ -381,6 +381,7 @@ macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，
 | 目标进度 / 统计缓存 | `flutter test test/target_progress_test.dart test/target_progress_ui_test.dart test/statistics_cache_test.dart` |
 | 打卡（照片 / 定位 / 同步） | `flutter test test/check_in_photo_security_test.dart test/privacy_boundary_test.dart test/check_in_sync_offline_test.dart` |
 | 起床记录 | `flutter test test/wake_up_provider_test.dart test/wake_up_sync_test.dart test/wake_up_history_screen_test.dart` |
+| 出行桌面单月日历（农历 / 节气 / 节日） | `flutter test test/lunar_day_label_test.dart test/travel_desktop_ui_test.dart` |
 | 全局搜索（记录 / 日记 / 出行 / 打卡 / 目标 / 复盘聚合） | `flutter test test/unified_search_service_test.dart test/global_search_index_test.dart test/global_search_screen_test.dart test/ai_review_search_test.dart` |
 | 语音建日程 | `flutter test test/voice_schedule_parser_test.dart test/voice_schedule_slot_planner_test.dart test/voice_schedule_apply_test.dart` |
 | 应用日志 / 那年今日 / 应用内更新 | `flutter test test/app_log_service_test.dart test/app_log_entry_test.dart test/app_log_export_service_test.dart test/app_log_screen_test.dart test/on_this_day_test.dart test/on_this_day_popup_test.dart test/update_service_test.dart` |
