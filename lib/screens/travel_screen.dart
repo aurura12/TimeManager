@@ -68,6 +68,18 @@ class _TravelScreenState extends State<TravelScreen> {
   /// 正在播放退场动画、还没真正删除的出行记录日期。
   String? _removingDateKey;
 
+  /// 日历上识别双击用的定时器与上一次单击的日期。
+  ///
+  /// 不给日期格挂 [InkWell.onDoubleTap]：同一个识别器同时挂 onTap 时，单击要
+  /// 等双击超时（约 300ms）才生效，点日期选中的反馈会明显变慢。这里保持单击
+  /// 立即选中，只把 [_calendarDoubleTapWindow] 内对同一天的第二次单击当作双击。
+  Timer? _calendarDoubleTapTimer;
+  String? _pendingCalendarTapKey;
+
+  /// 双击判定窗口。比系统 300ms 稍宽，缩小窗口内第二次点击被吞掉的可能。
+  static const Duration _calendarDoubleTapWindow =
+      Duration(milliseconds: 350);
+
   /// 全局同步状态中心。允许为空：独立构建出行页（例如页面级测试）时没
   /// 有 Provider 树，此时只跳过状态上报。
   SyncStatusCoordinator? _statusCoordinator;
@@ -94,6 +106,7 @@ class _TravelScreenState extends State<TravelScreen> {
   @override
   void dispose() {
     _pullCompletedSubscription?.cancel();
+    _calendarDoubleTapTimer?.cancel();
     super.dispose();
   }
 
@@ -984,6 +997,34 @@ class _TravelScreenState extends State<TravelScreen> {
         _calendarMonth = DateTime(normalizedDate.year, normalizedDate.month);
       }
     });
+    _handleCalendarDoubleTap(normalizedDate);
+  }
+
+  /// 双击日期：已有记录进入编辑，没有记录直接按该日期新增。
+  void _handleCalendarDoubleTap(DateTime date) {
+    final dateKey = DateFormat('yyyy-MM-dd').format(date);
+    if (_pendingCalendarTapKey == dateKey) {
+      _calendarDoubleTapTimer?.cancel();
+      _calendarDoubleTapTimer = null;
+      _pendingCalendarTapKey = null;
+      unawaited(_openRecordEditorForDate(date));
+      return;
+    }
+    _calendarDoubleTapTimer?.cancel();
+    _pendingCalendarTapKey = dateKey;
+    _calendarDoubleTapTimer = Timer(_calendarDoubleTapWindow, () {
+      _calendarDoubleTapTimer = null;
+      _pendingCalendarTapKey = null;
+    });
+  }
+
+  Future<void> _openRecordEditorForDate(DateTime date) async {
+    if (!mounted || _loading || _processing) return;
+    if (_recordForDate(date) == null) {
+      await _showAddRecordDialog(initialDate: date);
+    } else {
+      await _showEditRecordDialog(date);
+    }
   }
 
   Widget _buildRecordActions(TravelRecord record) {
@@ -1238,11 +1279,7 @@ class _TravelScreenState extends State<TravelScreen> {
             final hasEvent = _recordDateKeys.contains(dateKey);
 
             return GestureDetector(
-              onTap: () {
-                setState(() {
-                  _selectedDate = date;
-                });
-              },
+              onTap: () => _selectCalendarDate(date),
               child: Container(
                 margin: const EdgeInsets.all(2),
                 decoration: BoxDecoration(
