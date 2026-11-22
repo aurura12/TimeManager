@@ -86,6 +86,8 @@ void main() {
       (tester) async {
     await _pumpScreen(tester, readAsset: true, currentVersion: '1.178.0+2067');
 
+    // 更新日志会随版本继续变长，1.178.0 不一定落在首屏，先滚动到它再断言。
+    await tester.scrollUntilVisible(find.text('1.178.0'), 400);
     expect(find.text('1.178.0'), findsOneWidget);
     expect(find.text('当前版本'), findsOneWidget);
   });
