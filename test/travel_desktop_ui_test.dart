@@ -323,7 +323,7 @@ void main() {
     expect(inDay('2026-10-23', '霜降'), findsOneWidget, reason: '节气优先');
     final dayCenter = tester.getCenter(inDay('2026-10-15', '15'));
     final lunarCenter = tester.getCenter(inDay('2026-10-15', '初六'));
-    expect(lunarCenter.dx, greaterThan(dayCenter.dx), reason: '农历在日号右侧');
+    expect(lunarCenter.dx, lessThan(dayCenter.dx), reason: '农历在日号左侧');
     expect(lunarCenter.dy, closeTo(dayCenter.dy, 8), reason: '日号与农历同一行');
     expect(tester.takeException(), isNull);
   });

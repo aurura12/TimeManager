@@ -546,7 +546,8 @@ class TravelDesktopCalendar extends StatelessWidget {
           Expanded(
             child: LayoutBuilder(builder: (context, constraints) {
               final cellHeight =
-                  ((constraints.maxHeight - AppSpacing.xs * (weeks - 1)) /
+                  ((constraints.maxHeight -
+                              AppSizes.hairline * (weeks - 1)) /
                           weeks)
                       .clamp(AppSizes.desktopTravelCalendarCellHeight * scale,
                           double.infinity);
@@ -558,28 +559,37 @@ class TravelDesktopCalendar extends StatelessWidget {
                     DateTime(firstCell.year, firstCell.month, firstCell.day + index),
               );
               final lunarLabels = lunarDayLabelsForDates(dates);
-              return GridView.builder(
-                primary: false,
-                padding: EdgeInsets.zero,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 7,
-                  mainAxisExtent: cellHeight,
-                  mainAxisSpacing: AppSpacing.xs,
-                  crossAxisSpacing: AppSpacing.xs,
+              // 格子之间不再留空隙，改画发丝分隔线：宽窗口下拉大格子以后，
+              // 相邻两天之间仍然有一条明确的边界，不会连成一片。
+              return Container(
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  border: Border.all(color: surfaces.joinDivider),
+                  borderRadius: AppRadius.controlAll,
                 ),
-                itemCount: dates.length,
-                itemBuilder: (context, index) {
-                  final date = dates[index];
-                  final key = _dateKey(date);
-                  return _buildDay(
-                    context,
-                    date: date,
-                    record: recordsByDate[key],
-                    lunarLabel: lunarLabels[key]!,
-                    selected: key == selectedKey,
-                    today: key == todayKey,
-                  );
-                },
+                child: GridView.builder(
+                  primary: false,
+                  padding: EdgeInsets.zero,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 7,
+                    mainAxisExtent: cellHeight,
+                  ),
+                  itemCount: dates.length,
+                  itemBuilder: (context, index) {
+                    final date = dates[index];
+                    final key = _dateKey(date);
+                    return _buildDay(
+                      context,
+                      date: date,
+                      record: recordsByDate[key],
+                      lunarLabel: lunarLabels[key]!,
+                      selected: key == selectedKey,
+                      today: key == todayKey,
+                      showRightDivider: index % 7 != 6,
+                      showBottomDivider: index + 7 < dates.length,
+                    );
+                  },
+                ),
               );
             }),
           ),
@@ -595,8 +605,11 @@ class TravelDesktopCalendar extends StatelessWidget {
     required LunarDayLabel lunarLabel,
     required bool selected,
     required bool today,
+    required bool showRightDivider,
+    required bool showBottomDivider,
   }) {
     final scheme = Theme.of(context).colorScheme;
+    final surfaces = AppSurfaces.of(context);
     final inMonth = date.month == month.month && date.year == month.year;
     final foreground = selected
         ? scheme.onPrimaryContainer
@@ -615,70 +628,150 @@ class TravelDesktopCalendar extends StatelessWidget {
       button: true,
       label:
           '${DateFormat('yyyy年M月d日').format(date)}，${lunarLabel.semanticText}',
-      child: Material(
-        key: ValueKey('travel-calendar-day-${_dateKey(date)}'),
-        color: selected
-            ? context.wallpaperFill(scheme.primaryContainer)
-            : record != null && inMonth
-                ? context.wallpaperFill(scheme.surfaceContainerHigh)
-                : Colors.transparent,
-        shape: RoundedRectangleBorder(
-          borderRadius: AppRadius.controlAll,
-          side: today ? BorderSide(color: scheme.primary) : BorderSide.none,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: selected
+              ? context.wallpaperFill(scheme.primaryContainer)
+              : record != null && inMonth
+                  ? context.wallpaperFill(scheme.surfaceContainerHigh)
+                  : Colors.transparent,
+          border: Border(
+            right: showRightDivider
+                ? BorderSide(color: surfaces.joinDivider)
+                : BorderSide.none,
+            bottom: showBottomDivider
+                ? BorderSide(color: surfaces.joinDivider)
+                : BorderSide.none,
+          ),
         ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: () => onSelectDate(date),
-          child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.sm),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.baseline,
-                  textBaseline: TextBaseline.alphabetic,
-                  children: [
-                    Text('${date.day}',
-                        style:
-                            AppText.sectionTitle.copyWith(color: foreground)),
-                    Expanded(
-                      child: ExcludeSemantics(
-                        child: Text(
-                          lunarLabel.text,
-                          textAlign: TextAlign.right,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppText.badge.copyWith(color: lunarColor),
+        child: Material(
+          key: ValueKey('travel-calendar-day-${_dateKey(date)}'),
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => onSelectDate(date),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.sm,
+                AppSpacing.xs + 2,
+                AppSpacing.sm,
+                AppSpacing.xs,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ExcludeSemantics(
+                          child: Text(
+                            lunarLabel.text,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppText.badge.copyWith(color: lunarColor),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-                if (record != null && inMonth) ...[
-                  const SizedBox(height: AppSpacing.xs),
-                  Tooltip(
-                    message: record.location,
-                    child: Text(record.location,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppText.button.copyWith(color: foreground)),
+                      const SizedBox(width: AppSpacing.xs),
+                      _buildDayNumber(
+                        context,
+                        day: date.day,
+                        foreground: foreground,
+                        selected: selected,
+                        today: today,
+                      ),
+                    ],
                   ),
-                  if (record.event.isNotEmpty) ...[
-                    const SizedBox(height: AppSpacing.xs),
-                    Expanded(
-                      child: Text(record.event,
+                  if (record != null && inMonth) ...[
+                    const SizedBox(height: AppSpacing.xs + 2),
+                    Tooltip(
+                      message: record.location,
+                      child: _buildLocationChip(
+                        context,
+                        location: record.location,
+                        selected: selected,
+                      ),
+                    ),
+                    if (record.event.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(record.event,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: AppText.caption.copyWith(
-                            color:
-                                selected ? foreground : scheme.onSurfaceVariant,
+                            color: selected
+                                ? scheme.onPrimaryContainer
+                                : scheme.onSurfaceVariant,
                           )),
-                    ),
+                    ],
                   ],
                 ],
-              ],
+              ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  /// 日号：大号数字压在格子右上角，今天用主色细圆环圈住，
+  /// 和日期选择面板里的「今天」标记保持一致。
+  Widget _buildDayNumber(
+    BuildContext context, {
+    required int day,
+    required Color foreground,
+    required bool selected,
+    required bool today,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      constraints: const BoxConstraints(
+        minWidth: AppSizes.travelCalendarDayNumberSize,
+        minHeight: AppSizes.travelCalendarDayNumberSize,
+      ),
+      alignment: Alignment.center,
+      decoration: today
+          ? BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: selected ? scheme.onPrimaryContainer : scheme.primary,
+              ),
+            )
+          : null,
+      child: Text(
+        '$day',
+        style: AppText.sectionTitle.copyWith(
+          color: foreground,
+          fontWeight: today || selected ? FontWeight.w700 : FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  /// 出行地点做成整行的小胶囊，宽窗口下拉满格子也不会显得散。
+  Widget _buildLocationChip(
+    BuildContext context, {
+    required String location,
+    required bool selected,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: AppSpacing.xs / 2,
+      ),
+      decoration: BoxDecoration(
+        color: selected
+            ? scheme.surface
+            : context.wallpaperFill(scheme.primaryContainer),
+        borderRadius: AppRadius.badgeAll,
+      ),
+      child: Text(
+        location,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: AppText.badge.copyWith(
+          color: selected ? scheme.onSurface : scheme.onPrimaryContainer,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );

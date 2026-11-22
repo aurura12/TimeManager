@@ -213,6 +213,9 @@ abstract final class AppSizes {
   static const double desktopTravelDetailsWidth = 320;
   static const double desktopTravelCalendarHeight = 720;
   static const double desktopTravelCalendarCellHeight = 96;
+
+  /// 单月日号的最小占位：给「今天」的圆环留出直径，数字放大也不会挤掉农历。
+  static const double travelCalendarDayNumberSize = 30;
   static const double desktopTravelMultiMonthCardHeight = 300;
   static const double desktopTravelMultiMonthToolbarHeight = 48;
 
