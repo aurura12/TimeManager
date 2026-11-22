@@ -88,7 +88,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
 
 - **时间粒度**：全天 144 个 10 分钟槽位 (`hour=0..23`, `minute10=0..5`)
 - **跨日自动推进**：`TimeProvider` 用构造时的「今天」基线判断是否跨日；`advanceToTodayIfNeeded()` **只在用户仍停留在此前那个今天时**才把 `_currentDate` 推进到新的一天，手动翻到历史日期时不抢视图（导航被身份切换 / 覆盖恢复挡住时返回 false，等下次检查重试）。触发点：回前台（`onAppResumed`）+ 记录 / 日记 / 出行 / 打卡 / 我的页的 `DayChangeBoundary`（可见且前台时定到零点，跨日 / 回前台 / 重新可见时补检，隐藏页暂停）。日记和出行只在自己选中的正是旧「今天」时跟着翻页；记录页翻页时清掉旧日期的待分配选择与刷子状态，避免把数据写进昨天。路由页同样接 `DayChangeBoundary`：每日复盘把新的一天补到日期条顶部（用户停在历史日期时不抢视图；程序化滚动期间按 `_anchoringSelection` 屏蔽滚动反推选中日期），全局搜索的相对区间（近 7 天 / 30 天 / 一年）在跨日后重算，全部与自定义区间不动
-- **空槽位兜底**：`slotsForDate`（`lib/providers/time_provider.dart:2054`）在日程未就绪（`!_isScheduleReady`，`:2056`）或身份 / 覆盖事务进行中返回**空列表**，初始化未完成时返回 144 个初始空槽；`TimeGrid` 遇到长度不足的列表只画空行、绝不下标取槽位。失败原因由壳层 `DataFailureBanner`（顶部横幅 + 查看日志）说明。删掉这条兜底，初始化失败会直接红屏而不是提示
+- **空槽位兜底**：`TimeProvider.slotsForDate()`（`lib/providers/time_provider.dart`）在日程未就绪（`!_isScheduleReady`）或身份 / 覆盖事务进行中返回**空列表**，初始化未完成时返回 144 个初始空槽；`TimeGrid` 遇到长度不足的列表只画空行、绝不下标取槽位。失败原因由壳层 `DataFailureBanner`（顶部横幅 + 查看日志）说明。删掉这条兜底，初始化失败会直接红屏而不是提示
 - **持久化分层**：
   - 时间块/分类/目标/模板 → `SharedPreferences`（JSON 序列化）
   - 敏感 Token → `FlutterSecureStorage`
@@ -374,10 +374,15 @@ macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，
 | 写盘 / 本地存储 / 反序列化容错 | `flutter test test/local_save_storage_failure_test.dart test/deserialization_tolerance_test.dart` |
 | 日记（合并 / 冲突 / 日期导航） | `flutter test test/diary_sync_service_test.dart test/diary_sync_service_overwrite_test.dart test/diary_conflict_flow_test.dart test/diary_date_navigation_test.dart` |
 | 日程解析 / 覆盖 / 后台合并 | `flutter test test/schedule_merge_test.dart test/schedule_overwrite_test.dart test/schedule_json_codec_test.dart test/schedule_bad_data_guard_test.dart` |
+| Google 日历同步（OAuth / 事件解析 / 分页） | `flutter test test/google_calendar_event_parser_test.dart test/google_calendar_pagination_test.dart test/google_calendar_sync_status_test.dart` |
 | 时间块拖拽调时长 | `flutter test test/time_block_resize_test.dart test/time_provider_resize_test.dart test/time_grid_resize_test.dart` |
+| 撤销 / 重做 | `flutter test test/time_provider_undo_test.dart` |
 | 目标进度 / 统计缓存 | `flutter test test/target_progress_test.dart test/target_progress_ui_test.dart test/statistics_cache_test.dart` |
 | 打卡（照片 / 定位 / 同步） | `flutter test test/check_in_photo_security_test.dart test/privacy_boundary_test.dart test/check_in_sync_offline_test.dart` |
 | 起床记录 | `flutter test test/wake_up_provider_test.dart test/wake_up_sync_test.dart test/wake_up_history_screen_test.dart` |
+| 全局搜索（记录 / 日记 / 出行 / 打卡 / 目标 / 复盘聚合） | `flutter test test/unified_search_service_test.dart test/global_search_index_test.dart test/global_search_screen_test.dart test/ai_review_search_test.dart` |
+| 语音建日程 | `flutter test test/voice_schedule_parser_test.dart test/voice_schedule_slot_planner_test.dart test/voice_schedule_apply_test.dart` |
+| 应用日志 / 那年今日 / 应用内更新 | `flutter test test/app_log_service_test.dart test/app_log_entry_test.dart test/app_log_export_service_test.dart test/app_log_screen_test.dart test/on_this_day_test.dart test/on_this_day_popup_test.dart test/update_service_test.dart` |
 | 导航偏好 / 桌面布局 / 快捷键 | `flutter test test/main_tab_provider_test.dart test/desktop_layout_provider_test.dart test/desktop_shortcuts_test.dart test/main_screen_lazy_loading_test.dart` |
 | 菜单栏常驻（macOS） | `flutter test test/menu_bar_provider_test.dart test/menu_bar_panel_test.dart test/menu_bar_dial_position_test.dart test/app_root_shell_test.dart` |
 | 桌面小组件配色 / `widget_theme` | `flutter test test/home_widget_theme_test.dart test/home_widget_appearance_sync_test.dart test/visual_system_test.dart` |
@@ -444,5 +449,6 @@ Flutter 3.50 起 `package:flutter/material.dart` 整体弃用，界面库统一�
 - 桌面小组件配色跟随 App 外观（浅/深 + 主题色）：一律由 `lib/services/home_widget_theme.dart` 派生后写进 `widget_theme`，不要在 Kotlin / drawable 里另抄一套；唯一允许保留字面量的是时间轴分段色板 `_timelinePalette`（见 `docs/design-system.md` 3.6）
 - 动效统一走 `lib/theme/app_tokens.dart` 的 `AppMotion`（200ms 单档 + `easeInOutCubic`；透明度过渡别用 `easeOutCubic`，它前 100ms 就走完 90%，看起来只是闪一下）与 `lib/widgets/motion_transitions.dart` 的三个组件（`ValueChangeTransition` 切 Tab / 切日期、`ListItemEntrance` 新增条目、`ListItemRemoval` 删除收高）；**页面里不写时长/曲线字面量，也不自己搭 `FadeTransition` / `AnimationController`**（`test/motion_test.dart` 有源码守卫）。降级统一用 `appMotionDuration()`，只淡入不位移（时间网格必须与时间轴像素对齐）。规范见 `docs/design-system.md` 第十节
 - 同步动作只放在同步中心：页面顶栏只挂 `SyncStatusButton`（正常不占位、同步中转圈、异常红/黄点，点击进 `SyncCenterScreen(initialModule:)`），不要再往页面加同步 / 拉取按钮。需要新方向时扩展 `SyncCenterOperations` 的 `operations`（上传）或 `pulls`（拉取远端），并让页面只上报状态
+- **文档里引用代码位置写符号名，不写行号**：行号每次改动都会漂（`time_provider.dart:2054` 漂到 2057 已经让本文件返工过一次），定位写 `文件路径` + 符号名（如 `TimeProvider.slotsForDate()`）；测试文件名、命令、偏好键这类稳定标识照写
 - 设计文档在 `docs/superpowers/{plans,specs}/`、已完结问题归档在 `docs/archive/`——这些目录**仅本地存在、被 `docs/*` 规则 gitignore**（`.gitignore` 只放行 `docs/design-system.md` 与 `docs/release-notes.md`），按需创建，**不要在 git 里找它们**。视觉规范在 `docs/design-system.md`；`docs/release-notes.md` 是两个发布脚本默认的 Release 说明来源，发版前必须先更新（否则发布查重会拒绝），同时它还是 App 内「更新日志」页的 asset（`pubspec.yaml` 的 `assets:` 引用），**移动或改名会静默 404**。根目录只保留 `AGENTS.md` 与 `README.md`（`待修复问题.md` 已删除，问题清单不再放在根目录）
 - `third_party/` 下是 vendored 的第三方插件 fork，已在 `analysis_options.yaml` 里整体 exclude，不参与本项目的静态检查；升级上游时按该目录下 `FORK.md` 的步骤重做
