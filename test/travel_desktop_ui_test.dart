@@ -328,6 +328,21 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('单月日期格的事件文字与地点文字左对齐', (tester) async {
+    await _pump(
+        tester,
+        _calendar(
+            selectedDate: DateTime(2026, 10, 5), onSelectDate: (_) {}));
+    final day = find.byKey(const ValueKey('travel-calendar-day-2026-10-05'));
+    final location = tester.getTopLeft(
+        find.descendant(of: day, matching: find.text('杭州 西湖')));
+    final event = tester.getTopLeft(find.descendant(
+        of: day, matching: find.text(_records[2].event)));
+    expect(event.dx, closeTo(location.dx, 0.5), reason: '事件文字和地点文字左对齐');
+    expect(event.dy, greaterThan(location.dy), reason: '事件在地点下面');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('多月视图按窗口大小自适应月份数量且不出现半截行', (tester) async {
     final boundary = GlobalKey();
     const allMonths = [

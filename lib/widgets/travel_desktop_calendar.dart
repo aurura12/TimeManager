@@ -693,14 +693,20 @@ class TravelDesktopCalendar extends StatelessWidget {
                     ),
                     if (record.event.isNotEmpty) ...[
                       const SizedBox(height: AppSpacing.xs),
-                      Text(record.event,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppText.caption.copyWith(
-                            color: selected
-                                ? scheme.onPrimaryContainer
-                                : scheme.onSurfaceVariant,
-                          )),
+                      // 和地点胶囊里的文字左对齐，不要贴到格子边上。
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.sm,
+                        ),
+                        child: Text(record.event,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppText.caption.copyWith(
+                              color: selected
+                                  ? scheme.onPrimaryContainer
+                                  : scheme.onSurfaceVariant,
+                            )),
+                      ),
                     ],
                   ],
                 ],
