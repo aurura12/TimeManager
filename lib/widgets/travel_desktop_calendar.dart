@@ -634,15 +634,25 @@ class TravelDesktopCalendar extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('${date.day}',
-                    style: AppText.sectionTitle.copyWith(color: foreground)),
-                ExcludeSemantics(
-                  child: Text(
-                    lunarLabel.text,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppText.badge.copyWith(color: lunarColor),
-                  ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
+                    Text('${date.day}',
+                        style:
+                            AppText.sectionTitle.copyWith(color: foreground)),
+                    Expanded(
+                      child: ExcludeSemantics(
+                        child: Text(
+                          lunarLabel.text,
+                          textAlign: TextAlign.right,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppText.badge.copyWith(color: lunarColor),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 if (record != null && inMonth) ...[
                   const SizedBox(height: AppSpacing.xs),
