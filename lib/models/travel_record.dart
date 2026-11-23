@@ -231,7 +231,9 @@ class TravelRecordsDocument {
             _recordIsNewerThanTombstone(localRecord, deletionAt)) {
           // 本地重新新增的记录只有在版本严格晚于删除时才撤销远端
           // tombstone；否则保留 tombstone，等待 UI 的冲突确认。
-          pushRecordsByDate[dateKey] = localRecord;
+          // 同日两端都有记录时按版本取新，避免把远端更新的内容静默覆盖。
+          pushRecordsByDate[dateKey] =
+              _newerLiveRecord(localRecord, remoteRecord);
           deleted.remove(dateKey);
         } else {
           deleted[dateKey] = deletionAt;
@@ -259,8 +261,10 @@ class TravelRecordsDocument {
 
   /// 返回两端无法自动解决的冲突日期。
   ///
-  /// 同一天的 live 记录内容不同仍然需要用户确认；live/tombstone 则按
-  /// 记录版本与删除版本判断，只有严格更新的本地重新记录可以自动复活。
+  /// 同一天的 live 记录内容不同时，只有两端版本都已知且不同才能判断谁更新，
+  /// 较新的一方胜出、不算冲突；版本相同或任一端版本未知（旧数据）时不猜
+  /// 用户意图，交给 UI 让用户确认。live/tombstone 仍按记录版本与删除版本
+  /// 判断，只有严格更新的本地重新记录可以自动复活。
   Set<String> conflictingDateKeys(TravelRecordsDocument other) {
     final conflicts = tombstoneConflictDateKeys(other);
     for (final local in records) {
@@ -268,11 +272,37 @@ class TravelRecordsDocument {
       final hasConflict = other.records.any(
         (remote) =>
             remote.dateKey == local.dateKey &&
-            (remote.location != local.location || remote.event != local.event),
+            (remote.location != local.location || remote.event != local.event) &&
+            _versionCannotDecide(local, remote),
       );
       if (hasConflict) conflicts.add(local.dateKey);
     }
     return conflicts;
+  }
+
+  /// 同日内容不同、且远端并不严格更新的日期。
+  ///
+  /// 自动拉取据此跳过：这些日期上本地还有未上传的改动（本地更新，或版本
+  /// 无法判断新旧），直接以远端覆盖会静默丢掉用户的修改。远端严格更新的
+  /// 日期不在此列，可以安全应用。
+  Set<String> localAheadDateKeys(TravelRecordsDocument other) {
+    final ahead = <String>{};
+    for (final local in records) {
+      if (other.deletedDateKeys.contains(local.dateKey)) continue;
+      for (final remote in other.records) {
+        if (remote.dateKey != local.dateKey) continue;
+        if (remote.location == local.location && remote.event == local.event) {
+          continue;
+        }
+        if (local.updatedAt > 0 &&
+            remote.updatedAt > 0 &&
+            remote.updatedAt > local.updatedAt) {
+          continue;
+        }
+        ahead.add(local.dateKey);
+      }
+    }
+    return ahead;
   }
 
   /// 返回无法仅凭版本自动解决的 live/tombstone 冲突日期。
@@ -416,6 +446,28 @@ class TravelRecordsDocument {
     int deletedAt,
   ) {
     return record.updatedAt > 0 && record.updatedAt > deletedAt;
+  }
+
+  /// 同日 live record 取较新版本；版本无法判断时保留本地，
+  /// 由 [conflictingDateKeys] 在推送前拦截，不在这里猜。
+  static TravelRecord _newerLiveRecord(
+    TravelRecord local,
+    TravelRecord? remote,
+  ) {
+    if (remote == null) return local;
+    if (local.updatedAt > 0 &&
+        remote.updatedAt > 0 &&
+        local.updatedAt != remote.updatedAt) {
+      return local.updatedAt > remote.updatedAt ? local : remote;
+    }
+    return local;
+  }
+
+  /// 两端版本无法判断新旧：版本相同，或任一端是未知版本的旧数据。
+  static bool _versionCannotDecide(TravelRecord local, TravelRecord remote) {
+    return local.updatedAt <= 0 ||
+        remote.updatedAt <= 0 ||
+        local.updatedAt == remote.updatedAt;
   }
 
   Map<String, TravelRecord> _recordsByDate(Iterable<TravelRecord> source) {

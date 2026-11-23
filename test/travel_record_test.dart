@@ -271,6 +271,88 @@ title: 出行记录
     );
   });
 
+  test('本地版本更新时同日内容不同不算冲突，推送保留本地', () {
+    final local = TravelRecordsDocument(records: [
+      _record(
+        date: '2026-11-17',
+        location: '北理',
+        event: '酒店',
+        updatedAt: 2000,
+      ),
+    ]);
+    final remote = TravelRecordsDocument(records: [
+      _record(
+        date: '2026-11-17',
+        location: '北理',
+        event: '',
+        updatedAt: 1000,
+      ),
+    ]);
+
+    expect(local.conflictingDateKeys(remote), isEmpty);
+    expect(local.localAheadDateKeys(remote), {'2026-11-17'});
+
+    final outgoing = local.preparePush(remote);
+    expect(outgoing.records.single.event, '酒店');
+    expect(outgoing.records.single.updatedAt, 2000);
+  });
+
+  test('远端版本更新时同日内容不同不算冲突，推送采用远端', () {
+    final local = TravelRecordsDocument(records: [
+      _record(
+        date: '2026-11-17',
+        location: '北理',
+        event: '酒店',
+        updatedAt: 1000,
+      ),
+    ]);
+    final remote = TravelRecordsDocument(records: [
+      _record(
+        date: '2026-11-17',
+        location: '北理',
+        event: '宣讲',
+        updatedAt: 2000,
+      ),
+    ]);
+
+    expect(local.conflictingDateKeys(remote), isEmpty);
+    // 远端严格更新，自动拉取可以覆盖本地。
+    expect(local.localAheadDateKeys(remote), isEmpty);
+
+    final outgoing = local.preparePush(remote);
+    expect(outgoing.records.single.event, '宣讲');
+    expect(outgoing.records.single.updatedAt, 2000);
+  });
+
+  test('版本相同或未知时同日内容不同仍需用户确认', () {
+    final local = TravelRecordsDocument(records: [
+      _record(
+        date: '2026-11-17',
+        location: '北理',
+        event: '酒店',
+        updatedAt: 1000,
+      ),
+    ]);
+    final sameVersion = TravelRecordsDocument(records: [
+      _record(
+        date: '2026-11-17',
+        location: '北理',
+        event: '宣讲',
+        updatedAt: 1000,
+      ),
+    ]);
+    final unknownRemote = TravelRecordsDocument(records: [
+      _record(date: '2026-11-17', location: '北理', event: '宣讲'),
+    ]);
+
+    expect(local.conflictingDateKeys(sameVersion), {'2026-11-17'});
+    expect(local.conflictingDateKeys(unknownRemote), {'2026-11-17'});
+    expect(local.localAheadDateKeys(sameVersion), {'2026-11-17'});
+    expect(local.localAheadDateKeys(unknownRemote), {'2026-11-17'});
+    // 冲突未被确认前，推送准备阶段不猜新旧，仍保留本地。
+    expect(local.preparePush(unknownRemote).records.single.event, '酒店');
+  });
+
   test('记录版本可以通过 Markdown 往返保存', () {
     final source = TravelRecordsDocument(records: [
       _record(

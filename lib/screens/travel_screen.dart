@@ -651,7 +651,11 @@ class _TravelScreenState extends State<TravelScreen> {
         // 交给同步中心的「拉取远端」让用户确认后再覆盖。
         final localOnly = _localOnlyDateKeys(doc);
         final conflicting = _document.conflictingDateKeys(doc);
-        if (localOnly.isNotEmpty || conflicting.isNotEmpty) {
+        // 本地版本更新的日期也算待上传改动，自动拉取不能覆盖。
+        final localAhead = _document.localAheadDateKeys(doc);
+        if (localOnly.isNotEmpty ||
+            conflicting.isNotEmpty ||
+            localAhead.isNotEmpty) {
           setState(() => _processing = false);
           return;
         }
