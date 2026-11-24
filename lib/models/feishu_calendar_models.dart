@@ -157,3 +157,121 @@ class FeishuDaySyncOutcome {
     );
   }
 }
+
+/// 授权流程中途需要跨进程记住的参数（手机端回环可能收不到回调）。
+class FeishuPendingAuth {
+  const FeishuPendingAuth({
+    required this.state,
+    required this.codeVerifier,
+    required this.createdAt,
+  });
+
+  final String state;
+  final String codeVerifier;
+  final DateTime createdAt;
+
+  Map<String, dynamic> toJson() => {
+        'state': state,
+        'code_verifier': codeVerifier,
+        'created_at': createdAt.millisecondsSinceEpoch,
+      };
+
+  static FeishuPendingAuth? fromJson(Map<String, dynamic> json) {
+    final state = json['state']?.toString();
+    final verifier = json['code_verifier']?.toString();
+    final createdAt = json['created_at'];
+    if (state == null || verifier == null || createdAt is! int) return null;
+    return FeishuPendingAuth(
+      state: state,
+      codeVerifier: verifier,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(createdAt),
+    );
+  }
+}
+
+/// 一次授权的结果。
+class FeishuAuthResult {
+  const FeishuAuthResult({required this.success, this.message});
+
+  const FeishuAuthResult.ok()
+      : success = true,
+        message = null;
+
+  const FeishuAuthResult.failed(this.message) : success = false;
+
+  final bool success;
+  final String? message;
+}
+
+/// 飞书 OpenAPI 调用结果；业务错误不抛异常。
+class FeishuApiResult<T> {
+  const FeishuApiResult._({
+    required this.success,
+    this.data,
+    this.error,
+    this.unauthorized = false,
+  });
+
+  factory FeishuApiResult.ok(T data) =>
+      FeishuApiResult._(success: true, data: data);
+
+  factory FeishuApiResult.failed(
+    String error, {
+    bool unauthorized = false,
+  }) =>
+      FeishuApiResult._(
+        success: false,
+        error: error,
+        unauthorized: unauthorized,
+      );
+
+  final bool success;
+  final T? data;
+  final String? error;
+
+  /// 令牌失效，调用方应刷新后重试一次。
+  final bool unauthorized;
+}
+
+/// 某一天的事件列表（带截断标记）。
+class FeishuEventPage {
+  const FeishuEventPage({required this.events, required this.truncated});
+
+  final List<FeishuRemoteEvent> events;
+
+  /// 飞书列表接口用 start_time/end_time 时无法分页，读不完就算截断。
+  final bool truncated;
+}
+
+/// 一次多日同步的汇总。
+class FeishuSyncSummary {
+  const FeishuSyncSummary({
+    required this.totalDays,
+    required this.successDays,
+    required this.created,
+    required this.deleted,
+    required this.failedDates,
+    this.needReauth = false,
+    this.cancelled = false,
+    this.message,
+  });
+
+  final int totalDays;
+  final int successDays;
+  final int created;
+  final int deleted;
+  final List<String> failedDates;
+  final bool needReauth;
+  final bool cancelled;
+  final String? message;
+
+  int get failedDays => failedDates.length;
+
+  String describe() {
+    if (cancelled) return '已取消（成功 $successDays / $totalDays 天）';
+    if (failedDates.isEmpty) {
+      return '完成：$successDays 天，新增 $created 条，删除 $deleted 条';
+    }
+    return '完成：成功 $successDays 天，失败 ${failedDates.length} 天';
+  }
+}
