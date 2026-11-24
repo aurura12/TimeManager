@@ -124,7 +124,7 @@ class FeishuCalendarSyncService extends ChangeNotifier {
       ),
     );
     if (!pageResult.success || pageResult.data == null) {
-      return FeishuDaySyncOutcome.failed(
+      return _fail(
         dateKey,
         pageResult.error ?? '读取飞书日程失败',
         needReauth: pageResult.unauthorized,
@@ -133,7 +133,7 @@ class FeishuCalendarSyncService extends ChangeNotifier {
     final page = pageResult.data!;
     if (page.truncated) {
       // fail-closed：没读全就不能删，交给下一次重试。
-      return FeishuDaySyncOutcome.failed(dateKey, '当天日程太多，读取被截断，稍后重试');
+      return _fail(dateKey, '当天日程太多，读取被截断，稍后重试');
     }
 
     final drafts = mergeSlotsToEvents(slots, date);
@@ -155,7 +155,7 @@ class FeishuCalendarSyncService extends ChangeNotifier {
         ),
       );
       if (!result.success) {
-        return FeishuDaySyncOutcome.failed(
+        return _fail(
           dateKey,
           result.error ?? '删除飞书日程失败',
           needReauth: result.unauthorized,
@@ -178,7 +178,7 @@ class FeishuCalendarSyncService extends ChangeNotifier {
           ),
         );
         if (!result.success) {
-          return FeishuDaySyncOutcome.failed(
+          return _fail(
             dateKey,
             result.error ?? '创建飞书日程失败',
             needReauth: result.unauthorized,
@@ -227,7 +227,9 @@ class FeishuCalendarSyncService extends ChangeNotifier {
     var created = 0;
     var deleted = 0;
     var needReauth = false;
+    String? firstError;
     final failedDates = <String>[];
+    feishuLog('开始同步飞书日历：${entries.length} 天（身份 ${kind.code}）');
 
     try {
       for (final entry in entries) {
@@ -251,7 +253,11 @@ class FeishuCalendarSyncService extends ChangeNotifier {
           deleted += outcome.deleted;
         } else {
           failedDates.add(entry.key);
+          firstError ??= outcome.message;
           needReauth = needReauth || outcome.needReauth;
+          feishuLogWarning(
+            '飞书同步失败：${entry.key} · ${outcome.message ?? '未知原因'}',
+          );
           if (outcome.needReauth) break;
         }
         _completed++;
@@ -271,6 +277,7 @@ class FeishuCalendarSyncService extends ChangeNotifier {
       failedDates: failedDates,
       needReauth: needReauth,
       cancelled: _cancelRequested,
+      firstError: firstError,
     );
     if (!summary.needReauth) {
       await FeishuCredentialStore.saveLastSync(
@@ -280,6 +287,20 @@ class FeishuCalendarSyncService extends ChangeNotifier {
       );
     }
     return summary;
+  }
+
+  /// 统一出口：失败一定写进运行日志，设置页也会拿到同样的文案。
+  FeishuDaySyncOutcome _fail(
+    String dateKey,
+    String message, {
+    bool needReauth = false,
+  }) {
+    feishuLogWarning('飞书同步失败：$dateKey · $message');
+    return FeishuDaySyncOutcome.failed(
+      dateKey,
+      message,
+      needReauth: needReauth,
+    );
   }
 
   Future<String?> _calendarId(DiaryKind kind) async {
@@ -295,7 +316,12 @@ class FeishuCalendarSyncService extends ChangeNotifier {
       (accessToken) => _api.fetchPrimaryCalendarId(accessToken),
     );
     final id = result.data;
-    if (!result.success || id == null || id.isEmpty) return null;
+    if (!result.success || id == null || id.isEmpty) {
+      feishuLogWarning(
+        '解析飞书主日历失败：${result.error ?? '返回里没有 calendar_id'}',
+      );
+      return null;
+    }
     _calendarIds[kind] = id;
     await FeishuCredentialStore.savePrimaryCalendarId(kind, id);
     return id;

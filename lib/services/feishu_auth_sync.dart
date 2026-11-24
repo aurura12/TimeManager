@@ -74,6 +74,7 @@ class FeishuAuthSync {
     if (result.notFound) {
       return const FeishuAuthPullResult(notFound: true);
     }
+    feishuLogWarning('读取飞书授权失败：${result.error ?? '未知错误'}');
     return FeishuAuthPullResult(error: result.error ?? '读取授权失败');
   }
 

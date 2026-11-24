@@ -280,6 +280,7 @@ class FeishuSyncSummary {
     this.needReauth = false,
     this.cancelled = false,
     this.message,
+    this.firstError,
   });
 
   final int totalDays;
@@ -291,6 +292,9 @@ class FeishuSyncSummary {
   final bool cancelled;
   final String? message;
 
+  /// 第一条失败原因，方便直接看出是哪类问题（权限 / 网络 / 截断）。
+  final String? firstError;
+
   int get failedDays => failedDates.length;
 
   String describe() {
@@ -298,7 +302,8 @@ class FeishuSyncSummary {
     if (failedDates.isEmpty) {
       return '完成：$successDays 天，新增 $created 条，删除 $deleted 条';
     }
-    return '完成：成功 $successDays 天，失败 ${failedDates.length} 天';
+    final reason = (firstError ?? '').isEmpty ? '' : '（$firstError）';
+    return '完成：成功 $successDays 天，失败 ${failedDates.length} 天$reason';
   }
 }
 

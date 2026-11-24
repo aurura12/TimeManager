@@ -559,6 +559,9 @@ class FeishuAuthFlow {
   }
 
   Future<FeishuAuthResult> _finish(FeishuAuthResult result) async {
+    if (!result.success) {
+      feishuLogWarning('飞书授权未完成：${result.message ?? '未知原因'}');
+    }
     if (!_completer.isCompleted) _completer.complete(result);
     _timeoutTimer?.cancel();
     _timeoutTimer = null;

@@ -6,6 +6,7 @@ import '../models/category.dart';
 import 'dart:convert';
 import '../services/google_calendar_service.dart';
 import '../models/feishu_calendar_models.dart';
+import '../services/feishu_calendar_log.dart';
 import '../services/feishu_calendar_sync_service.dart';
 import '../services/feishu_credentials_store.dart';
 import '../services/feishu_oauth_service.dart';
@@ -2989,9 +2990,14 @@ class TimeProvider with ChangeNotifier {
           date: date,
           slots: slots,
         );
-        if (!outcome.success && outcome.needReauth) {
-          _dropFeishuQueueAfterAuthLoss();
-          break;
+        if (!outcome.success) {
+          feishuLogWarning(
+            '飞书自动同步失败：$dateKey · ${outcome.message ?? '未知原因'}',
+          );
+          if (outcome.needReauth) {
+            _dropFeishuQueueAfterAuthLoss();
+            break;
+          }
         }
       }
     } finally {
@@ -3019,8 +3025,12 @@ class TimeProvider with ChangeNotifier {
       if (stored.isEmpty) return;
       _pendingFeishuDateKeys.addAll(stored);
       _scheduleFeishuFlush();
-    } catch (_) {
-      // 偏好设置不可用（测试环境）时静默跳过，不影响主流程。
+    } catch (e, stackTrace) {
+      feishuLogWarning(
+        '读取飞书待同步日期失败',
+        error: e,
+        stackTrace: stackTrace,
+      );
     }
   }
 
@@ -3037,8 +3047,12 @@ class TimeProvider with ChangeNotifier {
       if (result.tokens == null && result.needReauth) {
         _dropFeishuQueueAfterAuthLoss();
       }
-    } catch (_) {
-      // 离线 / 测试环境没有插件：忽略。
+    } catch (e, stackTrace) {
+      feishuLogWarning(
+        '飞书授权续期失败（不影响其它同步）',
+        error: e,
+        stackTrace: stackTrace,
+      );
     }
   }
 
