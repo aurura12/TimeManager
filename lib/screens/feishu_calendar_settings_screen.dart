@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -56,6 +57,7 @@ class _FeishuCalendarSettingsScreenState
   DateTime? _lastSyncAt;
   String? _lastSummary;
   String? _authError;
+  String? _authUri;
   FeishuAuthFlow? _flow;
 
   @override
@@ -126,13 +128,14 @@ class _FeishuCalendarSettingsScreenState
       credentials: credentials,
     );
     _flow = flow;
+    setState(() => _authUri = flow.authUri.toString());
 
     var launched = false;
     try {
       launched = await launchUrl(
         flow.authUri,
         mode: LaunchMode.externalApplication,
-      );
+      ).timeout(const Duration(seconds: 10), onTimeout: () => false);
     } on Object {
       launched = false;
     }
@@ -140,7 +143,7 @@ class _FeishuCalendarSettingsScreenState
     if (!launched) {
       setState(() {
         _authorizing = false;
-        _authError = '没能打开浏览器，请复制授权链接手动打开，或直接粘贴回调链接';
+        _authError = '没能自动打开浏览器，点上面的「复制链接」，在浏览器里粘贴打开';
       });
       return;
     }
@@ -148,6 +151,42 @@ class _FeishuCalendarSettingsScreenState
     final result = await flow.result;
     if (!mounted) return;
     await _finishAuthorization(result);
+  }
+
+  Future<void> _copyAuthUri() async {
+    final uri = _authUri;
+    if (uri == null) return;
+    await Clipboard.setData(ClipboardData(text: uri));
+    if (!mounted) return;
+    showAppSnackBar(context, '授权链接已复制');
+  }
+
+  Future<void> _openAuthUriAgain() async {
+    final uri = _authUri;
+    if (uri == null) return;
+    var launched = false;
+    try {
+      launched = await launchUrl(
+        Uri.parse(uri),
+        mode: LaunchMode.externalApplication,
+      ).timeout(const Duration(seconds: 10), onTimeout: () => false);
+    } on Object {
+      launched = false;
+    }
+    if (!mounted || launched) return;
+    setState(() => _authError = '还是没能打开浏览器，请复制链接后手动粘贴打开');
+  }
+
+  Future<void> _cancelAuthorization() async {
+    final flow = _flow;
+    await flow?.cancel();
+    if (!mounted) return;
+    setState(() {
+      _authorizing = false;
+      _flow = null;
+      _authUri = null;
+      _authError = null;
+    });
   }
 
   Future<void> _submitPastedCallback() async {
@@ -178,6 +217,7 @@ class _FeishuCalendarSettingsScreenState
       _authorizing = false;
       _authError = result.success ? null : (result.message ?? '授权失败');
       _flow = null;
+      _authUri = null;
     });
     if (result.success) {
       _pasteController.clear();
@@ -442,11 +482,61 @@ class _FeishuCalendarSettingsScreenState
                 ),
               ],
             ),
-            if (_authorizing) ...[
+            if (_authUri != null) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
-                '已打开浏览器，请完成授权。手机端如果授权后没自动返回，'
-                '把浏览器地址栏的整条链接复制下来，粘到下面。',
+                _authorizing
+                    ? '浏览器没自动打开也没关系：复制下面这条链接，自己粘到浏览器地址栏。'
+                    : '授权链接（需要的话重新复制打开）：',
+                style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(AppSpacing.sm),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest,
+                  borderRadius: AppRadius.controlAll,
+                ),
+                child: SelectableText(
+                  _authUri!,
+                  key: const ValueKey('feishu-auth-uri'),
+                  maxLines: 4,
+                  style: AppText.caption.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Wrap(
+                spacing: AppSpacing.sm,
+                runSpacing: AppSpacing.xs,
+                children: [
+                  TextButton.icon(
+                    key: const ValueKey('feishu-copy-auth-uri'),
+                    onPressed: _copyAuthUri,
+                    icon: const Icon(Icons.copy_rounded),
+                    label: const Text('复制链接'),
+                  ),
+                  TextButton.icon(
+                    key: const ValueKey('feishu-reopen-auth-uri'),
+                    onPressed: _openAuthUriAgain,
+                    icon: const Icon(Icons.open_in_new),
+                    label: const Text('再打开一次'),
+                  ),
+                  if (_authorizing)
+                    TextButton(
+                      key: const ValueKey('feishu-cancel-authorize'),
+                      onPressed: _cancelAuthorization,
+                      child: const Text('取消'),
+                    ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                '在浏览器里同意后，地址栏会跳到 '
+                '127.0.0.1 开头的一页；如果那一页打不开是正常的，'
+                '把整条链接复制下来粘到下面的输入框即可。',
                 style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
               ),
             ],
