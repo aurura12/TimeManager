@@ -2923,6 +2923,20 @@ class TimeProvider with ChangeNotifier {
 
   /// 把排队的日期推到飞书。同一时刻只跑一个；期间新来的编辑会再排一轮。
   Future<void> _flushPendingFeishuSync() async {
+    try {
+      await _flushPendingFeishuSyncUnsafe();
+    } catch (e, stackTrace) {
+      // 测试环境没有偏好设置/钥匙串插件，或网络层异常：不能让它冒成未捕获异常。
+      _appLogService.warning(
+        '飞书自动同步失败',
+        source: 'feishu_calendar',
+        error: e,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<void> _flushPendingFeishuSyncUnsafe() async {
     if (_isDisposed || _feishuSyncing) return;
     final kind = _feishuKind;
     if (kind == null || _pendingFeishuDateKeys.isEmpty) return;
@@ -2976,12 +2990,16 @@ class TimeProvider with ChangeNotifier {
   Future<void> _restoreFeishuPendingDates() async {
     final kind = _feishuKind;
     if (kind == null) return;
-    _feishuAutoSyncCache = await FeishuCredentialStore.loadAutoSync(kind);
-    if (_feishuAutoSyncCache != true) return;
-    final stored = await FeishuCredentialStore.loadPendingDates(kind);
-    if (stored.isEmpty) return;
-    _pendingFeishuDateKeys.addAll(stored);
-    _scheduleFeishuFlush();
+    try {
+      _feishuAutoSyncCache = await FeishuCredentialStore.loadAutoSync(kind);
+      if (_feishuAutoSyncCache != true) return;
+      final stored = await FeishuCredentialStore.loadPendingDates(kind);
+      if (stored.isEmpty) return;
+      _pendingFeishuDateKeys.addAll(stored);
+      _scheduleFeishuFlush();
+    } catch (_) {
+      // 偏好设置不可用（测试环境）时静默跳过，不影响主流程。
+    }
   }
 
   /// 手动补同步最近 [days] 天（含今天）。
