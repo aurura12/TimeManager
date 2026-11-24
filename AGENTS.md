@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-Flutter time management app (package name `time_manager`) with Google Calendar integration, daily diary, travel records, check-in tracking, target tracking, AI daily review, voice scheduling, app logging, global search, a unified sync center, and Android local reminders (daily diary + per check-in goal). Chinese-language UI with English fallback. Supports Android, Windows desktop, macOS, and iOS. iOS 的编译、真机安装 / 运行与调试连接均已验证可用，但构建 / 真机调试**必须在 macOS + Xcode 上**进行；平台差异与踩坑见「iOS 平台约束」。
+Flutter time management app (package name `time_manager`) with Google Calendar integration, one-way Feishu calendar push, daily diary, travel records, check-in tracking, target tracking, AI daily review, voice scheduling, app logging, global search, a unified sync center, and Android local reminders (daily diary + per check-in goal). Chinese-language UI with English fallback. Supports Android, Windows desktop, macOS, and iOS. iOS 的编译、真机安装 / 运行与调试连接均已验证可用，但构建 / 真机调试**必须在 macOS + Xcode 上**进行；平台差异与踩坑见「iOS 平台约束」。
 
 ## 改动前必读（高风险区域索引）
 
@@ -15,10 +15,11 @@ Flutter time management app (package name `time_manager`) with Google Calendar i
 - **背景图（壁纸）** → 见「背景图（壁纸，仅本机）」，本地图片路径绝不进同步或备份
 - **菜单栏常驻（macOS）** → 见「macOS 菜单栏常驻」，窗口双形态 / 激活策略 / 面板只读 + 新增 都在里面
 - **同步 / 身份分片 / 跨身份数据** → 见「远端文档布局」与「分类不带默认种子 + 「临时」仅本机」；切身份文案差异见「待同步队列的身份归属」
+- **飞书日历同步（单向）** → 见「飞书日历同步（单向）」；只推不拉、认领标记、单日串行、待推队列落盘、按身份分片的凭据与两端共用授权全在里面，动 `TimeProvider` 的飞书推送链路前务必先读
 - **视觉（配色 / 间距 / 字号 / 圆角）** → 见「Conventions」，规范在 `docs/design-system.md`，改后必跑 `test/visual_system_test.dart`
 - **界面导入 / 组件库** → 一律用 material_ui，见「界面组件库（material_ui）」；旧 material 导入会让 analyze 报 deprecated、打包脚本直接中断
 
-**按需跳转**：下文依次为「Architecture → 数据流与关键模式 → Commands → iOS 平台约束 / macOS 菜单栏常驻 → 构建与发布 → Config Files / Key Dependencies → Testing → 界面组件库（material_ui） → Conventions」。改具体功能前，先回到上面的风险区索引找到对应小节。
+**按需跳转**：下文依次为「Architecture → 数据流与关键模式 → Commands → iOS 平台约束 / macOS 菜单栏常驻 / 飞书日历同步（单向） → 构建与发布 → Config Files / Key Dependencies → Testing → 界面组件库（material_ui） → Conventions」。改具体功能前，先回到上面的风险区索引找到对应小节。
 
 ## 首次本地开发前提
 
@@ -48,6 +49,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
   - `haptics_provider.dart` → `HapticsProvider` — 触感反馈总开关（`app_haptics_v1`，默认开启），**本机设置、独立于身份、不进同步或备份**。所有震动只能经 `lib/utils/haptics.dart` 的 `playHaptic(context, HapticStrength.*)` 发出（它读这个开关、吞掉平台通道异常），不要在页面里直接调 `HapticFeedback`；设置入口在「我的 → 设置 → 操作与布局 → 触感反馈」
   - `on_this_day_popup_provider.dart` → `OnThisDayPopupProvider` — 「那年今日」启动自动弹出开关（`app_on_this_day_popup_v1`，默认自动弹出），**本机设置、独立于身份、不进同步或备份**；只决定 `MainScreen._tryShowOnThisDay` 是否自动弹层，「记录回顾 → 那年今日」的手动入口不受影响。设置入口在「我的 → 记录回顾 → 自动弹出」
 - **Models**: `lib/models/`
+  - 飞书日历：`FeishuEventDraft` / `FeishuRemoteEvent` / `FeishuDayDiff`（`feishu_calendar_models.dart`，槽位合并、远端事件解析与单日差集）、`FeishuCredentials` / `FeishuTokenSet` / `FeishuRemoteAuth`（凭据、令牌与同步仓库里的授权文件）、`FeishuDaySyncOutcome` / `FeishuSyncSummary` / `FeishuTokenResult`（结果与失败分类：暂时失败 vs 需重新授权）
   - 时间记录：`TimeSlot`, `Category`, `CalendarBlock`, `ScheduleTemplate`, `VoiceScheduleDraft`, `ScheduleSyncProgress`
   - 打卡系统：`CheckInGoal`, `CheckInRecord`, `CheckInDocument`, `CheckInViewFilter`
   - 目标系统：`Target`、`TargetProgress` / `TargetPeriodRange`（`target_progress.dart`，统一进度计算的结果模型）
@@ -61,9 +63,10 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
   - 搜索/同步/日志：`SearchRecordEntry` / `SearchRecordGroup`, `GlobalSearchResult`（含 `GlobalSearchContentType` / `GlobalSearchIdentityFilter`）, `RemoteSyncPlatform`, `PendingSyncState`, `SyncModuleState`（含 `SyncModule` / `SyncModuleStatus`）, `AppLogEntry`, `OnThisDayEntry`
   - 分类生命周期：`DeletedEventRelation`（已删除事件的父子关系，仅本地持久化，见"数据流与关键模式"）
   - 工具：`CoordTransform`
-- **Screens**: `lib/screens/` — `MainScreen`, `HomeScreen`, `DiaryScreen`, `TravelScreen`, `CheckInScreen`, `TargetScreen`, `ProfileScreen`, plus `DailyReviewScreen`, `WordCloudScreen`, `EventDetailScreen`, `TargetDetailScreen`, `AddTargetScreen`, `GlobalSearchScreen`, `GlobalSearchDetailScreen`, `DiarySearchScreen`, `AddCheckInGoalScreen`, `CheckInDetailScreen`, `CheckInArchiveScreen`, `CheckInMapScreen` (flutter_map 地图), `DiaryConflictScreen` (日记冲突逐块对比/合并), `SyncCenterScreen`, `AppLogScreen`, `OnThisDayScreen`, `WakeUpHistoryScreen` (起床历史), `MainTabSettingsScreen` (底部标签设置), `DesktopLayoutSettingsScreen` (桌面布局设置), `DesktopShortcutSettingsScreen` (快捷键设置), `EventLabelSettingsScreen` (事件名显示设置，从「我的 → 设置」进入)
+- **Screens**: `lib/screens/` — `MainScreen`, `HomeScreen`, `DiaryScreen`, `TravelScreen`, `CheckInScreen`, `TargetScreen`, `ProfileScreen`, plus `DailyReviewScreen`, `WordCloudScreen`, `EventDetailScreen`, `TargetDetailScreen`, `AddTargetScreen`, `GlobalSearchScreen`, `GlobalSearchDetailScreen`, `DiarySearchScreen`, `AddCheckInGoalScreen`, `CheckInDetailScreen`, `CheckInArchiveScreen`, `CheckInMapScreen` (flutter_map 地图), `DiaryConflictScreen` (日记冲突逐块对比/合并), `SyncCenterScreen`, `AppLogScreen`, `OnThisDayScreen`, `WakeUpHistoryScreen` (起床历史), `MainTabSettingsScreen` (底部标签设置), `DesktopLayoutSettingsScreen` (桌面布局设置), `DesktopShortcutSettingsScreen` (快捷键设置), `EventLabelSettingsScreen` (事件名显示设置，从「我的 → 设置」进入), `FeishuCalendarSettingsScreen` (飞书日历同步设置：凭据 + 授权 + 自动同步开关 + 手动补同步，入口「我的 → 飞书日历同步」)
 - **Services**: `lib/services/`，主要板块：
   - **Google 身份 & 日历**：`GoogleCalendarService` (OAuth 2.0 + 事件同步)、`calendarEventToBlock`（`google_calendar_event_parser.dart`）、`HomeWidgetService` (Android 桌面小组件：数据 + 外观写入)、`home_widget_theme.dart`（`HomeWidgetTheme` / `HomeWidgetPalette`：由主题色 + 亮度派生两套小组件配色，序列化成 `widget_theme`）、`HomeWidgetActionRouter` (小组件深链接路由)、`AppIdentityService` (手动/Google 双身份)、`AppUserIdentityStore` (身份信息本地存储)、`GoogleSessionStore`
+  - **飞书日历（单向推送）**：`FeishuCalendarSyncService`（单日/批量同步编排，按「身份 + 日期」串行）、`FeishuOAuthService`（授权、换 token、刷新单飞）、`FeishuCalendarApi`（建/删/列日程）、`FeishuCalendarPlanner`（`mergeSlotsToEvents` / `diffFeishuDayEvents` / `buildFeishuEventBody` / `parseFeishuRemoteEvent`）、`FeishuCredentialStore`（按身份分片的凭据与同步状态）、`FeishuAuthSync`（同步仓库 `feishu/{g|j}.json` 的读改写，带 expectedSha）、`FeishuCalendarConfig`（端点、scope、认领标记、回环端口）、`feishu_calendar_log`（统一日志出口）
   - **Git 同步（Gitee/GitHub 双平台）**：`GitHubContentsApi`、`GiteeContentsApi`、`contents_api_common.dart`（`ContentsTreeEntry` / `ContentsDirectoryResult` 等公共类型）、`DiaryGitHubService`/`DiaryGiteeService`、`DiarySyncService` (列表/拉取/推送编排)、`TravelGitHubService`/`TravelGiteeService`、`CheckInGitHubService`/`CheckInGiteeService`、`PendingGoogleDaySyncResult`（待同步状态）
   - **同步中心**：`SyncCenterOperations` + `SyncCenterController`（`sync_center_service.dart`，统一同步入口 / 重试 / 拉取远端）、`SyncStatusCoordinator` + `SharedPreferencesSyncStatusStore`/`InMemorySyncStatusStore`（`sync_status_coordinator.dart`，跨页同步状态）、`SyncOperationLock`（互斥）、`RemoteSyncSettings`、`DiaryAutoSyncService`（`diary_auto_sync_service.dart`，日记自动上传的触发与去重）；日记冲突时模块卡片提供「去处理冲突」，从 `SyncModuleState.details` 里的远端路径解析日期，跳 `DiaryScreen(initialKind/initialDate/openConflictOnLoad)` 直达当天冲突页
   - **日程同步**：`schedule_day_merge.dart`（`parseScheduleContent` / `mergeScheduleSlots`，单日日程解析与合并）、`ScheduleGiteeService`、`ScheduleOverwriteSnapshot`（`schedule_overwrite.dart`，覆盖拉取校验）、`ScheduleSyncDependencies`、`ScheduleSyncManifestStore`、`ScheduleJsonPatch`（`schedule_json_codec.dart`，后台 isolate 里的 JSON 合并）、日程坏格式防护相关服务
@@ -111,6 +114,7 @@ iOS 构建 / 真机调试**必须在 macOS + Xcode 上**进行，Windows 上只�
 - **其它模块的本地保存失败也不静默**：出行 / 打卡 / 日记的 `*_local_store.save*` 返回 `bool`，调用方必须处理。出行删除失败会回滚内存且不推送远端；日记保存失败会显示「本地保存失败」并拒绝切换日期（否则会丢掉编辑框里未落盘的文字），切后台 / 桌面最小化（paused / hidden）时会立即落盘，不等 350ms 防抖；打卡落盘失败直接返回失败结果，不报「同步成功」。store 内已把平台通道异常统一折算成 `false`；新增本地写入时不要忽略 `prefs.setString` 的返回值，也不要让异常冒到 UI
 - **统计缓存**：分类区间、每日趋势与连续块次数各用独立缓存，修改日期只使相交区间失效。日期统计统一忽略时分秒并按自然日遍历，词云缓存键不能包含 `DateTime.now()` 的时分秒。「总览」区间的起点取 `TimeProvider.earliestRecordedDay`（最早有已记录槽位的自然日），不要再写死年份；没有记录时退回今天。`MainTabActivity` 给保活 Tab 传递可见状态；`ProfileScreen` 隐藏时复用已构建内容，返回时重新读取最新统计并保留滚动与筛选状态
 - **Google 日历同步**：3 秒防抖 + `_isSyncing` 锁防并发。事件以 "乖乖爱心晶晶" 为识别签名，区分本 App 创建和外部事件
+- **飞书日历同步**：同一套「本地编辑 → 待推队列 → 3 秒防抖」的模式，但**只推不拉**、按天求差集、认领靠 `description` 标记，细节与全部硬约束见「飞书日历同步（单向）」
 - **打卡合并策略**：`CheckInDocument.merge(local, remote)` 按 ID 去重，同 ID 保留较新记录
 - **起床同步**：修改后 3 秒防抖，启动 / 切身份 / 回前台自动拉取，前台每 60 秒刷新；后台停表，有待上传记录时补同步一次，慢拉取占用同步锁时由收尾补做。自动同步与同步中心共用入口和 `SyncOperationLock`：先读取并严格校验远端文档、按日期合并并本机落盘，再带 SHA 上传，版本冲突最多重试三次。`updatedAt` 较大的修改胜出，同时间戳取较早起床时间，删除同版本优先；删除墓碑保留以防离线旧记录复活。上传期间的新编辑保留待上传标记，失败不能覆盖远端或清掉本机记录；原先仅本机的 v1 记录迁移为最低版本加入首次同步
 - **子事件编辑**：排序、隐藏、删除与新增绝不能按列表位置推断重命名。只有用户明确改名时，编辑草稿才记录原名 → 最终名称，`updateCategoryWithResult` 一次性按原始标签映射，避免交换名称时链式合并；草稿取消不写数据，保存前校验分类未被并发修改。有同名历史记录缺少可识别父 ID 时拒绝改名，不能猜测。真正改名需更新匹配父 ID 的历史时间块、目标和模板；槽位和目标版本基于原版本加一，优先保留尚未拉取的较新远端编辑，同版本仍走原有合并规则。受影响的每个日期标记本机脏数据和带当前身份归属的待同步队列；撤销栈里的标签也要随之迁移
@@ -264,6 +268,22 @@ macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，
 - **登录项**：macOS 13+ `SMAppService.mainApp`，macOS 12 隐藏开关；注册失败或被系统要求批准时只提示并回滚，不阻塞启动。
 - **仅 macOS**：平台判定走 `lib/utils/platform_features.dart` 的 `supportsMenuBar`；Windows 托盘尚未实现。
 
+## 飞书日历同步（单向）
+
+把时间块写成飞书日程，**只推不拉**：飞书上改了、删了都不会读回本 App，也没有回写检测。实现散在 `lib/services/feishu_*.dart` 与 `lib/screens/feishu_calendar_settings_screen.dart`，入口「我的 → 飞书日历同步」。改这块前先读下面这些约束：
+
+- **认领靠 description 标记**：创建时 `description` 写 `FeishuCalendarConfig.eventMarker`；读远端只认「带该标记 + 非 cancelled + 有 event_id」的事件（`parseFeishuRemoteEvent`）。用户在飞书自建的事件绝不能被删——差集的对象只可能是带标记的事件，这是单向同步唯一的安全边界。由此推论：在飞书里删掉本 App 建的日程，下一次同步会被重新建回来，属既定行为，不要试图读回来「尊重」这次删除
+- **单日 = 拉当天 + 精确差集**：`mergeSlotsToEvents` 把连续同标签槽位合成块（跳过空标签、墓碑、`isFromCalendar` 的外部日历槽位；跨 24:00 的块落到次日 00:00），`diffFeishuDayEvents` 按「标题 + 开始 + 结束」精确匹配，所以改名等于一删一建。列表接口的 `has_more` 视为截断：**截断时既不删也不建**（fail-closed）留给下一轮，否则会把没读到的事件当孤儿删掉
+- **同一天必须串行**：`FeishuCalendarSyncService.syncDay` 用 `_dayChains` 按「身份 + 日期」排队，后一次等前一次写完再重新求差集。自动推送与手动全量同时命中同一天时，两边都读到「远端还没有」就会各建一份，飞书上出现重复日程。手动全量 `syncDates` 进行中时，`TimeProvider._flushPendingFeishuSyncUnsafe` 只重新排期、不并发
+- **待推队列按身份落盘**：`TimeProvider._markPendingSync` 顺带调 `_markFeishuCalendarPending`，3 秒防抖（`feishuCalendarDebounce`），同一时刻只跑一个 flush。落盘必须写 `_feishuPendingForDisk`（**正在推的 + 新排队的**并集）：只写新排队会把在途日期从磁盘抹掉，进程被杀就永久丢失。启动时 `_restoreFeishuPendingDates()` 补推，`_keepFeishuTokenAlive()` 续期一次令牌
+- **凭据按身份分片、绝不共用**：App ID / App Secret / access / refresh / 主日历 id / 待推与已同步日期全部用 `identity_{code}_feishu_*` 键（`FeishuCredentialStore`）。两人飞书账号不在同一租户，各自建企业自建应用，**不能假设共用一个 App ID**。切身份时 `_invalidateIdentityScopedOperations` 清内存队列并递增 `_feishuSyncGeneration`，旧身份的异步结果不得写回。这些键不进 `_identityScopedPreferenceBases`、也不进 JSON 备份，换机重装重新授权即可
+- **钥匙串不可用要降级**：密钥优先 `FlutterSecureStorage`；macOS 上应用本地签名、没有钥匙串 entitlement（`PlatformException -34018`）时自动改存 SharedPreferences 并只记一次警告，功能照常。不要为它加阻塞启动的检查
+- **两端共用一次授权**：凭据 + 令牌写进同步仓库 `feishu/{g|j}.json`（`FeishuAuthSync`，8 秒超时，失败只记日志、不阻塞主流程）。refresh_token 一次性、30 天滚动：刷新前先拉远端看另一台是否刚刷过，本地刷新成功后带 `expectedSha` 乐观并发回写；被对方抢先时只记日志、不回写，下次拉取自然用上对方的新令牌。刷新单飞用 `_refreshInFlight`——`whenComplete` 必须用块体 + `ignore()`，写成箭头函数返回 `map.remove()` 会自锁
+- **失败要分清「暂时」还是「失效」**：网络错误 / 5xx / 超时属暂时失败，保留令牌和队列、下次重试；只有 refresh 过期，或服务端明确拒绝且远端也没有新令牌，才置 `needReauth` 要求重新授权。**不要为一次网络失败清令牌**，那会让用户无谓地重走浏览器授权。断开授权写 `revoked` 墓碑，墓碑写失败要提示重试，否则另一台设备下次打开设置页又会把授权装回来
+- **OAuth 走本机回环**：`http://127.0.0.1:17890/feishu/oauth/callback`，端口与飞书后台登记的重定向 URL **必须完全一致**，不能动态改；端口被占不阻断授权，退化为「没自动跳回来？手动完成」里粘贴回调链接（只有失败才自动展开）。这里**没有 PKCE**（带 App Secret 的应用不需要，旧链接/重试时 verifier 与 challenge 对不上会直接失败），`codeVerifier` 留空，不要再加回去
+- **不在同步中心**：`SyncModule` 里没有飞书，状态与手动同步（最近 7 天 / 全部有记录的日期，可取消）只在 `FeishuCalendarSettingsScreen`。「断开连接」只清本机授权，不删飞书上已同步的日程
+- **日志统一出口**：一律走 `feishu_calendar_log.dart` 的 `feishuLog` / `feishuLogWarning`（source `feishu_calendar`，进运行日志），设置页展示的失败文案与日志用同一个字符串，别再各自拼
+
 ## 构建与发布
 
 脚本约定（新增 / 修改 `scripts/` 前先看）：
@@ -376,6 +396,7 @@ macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，
 | 日记（合并 / 冲突 / 日期导航） | `flutter test test/diary_sync_service_test.dart test/diary_sync_service_overwrite_test.dart test/diary_conflict_flow_test.dart test/diary_date_navigation_test.dart` |
 | 日程解析 / 覆盖 / 后台合并 | `flutter test test/schedule_merge_test.dart test/schedule_overwrite_test.dart test/schedule_json_codec_test.dart test/schedule_bad_data_guard_test.dart` |
 | Google 日历同步（OAuth / 事件解析 / 分页） | `flutter test test/google_calendar_event_parser_test.dart test/google_calendar_pagination_test.dart test/google_calendar_sync_status_test.dart` |
+| 飞书日历同步（槽位合并 / 差集 / 令牌共用 / 单日串行） | `flutter test test/feishu_calendar_planner_test.dart test/feishu_calendar_api_test.dart test/feishu_auth_share_test.dart test/feishu_calendar_sync_service_test.dart` |
 | 时间块拖拽调时长 | `flutter test test/time_block_resize_test.dart test/time_provider_resize_test.dart test/time_grid_resize_test.dart` |
 | 撤销 / 重做 | `flutter test test/time_provider_undo_test.dart` |
 | 目标进度 / 统计缓存 | `flutter test test/target_progress_test.dart test/target_progress_ui_test.dart test/statistics_cache_test.dart` |
@@ -393,6 +414,10 @@ macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，
 
 ### 分模块测试要点（按文件）
 
+- `test/feishu_calendar_planner_test.dart` — 飞书槽位合并与差集：连续同标签合并、标签不同 / 中间空格拆分、墓碑与外部日历槽位跳过、整天块落到次日零点、改名视为一删一建、远端截断时不删也不建、重复同签名事件只保留一个
+- `test/feishu_calendar_api_test.dart` — 飞书接口解析：只认本 App 标记、非当天开始的事件忽略、`has_more` 视为截断、请求体带标记与时区、404 视为已删除、权限不足给出可执行提示、401 标记 unauthorized、主日历优先取 `primary`
+- `test/feishu_auth_share_test.dart` — 两台设备共用一次授权：本地无授权时采用远端令牌、令牌有效时不访问仓库、本地过期但对方已刷新则采用、两端都过期才自己刷新并回写、刷新失败但对方刚刷新成功时采用对方令牌、网络失败与 5xx 不清本地令牌也不要求重新授权
+- `test/feishu_calendar_sync_service_test.dart` — 同一天并发触发两次只创建一条日程、串行之后第二次能看到第一条并不重复删建
 - `test/background_image_contrast_test.dart` / `background_image_provider_test.dart` — 背景图对比度契约与 Provider 状态（不透明度只在 commit 时落盘、启动清失效路径、超限/取消属正常结果）
 - `test/visual_system_test.dart` — 视觉系统守护测试：对比度计算、主题一致性、令牌使用约束与源码守卫（页面无颜色 / 圆角 / 字号字面量，字号一律走 `AppText.*`；改 `lib/theme/` 或页面配色时必跑）
 - `test/time_provider_save_test.dart` / `test/schedule_json_codec_test.dart` — 普通编辑保存合并、切后台/身份即时落盘、保存期间新编辑与待同步归属不丢、统计缓存按日期失效、后台 JSON 合并及旧哈希兼容
@@ -450,7 +475,7 @@ Flutter 3.50 起 `package:flutter/material.dart` 整体弃用，界面库统一�
 - 视觉规范：页面不得硬编码颜色/圆角/间距/字号字面量，统一引用 `lib/theme/` 三文件（`AppSpacing`/`AppRadius`/`AppSizes`/`AppText`、`AppSurfaces.of(context)`、`AppSemanticColors`）；照片浮层等主题无关的黑色 scrim 属于允许的例外。**启用背景图时，叠在壁纸上的填充必须走 `context.wallpaperFill()` / `adaptSemanticFill()`（见「背景图」一节）**。守卫测试 `test/visual_system_test.dart`
 - 桌面小组件配色跟随 App 外观（浅/深 + 主题色）：一律由 `lib/services/home_widget_theme.dart` 派生后写进 `widget_theme`，不要在 Kotlin / drawable 里另抄一套；唯一允许保留字面量的是时间轴分段色板 `_timelinePalette`（见 `docs/design-system.md` 3.6）
 - 动效统一走 `lib/theme/app_tokens.dart` 的 `AppMotion`（200ms 单档 + `easeInOutCubic`；透明度过渡别用 `easeOutCubic`，它前 100ms 就走完 90%，看起来只是闪一下）与 `lib/widgets/motion_transitions.dart` 的三个组件（`ValueChangeTransition` 切 Tab / 切日期、`ListItemEntrance` 新增条目、`ListItemRemoval` 删除收高）；**页面里不写时长/曲线字面量，也不自己搭 `FadeTransition` / `AnimationController`**（`test/motion_test.dart` 有源码守卫）。降级统一用 `appMotionDuration()`，只淡入不位移（时间网格必须与时间轴像素对齐）。规范见 `docs/design-system.md` 第十节
-- 同步动作只放在同步中心：页面顶栏只挂 `SyncStatusButton`（正常不占位、同步中转圈、异常红/黄点，点击进 `SyncCenterScreen(initialModule:)`），不要再往页面加同步 / 拉取按钮。需要新方向时扩展 `SyncCenterOperations` 的 `operations`（上传）或 `pulls`（拉取远端），并让页面只上报状态
+- 同步动作只放在同步中心：页面顶栏只挂 `SyncStatusButton`（正常不占位、同步中转圈、异常红/黄点，点击进 `SyncCenterScreen(initialModule:)`），不要再往页面加同步 / 拉取按钮。需要新方向时扩展 `SyncCenterOperations` 的 `operations`（上传）或 `pulls`（拉取远端），并让页面只上报状态。**飞书日历是例外**：`SyncModule` 里没有它，手动同步入口只留在 `FeishuCalendarSettingsScreen`，不要为它新建页面按钮，也不要往同步中心塞一个模块
 - **文档里引用代码位置写符号名，不写行号**：行号每次改动都会漂（`time_provider.dart:2054` 漂到 2057 已经让本文件返工过一次），定位写 `文件路径` + 符号名（如 `TimeProvider.slotsForDate()`）；测试文件名、命令、偏好键这类稳定标识照写
 - 设计文档在 `docs/superpowers/{plans,specs}/`、已完结问题归档在 `docs/archive/`——这些目录**仅本地存在、被 `docs/*` 规则 gitignore**（`.gitignore` 只放行 `docs/design-system.md` 与 `docs/release-notes.md`），按需创建，**不要在 git 里找它们**。视觉规范在 `docs/design-system.md`；`docs/release-notes.md` 是两个发布脚本默认的 Release 说明来源，发版前必须先更新（否则发布查重会拒绝），同时它还是 App 内「更新日志」页的 asset（`pubspec.yaml` 的 `assets:` 引用），**移动或改名会静默 404**。根目录只保留 `AGENTS.md` 与 `README.md`（`待修复问题.md` 已删除，问题清单不再放在根目录）
 - `third_party/` 下是 vendored 的第三方插件 fork，已在 `analysis_options.yaml` 里整体 exclude，不参与本项目的静态检查；升级上游时按该目录下 `FORK.md` 的步骤重做
