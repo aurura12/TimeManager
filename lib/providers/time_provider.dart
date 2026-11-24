@@ -1276,6 +1276,7 @@ class TimeProvider with ChangeNotifier {
     _feishuCalendarTimer?.cancel();
     _feishuCalendarTimer = null;
     _pendingFeishuDateKeys.clear();
+    _feishuInFlightDateKeys.clear();
     _feishuAutoSyncCache = null;
     _debounceTimer?.cancel();
     _localSaveTimer?.cancel();
@@ -2872,9 +2873,19 @@ class TimeProvider with ChangeNotifier {
 
   Timer? _feishuCalendarTimer;
   final Set<String> _pendingFeishuDateKeys = {};
+
+  /// 正在推送的日期。它们已经不在待推集合里，落盘时必须并回来，否则这一轮
+  /// flush 期间新排队的编辑会把它们的磁盘记录冲掉，进程被杀就永久丢失。
+  final Set<String> _feishuInFlightDateKeys = {};
   bool _feishuSyncing = false;
   int _feishuSyncGeneration = 0;
   bool? _feishuAutoSyncCache;
+
+  /// 落盘用的完整待推集合：在途 + 新排队。
+  Set<String> get _feishuPendingForDisk => {
+        ..._feishuInFlightDateKeys,
+        ..._pendingFeishuDateKeys,
+      };
 
   /// 自动同步开关；null 表示还没从本地读过。
   bool get feishuAutoSyncEnabled => _feishuAutoSyncCache ?? false;
@@ -2893,6 +2904,7 @@ class TimeProvider with ChangeNotifier {
       _feishuCalendarTimer?.cancel();
       _feishuCalendarTimer = null;
       _pendingFeishuDateKeys.clear();
+      _feishuInFlightDateKeys.clear();
       _feishuSyncGeneration++;
     }
     notifyListeners();
@@ -2906,10 +2918,11 @@ class TimeProvider with ChangeNotifier {
     _pendingFeishuDateKeys.add(dateKey);
     if (wasEmpty) {
       // 只在新一轮排队时落盘，避免连续拖拽时反复写偏好设置。
+      // 写完整集合而不是这一个日期：否则会把正在推送的那批日期从磁盘上抹掉。
       final kind = _feishuKind;
       if (kind != null) {
         unawaited(
-          FeishuCredentialStore.savePendingDates(kind, [dateKey]),
+          FeishuCredentialStore.savePendingDates(kind, _feishuPendingForDisk),
         );
       }
     }
@@ -2960,7 +2973,11 @@ class TimeProvider with ChangeNotifier {
     final generation = _feishuSyncGeneration;
     final dates = _pendingFeishuDateKeys.toList()..sort();
     _pendingFeishuDateKeys.clear();
-    await FeishuCredentialStore.savePendingDates(kind, dates);
+    _feishuInFlightDateKeys.addAll(dates);
+    await FeishuCredentialStore.savePendingDates(
+      kind,
+      _feishuPendingForDisk,
+    );
     try {
       for (final dateKey in dates) {
         if (_isDisposed || generation != _feishuSyncGeneration) break;
@@ -2979,10 +2996,12 @@ class TimeProvider with ChangeNotifier {
       }
     } finally {
       _feishuSyncing = false;
+      _feishuInFlightDateKeys.clear();
+      // 这一轮已经推完（或被打断），磁盘上只留还没推的日期。
       if (!_isDisposed) {
         await FeishuCredentialStore.savePendingDates(
           kind,
-          _pendingFeishuDateKeys,
+          _feishuPendingForDisk,
         );
       }
     }
@@ -3030,6 +3049,7 @@ class TimeProvider with ChangeNotifier {
   void _dropFeishuQueueAfterAuthLoss() {
     final kind = _feishuKind;
     _pendingFeishuDateKeys.clear();
+    _feishuInFlightDateKeys.clear();
     if (kind == null) return;
     unawaited(FeishuCredentialStore.savePendingDates(kind, const []));
     if (!_isDisposed) notifyListeners();
