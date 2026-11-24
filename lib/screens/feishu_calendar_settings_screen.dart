@@ -9,6 +9,7 @@ import '../models/diary_kind.dart';
 import '../models/feishu_calendar_models.dart';
 import '../providers/time_provider.dart';
 import '../services/app_identity_service.dart';
+import '../services/feishu_auth_sync.dart';
 import '../services/feishu_calendar_constants.dart';
 import '../services/feishu_calendar_sync_service.dart';
 import '../services/feishu_credentials_store.dart';
@@ -80,6 +81,12 @@ class _FeishuCalendarSettingsScreenState
     if (kind == null) {
       if (mounted) setState(() => _loading = false);
       return;
+    }
+    final localCredentials = await FeishuCredentialStore.loadCredentials(kind);
+    final localTokens = await FeishuCredentialStore.loadTokens(kind);
+    if (localCredentials == null || localTokens == null) {
+      // 另一台设备授权过就能直接用，不用在这台再走一遍浏览器授权
+      await _oauth.syncFromRemote(kind);
     }
     final credentials = await FeishuCredentialStore.loadCredentials(kind);
     final tokens = await FeishuCredentialStore.loadTokens(kind);
@@ -235,7 +242,10 @@ class _FeishuCalendarSettingsScreenState
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('断开飞书日历'),
-        content: const Text('只清除本机保存的授权，不会删除飞书日历上已同步的日程。'),
+        content: const Text(
+          '会清除这台设备和其它设备的飞书授权（需要重新授权），'
+          '但不会删除飞书日历上已同步的日程。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -251,6 +261,7 @@ class _FeishuCalendarSettingsScreenState
     if (confirmed != true) return;
     await FeishuCredentialStore.clearTokens(kind);
     await FeishuCredentialStore.saveNeedsReauth(kind, false);
+    await FeishuAuthSync().revoke(kind);
     if (!mounted) return;
     showAppSnackBar(context, '已断开飞书日历');
     await _load();
@@ -382,7 +393,8 @@ class _FeishuCalendarSettingsScreenState
             const SizedBox(height: AppSpacing.sm),
             Text(
               '只把时间块写到飞书日历，不会把飞书上的改动读回来。'
-              '自动同步产生的日程带固定标记，手改会被下次同步覆盖。',
+              '自动同步产生的日程带固定标记，手改会被下次同步覆盖。'
+              '授权会在同一身份的其它设备之间共用，一边授权过就不用再授权。',
               style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: AppSpacing.sm),

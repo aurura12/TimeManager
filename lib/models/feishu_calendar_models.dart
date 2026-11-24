@@ -275,3 +275,92 @@ class FeishuSyncSummary {
     return '完成：成功 $successDays 天，失败 ${failedDates.length} 天';
   }
 }
+
+/// 同步到 Gitee 仓库里的授权信息（凭据 + 令牌），供同一身份的其它设备复用。
+class FeishuRemoteAuth {
+  const FeishuRemoteAuth({
+    required this.updatedAt,
+    this.credentials,
+    this.tokens,
+    this.revoked = false,
+    this.sha,
+  });
+
+  final DateTime updatedAt;
+  final FeishuCredentials? credentials;
+  final FeishuTokenSet? tokens;
+
+  /// 用户主动断开时写入的墓碑，避免另一台设备又把授权同步回来。
+  final bool revoked;
+
+  final String? sha;
+
+  bool get hasAuth => !revoked && credentials != null;
+
+  FeishuRemoteAuth withSha(String? sha) => FeishuRemoteAuth(
+        updatedAt: updatedAt,
+        credentials: credentials,
+        tokens: tokens,
+        revoked: revoked,
+        sha: sha,
+      );
+
+  Map<String, dynamic> toJson() {
+    final credentials = this.credentials;
+    final tokens = this.tokens;
+    return {
+      'revoked': revoked,
+      'updated_at': updatedAt.millisecondsSinceEpoch,
+      if (credentials != null) 'app_id': credentials.appId,
+      if (credentials != null) 'app_secret': credentials.appSecret,
+      if (tokens != null) 'access_token': tokens.accessToken,
+      if (tokens != null)
+        'access_expires_at': tokens.accessExpiresAt.millisecondsSinceEpoch,
+      if (tokens?.hasRefreshToken ?? false)
+        'refresh_token': tokens!.refreshToken,
+      if (tokens?.refreshExpiresAt != null)
+        'refresh_expires_at': tokens!.refreshExpiresAt!.millisecondsSinceEpoch,
+      if ((tokens?.scope ?? '').isNotEmpty) 'scope': tokens!.scope,
+    };
+  }
+
+  static FeishuRemoteAuth? fromJson(Map<String, dynamic> json, {String? sha}) {
+    final updatedAt = json['updated_at'];
+    if (updatedAt is! int) return null;
+    final appId = (json['app_id'] ?? '').toString().trim();
+    final appSecret = (json['app_secret'] ?? '').toString().trim();
+    final credentials = appId.isEmpty || appSecret.isEmpty
+        ? null
+        : FeishuCredentials(appId: appId, appSecret: appSecret);
+
+    final accessToken = (json['access_token'] ?? '').toString().trim();
+    final accessExpiresAt = json['access_expires_at'];
+    FeishuTokenSet? tokens;
+    if (accessToken.isNotEmpty && accessExpiresAt is int) {
+      final refreshExpiresAt = json['refresh_expires_at'];
+      final refreshToken =
+          (json['refresh_token'] ?? '').toString().trim().isEmpty
+              ? null
+              : json['refresh_token'].toString().trim();
+      tokens = FeishuTokenSet(
+        accessToken: accessToken,
+        accessExpiresAt: DateTime.fromMillisecondsSinceEpoch(accessExpiresAt),
+        refreshToken: refreshToken,
+        refreshExpiresAt: refreshExpiresAt is int
+            ? DateTime.fromMillisecondsSinceEpoch(refreshExpiresAt)
+            : null,
+        scope: (json['scope'] ?? '').toString().isEmpty
+            ? null
+            : json['scope'].toString(),
+      );
+    }
+
+    return FeishuRemoteAuth(
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(updatedAt),
+      credentials: credentials,
+      tokens: tokens,
+      revoked: json['revoked'] == true,
+      sha: sha,
+    );
+  }
+}

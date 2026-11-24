@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/diary_kind.dart';
@@ -9,6 +10,7 @@ import '../models/feishu_calendar_models.dart';
 import 'contents_api_common.dart';
 import 'feishu_calendar_constants.dart';
 import 'feishu_calendar_log.dart';
+import 'feishu_auth_sync.dart';
 import 'feishu_calendar_planner.dart';
 import 'feishu_credentials_store.dart';
 
@@ -16,12 +18,18 @@ import 'feishu_credentials_store.dart';
 ///
 /// 授权走「拉起浏览器 + 本机回环收 code」，收不到时由设置页的粘贴回调兜底。
 class FeishuOAuthService {
-  FeishuOAuthService({http.Client? client}) : _client = client;
+  FeishuOAuthService({http.Client? client, FeishuAuthSync? authSync})
+      : _client = client,
+        _authSync = authSync ?? FeishuAuthSync();
 
   final http.Client? _client;
+  final FeishuAuthSync _authSync;
 
   /// 同一个 refresh_token 只能用一次，并发刷新必须共享同一个 Future。
   static final Map<DiaryKind, Future<FeishuTokenSet?>> _refreshInFlight = {};
+
+  @visibleForTesting
+  static void resetRefreshStateForTesting() => _refreshInFlight.clear();
 
   /// 发起授权：登记 pending、尽量起回环服务器，返回授权链接。
   Future<FeishuAuthFlow> beginAuthorization({
@@ -95,36 +103,80 @@ class FeishuOAuthService {
     );
   }
 
-  /// 拿一个可用令牌；快过期时自动刷新。
+  /// 拿一个可用令牌；本地过期时先看别的设备是否刚刷新过，再自己刷。
   Future<FeishuTokenSet?> ensureAccessToken(DiaryKind kind) async {
-    final tokens = await FeishuCredentialStore.loadTokens(kind);
-    if (tokens == null) return null;
-    if (tokens.isRefreshExpired(DateTime.now())) {
+    final now = DateTime.now();
+    final local = await FeishuCredentialStore.loadTokens(kind);
+    if (local != null &&
+        !local.isAccessExpired(now) &&
+        !local.isRefreshExpired(now)) {
+      return local;
+    }
+
+    final remote = await _authSync.pull(kind);
+    final remoteAuth = remote.auth;
+    final remoteTokens = remoteAuth?.tokens;
+    if (remoteTokens != null &&
+        !remoteTokens.isAccessExpired(now) &&
+        !remoteTokens.isRefreshExpired(now)) {
+      await _adoptRemote(kind, remoteAuth!);
+      return remoteTokens;
+    }
+
+    if (local == null && remoteTokens == null) {
+      if (remoteAuth != null && remoteAuth.revoked) {
+        await FeishuCredentialStore.clearTokens(kind);
+      }
+      return null;
+    }
+    return refreshAccessToken(kind, prefetched: remote);
+  }
+
+  Future<FeishuTokenSet?> refreshAccessToken(
+    DiaryKind kind, {
+    FeishuAuthPullResult? prefetched,
+  }) {
+    final inFlight = _refreshInFlight[kind];
+    if (inFlight != null) return inFlight;
+    final future = _doRefresh(kind, prefetched);
+    _refreshInFlight[kind] = future;
+    // 注意：whenComplete 的回调如果返回 Future 会等它完成，而 remove 正好返回
+    // 这个 Future 本身，写成箭头函数会自锁。用块体并忽略派生 future。
+    future.whenComplete(() {
+      _refreshInFlight.remove(kind);
+    }).ignore();
+    return future;
+  }
+
+  Future<FeishuTokenSet?> _doRefresh(
+    DiaryKind kind,
+    FeishuAuthPullResult? prefetched,
+  ) async {
+    final now = DateTime.now();
+    final pull = prefetched ?? await _authSync.pull(kind);
+    final remoteAuth = pull.auth;
+    final remoteTokens = remoteAuth?.tokens;
+    if (remoteTokens != null &&
+        !remoteTokens.isAccessExpired(now) &&
+        !remoteTokens.isRefreshExpired(now)) {
+      await _adoptRemote(kind, remoteAuth!);
+      return remoteTokens;
+    }
+
+    final credentials = remoteAuth?.credentials ??
+        await FeishuCredentialStore.loadCredentials(kind);
+    final tokens = remoteTokens ?? await FeishuCredentialStore.loadTokens(kind);
+    if (credentials == null || tokens == null || !tokens.hasRefreshToken) {
+      await FeishuCredentialStore.saveNeedsReauth(kind, true);
+      return null;
+    }
+    if (tokens.isRefreshExpired(now)) {
       feishuLogWarning('飞书刷新令牌已过期，需要重新授权');
       await FeishuCredentialStore.clearTokens(kind);
       await FeishuCredentialStore.saveNeedsReauth(kind, true);
       return null;
     }
-    if (!tokens.isAccessExpired(DateTime.now())) return tokens;
-    return refreshAccessToken(kind);
-  }
 
-  Future<FeishuTokenSet?> refreshAccessToken(DiaryKind kind) {
-    final inFlight = _refreshInFlight[kind];
-    if (inFlight != null) return inFlight;
-    final future =
-        _doRefresh(kind).whenComplete(() => _refreshInFlight.remove(kind));
-    _refreshInFlight[kind] = future;
-    return future;
-  }
-
-  Future<FeishuTokenSet?> _doRefresh(DiaryKind kind) async {
-    final credentials = await FeishuCredentialStore.loadCredentials(kind);
-    final tokens = await FeishuCredentialStore.loadTokens(kind);
-    if (credentials == null || tokens == null || !tokens.hasRefreshToken) {
-      await FeishuCredentialStore.saveNeedsReauth(kind, true);
-      return null;
-    }
     final result = await _requestToken(
       kind: kind,
       credentials: credentials,
@@ -137,26 +189,116 @@ class FeishuOAuthService {
     );
     final refreshed = result.tokens;
     if (refreshed == null) {
+      // refresh_token 一次性：可能是另一台抢先刷过并把新令牌写回仓库了。
+      final retry = await _authSync.pull(kind);
+      final retryTokens = retry.auth?.tokens;
+      if (retryTokens != null &&
+          !retryTokens.isAccessExpired(now) &&
+          !retryTokens.isRefreshExpired(now)) {
+        await _adoptRemote(kind, retry.auth!);
+        return retryTokens;
+      }
       feishuLogWarning('飞书令牌刷新失败：${result.error ?? '未知错误'}');
       await FeishuCredentialStore.clearTokens(kind);
       await FeishuCredentialStore.saveNeedsReauth(kind, true);
       return null;
     }
-    await FeishuCredentialStore.saveTokens(
-      kind,
-      refreshed.hasRefreshToken
-          ? refreshed
-          : FeishuTokenSet(
-              accessToken: refreshed.accessToken,
-              accessExpiresAt: refreshed.accessExpiresAt,
-              refreshToken: tokens.refreshToken,
-              refreshExpiresAt: tokens.refreshExpiresAt,
-              scope: refreshed.scope ?? tokens.scope,
-            ),
-    );
+
+    final merged = refreshed.hasRefreshToken
+        ? refreshed
+        : FeishuTokenSet(
+            accessToken: refreshed.accessToken,
+            accessExpiresAt: refreshed.accessExpiresAt,
+            refreshToken: tokens.refreshToken,
+            refreshExpiresAt: tokens.refreshExpiresAt,
+            scope: refreshed.scope ?? tokens.scope,
+          );
+    await FeishuCredentialStore.saveTokens(kind, merged);
     await FeishuCredentialStore.saveNeedsReauth(kind, false);
+    await _publishAuth(
+      kind,
+      merged,
+      baseSha: pull.auth?.sha,
+      expectNotFound: pull.notFound,
+    );
     feishuLog('飞书令牌已刷新');
-    return refreshed;
+    return merged;
+  }
+
+  /// 打开设置页时调用：本地没有可用授权就从同步仓库捞一份回来。
+  Future<bool> syncFromRemote(DiaryKind kind) async {
+    final pull = await _authSync.pull(kind);
+    final auth = pull.auth;
+    if (auth == null) return false;
+    if (auth.revoked) {
+      await FeishuCredentialStore.clearTokens(kind);
+      return true;
+    }
+    if (auth.credentials != null) {
+      final local = await FeishuCredentialStore.loadCredentials(kind);
+      if (local == null) {
+        await FeishuCredentialStore.saveCredentials(kind, auth.credentials!);
+      }
+    }
+    final now = DateTime.now();
+    final remoteTokens = auth.tokens;
+    final localTokens = await FeishuCredentialStore.loadTokens(kind);
+    final localUnusable =
+        localTokens == null || localTokens.isAccessExpired(now);
+    if (remoteTokens != null &&
+        localUnusable &&
+        !remoteTokens.isAccessExpired(now) &&
+        !remoteTokens.isRefreshExpired(now)) {
+      await _adoptRemote(kind, auth);
+    }
+    return true;
+  }
+
+  /// 授权成功后把令牌写进同步仓库，另一台设备直接复用。
+  Future<void> publishAuthorization(DiaryKind kind) async {
+    final tokens = await FeishuCredentialStore.loadTokens(kind);
+    if (tokens == null) return;
+    final pull = await _authSync.pull(kind);
+    if (!pull.available) return;
+    await _publishAuth(
+      kind,
+      tokens,
+      baseSha: pull.auth?.sha,
+      expectNotFound: pull.notFound,
+    );
+  }
+
+  Future<void> _adoptRemote(DiaryKind kind, FeishuRemoteAuth auth) async {
+    final credentials = auth.credentials;
+    if (credentials != null) {
+      await FeishuCredentialStore.saveCredentials(kind, credentials);
+    }
+    final tokens = auth.tokens;
+    if (tokens != null) {
+      await FeishuCredentialStore.saveTokens(kind, tokens);
+    }
+    await FeishuCredentialStore.saveNeedsReauth(kind, false);
+    feishuLog('已采用同步仓库里的飞书授权（${kind.code}）');
+  }
+
+  Future<void> _publishAuth(
+    DiaryKind kind,
+    FeishuTokenSet tokens, {
+    String? baseSha,
+    bool expectNotFound = false,
+  }) async {
+    final credentials = await FeishuCredentialStore.loadCredentials(kind);
+    if (credentials == null) return;
+    await _authSync.push(
+      kind,
+      FeishuRemoteAuth(
+        credentials: credentials,
+        tokens: tokens,
+        updatedAt: DateTime.now(),
+      ),
+      expectedSha: baseSha,
+      expectNotFound: expectNotFound,
+    );
   }
 
   Future<_TokenResult> _exchangeAuthorizationCode({
@@ -373,6 +515,7 @@ class FeishuAuthFlow {
     await FeishuCredentialStore.clearPendingAuth(kind);
     await FeishuCredentialStore.saveNeedsReauth(kind, false);
     feishuLog('飞书授权成功（${kind.code}）');
+    await service.publishAuthorization(kind);
     return _finish(const FeishuAuthResult.ok());
   }
 
