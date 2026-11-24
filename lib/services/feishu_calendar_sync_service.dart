@@ -47,12 +47,13 @@ class FeishuCalendarSyncService extends ChangeNotifier {
     required List<TimeSlot> slots,
   }) async {
     final dateKey = _dateKey(date);
-    final token = await _oauth.ensureAccessToken(kind);
-    if (token == null) {
+    final tokenResult = await _oauth.ensureAccessToken(kind);
+    if (tokenResult.tokens == null) {
+      // 网络失败只报错、不标记重新授权：把队列留住，下次自动重试。
       return FeishuDaySyncOutcome.failed(
         dateKey,
-        '飞书授权已失效，请重新授权',
-        needReauth: true,
+        tokenResult.error ?? '飞书授权已失效，请重新授权',
+        needReauth: tokenResult.needReauth,
       );
     }
 
@@ -252,15 +253,26 @@ class FeishuCalendarSyncService extends ChangeNotifier {
     DiaryKind kind,
     Future<FeishuApiResult<T>> Function(String accessToken) call,
   ) async {
-    final tokens = await _oauth.ensureAccessToken(kind);
+    final tokenResult = await _oauth.ensureAccessToken(kind);
+    final tokens = tokenResult.tokens;
     if (tokens == null) {
-      return FeishuApiResult.failed('飞书授权已失效，请重新授权', unauthorized: true);
+      return FeishuApiResult.failed(
+        tokenResult.error ?? '飞书授权已失效，请重新授权',
+        unauthorized: tokenResult.needReauth,
+      );
     }
     final first = await call(tokens.accessToken);
     if (!first.unauthorized) return first;
     final refreshed = await _oauth.refreshAccessToken(kind);
-    if (refreshed == null) return first;
-    return call(refreshed.accessToken);
+    final refreshedTokens = refreshed.tokens;
+    if (refreshedTokens == null) {
+      // 暂时刷新不了就如实报错；只有真的失效才让上层要求重新授权。
+      return FeishuApiResult.failed(
+        refreshed.error ?? first.error ?? '飞书授权已失效，请重新授权',
+        unauthorized: refreshed.needReauth,
+      );
+    }
+    return call(refreshedTokens.accessToken);
   }
 
   Future<void> _updateSyncedIndex(

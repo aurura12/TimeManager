@@ -81,9 +81,9 @@ void main() {
     final fake = _FakeAuthSync(FeishuAuthPullResult(auth: remote));
     final service = FeishuOAuthService(authSync: fake);
 
-    final token = await service.ensureAccessToken(kind);
+    final result = await service.ensureAccessToken(kind);
 
-    expect(token?.accessToken, 'remote-access');
+    expect(result.tokens?.accessToken, 'remote-access');
     expect(fake.pullCount, 1);
     final stored = await FeishuCredentialStore.loadTokens(kind);
     expect(stored?.accessToken, 'remote-access');
@@ -104,9 +104,9 @@ void main() {
     final fake = _FakeAuthSync(const FeishuAuthPullResult(notFound: true));
     final service = FeishuOAuthService(authSync: fake);
 
-    final token = await service.ensureAccessToken(kind);
+    final result = await service.ensureAccessToken(kind);
 
-    expect(token?.accessToken, 'local-access');
+    expect(result.tokens?.accessToken, 'local-access');
     expect(fake.pullCount, 0);
   });
 
@@ -134,9 +134,9 @@ void main() {
     addTearDown(client.close);
     final service = FeishuOAuthService(client: client, authSync: fake);
 
-    final token = await service.ensureAccessToken(kind);
+    final result = await service.ensureAccessToken(kind);
 
-    expect(token?.accessToken, 'fresh-access');
+    expect(result.tokens?.accessToken, 'fresh-access');
     expect(fake.pushed, isEmpty);
   });
 
@@ -173,8 +173,8 @@ void main() {
     addTearDown(client.close);
     final service = FeishuOAuthService(client: client, authSync: fake);
 
-    final token = await service.ensureAccessToken(kind);
-    expect(token?.accessToken, 'new-access');
+    final result = await service.ensureAccessToken(kind);
+    expect(result.tokens?.accessToken, 'new-access');
     expect(fake.pushed.single.tokens?.refreshToken, 'new-refresh');
     final stored = await FeishuCredentialStore.loadTokens(kind);
     expect(stored?.refreshToken, 'new-refresh');
@@ -217,13 +217,72 @@ void main() {
       pulls++;
       return pulls;
     });
-    final token = await FeishuOAuthService(client: client, authSync: service2)
+    final result = await FeishuOAuthService(client: client, authSync: service2)
         .ensureAccessToken(kind);
 
-    expect(token?.accessToken, 'other-device-access');
+    expect(result.tokens?.accessToken, 'other-device-access');
     final stored = await FeishuCredentialStore.loadTokens(kind);
     expect(stored?.accessToken, 'other-device-access');
     expect(await FeishuCredentialStore.loadNeedsReauth(kind), isFalse);
+  });
+
+  test('刷新时网络失败不清空本地令牌，也不要求重新授权', () async {
+    await FeishuCredentialStore.saveCredentials(
+      kind,
+      const FeishuCredentials(appId: 'cli_x', appSecret: 'secret'),
+    );
+    await FeishuCredentialStore.saveTokens(
+      kind,
+      tokenSet(
+        access: 'stale-access',
+        accessIn: const Duration(hours: -3),
+        refresh: 'still-good-refresh',
+        refreshIn: const Duration(days: 20),
+      ),
+    );
+    // 网络层直接抛错：走的是「暂时失败」而不是「授权失效」。
+    final client = MockClient((request) async {
+      throw http.RequestAbortedException(request.url);
+    });
+    addTearDown(client.close);
+    final fake = _FakeAuthSync(const FeishuAuthPullResult(notFound: true));
+    final service = FeishuOAuthService(client: client, authSync: fake);
+
+    final result = await service.ensureAccessToken(kind);
+
+    expect(result.tokens, isNull);
+    expect(result.needReauth, isFalse);
+    expect(result.error, isNotNull);
+    final stored = await FeishuCredentialStore.loadTokens(kind);
+    expect(stored?.refreshToken, 'still-good-refresh');
+    expect(await FeishuCredentialStore.loadNeedsReauth(kind), isFalse);
+  });
+
+  test('服务端 5xx 视为暂时失败，不清空令牌', () async {
+    await FeishuCredentialStore.saveCredentials(
+      kind,
+      const FeishuCredentials(appId: 'cli_x', appSecret: 'secret'),
+    );
+    await FeishuCredentialStore.saveTokens(
+      kind,
+      tokenSet(
+        access: 'stale-access',
+        accessIn: const Duration(hours: -3),
+        refresh: 'still-good-refresh',
+        refreshIn: const Duration(days: 20),
+      ),
+    );
+    final client = MockClient((request) async => http.Response('busy', 503));
+    addTearDown(client.close);
+    final fake = _FakeAuthSync(const FeishuAuthPullResult(notFound: true));
+
+    final result = await FeishuOAuthService(client: client, authSync: fake)
+        .ensureAccessToken(kind);
+
+    expect(result.tokens, isNull);
+    expect(result.needReauth, isFalse);
+    final stored = await FeishuCredentialStore.loadTokens(kind);
+    expect(stored?.refreshToken, 'still-good-refresh');
   });
 }
 

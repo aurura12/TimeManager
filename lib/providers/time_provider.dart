@@ -3013,8 +3013,11 @@ class TimeProvider with ChangeNotifier {
     if (kind == null) return;
     try {
       if (await FeishuCredentialStore.loadTokens(kind) == null) return;
-      final token = await FeishuOAuthService().ensureAccessToken(kind);
-      if (token == null) _dropFeishuQueueAfterAuthLoss();
+      final result = await FeishuOAuthService().ensureAccessToken(kind);
+      // 只有真的需要重新授权才清队列；网络失败留给下次启动重试。
+      if (result.tokens == null && result.needReauth) {
+        _dropFeishuQueueAfterAuthLoss();
+      }
     } catch (_) {
       // 离线 / 测试环境没有插件：忽略。
     }

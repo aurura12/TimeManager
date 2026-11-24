@@ -233,6 +233,33 @@ class FeishuApiResult<T> {
   final bool unauthorized;
 }
 
+/// 取令牌的结果：区分「需要重新授权」与「暂时失败（网络/服务端）」。
+///
+/// 两者都拿不到令牌，但处理方式完全不同：前者必须让用户重走授权，后者只要
+/// 保持本地令牌不动、下一次再试，绝不能清空令牌。
+class FeishuTokenResult {
+  const FeishuTokenResult._({
+    this.tokens,
+    this.error,
+    this.needReauth = false,
+  });
+
+  const FeishuTokenResult.ok(FeishuTokenSet tokens) : this._(tokens: tokens);
+
+  const FeishuTokenResult.needReauth(String error)
+      : this._(error: error, needReauth: true);
+
+  const FeishuTokenResult.transient(String error) : this._(error: error);
+
+  final FeishuTokenSet? tokens;
+  final String? error;
+
+  /// 必须重新授权；为假时表示只是这次没拿到，稍后重试即可。
+  final bool needReauth;
+
+  bool get success => tokens != null;
+}
+
 /// 某一天的事件列表（带截断标记）。
 class FeishuEventPage {
   const FeishuEventPage({required this.events, required this.truncated});

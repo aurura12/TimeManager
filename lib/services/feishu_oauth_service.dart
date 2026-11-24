@@ -26,7 +26,7 @@ class FeishuOAuthService {
   final FeishuAuthSync _authSync;
 
   /// 同一个 refresh_token 只能用一次，并发刷新必须共享同一个 Future。
-  static final Map<DiaryKind, Future<FeishuTokenSet?>> _refreshInFlight = {};
+  static final Map<DiaryKind, Future<FeishuTokenResult>> _refreshInFlight = {};
 
   @visibleForTesting
   static void resetRefreshStateForTesting() => _refreshInFlight.clear();
@@ -104,13 +104,13 @@ class FeishuOAuthService {
   }
 
   /// 拿一个可用令牌；本地过期时先看别的设备是否刚刷新过，再自己刷。
-  Future<FeishuTokenSet?> ensureAccessToken(DiaryKind kind) async {
+  Future<FeishuTokenResult> ensureAccessToken(DiaryKind kind) async {
     final now = DateTime.now();
     final local = await FeishuCredentialStore.loadTokens(kind);
     if (local != null &&
         !local.isAccessExpired(now) &&
         !local.isRefreshExpired(now)) {
-      return local;
+      return FeishuTokenResult.ok(local);
     }
 
     final remote = await _authSync.pull(kind);
@@ -120,19 +120,24 @@ class FeishuOAuthService {
         !remoteTokens.isAccessExpired(now) &&
         !remoteTokens.isRefreshExpired(now)) {
       await _adoptRemote(kind, remoteAuth!);
-      return remoteTokens;
+      return FeishuTokenResult.ok(remoteTokens);
     }
 
     if (local == null && remoteTokens == null) {
       if (remoteAuth != null && remoteAuth.revoked) {
         await FeishuCredentialStore.clearTokens(kind);
+        return const FeishuTokenResult.needReauth('飞书授权已失效，请重新授权');
       }
-      return null;
+      // 读远端失败不代表授权失效：本地没令牌只是这次查不到，让调用方稍后重试。
+      if (remote.error != null) {
+        return const FeishuTokenResult.transient('网络异常，飞书日程稍后自动重试');
+      }
+      return const FeishuTokenResult.needReauth('飞书授权已失效，请重新授权');
     }
     return refreshAccessToken(kind, prefetched: remote);
   }
 
-  Future<FeishuTokenSet?> refreshAccessToken(
+  Future<FeishuTokenResult> refreshAccessToken(
     DiaryKind kind, {
     FeishuAuthPullResult? prefetched,
   }) {
@@ -148,7 +153,7 @@ class FeishuOAuthService {
     return future;
   }
 
-  Future<FeishuTokenSet?> _doRefresh(
+  Future<FeishuTokenResult> _doRefresh(
     DiaryKind kind,
     FeishuAuthPullResult? prefetched,
   ) async {
@@ -160,21 +165,23 @@ class FeishuOAuthService {
         !remoteTokens.isAccessExpired(now) &&
         !remoteTokens.isRefreshExpired(now)) {
       await _adoptRemote(kind, remoteAuth!);
-      return remoteTokens;
+      return FeishuTokenResult.ok(remoteTokens);
     }
 
     final credentials = remoteAuth?.credentials ??
         await FeishuCredentialStore.loadCredentials(kind);
     final tokens = remoteTokens ?? await FeishuCredentialStore.loadTokens(kind);
-    if (credentials == null || tokens == null || !tokens.hasRefreshToken) {
+    if (credentials == null ||
+        tokens == null ||
+        !tokens.hasRefreshToken) {
       await FeishuCredentialStore.saveNeedsReauth(kind, true);
-      return null;
+      return const FeishuTokenResult.needReauth('飞书授权已失效，请重新授权');
     }
     if (tokens.isRefreshExpired(now)) {
       feishuLogWarning('飞书刷新令牌已过期，需要重新授权');
       await FeishuCredentialStore.clearTokens(kind);
       await FeishuCredentialStore.saveNeedsReauth(kind, true);
-      return null;
+      return const FeishuTokenResult.needReauth('飞书授权已过期，请重新授权');
     }
 
     final result = await _requestToken(
@@ -189,6 +196,14 @@ class FeishuOAuthService {
     );
     final refreshed = result.tokens;
     if (refreshed == null) {
+      // 网络/服务端故障只是这一次没换成：令牌还留着，下次启动或下次同步再试。
+      // 清掉令牌会让用户被无谓地要求重走浏览器授权。
+      if (result.network) {
+        feishuLogWarning('飞书令牌刷新暂时失败：${result.error ?? '未知错误'}');
+        return FeishuTokenResult.transient(
+          result.error ?? '网络异常，飞书日程稍后自动重试',
+        );
+      }
       // refresh_token 一次性：可能是另一台抢先刷过并把新令牌写回仓库了。
       final retry = await _authSync.pull(kind);
       final retryTokens = retry.auth?.tokens;
@@ -196,12 +211,12 @@ class FeishuOAuthService {
           !retryTokens.isAccessExpired(now) &&
           !retryTokens.isRefreshExpired(now)) {
         await _adoptRemote(kind, retry.auth!);
-        return retryTokens;
+        return FeishuTokenResult.ok(retryTokens);
       }
       feishuLogWarning('飞书令牌刷新失败：${result.error ?? '未知错误'}');
       await FeishuCredentialStore.clearTokens(kind);
       await FeishuCredentialStore.saveNeedsReauth(kind, true);
-      return null;
+      return const FeishuTokenResult.needReauth('飞书授权已失效，请重新授权');
     }
 
     final merged = refreshed.hasRefreshToken
@@ -222,7 +237,7 @@ class FeishuOAuthService {
       expectNotFound: pull.notFound,
     );
     feishuLog('飞书令牌已刷新');
-    return merged;
+    return FeishuTokenResult.ok(merged);
   }
 
   /// 打开设置页时调用：本地没有可用授权就从同步仓库捞一份回来。
@@ -340,10 +355,14 @@ class FeishuOAuthService {
       if (response.statusCode == 404 || response.statusCode == 405) {
         return await _requestTokenV2(client: client, body: body);
       }
+      // 5xx 是服务端暂时不可用，判定为可重试的暂时失败，不能当授权失效。
+      if (response.statusCode >= 500) {
+        return _TokenResult.network('飞书服务暂时不可用（${response.statusCode}）');
+      }
       return _parseTokenResponse(response.body);
     } catch (e, stackTrace) {
       feishuLogError('飞书换取令牌失败', error: e, stackTrace: stackTrace);
-      return _TokenResult.failed('网络错误，请稍后重试');
+      return const _TokenResult.network('网络错误，请稍后重试');
     } finally {
       if (_client == null) client.close();
     }
@@ -438,14 +457,19 @@ class FeishuOAuthService {
 }
 
 class _TokenResult {
-  const _TokenResult._({this.tokens, this.error});
+  const _TokenResult._({this.tokens, this.error, this.network = false});
 
   const _TokenResult.ok(FeishuTokenSet tokens) : this._(tokens: tokens);
 
   const _TokenResult.failed(String message) : this._(error: message);
 
+  /// 网络中断 / 超时 / 服务端 5xx：可以重试，不代表授权失效。
+  const _TokenResult.network(String message)
+      : this._(error: message, network: true);
+
   final FeishuTokenSet? tokens;
   final String? error;
+  final bool network;
 }
 
 /// 一次进行中的授权：等回环回调，或接受用户粘贴的回调链接。
