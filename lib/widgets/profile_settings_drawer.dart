@@ -36,6 +36,7 @@ import '../screens/main_tab_settings_screen.dart';
 import '../screens/sync_center_screen.dart';
 import '../screens/word_cloud_screen.dart';
 import '../screens/on_this_day_screen.dart';
+import '../screens/feishu_calendar_settings_screen.dart';
 import '../services/google_calendar_service.dart';
 import '../services/sync_center_service.dart';
 import '../services/app_identity_service.dart';
@@ -239,8 +240,7 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
             (timeBlockReminderStatus.issue != TimeBlockReminderIssue.none ||
                 timeBlockReminderStatus.message != null));
     final interactionSubtitle = [
-      if (isDesktop && context.read<DesktopLayoutProvider?>() != null)
-        '桌面布局',
+      if (isDesktop && context.read<DesktopLayoutProvider?>() != null) '桌面布局',
       if (isDesktop && context.read<DesktopShortcutProvider?>() != null)
         '键盘快捷键',
       if (context.read<MenuBarProvider?>()?.supported ?? false) '菜单栏',
@@ -341,9 +341,8 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
             context,
             section: _ProfileDrawerSection.app,
             icon: Icons.info_outline_rounded,
-            subtitle: supportsInAppUpdateFor(ios: isIOS)
-                ? '检查更新 · 运行日志'
-                : '运行日志',
+            subtitle:
+                supportsInAppUpdateFor(ios: isIOS) ? '检查更新 · 运行日志' : '运行日志',
           ),
         ]),
         const SizedBox(height: AppSpacing.lg),
@@ -545,6 +544,14 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
             _buildLoginSection(
                 context, AppIdentityService.googleUser, provider),
           if (!isDesktop) _buildRemoteSyncSection(context, provider),
+          ListTile(
+            key: const ValueKey('profile-feishu-calendar'),
+            leading: const Icon(Icons.event_available_outlined),
+            title: const Text('飞书日历同步'),
+            subtitle: const Text('把时间块同步到自己的飞书日历'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _openScreen(const FeishuCalendarSettingsScreen()),
+          ),
         ],
       _ProfileDrawerSection.review => [
           ListTile(
@@ -1051,7 +1058,6 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
     }
   }
 
-
   /// 提醒设置分组的副标题：两类提醒各自独立，这里只做汇总。
   String _remindersGroupSubtitle() {
     final diary = _diaryReminderLoaded ? _diaryReminderStatus : null;
@@ -1104,9 +1110,8 @@ class _ProfileSettingsDrawerState extends State<ProfileSettingsDrawer> {
           title: const Text('时间块提醒'),
           subtitle: Text(_timeBlockReminderSubtitle(status)),
           value: settings.enabled,
-          onChanged: canEdit
-              ? (value) => _handleTimeBlockReminderToggle(value)
-              : null,
+          onChanged:
+              canEdit ? (value) => _handleTimeBlockReminderToggle(value) : null,
         ),
         ListTile(
           leading: const Icon(Icons.av_timer_outlined),
