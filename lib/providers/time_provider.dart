@@ -8,6 +8,7 @@ import '../services/google_calendar_service.dart';
 import '../models/feishu_calendar_models.dart';
 import '../services/feishu_calendar_sync_service.dart';
 import '../services/feishu_credentials_store.dart';
+import '../services/feishu_oauth_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import '../models/target.dart';
@@ -1965,6 +1966,8 @@ class TimeProvider with ChangeNotifier {
       _ensureScheduleAutoRefreshTimer();
       // 补推上次没推成功的飞书日程
       unawaited(_restoreFeishuPendingDates());
+      // 启动时检查一次飞书授权，把 refresh_token 的 30 天窗口续上
+      unawaited(_keepFeishuTokenAlive());
       // 仅在用户明确选择 Google 模式后恢复会话；手动模式绝不触发 Google。
       if (_usesMobileIdentityFlow &&
           _identityMode == AppIdentityMode.google &&
@@ -2970,7 +2973,7 @@ class TimeProvider with ChangeNotifier {
           slots: slots,
         );
         if (!outcome.success && outcome.needReauth) {
-          _feishuAutoSyncCache = false;
+          _dropFeishuQueueAfterAuthLoss();
           break;
         }
       }
@@ -3000,6 +3003,33 @@ class TimeProvider with ChangeNotifier {
     } catch (_) {
       // 偏好设置不可用（测试环境）时静默跳过，不影响主流程。
     }
+  }
+
+  /// 启动时检查一次飞书授权：access token 快过期就刷新，顺带续 30 天窗口。
+  ///
+  /// 不做网络请求以外的事；离线或插件不可用时静默跳过，下次启动再试。
+  Future<void> _keepFeishuTokenAlive() async {
+    final kind = _feishuKind;
+    if (kind == null) return;
+    try {
+      if (await FeishuCredentialStore.loadTokens(kind) == null) return;
+      final token = await FeishuOAuthService().ensureAccessToken(kind);
+      if (token == null) _dropFeishuQueueAfterAuthLoss();
+    } catch (_) {
+      // 离线 / 测试环境没有插件：忽略。
+    }
+  }
+
+  /// 授权失效时清空待推队列。
+  ///
+  /// 不动自动同步开关本身：重新授权后不用重启 App 就能继续同步，
+  /// 期间新编辑会正常重新排队，只是推不上去。
+  void _dropFeishuQueueAfterAuthLoss() {
+    final kind = _feishuKind;
+    _pendingFeishuDateKeys.clear();
+    if (kind == null) return;
+    unawaited(FeishuCredentialStore.savePendingDates(kind, const []));
+    if (!_isDisposed) notifyListeners();
   }
 
   /// 手动补同步最近 [days] 天（含今天）。
