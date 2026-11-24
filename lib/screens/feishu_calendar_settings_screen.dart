@@ -129,11 +129,22 @@ class _FeishuCalendarSettingsScreenState
       _authorizing = true;
       _authError = null;
     });
-    await FeishuCredentialStore.saveCredentials(kind, credentials);
-    final flow = await _oauth.beginAuthorization(
-      kind: kind,
-      credentials: credentials,
-    );
+
+    FeishuAuthFlow flow;
+    try {
+      await FeishuCredentialStore.saveCredentials(kind, credentials);
+      flow = await _oauth.beginAuthorization(
+        kind: kind,
+        credentials: credentials,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _authorizing = false;
+        _authError = '发起授权失败：$e';
+      });
+      return;
+    }
     _flow = flow;
     setState(() => _authUri = flow.authUri.toString());
 
@@ -214,7 +225,14 @@ class _FeishuCalendarSettingsScreenState
       }
       _flow = flow;
     }
-    final result = await flow.submitCallbackText(text);
+    FeishuAuthResult result;
+    try {
+      result = await flow.submitCallbackText(text);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _authError = '完成授权失败：$e');
+      return;
+    }
     if (!mounted) return;
     await _finishAuthorization(result);
   }
