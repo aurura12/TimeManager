@@ -5,6 +5,9 @@ import '../models/time_slot_resize.dart';
 import '../models/category.dart';
 import 'dart:convert';
 import '../services/google_calendar_service.dart';
+import '../models/feishu_calendar_models.dart';
+import '../services/feishu_calendar_sync_service.dart';
+import '../services/feishu_credentials_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import '../models/target.dart';
@@ -714,6 +717,7 @@ class TimeProvider with ChangeNotifier {
   /// 前台日程自动刷新间隔。null 表示关闭（测试默认关闭，生产在 main.dart 显式开启）。
   final Duration? _scheduleAutoRefreshInterval;
   final Duration _googleCalendarDebounce;
+  final Duration _feishuCalendarDebounce;
   final bool? _identityModePlatformOverride;
   final bool? _googleCalendarSyncPlatformOverride;
   final bool? _googleCalendarSignedInOverride;
@@ -1267,6 +1271,11 @@ class TimeProvider with ChangeNotifier {
 
   void _invalidateIdentityScopedOperations() {
     _googleSyncGeneration++;
+    _feishuSyncGeneration++;
+    _feishuCalendarTimer?.cancel();
+    _feishuCalendarTimer = null;
+    _pendingFeishuDateKeys.clear();
+    _feishuAutoSyncCache = null;
     _debounceTimer?.cancel();
     _localSaveTimer?.cancel();
     _localSaveTimer = null;
@@ -1723,6 +1732,8 @@ class TimeProvider with ChangeNotifier {
     _categoriesGiteeTimer?.cancel();
     _targetsGiteeTimer?.cancel();
     _scheduleSyncProgressClearTimer?.cancel();
+    _feishuCalendarTimer?.cancel();
+    _feishuSyncGeneration++;
     _googleAuthSubscription?.cancel();
     _syncStatusController.close();
     _scheduleGiteeSyncController?.close();
@@ -1741,6 +1752,7 @@ class TimeProvider with ChangeNotifier {
     Duration scheduleGiteeDebounce = const Duration(seconds: 3),
     Duration? scheduleAutoRefreshInterval,
     Duration googleCalendarDebounce = const Duration(seconds: 3),
+    Duration feishuCalendarDebounce = const Duration(seconds: 3),
     bool? identityModePlatformOverride,
     bool? googleCalendarSyncPlatformOverride,
     bool? googleCalendarSignedInOverride,
@@ -1760,6 +1772,7 @@ class TimeProvider with ChangeNotifier {
         _scheduleGiteeDebounce = scheduleGiteeDebounce,
         _scheduleAutoRefreshInterval = scheduleAutoRefreshInterval,
         _googleCalendarDebounce = googleCalendarDebounce,
+        _feishuCalendarDebounce = feishuCalendarDebounce,
         _identityModePlatformOverride = identityModePlatformOverride,
         _googleCalendarSyncPlatformOverride =
             googleCalendarSyncPlatformOverride,
@@ -1950,6 +1963,8 @@ class TimeProvider with ChangeNotifier {
       _pullOwnScheduleOnDateChange();
       // 开启前台自动刷新，让另一台设备（手机/电脑）的修改能自己浮现
       _ensureScheduleAutoRefreshTimer();
+      // 补推上次没推成功的飞书日程
+      unawaited(_restoreFeishuPendingDates());
       // 仅在用户明确选择 Google 模式后恢复会话；手动模式绝不触发 Google。
       if (_usesMobileIdentityFlow &&
           _identityMode == AppIdentityMode.google &&
@@ -2848,6 +2863,177 @@ class TimeProvider with ChangeNotifier {
   /// 走防抖自动同步（待同步标记由调用方在 _saveData 前写入）
   void _scheduleCalendarSync() {
     synchronizeCalendar(delay: true);
+  }
+
+  // --- 飞书日历同步（单向：时间块 → 飞书） ---
+
+  Timer? _feishuCalendarTimer;
+  final Set<String> _pendingFeishuDateKeys = {};
+  bool _feishuSyncing = false;
+  int _feishuSyncGeneration = 0;
+  bool? _feishuAutoSyncCache;
+
+  /// 自动同步开关；null 表示还没从本地读过。
+  bool get feishuAutoSyncEnabled => _feishuAutoSyncCache ?? false;
+
+  DiaryKind? get _feishuKind => _hasSelectedScheduleUser ? _scheduleUser : null;
+
+  Future<void> setFeishuAutoSyncEnabled(bool enabled) async {
+    _feishuAutoSyncCache = enabled;
+    final kind = _feishuKind;
+    if (kind != null) {
+      await FeishuCredentialStore.saveAutoSync(kind, enabled);
+    }
+    if (enabled) {
+      _scheduleFeishuFlush();
+    } else {
+      _feishuCalendarTimer?.cancel();
+      _feishuCalendarTimer = null;
+      _pendingFeishuDateKeys.clear();
+      _feishuSyncGeneration++;
+    }
+    notifyListeners();
+  }
+
+  /// 本地编辑后排队；真正推送在 [_feishuCalendarDebounce] 之后。
+  void _markFeishuCalendarPending(String dateKey) {
+    if (_isDisposed || _feishuKind == null) return;
+    if (_feishuAutoSyncCache == false) return;
+    final wasEmpty = _pendingFeishuDateKeys.isEmpty;
+    _pendingFeishuDateKeys.add(dateKey);
+    if (wasEmpty) {
+      // 只在新一轮排队时落盘，避免连续拖拽时反复写偏好设置。
+      final kind = _feishuKind;
+      if (kind != null) {
+        unawaited(
+          FeishuCredentialStore.savePendingDates(kind, [dateKey]),
+        );
+      }
+    }
+    _scheduleFeishuFlush();
+  }
+
+  void _scheduleFeishuFlush() {
+    _feishuCalendarTimer?.cancel();
+    _feishuCalendarTimer = Timer(_feishuCalendarDebounce, () {
+      _feishuCalendarTimer = null;
+      unawaited(_flushPendingFeishuSync());
+    });
+  }
+
+  /// 把排队的日期推到飞书。同一时刻只跑一个；期间新来的编辑会再排一轮。
+  Future<void> _flushPendingFeishuSync() async {
+    if (_isDisposed || _feishuSyncing) return;
+    final kind = _feishuKind;
+    if (kind == null || _pendingFeishuDateKeys.isEmpty) return;
+    _feishuAutoSyncCache ??= await FeishuCredentialStore.loadAutoSync(kind);
+    if (_feishuAutoSyncCache != true) {
+      _pendingFeishuDateKeys.clear();
+      return;
+    }
+    if (await FeishuCredentialStore.loadTokens(kind) == null) return;
+    if (_isDisposed) return;
+    if (FeishuCalendarSyncService.instance.syncing) {
+      // 手动全量同步正在进行，等它结束再推，避免两边同时建出重复日程。
+      _scheduleFeishuFlush();
+      return;
+    }
+
+    _feishuSyncing = true;
+    final generation = _feishuSyncGeneration;
+    final dates = _pendingFeishuDateKeys.toList()..sort();
+    _pendingFeishuDateKeys.clear();
+    await FeishuCredentialStore.savePendingDates(kind, dates);
+    try {
+      for (final dateKey in dates) {
+        if (_isDisposed || generation != _feishuSyncGeneration) break;
+        final date = _parseFeishuDateKey(dateKey);
+        final slots = _dailySlots[dateKey];
+        if (date == null || slots == null) continue;
+        final outcome = await FeishuCalendarSyncService.instance.syncDay(
+          kind: kind,
+          date: date,
+          slots: slots,
+        );
+        if (!outcome.success && outcome.needReauth) {
+          _feishuAutoSyncCache = false;
+          break;
+        }
+      }
+    } finally {
+      _feishuSyncing = false;
+      if (!_isDisposed) {
+        await FeishuCredentialStore.savePendingDates(
+          kind,
+          _pendingFeishuDateKeys,
+        );
+      }
+    }
+    if (_pendingFeishuDateKeys.isNotEmpty) _scheduleFeishuFlush();
+  }
+
+  /// App 启动时补推上次没推成功的日期。
+  Future<void> _restoreFeishuPendingDates() async {
+    final kind = _feishuKind;
+    if (kind == null) return;
+    _feishuAutoSyncCache = await FeishuCredentialStore.loadAutoSync(kind);
+    if (_feishuAutoSyncCache != true) return;
+    final stored = await FeishuCredentialStore.loadPendingDates(kind);
+    if (stored.isEmpty) return;
+    _pendingFeishuDateKeys.addAll(stored);
+    _scheduleFeishuFlush();
+  }
+
+  /// 手动补同步最近 [days] 天（含今天）。
+  Future<FeishuSyncSummary?> syncFeishuRecentDays({int days = 7}) async {
+    final kind = _feishuKind;
+    if (kind == null) return null;
+    final today = DateTime(
+      _currentDate.year,
+      _currentDate.month,
+      _currentDate.day,
+    );
+    final slotsByDate = <String, List<TimeSlot>>{};
+    for (var i = 0; i < days; i++) {
+      final date = today.subtract(Duration(days: i));
+      final key = _getDateKey(date);
+      slotsByDate[key] = _dailySlots[key] ?? _generateInitialSlots();
+    }
+    return FeishuCalendarSyncService.instance.syncDates(
+      kind: kind,
+      slotsByDate: slotsByDate,
+    );
+  }
+
+  /// 手动补同步所有有记录的日期，以及以前同步过、后来被清空的日期。
+  Future<FeishuSyncSummary?> syncFeishuAllRecordedDays() async {
+    final kind = _feishuKind;
+    if (kind == null) return null;
+    final synced = (await FeishuCredentialStore.loadSyncedDates(kind)).toSet();
+    final slotsByDate = <String, List<TimeSlot>>{};
+    for (final key in <String>{..._dailySlots.keys, ...synced}) {
+      final slots = _dailySlots[key];
+      if (slots == null) {
+        slotsByDate[key] = _generateInitialSlots();
+      } else if (synced.contains(key) || slots.any((slot) => slot.recorded)) {
+        slotsByDate[key] = slots;
+      }
+    }
+    if (slotsByDate.isEmpty) return null;
+    return FeishuCalendarSyncService.instance.syncDates(
+      kind: kind,
+      slotsByDate: slotsByDate,
+    );
+  }
+
+  static DateTime? _parseFeishuDateKey(String key) {
+    final parts = key.split('-');
+    if (parts.length != 3) return null;
+    final year = int.tryParse(parts[0]);
+    final month = int.tryParse(parts[1]);
+    final day = int.tryParse(parts[2]);
+    if (year == null || month == null || day == null) return null;
+    return DateTime(year, month, day);
   }
 
   // --- Gitee 日程同步 ---
@@ -6232,6 +6418,7 @@ class TimeProvider with ChangeNotifier {
     }
     _syncDirty = true;
     _markScheduleGiteePending(key);
+    _markFeishuCalendarPending(key);
   }
 
   /// 清除某天在 [userCode]（默认当前身份）下的待推送状态。
