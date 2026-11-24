@@ -179,6 +179,14 @@ class _FeishuCalendarSettingsScreenState
     showAppSnackBar(context, '授权链接已复制');
   }
 
+  Future<void> _copyRedirectUri() async {
+    await Clipboard.setData(
+      ClipboardData(text: FeishuCalendarConfig.redirectUri),
+    );
+    if (!mounted) return;
+    showAppSnackBar(context, '重定向地址已复制');
+  }
+
   Future<void> _openAuthUriAgain() async {
     final uri = _authUri;
     if (uri == null) return;
@@ -283,9 +291,7 @@ class _FeishuCalendarSettingsScreenState
     if (!mounted) return;
     showAppSnackBar(
       context,
-      revoked
-          ? '已断开飞书日历'
-          : '已在本机断开，但没能同步到仓库：另一台设备可能还连着，检查网络后再点一次「断开连接」',
+      revoked ? '已断开飞书日历' : '已在本机断开，但没能同步到仓库：另一台设备可能还连着，检查网络后再点一次「断开连接」',
     );
     await _load();
   }
@@ -517,91 +523,97 @@ class _FeishuCalendarSettingsScreenState
                 ),
               ],
             ),
-            if (_authUri != null) ...[
+            if (_authorizing) ...[
               const SizedBox(height: AppSpacing.sm),
-              Text(
-                _authorizing
-                    ? '浏览器没自动打开也没关系：复制下面这条链接，自己粘到浏览器地址栏。'
-                    : '授权链接（需要的话重新复制打开）：',
-                style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(AppSpacing.sm),
-                decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest,
-                  borderRadius: AppRadius.controlAll,
-                ),
-                child: SelectableText(
-                  _authUri!,
-                  key: const ValueKey('feishu-auth-uri'),
-                  maxLines: 4,
-                  style: AppText.caption.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Wrap(
-                spacing: AppSpacing.sm,
-                runSpacing: AppSpacing.xs,
+              Row(
                 children: [
-                  TextButton.icon(
-                    key: const ValueKey('feishu-copy-auth-uri'),
-                    onPressed: _copyAuthUri,
-                    icon: const Icon(Icons.copy_rounded),
-                    label: const Text('复制链接'),
+                  SizedBox(
+                    width: AppSizes.iconButton / 2,
+                    height: AppSizes.iconButton / 2,
+                    child: const CircularProgressIndicator(strokeWidth: 2),
                   ),
-                  TextButton.icon(
-                    key: const ValueKey('feishu-reopen-auth-uri'),
-                    onPressed: _openAuthUriAgain,
-                    icon: const Icon(Icons.open_in_new),
-                    label: const Text('再打开一次'),
-                  ),
-                  if (_authorizing)
-                    TextButton(
-                      key: const ValueKey('feishu-cancel-authorize'),
-                      onPressed: _cancelAuthorization,
-                      child: const Text('取消'),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Text(
+                      '在浏览器里点「同意」就会自动回到这里，不用做别的。',
+                      style: AppText.caption.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
+                  ),
+                  TextButton(
+                    key: const ValueKey('feishu-cancel-authorize'),
+                    onPressed: _cancelAuthorization,
+                    child: const Text('取消'),
+                  ),
                 ],
               ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                '在浏览器里同意后，地址栏会跳到 '
-                '127.0.0.1 开头的一页；如果那一页打不开是正常的，'
-                '把整条链接复制下来粘到下面的输入框即可。',
-                style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
+            ],
+            if (_authUri != null && !_authorizing) ...[
+              const SizedBox(height: AppSpacing.sm),
+              ExpansionTile(
+                key: ValueKey('feishu-manual-${_authError != null}'),
+                title: Text('没自动跳回来？手动完成', style: AppText.body),
+                tilePadding: EdgeInsets.zero,
+                initiallyExpanded: _authError != null,
+                childrenPadding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(AppSpacing.sm),
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerHighest,
+                      borderRadius: AppRadius.controlAll,
+                    ),
+                    child: SelectableText(
+                      _authUri!,
+                      key: const ValueKey('feishu-auth-uri'),
+                      maxLines: 4,
+                      style: AppText.caption.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  Wrap(
+                    spacing: AppSpacing.sm,
+                    runSpacing: AppSpacing.xs,
+                    children: [
+                      TextButton.icon(
+                        key: const ValueKey('feishu-copy-auth-uri'),
+                        onPressed: _copyAuthUri,
+                        icon: const Icon(Icons.copy_rounded),
+                        label: const Text('复制链接'),
+                      ),
+                      TextButton.icon(
+                        key: const ValueKey('feishu-reopen-auth-uri'),
+                        onPressed: _openAuthUriAgain,
+                        icon: const Icon(Icons.open_in_new),
+                        label: const Text('再打开一次'),
+                      ),
+                    ],
+                  ),
+                  TextField(
+                    key: const ValueKey('feishu-callback-input'),
+                    controller: _pasteController,
+                    minLines: 1,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      hintText:
+                          'http://127.0.0.1:17890/feishu/oauth/callback?code=...',
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: OutlinedButton(
+                      key: const ValueKey('feishu-callback-submit'),
+                      onPressed: _submitPastedCallback,
+                      child: const Text('完成授权'),
+                    ),
+                  ),
+                ],
               ),
             ],
-            const SizedBox(height: AppSpacing.md),
-            ExpansionTile(
-              title: Text('粘贴回调链接', style: AppText.body),
-              tilePadding: EdgeInsets.zero,
-              childrenPadding: const EdgeInsets.only(bottom: AppSpacing.sm),
-              children: [
-                TextField(
-                  key: const ValueKey('feishu-callback-input'),
-                  controller: _pasteController,
-                  minLines: 1,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                    hintText:
-                        'http://127.0.0.1:17890/feishu/oauth/callback?code=...',
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: OutlinedButton(
-                    key: const ValueKey('feishu-callback-submit'),
-                    onPressed: _submitPastedCallback,
-                    child: const Text('完成授权'),
-                  ),
-                ),
-              ],
-            ),
           ],
         ),
       ),
@@ -702,9 +714,9 @@ class _FeishuCalendarSettingsScreenState
     final steps = [
       '打开飞书开发者后台 open.feishu.cn/app，创建「企业自建应用」。',
       '在「凭证与基础信息」复制 App ID 和 App Secret。',
-      '「权限管理」开通 calendar:calendar（更新日历及日程信息）。',
-      '「安全设置」开启「刷新 user_access_token」，并把重定向 URL 填成 '
-          '${FeishuCalendarConfig.redirectUri}。',
+      '「权限管理」开通两个权限：calendar:calendar（更新日历及日程信息）'
+          '和 offline_access（持续访问已授权数据）。两个都要，缺一个会报 20027。',
+      '「安全设置」开启「刷新 user_access_token」，重定向 URL 填下面这条。',
       '「版本管理与发布」创建版本并申请发布，管理员（自己）审核通过。',
       '回到这里填 App ID / App Secret，点「保存并授权」。',
     ];
@@ -738,6 +750,41 @@ class _FeishuCalendarSettingsScreenState
                 ],
               ),
             ),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(AppSpacing.sm),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest,
+              borderRadius: AppRadius.controlAll,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '重定向 URL 填这一条：',
+                  style: AppText.caption.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                SelectableText(
+                  FeishuCalendarConfig.redirectUri,
+                  key: const ValueKey('feishu-redirect-uri'),
+                  style: AppText.body,
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    key: const ValueKey('feishu-copy-redirect-uri'),
+                    onPressed: _copyRedirectUri,
+                    icon: const Icon(Icons.copy_rounded),
+                    label: const Text('复制'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
           Align(
             alignment: Alignment.centerLeft,
             child: OutlinedButton.icon(
