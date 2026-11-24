@@ -162,8 +162,8 @@ class FeishuDaySyncOutcome {
 class FeishuPendingAuth {
   const FeishuPendingAuth({
     required this.state,
-    required this.codeVerifier,
     required this.createdAt,
+    this.codeVerifier = '',
   });
 
   final String state;
@@ -178,12 +178,11 @@ class FeishuPendingAuth {
 
   static FeishuPendingAuth? fromJson(Map<String, dynamic> json) {
     final state = json['state']?.toString();
-    final verifier = json['code_verifier']?.toString();
     final createdAt = json['created_at'];
-    if (state == null || verifier == null || createdAt is! int) return null;
+    if (state == null || createdAt is! int) return null;
     return FeishuPendingAuth(
       state: state,
-      codeVerifier: verifier,
+      codeVerifier: (json['code_verifier'] ?? '').toString(),
       createdAt: DateTime.fromMillisecondsSinceEpoch(createdAt),
     );
   }

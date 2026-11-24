@@ -142,13 +142,16 @@ int? _timeInfoSeconds(Object? value) {
 }
 
 /// 拼授权链接。redirect_uri 必须与飞书后台登记值完全一致。
+/// [codeChallenge] 为空时不带 PKCE：自带 App Secret 的应用不需要它，
+/// 带了反而会因为旧链接的 verifier 不匹配报 "PKCE code challenge failed"。
 Uri buildFeishuAuthorizeUri({
   required String appId,
   required String state,
-  required String codeChallenge,
+  String? codeChallenge,
   String redirectUri = '',
   String scopes = FeishuCalendarConfig.scopes,
 }) {
+  final hasChallenge = (codeChallenge ?? '').isNotEmpty;
   return Uri.parse(FeishuCalendarConfig.authorizeUrl).replace(
     queryParameters: {
       'client_id': appId,
@@ -157,8 +160,8 @@ Uri buildFeishuAuthorizeUri({
           redirectUri.isEmpty ? FeishuCalendarConfig.redirectUri : redirectUri,
       'scope': scopes,
       'state': state,
-      'code_challenge': codeChallenge,
-      'code_challenge_method': 'S256',
+      if (hasChallenge) 'code_challenge': codeChallenge!,
+      if (hasChallenge) 'code_challenge_method': 'S256',
     },
   );
 }

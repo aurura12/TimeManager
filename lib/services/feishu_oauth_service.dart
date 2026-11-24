@@ -37,12 +37,10 @@ class FeishuOAuthService {
     required FeishuCredentials credentials,
   }) async {
     final state = _randomState();
-    final verifier = generateFeishuCodeVerifier();
     await FeishuCredentialStore.savePendingAuth(
       kind,
       FeishuPendingAuth(
         state: state,
-        codeVerifier: verifier,
         createdAt: DateTime.now(),
       ),
     );
@@ -62,7 +60,6 @@ class FeishuOAuthService {
     final authUri = buildFeishuAuthorizeUri(
       appId: credentials.appId,
       state: state,
-      codeChallenge: feishuCodeChallenge(verifier),
     );
 
     return FeishuAuthFlow._(
@@ -70,7 +67,7 @@ class FeishuOAuthService {
       kind: kind,
       credentials: credentials,
       state: state,
-      codeVerifier: verifier,
+      codeVerifier: '',
       authUri: authUri,
       server: server,
     );
@@ -97,7 +94,6 @@ class FeishuOAuthService {
       authUri: buildFeishuAuthorizeUri(
         appId: credentials.appId,
         state: pending.state,
-        codeChallenge: feishuCodeChallenge(pending.codeVerifier),
       ),
       server: null,
     );
@@ -171,9 +167,7 @@ class FeishuOAuthService {
     final credentials = remoteAuth?.credentials ??
         await FeishuCredentialStore.loadCredentials(kind);
     final tokens = remoteTokens ?? await FeishuCredentialStore.loadTokens(kind);
-    if (credentials == null ||
-        tokens == null ||
-        !tokens.hasRefreshToken) {
+    if (credentials == null || tokens == null || !tokens.hasRefreshToken) {
       await FeishuCredentialStore.saveNeedsReauth(kind, true);
       return const FeishuTokenResult.needReauth('飞书授权已失效，请重新授权');
     }
@@ -320,7 +314,6 @@ class FeishuOAuthService {
     required DiaryKind kind,
     required FeishuCredentials credentials,
     required String code,
-    required String codeVerifier,
   }) {
     return _requestToken(
       kind: kind,
@@ -331,7 +324,6 @@ class FeishuOAuthService {
         'client_secret': credentials.appSecret,
         'code': code,
         'redirect_uri': FeishuCalendarConfig.redirectUri,
-        'code_verifier': codeVerifier,
       },
     );
   }
@@ -529,11 +521,14 @@ class FeishuAuthFlow {
       kind: kind,
       credentials: credentials,
       code: callback.code!,
-      codeVerifier: codeVerifier,
     );
     final tokens = result.tokens;
     if (tokens == null) {
-      return _finish(FeishuAuthResult.failed(result.error ?? '授权失败'));
+      final error = result.error ?? '授权失败';
+      return _finish(FeishuAuthResult.failed(
+        '$error（授权码 5 分钟内有效且只能用一次，'
+        '如果这条链接是之前几次尝试留下的，请重新点「保存并授权」用最新链接）',
+      ));
     }
     await FeishuCredentialStore.saveTokens(kind, tokens);
     await FeishuCredentialStore.clearPendingAuth(kind);
