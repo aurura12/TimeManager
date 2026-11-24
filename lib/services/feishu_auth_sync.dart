@@ -113,10 +113,14 @@ class FeishuAuthSync {
   }
 
   /// 断开授权时写入墓碑，避免另一台设备再把它同步回来。
-  Future<void> revoke(DiaryKind kind) async {
+  ///
+  /// 返回墓碑是否写成功：写失败（断网、仓库读不到、被另一台抢先改写）时
+  /// 另一台设备手里还留着授权，下次打开设置页可能又把它装回来，调用方要
+  /// 提示用户重试，而不是直接宣称「已断开」。
+  Future<bool> revoke(DiaryKind kind) async {
     final current = await pull(kind);
-    if (!current.available) return;
-    await push(
+    if (!current.available) return false;
+    return push(
       kind,
       FeishuRemoteAuth(updatedAt: DateTime.now(), revoked: true),
       expectedSha: current.auth?.sha,

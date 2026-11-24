@@ -36,7 +36,7 @@ class _FakeAuthSync extends FeishuAuthSync {
   }
 
   @override
-  Future<void> revoke(DiaryKind kind) async {}
+  Future<bool> revoke(DiaryKind kind) async => true;
 }
 
 const kind = DiaryKind.g;

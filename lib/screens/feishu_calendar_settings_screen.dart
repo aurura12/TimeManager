@@ -279,9 +279,14 @@ class _FeishuCalendarSettingsScreenState
     if (confirmed != true) return;
     await FeishuCredentialStore.clearTokens(kind);
     await FeishuCredentialStore.saveNeedsReauth(kind, false);
-    await FeishuAuthSync().revoke(kind);
+    final revoked = await FeishuAuthSync().revoke(kind);
     if (!mounted) return;
-    showAppSnackBar(context, '已断开飞书日历');
+    showAppSnackBar(
+      context,
+      revoked
+          ? '已断开飞书日历'
+          : '已在本机断开，但没能同步到仓库：另一台设备可能还连着，检查网络后再点一次「断开连接」',
+    );
     await _load();
   }
 
