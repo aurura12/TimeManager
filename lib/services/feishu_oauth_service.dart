@@ -68,6 +68,33 @@ class FeishuOAuthService {
     );
   }
 
+  /// App 被杀后重新打开时，用本地 pending 恢复未完成的授权（只走粘贴）。
+  Future<FeishuAuthFlow?> resumePendingAuthorization({
+    required DiaryKind kind,
+  }) async {
+    final pending = await FeishuCredentialStore.loadPendingAuth(kind);
+    final credentials = await FeishuCredentialStore.loadCredentials(kind);
+    if (pending == null || credentials == null) return null;
+    if (DateTime.now().difference(pending.createdAt) >
+        FeishuCalendarConfig.authTimeout) {
+      await FeishuCredentialStore.clearPendingAuth(kind);
+      return null;
+    }
+    return FeishuAuthFlow._(
+      service: this,
+      kind: kind,
+      credentials: credentials,
+      state: pending.state,
+      codeVerifier: pending.codeVerifier,
+      authUri: buildFeishuAuthorizeUri(
+        appId: credentials.appId,
+        state: pending.state,
+        codeChallenge: feishuCodeChallenge(pending.codeVerifier),
+      ),
+      server: null,
+    );
+  }
+
   /// 拿一个可用令牌；快过期时自动刷新。
   Future<FeishuTokenSet?> ensureAccessToken(DiaryKind kind) async {
     final tokens = await FeishuCredentialStore.loadTokens(kind);
