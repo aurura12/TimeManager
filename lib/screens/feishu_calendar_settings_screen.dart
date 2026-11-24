@@ -255,6 +255,8 @@ class _FeishuCalendarSettingsScreenState
     if (result.success) {
       _pasteController.clear();
       showAppSnackBar(context, '飞书日历已连接');
+      // 授权失效期间暂停的待推日期现在可以补推了。
+      unawaited(context.read<TimeProvider>().resumeFeishuSyncAfterAuth());
       await _load();
     } else {
       showAppSnackBar(context, result.message ?? '授权失败');

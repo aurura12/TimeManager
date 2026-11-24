@@ -19,8 +19,12 @@ class FeishuCalendarConfig {
   /// OpenAPI 根路径。
   static const String apiBase = 'https://open.feishu.cn/open-apis';
 
-  /// `calendar:calendar` 才能建/删日程；`offline_access` 才拿得到 refresh_token。
-  static const String scopes = 'calendar:calendar offline_access';
+  /// `calendar:calendar` 覆盖建 / 删 / 列日程；查主日历（`POST /calendars/primary`）
+  /// 只认读权限，必须再带 `calendar:calendar:read`——少这一个，令牌即使拿到
+  /// `calendar:calendar` 也会被 99991679 拒绝，同步就卡在「没有找到主日历」。
+  /// `offline_access` 才拿得到 refresh_token。
+  static const String scopes =
+      'calendar:calendar calendar:calendar:read offline_access';
 
   /// 本 App 创建的事件用这个 description 认领，用户在飞书自建的事件绝不碰。
   static const String eventMarker = '由「时间块」自动同步';

@@ -110,9 +110,17 @@ class FeishuCalendarSyncService extends ChangeNotifier {
       );
     }
 
-    final calendarId = await _calendarId(kind);
-    if (calendarId == null) {
-      return FeishuDaySyncOutcome.failed(dateKey, '没有找到飞书主日历');
+    final calendarResult = await _calendarId(kind);
+    final calendarId = calendarResult.data;
+    if (!calendarResult.success || calendarId == null) {
+      // 主日历读不到时要把飞书给的真实原因带出去：权限类失败（99991679）
+      // 以前被兜底成「没有找到飞书主日历」，用户完全看不出该重新授权。
+      return _fail(
+        kind,
+        dateKey,
+        calendarResult.error ?? '没有找到飞书主日历',
+        needReauth: calendarResult.unauthorized,
+      );
     }
 
     final pageResult = await _withToken(
@@ -125,6 +133,7 @@ class FeishuCalendarSyncService extends ChangeNotifier {
     );
     if (!pageResult.success || pageResult.data == null) {
       return _fail(
+        kind,
         dateKey,
         pageResult.error ?? '读取飞书日程失败',
         needReauth: pageResult.unauthorized,
@@ -133,7 +142,7 @@ class FeishuCalendarSyncService extends ChangeNotifier {
     final page = pageResult.data!;
     if (page.truncated) {
       // fail-closed：没读全就不能删，交给下一次重试。
-      return _fail(dateKey, '当天日程太多，读取被截断，稍后重试');
+      return _fail(kind, dateKey, '当天日程太多，读取被截断，稍后重试');
     }
 
     final drafts = mergeSlotsToEvents(slots, date);
@@ -156,6 +165,7 @@ class FeishuCalendarSyncService extends ChangeNotifier {
       );
       if (!result.success) {
         return _fail(
+          kind,
           dateKey,
           result.error ?? '删除飞书日程失败',
           needReauth: result.unauthorized,
@@ -179,6 +189,7 @@ class FeishuCalendarSyncService extends ChangeNotifier {
         );
         if (!result.success) {
           return _fail(
+            kind,
             dateKey,
             result.error ?? '创建飞书日程失败',
             needReauth: result.unauthorized,
@@ -290,12 +301,19 @@ class FeishuCalendarSyncService extends ChangeNotifier {
   }
 
   /// 统一出口：失败一定写进运行日志，设置页也会拿到同样的文案。
+  ///
+  /// 需要重新授权时顺手把标记落盘，设置页的状态才会从「已连接」变成
+  /// 「授权已失效，需要重新授权」——权限类失败（99991679）尤其是这样。
   FeishuDaySyncOutcome _fail(
+    DiaryKind kind,
     String dateKey,
     String message, {
     bool needReauth = false,
   }) {
     feishuLogWarning('飞书同步失败：$dateKey · $message');
+    if (needReauth) {
+      unawaited(FeishuCredentialStore.saveNeedsReauth(kind, true));
+    }
     return FeishuDaySyncOutcome.failed(
       dateKey,
       message,
@@ -303,13 +321,13 @@ class FeishuCalendarSyncService extends ChangeNotifier {
     );
   }
 
-  Future<String?> _calendarId(DiaryKind kind) async {
+  Future<FeishuApiResult<String>> _calendarId(DiaryKind kind) async {
     final cached = _calendarIds[kind];
-    if (cached != null) return cached;
+    if (cached != null) return FeishuApiResult.ok(cached);
     final stored = await FeishuCredentialStore.loadPrimaryCalendarId(kind);
     if (stored != null) {
       _calendarIds[kind] = stored;
-      return stored;
+      return FeishuApiResult.ok(stored);
     }
     final result = await _withToken(
       kind,
@@ -317,14 +335,14 @@ class FeishuCalendarSyncService extends ChangeNotifier {
     );
     final id = result.data;
     if (!result.success || id == null || id.isEmpty) {
-      feishuLogWarning(
-        '解析飞书主日历失败：${result.error ?? '返回里没有 calendar_id'}',
+      return FeishuApiResult.failed(
+        result.error ?? '没有找到飞书主日历',
+        unauthorized: result.unauthorized,
       );
-      return null;
     }
     _calendarIds[kind] = id;
     await FeishuCredentialStore.savePrimaryCalendarId(kind, id);
-    return id;
+    return FeishuApiResult.ok(id);
   }
 
   /// 调飞书接口；令牌失效时刷新一次并重放一次。

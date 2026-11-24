@@ -217,5 +217,27 @@ void main() {
       final result = await api.fetchPrimaryCalendarId('t');
       expect(result.data, 'main');
     });
+
+    test('权限不足（99991679）视为需要重新授权并给出可执行提示', () async {
+      final api = apiWith((request) async {
+        return jsonResponse({
+          'code': 99991679,
+          'msg': 'Unauthorized. You do not have permission to perform the '
+              'requested operation on the resource. required one of these '
+              'privileges: [calendar:calendar:readonly, calendar:calendar:read]',
+        });
+      });
+      final result = await api.fetchPrimaryCalendarId('t');
+      expect(result.success, isFalse);
+      expect(result.unauthorized, isTrue);
+      expect(result.error, contains('重新授权'));
+    });
+  });
+
+  test('授权 scope 覆盖查主日历需要的读权限', () {
+    // 查主日历只认读权限：漏掉 calendar:calendar:read 会让令牌被 99991679 拒绝。
+    expect(FeishuCalendarConfig.scopes, contains('calendar:calendar:read'));
+    expect(FeishuCalendarConfig.scopes, contains('calendar:calendar'));
+    expect(FeishuCalendarConfig.scopes, contains('offline_access'));
   });
 }

@@ -280,6 +280,7 @@ macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，
 - **钥匙串不可用要降级**：密钥优先 `FlutterSecureStorage`；macOS 上应用本地签名、没有钥匙串 entitlement（`PlatformException -34018`）时自动改存 SharedPreferences 并只记一次警告，功能照常。不要为它加阻塞启动的检查
 - **两端共用一次授权**：凭据 + 令牌写进同步仓库 `feishu/{g|j}.json`（`FeishuAuthSync`，8 秒超时，失败只记日志、不阻塞主流程）。refresh_token 一次性、30 天滚动：刷新前先拉远端看另一台是否刚刷过，本地刷新成功后带 `expectedSha` 乐观并发回写；被对方抢先时只记日志、不回写，下次拉取自然用上对方的新令牌。刷新单飞用 `_refreshInFlight`——`whenComplete` 必须用块体 + `ignore()`，写成箭头函数返回 `map.remove()` 会自锁
 - **失败要分清「暂时」还是「失效」**：网络错误 / 5xx / 超时属暂时失败，保留令牌和队列、下次重试；只有 refresh 过期，或服务端明确拒绝且远端也没有新令牌，才置 `needReauth` 要求重新授权。**不要为一次网络失败清令牌**，那会让用户无谓地重走浏览器授权。断开授权写 `revoked` 墓碑，墓碑写失败要提示重试，否则另一台设备下次打开设置页又会把授权装回来
+- **scope 必须带读权限**：授权 scope 是 `calendar:calendar calendar:calendar:read offline_access`。`calendar:calendar` 只够建 / 删 / 列日程，**查主日历只认读权限**（`calendar:calendar:read` / `calendar:calendar:readonly`）——漏了就被 99991679 拒绝、整个同步卡在「没有找到主日历」。开发者后台把权限标成「已开通」也不代表旧令牌有权限：改过 scope 必须重新授权
 - **OAuth 走本机回环**：`http://127.0.0.1:17890/feishu/oauth/callback`，端口与飞书后台登记的重定向 URL **必须完全一致**，不能动态改；端口被占不阻断授权，退化为「没自动跳回来？手动完成」里粘贴回调链接（只有失败才自动展开）。这里**没有 PKCE**（带 App Secret 的应用不需要，旧链接/重试时 verifier 与 challenge 对不上会直接失败），`codeVerifier` 留空，不要再加回去
 - **不在同步中心**：`SyncModule` 里没有飞书，状态与手动同步（最近 7 天 / 全部有记录的日期，可取消）只在 `FeishuCalendarSettingsScreen`。「断开连接」只清本机授权，不删飞书上已同步的日程
 - **日志统一出口**：一律走 `feishu_calendar_log.dart` 的 `feishuLog` / `feishuLogWarning`（source `feishu_calendar`，进运行日志），设置页展示的失败文案与日志用同一个字符串，别再各自拼

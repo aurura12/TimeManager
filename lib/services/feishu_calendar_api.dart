@@ -224,13 +224,17 @@ class FeishuCalendarApi {
     return code == '99991663' ||
         code == '99991668' ||
         code == '99991677' ||
-        code == '99991661';
+        code == '99991661' ||
+        // 令牌没有接口要求的用户权限（scope 没申请到 / 授权早于权限开通）。
+        // 这也是「需要用户重新授权」的一种，归到这里页面才会提示重连。
+        code == '99991679';
   }
 
   static String _describeError(String code, String message) {
     final fallback = message.isEmpty ? '飞书接口返回错误（$code）' : message;
     return switch (code) {
       '99991672' => '飞书应用缺少日历权限，请到开发者后台开通 calendar:calendar 并发布',
+      '99991679' => '飞书应用未获得该操作所需的日历用户授权，请确认开发者后台已开通日历权限，然后重新授权',
       '20010' => '当前飞书账号不在应用的可用范围内，请在开发者后台把使用范围加上自己',
       '190006' => 'App ID 或 App Secret 不正确',
       '191004' => '该日历类型不支持写入，请确认用的是主日历',

@@ -1279,6 +1279,7 @@ class TimeProvider with ChangeNotifier {
     _pendingFeishuDateKeys.clear();
     _feishuInFlightDateKeys.clear();
     _feishuAutoSyncCache = null;
+    _feishuAuthLost = false;
     _debounceTimer?.cancel();
     _localSaveTimer?.cancel();
     _localSaveTimer = null;
@@ -2882,6 +2883,10 @@ class TimeProvider with ChangeNotifier {
   int _feishuSyncGeneration = 0;
   bool? _feishuAutoSyncCache;
 
+  /// 授权失效（含令牌缺权限）后停推，直到重新授权 / 重启 / 切身份。
+  /// 停推期间不能把待推日期写空，否则那些日期再也补不回来。
+  bool _feishuAuthLost = false;
+
   /// 落盘用的完整待推集合：在途 + 新排队。
   Set<String> get _feishuPendingForDisk => {
         ..._feishuInFlightDateKeys,
@@ -2900,6 +2905,7 @@ class TimeProvider with ChangeNotifier {
       await FeishuCredentialStore.saveAutoSync(kind, enabled);
     }
     if (enabled) {
+      _feishuAuthLost = false;
       _scheduleFeishuFlush();
     } else {
       _feishuCalendarTimer?.cancel();
@@ -2909,6 +2915,16 @@ class TimeProvider with ChangeNotifier {
       _feishuSyncGeneration++;
     }
     notifyListeners();
+  }
+
+  /// 重新授权成功后调用：解除停推，把磁盘上留着的待推日期重新排上。
+  Future<void> resumeFeishuSyncAfterAuth() async {
+    _feishuAuthLost = false;
+    final kind = _feishuKind;
+    if (kind == null) return;
+    final stored = await FeishuCredentialStore.loadPendingDates(kind);
+    if (stored.isNotEmpty) _pendingFeishuDateKeys.addAll(stored);
+    if (_pendingFeishuDateKeys.isNotEmpty) _scheduleFeishuFlush();
   }
 
   /// 本地编辑后排队；真正推送在 [_feishuCalendarDebounce] 之后。
@@ -2954,7 +2970,7 @@ class TimeProvider with ChangeNotifier {
   }
 
   Future<void> _flushPendingFeishuSyncUnsafe() async {
-    if (_isDisposed || _feishuSyncing) return;
+    if (_isDisposed || _feishuSyncing || _feishuAuthLost) return;
     final kind = _feishuKind;
     if (kind == null || _pendingFeishuDateKeys.isEmpty) return;
     _feishuAutoSyncCache ??= await FeishuCredentialStore.loadAutoSync(kind);
@@ -2995,7 +3011,7 @@ class TimeProvider with ChangeNotifier {
             '飞书自动同步失败：$dateKey · ${outcome.message ?? '未知原因'}',
           );
           if (outcome.needReauth) {
-            _dropFeishuQueueAfterAuthLoss();
+            _pauseFeishuQueueAfterAuthLoss();
             break;
           }
         }
@@ -3004,14 +3020,17 @@ class TimeProvider with ChangeNotifier {
       _feishuSyncing = false;
       _feishuInFlightDateKeys.clear();
       // 这一轮已经推完（或被打断），磁盘上只留还没推的日期。
-      if (!_isDisposed) {
+      // 授权失效时内存队列已清空，写盘会把待补推的日期抹掉，必须跳过。
+      if (!_isDisposed && !_feishuAuthLost) {
         await FeishuCredentialStore.savePendingDates(
           kind,
           _feishuPendingForDisk,
         );
       }
     }
-    if (_pendingFeishuDateKeys.isNotEmpty) _scheduleFeishuFlush();
+    if (!_feishuAuthLost && _pendingFeishuDateKeys.isNotEmpty) {
+      _scheduleFeishuFlush();
+    }
   }
 
   /// App 启动时补推上次没推成功的日期。
@@ -3023,6 +3042,7 @@ class TimeProvider with ChangeNotifier {
       if (_feishuAutoSyncCache != true) return;
       final stored = await FeishuCredentialStore.loadPendingDates(kind);
       if (stored.isEmpty) return;
+      _feishuAuthLost = false;
       _pendingFeishuDateKeys.addAll(stored);
       _scheduleFeishuFlush();
     } catch (e, stackTrace) {
@@ -3045,7 +3065,7 @@ class TimeProvider with ChangeNotifier {
       final result = await FeishuOAuthService().ensureAccessToken(kind);
       // 只有真的需要重新授权才清队列；网络失败留给下次启动重试。
       if (result.tokens == null && result.needReauth) {
-        _dropFeishuQueueAfterAuthLoss();
+        _pauseFeishuQueueAfterAuthLoss();
       }
     } catch (e, stackTrace) {
       feishuLogWarning(
@@ -3056,16 +3076,16 @@ class TimeProvider with ChangeNotifier {
     }
   }
 
-  /// 授权失效时清空待推队列。
+  /// 授权失效（含令牌缺权限）时暂停推送。
   ///
+  /// 只清内存队列，避免 3 秒重试空转；**磁盘上的待推日期必须保留**——
+  /// 重新授权后还要靠它们补推，写空就永久丢失（权限类失败尤其常见）。
   /// 不动自动同步开关本身：重新授权后不用重启 App 就能继续同步，
   /// 期间新编辑会正常重新排队，只是推不上去。
-  void _dropFeishuQueueAfterAuthLoss() {
-    final kind = _feishuKind;
+  void _pauseFeishuQueueAfterAuthLoss() {
+    _feishuAuthLost = true;
     _pendingFeishuDateKeys.clear();
     _feishuInFlightDateKeys.clear();
-    if (kind == null) return;
-    unawaited(FeishuCredentialStore.savePendingDates(kind, const []));
     if (!_isDisposed) notifyListeners();
   }
 
