@@ -353,6 +353,50 @@ title: 出行记录
     expect(local.preparePush(unknownRemote).records.single.event, '酒店');
   });
 
+  test('本地新增时推送会并入远端独有的记录', () {
+    final local = TravelRecordsDocument(records: [
+      _record(
+        date: '2026-09-15',
+        location: '上海',
+        event: '出差',
+        updatedAt: 2000,
+      ),
+    ]);
+    final remote = TravelRecordsDocument(records: [
+      _record(
+        date: '2026-09-14',
+        location: '杭州',
+        event: '散步',
+        updatedAt: 1000,
+      ),
+    ]);
+
+    final outgoing = local.preparePush(remote);
+
+    expect(outgoing.recordDateKeys, {'2026-09-14', '2026-09-15'});
+    expect(outgoing.deletedAtByDate, isEmpty);
+  });
+
+  test('本地删除的日期不会被远端独有记录复活', () {
+    final local = TravelRecordsDocument(
+      records: const [],
+      deletedAtByDate: const {'2026-09-14': 200},
+    );
+    final remote = TravelRecordsDocument(records: [
+      _record(
+        date: '2026-09-14',
+        location: '杭州',
+        event: '散步',
+        updatedAt: 100,
+      ),
+    ]);
+
+    final outgoing = local.preparePush(remote);
+
+    expect(outgoing.records, isEmpty);
+    expect(outgoing.deletedAtByDate, {'2026-09-14': 200});
+  });
+
   test('记录版本可以通过 Markdown 往返保存', () {
     final source = TravelRecordsDocument(records: [
       _record(

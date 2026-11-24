@@ -176,17 +176,7 @@ class SyncCenterOperations {
     }
 
     final remote = TravelRecordsDocument.fromMarkdown(pull.content!);
-    final remoteOnly = remote.recordDateKeys
-        .difference(local.recordDateKeys)
-        .difference(local.deletedDateKeys);
     final conflicts = local.conflictingDateKeys(remote);
-    if (remoteOnly.isNotEmpty) {
-      return SyncOperationResult.conflict(
-        '远端有本地没有的出行记录，请点「拉取远端」确认后再上传',
-        conflictCount: remoteOnly.length,
-        details: remoteOnly.take(10).toList(growable: false),
-      );
-    }
     if (conflicts.isNotEmpty) {
       return SyncOperationResult.conflict(
         '本地与远端出行记录存在内容冲突，请点「拉取远端」确认',

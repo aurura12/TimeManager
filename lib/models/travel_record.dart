@@ -206,6 +206,9 @@ class TravelRecordsDocument {
   }
 
   /// 构造本次推送的文档，按 live record 与 tombstone 的版本合并两端状态。
+  ///
+  /// 远端独有的日期会并入推送结果（并集），否则推送会用一份缺少这些日期的
+  /// 文档把远端记录删掉；本地墓碑更新时仍以删除为准。
   TravelRecordsDocument preparePush(TravelRecordsDocument remote) {
     final localRecords = _recordsByDate(records);
     final remoteRecords = _recordsByDate(remote.records);
@@ -241,11 +244,11 @@ class TravelRecordsDocument {
         continue;
       }
 
-      // 本地删除与远端较新的重新记录也按版本保留 live record，避免
-      // preparePush 在被单独调用时静默删除远端的新内容。
+      // 本地没有这一天：并入推送，避免把远端已有的记录删掉。
+      // 本地删除意图更新时仍按删除处理，不复活远端旧记录。
       if (remoteRecord != null &&
-          deletedAtByDate[dateKey] != null &&
-          _recordIsNewerThanTombstone(remoteRecord, deletionAt!)) {
+          (deletionAt == null ||
+              _recordIsNewerThanTombstone(remoteRecord, deletionAt))) {
         pushRecordsByDate[dateKey] = remoteRecord;
         deleted.remove(dateKey);
       }

@@ -180,12 +180,6 @@ class _TravelScreenState extends State<TravelScreen> {
           .difference(remote.records.map((e) => e.dateKey).toSet())
           .difference(remote.deletedDateKeys);
 
-  /// 远端有、本地没有的日期。
-  Set<String> _remoteOnlyDateKeys(TravelRecordsDocument remote) =>
-      remote.recordDateKeys
-          .difference(_recordDateKeys)
-          .difference(_document.deletedDateKeys);
-
   Future<bool> _confirmReplaceExistingRecord({
     required TravelRecord existing,
     required TravelRecord replacement,
@@ -756,22 +750,6 @@ class _TravelScreenState extends State<TravelScreen> {
       try {
         final remote = TravelRecordsDocument.fromMarkdown(pull.content!);
         remoteDocument = remote;
-        final remoteOnly = _remoteOnlyDateKeys(remote);
-        if (remoteOnly.isNotEmpty) {
-          setState(() => _processing = false);
-          final preview = remoteOnly.take(5).join('、');
-          _showMessage(
-            '远端有本地没有的记录（$preview），已中止同步，请先执行「拉取」',
-          );
-          _reportTravel(
-            SyncOperationResult.conflict(
-              '远端有本地没有的出行记录，请先在出行页执行「拉取」',
-              conflictCount: remoteOnly.length,
-              details: remoteOnly.take(10).toList(growable: false),
-            ),
-          );
-          return;
-        }
         final conflicting = _document.conflictingDateKeys(remote);
         if (conflicting.isNotEmpty) {
           final tombstoneConflicts =
