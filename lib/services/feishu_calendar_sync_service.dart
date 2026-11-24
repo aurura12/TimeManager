@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 
@@ -40,8 +42,59 @@ class FeishuCalendarSyncService extends ChangeNotifier {
     if (_syncing) _cancelRequested = true;
   }
 
+  /// 同一天的同步串行排队。
+  ///
+  /// 自动推送与手动全量同步都可能命中同一天：两边同时读到「远端还没有这些
+  /// 日程」，就会各自创建一份，飞书上出现重复日程。这里按「身份 + 日期」
+  /// 排队，后一个等前一个写完再重新拉取求差集。
+  final Map<String, Future<void>> _dayChains = {};
+
   /// 同步单日：拉当天本 App 事件 → 与本地槽位求差集 → 增删。
   Future<FeishuDaySyncOutcome> syncDay({
+    required DiaryKind kind,
+    required DateTime date,
+    required List<TimeSlot> slots,
+  }) {
+    final key = '${kind.code}|${_dateKey(date)}';
+    final previous = _dayChains[key];
+    final gate = Completer<void>();
+    _dayChains[key] = gate.future;
+    return _runQueuedDay(
+      previous,
+      gate,
+      key,
+      kind: kind,
+      date: date,
+      slots: slots,
+    );
+  }
+
+  Future<FeishuDaySyncOutcome> _runQueuedDay(
+    Future<void>? previous,
+    Completer<void> gate,
+    String key, {
+    required DiaryKind kind,
+    required DateTime date,
+    required List<TimeSlot> slots,
+  }) async {
+    if (previous != null) {
+      try {
+        await previous;
+      } catch (_) {
+        // 前一次失败不影响这一次：它自己会把错误报给调用方。
+      }
+    }
+    try {
+      return await _syncDayUnsafe(kind: kind, date: date, slots: slots);
+    } finally {
+      gate.complete();
+      if (identical(_dayChains[key], gate.future)) {
+        _dayChains.remove(key);
+      }
+    }
+  }
+
+  Future<FeishuDaySyncOutcome> _syncDayUnsafe({
     required DiaryKind kind,
     required DateTime date,
     required List<TimeSlot> slots,
