@@ -314,6 +314,7 @@ class FeishuRemoteAuth {
     this.credentials,
     this.tokens,
     this.revoked = false,
+    this.autoSync,
     this.sha,
   });
 
@@ -324,6 +325,12 @@ class FeishuRemoteAuth {
   /// 用户主动断开时写入的墓碑，避免另一台设备又把授权同步回来。
   final bool revoked;
 
+  /// 同一身份共享的「自动同步」开关。
+  ///
+  /// null 表示旧版文件里没有这个字段：新设备只在本地从未设置过开关时继承它，
+  /// 本机手动关掉过就尊重本机的选择。
+  final bool? autoSync;
+
   final String? sha;
 
   bool get hasAuth => !revoked && credentials != null;
@@ -333,6 +340,7 @@ class FeishuRemoteAuth {
         credentials: credentials,
         tokens: tokens,
         revoked: revoked,
+        autoSync: autoSync,
         sha: sha,
       );
 
@@ -352,6 +360,7 @@ class FeishuRemoteAuth {
       if (tokens?.refreshExpiresAt != null)
         'refresh_expires_at': tokens!.refreshExpiresAt!.millisecondsSinceEpoch,
       if ((tokens?.scope ?? '').isNotEmpty) 'scope': tokens!.scope,
+      if (autoSync != null) 'auto_sync': autoSync,
     };
   }
 
@@ -391,6 +400,7 @@ class FeishuRemoteAuth {
       credentials: credentials,
       tokens: tokens,
       revoked: json['revoked'] == true,
+      autoSync: json['auto_sync'] is bool ? json['auto_sync'] as bool : null,
       sha: sha,
     );
   }

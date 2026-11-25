@@ -1967,10 +1967,9 @@ class TimeProvider with ChangeNotifier {
       _pullOwnScheduleOnDateChange();
       // 开启前台自动刷新，让另一台设备（手机/电脑）的修改能自己浮现
       _ensureScheduleAutoRefreshTimer();
-      // 补推上次没推成功的飞书日程
-      unawaited(_restoreFeishuPendingDates());
-      // 启动时检查一次飞书授权，把 refresh_token 的 30 天窗口续上
-      unawaited(_keepFeishuTokenAlive());
+      // 启动时的飞书自检：先继承同一身份的授权（含自动同步开关），
+      // 再补推上次没推成功的日期，最后给令牌续期。
+      unawaited(_bootstrapFeishuCalendar());
       // 仅在用户明确选择 Google 模式后恢复会话；手动模式绝不触发 Google。
       if (_usesMobileIdentityFlow &&
           _identityMode == AppIdentityMode.google &&
@@ -2913,6 +2912,8 @@ class TimeProvider with ChangeNotifier {
     final kind = _feishuKind;
     if (kind != null) {
       await FeishuCredentialStore.saveAutoSync(kind, enabled);
+      // 开关也写进同步仓库：另一台设备第一次打开时直接继承，不用再拨一次。
+      unawaited(_publishFeishuAutoSync(kind, enabled));
     }
     if (enabled) {
       _feishuAuthLost = false;
@@ -2925,6 +2926,39 @@ class TimeProvider with ChangeNotifier {
       _feishuSyncGeneration++;
     }
     notifyListeners();
+  }
+
+  Future<void> _publishFeishuAutoSync(DiaryKind kind, bool enabled) async {
+    try {
+      await FeishuOAuthService().publishAutoSync(kind, enabled);
+    } catch (e, stackTrace) {
+      // 只影响另一台设备能不能继承开关，本机照常同步。
+      feishuLogWarning(
+        '飞书自动同步开关没能写进同步仓库',
+        error: e,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  /// 设置页从同步仓库拉回授权后调用：本机缓存可能还是旧值（另一台设备
+  /// 开着自动同步时本机刚继承过来），重新读一遍，变成开着就补上待推日期。
+  Future<void> refreshFeishuAutoSyncFromStore() async {
+    final kind = _feishuKind;
+    if (kind == null || _isDisposed) return;
+    final bool enabled;
+    try {
+      enabled = await FeishuCredentialStore.loadAutoSync(kind);
+    } catch (_) {
+      return;
+    }
+    if (_isDisposed || _feishuAutoSyncCache == enabled) return;
+    _feishuAutoSyncCache = enabled;
+    if (enabled) {
+      _feishuAuthLost = false;
+      await resumeFeishuSyncAfterAuth();
+    }
+    if (!_isDisposed) notifyListeners();
   }
 
   /// 重新授权成功后调用：解除停推，把磁盘上留着的待推日期重新排上。
@@ -2988,7 +3022,11 @@ class TimeProvider with ChangeNotifier {
       _pendingFeishuDateKeys.clear();
       return;
     }
-    if (await FeishuCredentialStore.loadTokens(kind) == null) return;
+    if (await FeishuCredentialStore.loadTokens(kind) == null) {
+      // 本机还没授权：同一身份的其它设备授权过就直接继承，不必先打开设置页。
+      final tokenResult = await FeishuOAuthService().ensureAccessToken(kind);
+      if (tokenResult.tokens == null) return;
+    }
     if (_isDisposed) return;
     if (FeishuCalendarSyncService.instance.syncing) {
       // 手动全量同步正在进行，等它结束再推，避免两边同时建出重复日程。
@@ -3041,6 +3079,29 @@ class TimeProvider with ChangeNotifier {
     if (!_feishuAuthLost && _pendingFeishuDateKeys.isNotEmpty) {
       _scheduleFeishuFlush();
     }
+  }
+
+  /// 启动时的飞书自检。
+  ///
+  /// 顺序很重要：先把同一身份在仓库里的授权（含自动同步开关）继承下来，
+  /// 否则本机第一次运行时会因为「没有令牌 / 开关是关的」把待推日期丢掉。
+  Future<void> _bootstrapFeishuCalendar() async {
+    final kind = _feishuKind;
+    if (kind == null) return;
+    try {
+      if (await FeishuCredentialStore.loadTokens(kind) == null) {
+        final adopted = await FeishuOAuthService().syncFromRemote(kind);
+        if (adopted) feishuLog('启动时从同步仓库继承了飞书授权');
+      }
+    } catch (e, stackTrace) {
+      feishuLogWarning(
+        '启动时继承飞书授权失败',
+        error: e,
+        stackTrace: stackTrace,
+      );
+    }
+    await _restoreFeishuPendingDates();
+    await _keepFeishuTokenAlive();
   }
 
   /// App 启动时补推上次没推成功的日期。

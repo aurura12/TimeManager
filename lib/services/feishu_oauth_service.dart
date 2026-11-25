@@ -229,6 +229,7 @@ class FeishuOAuthService {
       merged,
       baseSha: pull.auth?.sha,
       expectNotFound: pull.notFound,
+      autoSync: pull.auth?.autoSync,
     );
     feishuLog('飞书令牌已刷新');
     return FeishuTokenResult.ok(merged);
@@ -249,6 +250,7 @@ class FeishuOAuthService {
         await FeishuCredentialStore.saveCredentials(kind, auth.credentials!);
       }
     }
+    await _adoptAutoSyncSeed(kind, auth);
     final now = DateTime.now();
     final remoteTokens = auth.tokens;
     final localTokens = await FeishuCredentialStore.loadTokens(kind);
@@ -274,6 +276,32 @@ class FeishuOAuthService {
       tokens,
       baseSha: pull.auth?.sha,
       expectNotFound: pull.notFound,
+      autoSync: await FeishuCredentialStore.loadAutoSyncOrNull(kind),
+    );
+  }
+
+  /// 把「自动同步」开关写进同步仓库，同一身份的其它设备第一次打开时继承。
+  ///
+  /// 只改开关，不碰令牌：令牌有它自己的刷新与乐观锁流程，这里把仓库里已有的
+  /// 令牌原样带回去，避免用本机也许已经过期的一份覆盖掉另一台刚刷新的。
+  Future<bool> publishAutoSync(DiaryKind kind, bool enabled) async {
+    final credentials = await FeishuCredentialStore.loadCredentials(kind);
+    if (credentials == null) return false;
+    final pull = await _authSync.pull(kind);
+    if (!pull.available) return false;
+    final remote = pull.auth;
+    // 远端已经断开授权时不再复活它：开关留给下一次重新授权写。
+    if (remote != null && remote.revoked) return false;
+    return _authSync.push(
+      kind,
+      FeishuRemoteAuth(
+        updatedAt: DateTime.now(),
+        credentials: remote?.credentials ?? credentials,
+        tokens: remote?.tokens ?? await FeishuCredentialStore.loadTokens(kind),
+        autoSync: enabled,
+      ),
+      expectedSha: remote?.sha,
+      expectNotFound: pull.notFound,
     );
   }
 
@@ -287,7 +315,16 @@ class FeishuOAuthService {
       await FeishuCredentialStore.saveTokens(kind, tokens);
     }
     await FeishuCredentialStore.saveNeedsReauth(kind, false);
+    await _adoptAutoSyncSeed(kind, auth);
     feishuLog('已采用同步仓库里的飞书授权（${kind.code}）');
+  }
+
+  /// 只在本地从未设置过开关时继承仓库里的值，免得把本机手动关掉的顶回来。
+  Future<void> _adoptAutoSyncSeed(DiaryKind kind, FeishuRemoteAuth auth) async {
+    final remote = auth.autoSync;
+    if (remote == null) return;
+    if (await FeishuCredentialStore.loadAutoSyncOrNull(kind) != null) return;
+    await FeishuCredentialStore.saveAutoSync(kind, remote);
   }
 
   Future<void> _publishAuth(
@@ -295,6 +332,7 @@ class FeishuOAuthService {
     FeishuTokenSet tokens, {
     String? baseSha,
     bool expectNotFound = false,
+    bool? autoSync,
   }) async {
     final credentials = await FeishuCredentialStore.loadCredentials(kind);
     if (credentials == null) return;
@@ -304,6 +342,9 @@ class FeishuOAuthService {
         credentials: credentials,
         tokens: tokens,
         updatedAt: DateTime.now(),
+        // 刷新令牌只是技术动作，开关沿用仓库里原有值，避免把用户的
+        // 选择抹掉；只有用户真的拨开关时才由 publishAutoSync 改写。
+        autoSync: autoSync,
       ),
       expectedSha: baseSha,
       expectNotFound: expectNotFound,

@@ -111,6 +111,13 @@ class _FeishuCalendarSettingsScreenState
         _appSecretController.text = credentials.appSecret;
       }
     });
+    // 另一台设备开着自动同步时，这一页会把开关一起继承过来，但此时
+    // TimeProvider 的缓存可能还是「没读过」。同步刷新一次，否则开关
+    // 显示为开着、实际推送仍被跳过。
+    final provider = context.read<TimeProvider?>();
+    if (provider != null) {
+      await provider.refreshFeishuAutoSyncFromStore();
+    }
   }
 
   Future<void> _saveAndAuthorize() async {

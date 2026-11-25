@@ -226,6 +226,12 @@ class FeishuCredentialStore {
     return prefs.getBool(_prefKey(kind, 'auto_sync')) ?? false;
   }
 
+  /// 本机从未设置过这个开关时返回 null，供「继承其它设备的选择」判断。
+  static Future<bool?> loadAutoSyncOrNull(DiaryKind kind) async {
+    final prefs = await _prefs;
+    return prefs.getBool(_prefKey(kind, 'auto_sync'));
+  }
+
   static Future<void> saveAutoSync(DiaryKind kind, bool enabled) async {
     final prefs = await _prefs;
     await prefs.setBool(_prefKey(kind, 'auto_sync'), enabled);

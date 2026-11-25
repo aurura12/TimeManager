@@ -284,6 +284,82 @@ void main() {
     final stored = await FeishuCredentialStore.loadTokens(kind);
     expect(stored?.refreshToken, 'still-good-refresh');
   });
+
+  test('新设备第一次拿到授权时连自动同步开关一起继承', () async {
+    final fake = _FakeAuthSync(FeishuAuthPullResult(
+      auth: FeishuRemoteAuth(
+        updatedAt: DateTime.now(),
+        credentials:
+            const FeishuCredentials(appId: 'cli_x', appSecret: 'secret'),
+        tokens: tokenSet(
+          access: 'remote-access',
+          accessIn: const Duration(hours: 1),
+          refresh: 'remote-refresh',
+          refreshIn: const Duration(days: 20),
+        ),
+        autoSync: true,
+      ),
+    ));
+
+    await FeishuOAuthService(authSync: fake).syncFromRemote(kind);
+
+    expect(await FeishuCredentialStore.loadAutoSync(kind), isTrue);
+  });
+
+  test('本机手动关掉过自动同步时，不继承仓库里的开', () async {
+    await FeishuCredentialStore.saveAutoSync(kind, false);
+    final fake = _FakeAuthSync(FeishuAuthPullResult(
+      auth: FeishuRemoteAuth(
+        updatedAt: DateTime.now(),
+        credentials:
+            const FeishuCredentials(appId: 'cli_x', appSecret: 'secret'),
+        autoSync: true,
+      ),
+    ));
+
+    await FeishuOAuthService(authSync: fake).syncFromRemote(kind);
+
+    expect(await FeishuCredentialStore.loadAutoSync(kind), isFalse);
+  });
+
+  test('拨开关写回仓库时保留仓库里已有的令牌', () async {
+    await FeishuCredentialStore.saveCredentials(
+      kind,
+      const FeishuCredentials(appId: 'cli_x', appSecret: 'secret'),
+    );
+    final fake = _FakeAuthSync(FeishuAuthPullResult(
+      auth: FeishuRemoteAuth(
+        updatedAt: DateTime.now(),
+        credentials:
+            const FeishuCredentials(appId: 'cli_x', appSecret: 'secret'),
+        tokens: tokenSet(
+          access: 'remote-access',
+          accessIn: const Duration(hours: 1),
+          refresh: 'remote-refresh',
+          refreshIn: const Duration(days: 20),
+        ),
+        autoSync: false,
+      ),
+    ));
+
+    final ok =
+        await FeishuOAuthService(authSync: fake).publishAutoSync(kind, true);
+
+    expect(ok, isTrue);
+    expect(fake.pushed.single.autoSync, isTrue);
+    expect(fake.pushed.single.tokens?.accessToken, 'remote-access');
+  });
+
+  test('授权文件的 auto_sync 可以往返序列化', () {
+    final auth = FeishuRemoteAuth(
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(1700000000000),
+      autoSync: true,
+    );
+    final decoded = FeishuRemoteAuth.fromJson(
+      jsonDecode(jsonEncode(auth.toJson())) as Map<String, dynamic>,
+    );
+    expect(decoded?.autoSync, isTrue);
+  });
 }
 
 /// 第一次返回 notFound，之后返回对方刷新好的令牌。
