@@ -83,6 +83,8 @@ docs/*
 !docs/design-system.md
 # 发布脚本默认读取的更新说明需要入库
 !docs/release-notes.md
+# Mac 开发机环境同步清单（两台机器协作需要）
+!docs/mac-setup-checklist.md
 iOS_移植计划.md
 网格重构方案.md
 flutter_*.png
