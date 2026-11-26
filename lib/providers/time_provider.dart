@@ -1987,7 +1987,17 @@ class TimeProvider with ChangeNotifier {
       // Windows 的日程身份历史上由 TimeProvider 单独读取。先加载共享身份
       // 服务，再把同一份手动身份注入进程内，保证同步中心使用相同 scope。
       await AppIdentityService.load();
-      final manualKind = await AppUserIdentityStore.loadManualKind();
+      var manualKind = await AppUserIdentityStore.loadManualKind();
+      if (manualKind == null) {
+        // 旧版本的桌面端只把身份存在 SharedPreferences（schedule_user_kind）。
+        // 升级后安全存储里还没有记录时回退读取，避免用户丢失已选身份。
+        final prefs = await SharedPreferences.getInstance();
+        final legacy = prefs.getString(_scheduleUserKey);
+        if (legacy != null && legacy.isNotEmpty) {
+          manualKind = DiaryKindX.fromCode(legacy);
+          unawaited(AppUserIdentityStore.saveManualKind(manualKind));
+        }
+      }
       if (_initializationFailed || _isDisposed) return;
       if (manualKind != null) {
         _scheduleUser = manualKind;

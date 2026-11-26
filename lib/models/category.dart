@@ -19,7 +19,23 @@ class Category {
     this.subCategories = const [],
     this.hiddenSubCategories = const [],
     this.updatedAt = 0,
-  }) : id = id ?? DateTime.now().microsecondsSinceEpoch.toString();
+  }) : id = id ?? _newId();
+
+  /// 微秒时间戳在同一微秒内创建的多个分类会撞 id（例如备份恢复、批量
+  /// 新建），一旦撞 id，统计归属与同步合并都会把它们当成同一个事件。
+  static String? _lastIdMicros;
+  static int _idSequence = 0;
+
+  static String _newId() {
+    final micros = DateTime.now().microsecondsSinceEpoch.toString();
+    if (micros == _lastIdMicros) {
+      _idSequence++;
+      return '${micros}_$_idSequence';
+    }
+    _lastIdMicros = micros;
+    _idSequence = 0;
+    return micros;
+  }
 
   Category copyWith({
     String? id,
