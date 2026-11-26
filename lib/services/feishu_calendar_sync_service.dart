@@ -199,6 +199,15 @@ class FeishuCalendarSyncService extends ChangeNotifier {
       }
     }
 
+    if (created > 0) {
+      await _collapseDuplicates(
+        kind: kind,
+        calendarId: calendarId,
+        date: date,
+        dateKey: dateKey,
+      );
+    }
+
     await _updateSyncedIndex(kind, dateKey, drafts);
     feishuLog('飞书同步 $dateKey：新增 $created，删除 $deleted');
     return FeishuDaySyncOutcome(
@@ -370,6 +379,63 @@ class FeishuCalendarSyncService extends ChangeNotifier {
       );
     }
     return call(refreshedTokens.accessToken);
+  }
+
+  /// 收敛并发创建出来的重复日程。
+  ///
+  /// 两台设备同时推同一天时，各自都读到「远端还没有这条」，就会各建一份。
+  /// 创建成功后立刻再列一次当天，按（标题, 开始, 结束）分组，多出来的删掉。
+  /// 保留 `event_id` 最小的一条，保证两台设备算出同一个保留者。
+  /// 属于尽力而为：失败只记日志，不影响本次同步结果。
+  Future<void> _collapseDuplicates({
+    required DiaryKind kind,
+    required String calendarId,
+    required DateTime date,
+    required String dateKey,
+  }) async {
+    final pageResult = await _withToken(
+      kind,
+      (accessToken) => _api.listDayEvents(
+        accessToken: accessToken,
+        calendarId: calendarId,
+        day: date,
+      ),
+    );
+    final page = pageResult.data;
+    if (!pageResult.success || page == null || page.truncated) return;
+
+    final groups = <String, List<FeishuRemoteEvent>>{};
+    for (final event in page.events) {
+      final key =
+          '${event.summary}|${event.startSeconds}|${event.endSeconds}';
+      groups.putIfAbsent(key, () => <FeishuRemoteEvent>[]).add(event);
+    }
+
+    var collapsed = 0;
+    for (final group in groups.values) {
+      if (group.length < 2) continue;
+      group.sort((a, b) => a.eventId.compareTo(b.eventId));
+      for (final extra in group.skip(1)) {
+        final result = await _withToken(
+          kind,
+          (accessToken) => _api.deleteEvent(
+            accessToken: accessToken,
+            calendarId: calendarId,
+            eventId: extra.eventId,
+          ),
+        );
+        if (result.success) {
+          collapsed++;
+        } else {
+          feishuLogWarning(
+            '飞书重复日程清理失败：$dateKey · ${result.error ?? '未知原因'}',
+          );
+        }
+      }
+    }
+    if (collapsed > 0) {
+      feishuLog('飞书同步 $dateKey：清理重复日程 $collapsed');
+    }
   }
 
   Future<void> _updateSyncedIndex(

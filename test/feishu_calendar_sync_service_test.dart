@@ -14,6 +14,9 @@ class _FakeApi extends FeishuCalendarApi {
   int deleteCalls = 0;
   int _nextId = 1;
 
+  /// 为真时每次创建都额外塞一条完全相同的事件，模拟另一台设备同时创建。
+  bool duplicateOnCreate = false;
+
   @override
   Future<FeishuApiResult<String>> fetchPrimaryCalendarId(
     String accessToken,
@@ -43,12 +46,21 @@ class _FakeApi extends FeishuCalendarApi {
     createCalls++;
     final start = body['start_time'] as Map<String, dynamic>;
     final end = body['end_time'] as Map<String, dynamic>;
-    events.add(FeishuRemoteEvent(
+    final created = FeishuRemoteEvent(
       eventId: 'e${_nextId++}',
       summary: body['summary'].toString(),
       startSeconds: int.parse(start['timestamp'].toString()),
       endSeconds: int.parse(end['timestamp'].toString()),
-    ));
+    );
+    events.add(created);
+    if (duplicateOnCreate) {
+      events.add(FeishuRemoteEvent(
+        eventId: 'e${_nextId++}',
+        summary: created.summary,
+        startSeconds: created.startSeconds,
+        endSeconds: created.endSeconds,
+      ));
+    }
     return FeishuApiResult.ok(true);
   }
 
@@ -107,6 +119,23 @@ void main() {
     expect(api.createCalls, 1);
     expect(api.events.length, 1);
     expect(api.events.single.summary, '写代码');
+  });
+
+  test('创建时另一台设备同时建了同一条日程，会被收敛成一条', () async {
+    final api = _FakeApi()..duplicateOnCreate = true;
+    final service = FeishuCalendarSyncService(api: api, oauth: _FakeOAuth());
+    final date = DateTime(2026, 11, 24);
+
+    final outcome = await service.syncDay(
+      kind: DiaryKind.g,
+      date: date,
+      slots: slotsWith('写代码'),
+    );
+
+    expect(outcome.success, isTrue);
+    expect(api.createCalls, 1);
+    expect(api.deleteCalls, 1);
+    expect(api.events.length, 1, reason: '并发创建的重复日程必须在同一轮收敛');
   });
 
   test('串行之后第二次同步看到第一条日程，不会重复删除重建', () async {
