@@ -59,8 +59,7 @@ Future<TimeProvider> _createProvider() async {
   final provider = TimeProvider();
   // 等待本地数据加载完成，避免后续 addCategory 被初始化覆盖
   final deadline = DateTime.now().add(const Duration(seconds: 5));
-  while (!provider.isInitialLoadFinished &&
-      DateTime.now().isBefore(deadline)) {
+  while (!provider.isSyncStateReady && DateTime.now().isBefore(deadline)) {
     await Future<void>.delayed(const Duration(milliseconds: 20));
   }
   return provider;

@@ -99,7 +99,9 @@ Future<TimeProvider> _createProvider({
       ? TimeProvider()
       : TimeProvider(scheduleGiteeDebounce: scheduleGiteeDebounce);
   final deadline = DateTime.now().add(const Duration(seconds: 5));
-  while (!provider.isInitialLoadFinished && DateTime.now().isBefore(deadline)) {
+  // 身份加载与本地数据加载是两段异步；等身份也完成再开始操作，
+  // 否则前几个编辑会被 _allowScheduleMutation 静默丢弃。
+  while (!provider.isSyncStateReady && DateTime.now().isBefore(deadline)) {
     await Future<void>.delayed(const Duration(milliseconds: 20));
   }
   return provider;
@@ -163,7 +165,6 @@ void main() {
     addTearDown(provider.dispose);
     final originalNames =
         provider.categories.map((category) => category.name).toList();
-
     provider.reorderCategories(0, 2);
 
     expect(

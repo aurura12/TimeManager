@@ -559,7 +559,8 @@ void main() {
     final offenders = <String>[];
     for (final entity in Directory('lib').listSync(recursive: true)) {
       if (entity is! File || !entity.path.endsWith('.dart')) continue;
-      if (entity.path.endsWith('lib/utils/app_snack_bar.dart')) continue;
+      // Windows 下 path 用反斜杠，统一用 uri.path（始终是正斜杠）比较。
+      if (entity.uri.path.endsWith('lib/utils/app_snack_bar.dart')) continue;
       if (entity.readAsStringSync().contains('showSnackBar(')) {
         offenders.add(entity.path);
       }
