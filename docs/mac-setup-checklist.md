@@ -16,6 +16,10 @@ flutter upgrade
 
 ## 2. 配置 pub 镜像
 
+两台机器、以及所有会跑 `flutter pub get` 的进程，都必须用同一个源。
+
+### 2.1 终端（~/.zshrc）
+
 写入 `~/.zshrc`，与 Windows 侧保持一致：
 
 ```bash
@@ -28,7 +32,21 @@ source ~/.zshrc
 echo $PUB_HOSTED_URL   # 应输出 https://pub.flutter-io.cn
 ```
 
-镜像必须在 `flutter pub get` 之前生效，否则 Mac 会把锁文件里的下载源改回 `pub.dev`，两台机器来回改写。
+注意：非交互 shell、IDE 内嵌的进程不会读 `~/.zshrc`。在脚本或工具里跑 `flutter` 时，要么显式带上这两个变量，要么确认它继承了正确的环境。
+
+### 2.2 VS Code（仓库内 .vscode/settings.json）
+
+仓库里的 `.vscode/settings.json` 已经用 `dart.env` 配好这两个变量，覆盖 Dart/Flutter 插件 spawn 的所有进程，包括保存 `pubspec.yaml` 时自动触发的 `pub get`。不需要在本机再配 VS Code。
+
+- 改完这个文件（或第一次拉到它）后，**完全退出 VS Code（Cmd+Q）再打开**；Reload Window 不保证重启 tooling daemon。
+- 不要为了避开自动 pub get 把 `dart.runPubGetOnPubspecChanges` 改成 `never`：发布脚本会改 `pubspec.yaml`，自动 pub get 本身是有用的。
+- 校验：完全重开后 `git status --short pubspec.lock` 应为空。
+
+### 2.3 其他 GUI 工具
+
+Android Studio 等不读 `.zshrc`、也没有仓库级 `dart.env`。要用它们跑 pub get 时，先在终端跑一次 `flutter pub get`，或自行在它的启动环境里设置这两个变量；否则会把锁文件改回 `pub.dev`。
+
+镜像必须在 `flutter pub get` 之前生效，否则 Mac 会把锁文件里的下载源改回 `pub.dev`，两台机器来回改写。镜像不可达时用 `flutter pub get --offline`（本机镜像缓存里已有当前锁的全部包），不要临时切回 pub.dev 再提交锁文件。
 
 ## 3. 拉代码并处理本地锁文件
 
@@ -58,6 +76,14 @@ git status --short pubspec.lock   # 应无输出
 ```
 
 如果有输出且只改动了 `url` 行，说明第 2 步的镜像没生效，先修正环境变量再重跑 `pub get`。
+
+也可以直接跑守护测试（全量 `flutter test` 也会收集它）：
+
+```bash
+flutter test test/pub_lock_host_guard_test.dart
+```
+
+它只校验 `source: hosted` 的 `url`，版本、`sha256` 与 `sdks:` 的合法变化不会误报。
 
 ## 6. 跑构建前门禁
 

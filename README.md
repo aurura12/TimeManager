@@ -96,6 +96,21 @@ scripts/build_and_install_android.sh # 用当前代码构建 Android release APK
 flutter build apk --release         # 直接构建 release APK
 ```
 
+## 依赖源（两台机器必须一致）
+
+`pubspec.lock` 记录的下载源固定为 `https://pub.flutter-io.cn`。任何没带镜像环境变量跑的 `flutter pub get`（包括保存 `pubspec.yaml` 时 IDE 自动跑的）都会把 165 行 `url` 改回 `pub.dev`，两台机器来回翻转。
+
+- macOS：终端按 `docs/mac-setup-checklist.md` 第 2 节配置；VS Code 由仓库内的 `.vscode/settings.json`（`dart.env`）覆盖，无需本机额外设置。
+- Windows（PowerShell）：
+
+  ```powershell
+  [Environment]::SetEnvironmentVariable('PUB_HOSTED_URL','https://pub.flutter-io.cn','User')
+  [Environment]::SetEnvironmentVariable('FLUTTER_STORAGE_BASE_URL','https://storage.flutter-io.cn','User')
+  ```
+
+  设置后完全退出并重开 VS Code 与新终端（新进程才会继承）。
+- 校验：`flutter test test/pub_lock_host_guard_test.dart` 会拒绝任何非镜像源的锁文件。
+
 ## Windows 发布到 Gitee
 
 在 Windows 上准备好 Flutter、Visual Studio 的「使用 C++ 的桌面开发」、Inno Setup 6.3+（`installer.iss` 使用 6.3 引入的 `x64compatible` 并以无 BOM 的 UTF-8 保存中文），以及下方列出的本机配置文件。Git 自动提交需要配置作者信息和当前分支的上游。更新 `docs/release-notes.md` 后，在项目根目录的 PowerShell 或 CMD 运行：
