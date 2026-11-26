@@ -379,6 +379,7 @@ macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，
 
 - `flutter test` 收集 `test/` 下的 `*_test.dart`（约 160 个，另有 `test/support/` 下 3 个共用 Fake），覆盖同步合并、语音解析、日历解析、桌面适配、日志系统、备份回滚、身份隔离等核心逻辑
 - 4 个脚本测试是独立脚本，`flutter test` **不会**收集：`bash test/update_macos_script_test.sh`、`bash test/update_metadata_script_test.sh`、`bash test/publish_android_release_script_test.sh`、`pwsh test/publish_windows_release_script_test.ps1`（不联网、不构建、不发布）
+- `test/pub_lock_host_guard_test.dart` 守护 `pubspec.lock` 的下载源必须是 `https://pub.flutter-io.cn`：只校验 `source: hosted` 的 `url`，git / path / sdk 依赖以及版本、`sdks:` 变化不会误报；失败时按提示用镜像变量重跑 `pub get`，不要把 pub.dev 的改写提交上去
 - 只想跑一条用例时用 `--plain-name "<用例名>"`，比整个文件快得多
 
 ### 改动 → 必跑测试
@@ -400,6 +401,7 @@ macOS 上默认以菜单栏形态运行（本机偏好 `app_menu_bar_mode_v1`，
 | 飞书日历同步（槽位合并 / 差集 / 令牌共用 / 单日串行） | `flutter test test/feishu_calendar_planner_test.dart test/feishu_calendar_api_test.dart test/feishu_auth_share_test.dart test/feishu_calendar_sync_service_test.dart` |
 | 时间块拖拽调时长 | `flutter test test/time_block_resize_test.dart test/time_provider_resize_test.dart test/time_grid_resize_test.dart` |
 | 撤销 / 重做 | `flutter test test/time_provider_undo_test.dart` |
+| `pubspec.lock` / 依赖下载源 | `flutter test test/pub_lock_host_guard_test.dart` |
 | 目标进度 / 统计缓存 | `flutter test test/target_progress_test.dart test/target_progress_ui_test.dart test/statistics_cache_test.dart` |
 | 打卡（照片 / 定位 / 同步） | `flutter test test/check_in_photo_security_test.dart test/privacy_boundary_test.dart test/check_in_sync_offline_test.dart` |
 | 起床记录 | `flutter test test/wake_up_provider_test.dart test/wake_up_sync_test.dart test/wake_up_history_screen_test.dart` |
