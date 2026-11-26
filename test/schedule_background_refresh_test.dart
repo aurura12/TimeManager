@@ -5,9 +5,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:time_manager/models/diary_kind.dart';
+import 'package:time_manager/models/feishu_calendar_models.dart';
 import 'package:time_manager/models/sync_center_state.dart';
+import 'package:time_manager/models/time_slot.dart';
 import 'package:time_manager/providers/time_provider.dart';
 import 'package:time_manager/services/app_identity_service.dart';
+import 'package:time_manager/services/feishu_calendar_sync_service.dart';
+import 'package:time_manager/services/feishu_credentials_store.dart';
 import 'package:time_manager/services/schedule_gitee_service.dart';
 import 'package:time_manager/services/schedule_sync_dependencies.dart';
 import 'package:time_manager/services/schedule_sync_manifest_store.dart';
@@ -104,11 +108,39 @@ ScheduleSyncDependencies _fakeDependencies(_RemoteState state) {
   );
 }
 
+/// 假的飞书同步编排：只记录被推的日期，可指定前几次失败。
+class _FakeFeishuSync extends FeishuCalendarSyncService {
+  _FakeFeishuSync({this.failuresBeforeSuccess = 0});
+
+  int failuresBeforeSuccess;
+  final List<String> syncedDateKeys = [];
+
+  @override
+  Future<FeishuDaySyncOutcome> syncDay({
+    required DiaryKind kind,
+    required DateTime date,
+    required List<TimeSlot> slots,
+  }) async {
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    final dateKey = '${date.year}-$month-$day';
+    syncedDateKeys.add(dateKey);
+    if (failuresBeforeSuccess > 0) {
+      failuresBeforeSuccess--;
+      return FeishuDaySyncOutcome.failed(dateKey, '网络错误');
+    }
+    return FeishuDaySyncOutcome(dateKey: dateKey, success: true);
+  }
+}
+
 Future<TimeProvider> _createProvider(
   _RemoteState state, {
   required bool mobile,
   Duration? autoRefreshInterval,
   Duration scheduleGiteeDebounce = const Duration(seconds: 3),
+  Duration feishuCalendarDebounce = const Duration(seconds: 3),
+  Duration feishuRetryDelay = const Duration(seconds: 60),
+  FeishuCalendarSyncService? feishuSyncService,
   /// true 时保留磁盘上的数据，用来模拟"重启后新建 Provider"。
   bool preservePreferences = false,
   /// false 时不等待初始化完成就返回，用来模拟"初始化还没跑完就切后台"。
@@ -140,6 +172,9 @@ Future<TimeProvider> _createProvider(
     scheduleSyncDependencies: _fakeDependencies(state),
     scheduleAutoRefreshInterval: autoRefreshInterval,
     scheduleGiteeDebounce: scheduleGiteeDebounce,
+    feishuCalendarDebounce: feishuCalendarDebounce,
+    feishuRetryDelay: feishuRetryDelay,
+    feishuSyncService: feishuSyncService,
   );
   if (!waitForInit) return provider;
   final deadline = DateTime.now().add(const Duration(seconds: 5));
@@ -160,7 +195,10 @@ Future<void> _waitUntil(bool Function() condition) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(AppIdentityService.resetForTesting);
+  setUp(() {
+    AppIdentityService.resetForTesting();
+    FeishuCredentialStore.resetSecureFallbackForTesting();
+  });
   tearDown(AppIdentityService.resetForTesting);
 
   test('远端与本地一致时不再下载正文，远端变化才重新下载', () async {
@@ -1372,6 +1410,95 @@ void main() {
     expect(state.pullRequests, contains('g/2026-09-08'));
     await refresh;
   });
+  test('远端拉取带来本地没有的日程时，这一天会排进飞书待推', () async {
+    final state = _RemoteState();
+    final provider = await _createProvider(
+      state,
+      mobile: true,
+      feishuCalendarDebounce: const Duration(seconds: 30),
+      extraPreferences: const {
+        'feishu_secure_disabled': true,
+        'identity_g_feishu_auto_sync': true,
+      },
+    );
+    addTearDown(provider.dispose);
+
+    provider.goToDate(DateTime(2026, 9, 6));
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    state.clearCounters();
+    await FeishuCredentialStore.savePendingDates(DiaryKind.g, const []);
+
+    // 另一台设备新增了 10:00-11:00 的日程。
+    state.setRemote(
+      'g',
+      '2026-09-06',
+      '{"updated_at":2000,"slots":[{"i":60,"l":"远端当天","c":1,"ts":2000}]}',
+      'sha-06',
+    );
+    expect(await provider.refreshSchedulesFromRemoteInBackground(), isTrue);
+    expect(provider.getSlotsForDate('2026-09-06')?[60].label, '远端当天');
+
+    // 拉回来必须补推飞书，否则被本机误删的日程永远回不来。
+    expect(
+      await FeishuCredentialStore.loadPendingDates(DiaryKind.g),
+      contains('2026-09-06'),
+    );
+  });
+
+  test('飞书推送网络失败后保留日期并自动重试', () async {
+    final state = _RemoteState();
+    final feishu = _FakeFeishuSync(failuresBeforeSuccess: 1);
+    final provider = await _createProvider(
+      state,
+      mobile: true,
+      feishuCalendarDebounce: const Duration(milliseconds: 20),
+      feishuRetryDelay: const Duration(milliseconds: 100),
+      feishuSyncService: feishu,
+      extraPreferences: const {
+        'feishu_secure_disabled': true,
+        'identity_g_feishu_auto_sync': true,
+      },
+    );
+    addTearDown(provider.dispose);
+
+    // 有令牌才会真正走到 syncDay；否则会被「本机还没授权」挡下。
+    await FeishuCredentialStore.saveTokens(
+      DiaryKind.g,
+      FeishuTokenSet(
+        accessToken: 'token',
+        accessExpiresAt: DateTime.now().add(const Duration(hours: 1)),
+      ),
+    );
+
+    provider.goToDate(DateTime(2026, 9, 6));
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    state.clearCounters();
+    await FeishuCredentialStore.savePendingDates(DiaryKind.g, const []);
+
+    state.setRemote(
+      'g',
+      '2026-09-06',
+      '{"updated_at":2000,"slots":[{"i":60,"l":"远端当天","c":1,"ts":2000}]}',
+      'sha-06',
+    );
+    expect(await provider.refreshSchedulesFromRemoteInBackground(), isTrue);
+
+    // 第一次推送失败后必须自动重试，而不是把日期丢掉。
+    await _waitUntil(() => feishu.syncedDateKeys.length >= 2);
+    expect(
+      feishu.syncedDateKeys.length,
+      greaterThanOrEqualTo(2),
+      reason: '第一次网络失败后应当自动重试',
+    );
+    expect(feishu.syncedDateKeys.first, '2026-09-06');
+    expect(feishu.syncedDateKeys.last, '2026-09-06');
+    expect(
+      await FeishuCredentialStore.loadPendingDates(DiaryKind.g),
+      isEmpty,
+      reason: '重试成功后不应再留着待推日期',
+    );
+  });
+
   test('ScheduleSyncManifest 相等性用于跳过重复写盘', () {
     const a = ScheduleSyncManifest(
       remoteDates: {'2026-09-06'},

@@ -720,6 +720,8 @@ class TimeProvider with ChangeNotifier {
   final Duration? _scheduleAutoRefreshInterval;
   final Duration _googleCalendarDebounce;
   final Duration _feishuCalendarDebounce;
+  final Duration _feishuRetryDelay;
+  final FeishuCalendarSyncService _feishuSyncService;
   final bool? _identityModePlatformOverride;
   final bool? _googleCalendarSyncPlatformOverride;
   final bool? _googleCalendarSignedInOverride;
@@ -1276,7 +1278,10 @@ class TimeProvider with ChangeNotifier {
     _feishuSyncGeneration++;
     _feishuCalendarTimer?.cancel();
     _feishuCalendarTimer = null;
+    _feishuRetryTimer?.cancel();
+    _feishuRetryTimer = null;
     _pendingFeishuDateKeys.clear();
+    _retryFeishuDateKeys.clear();
     _feishuInFlightDateKeys.clear();
     _feishuAutoSyncCache = null;
     _feishuAuthLost = false;
@@ -1737,6 +1742,7 @@ class TimeProvider with ChangeNotifier {
     _targetsGiteeTimer?.cancel();
     _scheduleSyncProgressClearTimer?.cancel();
     _feishuCalendarTimer?.cancel();
+    _feishuRetryTimer?.cancel();
     _feishuSyncGeneration++;
     _googleAuthSubscription?.cancel();
     _syncStatusController.close();
@@ -1757,6 +1763,8 @@ class TimeProvider with ChangeNotifier {
     Duration? scheduleAutoRefreshInterval,
     Duration googleCalendarDebounce = const Duration(seconds: 3),
     Duration feishuCalendarDebounce = const Duration(seconds: 3),
+    Duration feishuRetryDelay = const Duration(seconds: 60),
+    FeishuCalendarSyncService? feishuSyncService,
     bool? identityModePlatformOverride,
     bool? googleCalendarSyncPlatformOverride,
     bool? googleCalendarSignedInOverride,
@@ -1777,6 +1785,9 @@ class TimeProvider with ChangeNotifier {
         _scheduleAutoRefreshInterval = scheduleAutoRefreshInterval,
         _googleCalendarDebounce = googleCalendarDebounce,
         _feishuCalendarDebounce = feishuCalendarDebounce,
+        _feishuRetryDelay = feishuRetryDelay,
+        _feishuSyncService =
+            feishuSyncService ?? FeishuCalendarSyncService.instance,
         _identityModePlatformOverride = identityModePlatformOverride,
         _googleCalendarSyncPlatformOverride =
             googleCalendarSyncPlatformOverride,
@@ -2885,6 +2896,11 @@ class TimeProvider with ChangeNotifier {
   Timer? _feishuCalendarTimer;
   final Set<String> _pendingFeishuDateKeys = {};
 
+  /// 上一轮推送失败（网络类，非授权失效）的日期，等 [_feishuRetryDelay] 后再推。
+  /// 失败后必须保留：否则那条编辑在飞书上永久丢失，只能等下次再编辑那天。
+  final Set<String> _retryFeishuDateKeys = {};
+  Timer? _feishuRetryTimer;
+
   /// 正在推送的日期。它们已经不在待推集合里，落盘时必须并回来，否则这一轮
   /// flush 期间新排队的编辑会把它们的磁盘记录冲掉，进程被杀就永久丢失。
   final Set<String> _feishuInFlightDateKeys = {};
@@ -2896,10 +2912,11 @@ class TimeProvider with ChangeNotifier {
   /// 停推期间不能把待推日期写空，否则那些日期再也补不回来。
   bool _feishuAuthLost = false;
 
-  /// 落盘用的完整待推集合：在途 + 新排队。
+  /// 落盘用的完整待推集合：在途 + 新排队 + 等待重试。
   Set<String> get _feishuPendingForDisk => {
         ..._feishuInFlightDateKeys,
         ..._pendingFeishuDateKeys,
+        ..._retryFeishuDateKeys,
       };
 
   /// 自动同步开关；null 表示还没从本地读过。
@@ -2921,7 +2938,10 @@ class TimeProvider with ChangeNotifier {
     } else {
       _feishuCalendarTimer?.cancel();
       _feishuCalendarTimer = null;
+      _feishuRetryTimer?.cancel();
+      _feishuRetryTimer = null;
       _pendingFeishuDateKeys.clear();
+      _retryFeishuDateKeys.clear();
       _feishuInFlightDateKeys.clear();
       _feishuSyncGeneration++;
     }
@@ -2990,6 +3010,16 @@ class TimeProvider with ChangeNotifier {
     _scheduleFeishuFlush();
   }
 
+  /// 远端内容真的改动了本地时，把这一天重新排进飞书待推队列。
+  ///
+  /// 飞书是「全天镜像」：本地快照缺某条日程就会把它当孤儿删掉。另一台设备的
+  /// 修改只能从同步仓库拉回来；拉回来不补推，飞书就会一直缺着（或一直留着
+  /// 已删的日程）。每次远端落地都触发一次幂等重推，多设备才能最终收敛。
+  void _markFeishuPendingAfterRemoteApply(String dateKey) {
+    if (_remoteViewEnabled) return;
+    _markFeishuCalendarPending(dateKey);
+  }
+
   void _scheduleFeishuFlush() {
     _feishuCalendarTimer?.cancel();
     _feishuCalendarTimer = Timer(_feishuCalendarDebounce, () {
@@ -3020,6 +3050,7 @@ class TimeProvider with ChangeNotifier {
     _feishuAutoSyncCache ??= await FeishuCredentialStore.loadAutoSync(kind);
     if (_feishuAutoSyncCache != true) {
       _pendingFeishuDateKeys.clear();
+      _retryFeishuDateKeys.clear();
       return;
     }
     if (await FeishuCredentialStore.loadTokens(kind) == null) {
@@ -3028,7 +3059,7 @@ class TimeProvider with ChangeNotifier {
       if (tokenResult.tokens == null) return;
     }
     if (_isDisposed) return;
-    if (FeishuCalendarSyncService.instance.syncing) {
+    if (_feishuSyncService.syncing) {
       // 手动全量同步正在进行，等它结束再推，避免两边同时建出重复日程。
       _scheduleFeishuFlush();
       return;
@@ -3039,6 +3070,7 @@ class TimeProvider with ChangeNotifier {
     final dates = _pendingFeishuDateKeys.toList()..sort();
     _pendingFeishuDateKeys.clear();
     _feishuInFlightDateKeys.addAll(dates);
+    final failed = <String>[];
     await FeishuCredentialStore.savePendingDates(
       kind,
       _feishuPendingForDisk,
@@ -3049,7 +3081,7 @@ class TimeProvider with ChangeNotifier {
         final date = _parseFeishuDateKey(dateKey);
         final slots = _dailySlots[dateKey];
         if (date == null || slots == null) continue;
-        final outcome = await FeishuCalendarSyncService.instance.syncDay(
+        final outcome = await _feishuSyncService.syncDay(
           kind: kind,
           date: date,
           slots: slots,
@@ -3062,23 +3094,46 @@ class TimeProvider with ChangeNotifier {
             _pauseFeishuQueueAfterAuthLoss();
             break;
           }
+          // 网络类失败：不能把日期丢掉，否则那天的编辑在飞书上永久缺失。
+          failed.add(dateKey);
         }
       }
     } finally {
       _feishuSyncing = false;
       _feishuInFlightDateKeys.clear();
-      // 这一轮已经推完（或被打断），磁盘上只留还没推的日期。
+      // 这一轮已经推完（或被打断），磁盘上留还没推的日期与等待重试的日期。
       // 授权失效时内存队列已清空，写盘会把待补推的日期抹掉，必须跳过。
       if (!_isDisposed && !_feishuAuthLost) {
+        _retryFeishuDateKeys.addAll(failed);
         await FeishuCredentialStore.savePendingDates(
           kind,
           _feishuPendingForDisk,
         );
       }
     }
+    if (!_feishuAuthLost && failed.isNotEmpty) {
+      _scheduleFeishuRetry();
+    }
     if (!_feishuAuthLost && _pendingFeishuDateKeys.isNotEmpty) {
       _scheduleFeishuFlush();
     }
+  }
+
+  /// 推送失败后延迟重投。
+  ///
+  /// 不用 3 秒防抖重试：网络持续不可用时每 3 秒打一次接口没有意义，还会
+  /// 反复唤醒。固定间隔重试，期间新的编辑仍走正常的 3 秒队列。
+  void _scheduleFeishuRetry() {
+    if (_isDisposed) return;
+    _feishuRetryTimer?.cancel();
+    _feishuRetryTimer = Timer(_feishuRetryDelay, () {
+      _feishuRetryTimer = null;
+      if (_isDisposed || _feishuAuthLost) return;
+      if (_retryFeishuDateKeys.isEmpty) return;
+      _pendingFeishuDateKeys.addAll(_retryFeishuDateKeys);
+      _retryFeishuDateKeys.clear();
+      unawaited(_flushPendingFeishuSync());
+    });
   }
 
   /// 启动时的飞书自检。
@@ -3156,6 +3211,7 @@ class TimeProvider with ChangeNotifier {
   void _pauseFeishuQueueAfterAuthLoss() {
     _feishuAuthLost = true;
     _pendingFeishuDateKeys.clear();
+    _retryFeishuDateKeys.clear();
     _feishuInFlightDateKeys.clear();
     if (!_isDisposed) notifyListeners();
   }
@@ -3175,7 +3231,7 @@ class TimeProvider with ChangeNotifier {
       final key = _getDateKey(date);
       slotsByDate[key] = _dailySlots[key] ?? _generateInitialSlots();
     }
-    return FeishuCalendarSyncService.instance.syncDates(
+    return _feishuSyncService.syncDates(
       kind: kind,
       slotsByDate: slotsByDate,
     );
@@ -3196,7 +3252,7 @@ class TimeProvider with ChangeNotifier {
       }
     }
     if (slotsByDate.isEmpty) return null;
-    return FeishuCalendarSyncService.instance.syncDates(
+    return _feishuSyncService.syncDates(
       kind: kind,
       slotsByDate: slotsByDate,
     );
@@ -3622,6 +3678,7 @@ class TimeProvider with ChangeNotifier {
           );
           _markSlotsDirty(dateKey);
           _targetStatsCache.invalidateDate(dateKey);
+          _markFeishuPendingAfterRemoteApply(dateKey);
           localChanged = true;
         }
         _clearScheduleGiteePendingWithoutScheduling(
@@ -5222,6 +5279,7 @@ class TimeProvider with ChangeNotifier {
     }
     _markSlotsDirty(dateKey);
     _targetStatsCache.invalidateDate(dateKey);
+    _markFeishuPendingAfterRemoteApply(dateKey);
     _appLogService.info(
       '日程拉取成功：$dateKey（远端 ${remote.slots.length} 条，合并后 ${merged.length} 条）',
       source: 'schedule_sync',
@@ -6211,10 +6269,13 @@ class TimeProvider with ChangeNotifier {
         return false;
       }
       final daySlots = _dailySlots.putIfAbsent(dateKey, _generateInitialSlots);
+      final localEntries = _serializeRecordedSlots(daySlots);
       final merged = mergeScheduleSlots(
-        localEntries: _serializeRecordedSlots(daySlots),
+        localEntries: localEntries,
         remoteEntries: remote.slots,
       );
+      final localChanged =
+          !scheduleSlotsEquivalent(merged, localEntries);
       _applyScheduleEntriesToSlots(daySlots, merged);
       _markAllSlotsDirty();
       if (!_remoteViewEnabled) {
@@ -6236,6 +6297,12 @@ class TimeProvider with ChangeNotifier {
       if (allowRemoteViewTransition) {
         // 只缓存校验过的远端原始条目（不是 merged），供远程视图下次切换秒显。
         _storeRemoteViewCacheEntry(code, dateKey, remote.slots);
+      }
+      if (localChanged &&
+          !allowRemoteViewTransition &&
+          code == selectedUserCode) {
+        // 远端（另一台设备）真的改动了这一天：补推一次飞书，避免镜像长期落后。
+        _markFeishuPendingAfterRemoteApply(dateKey);
       }
       notifyListeners();
       _addScheduleSyncStatus('已同步');
@@ -6695,6 +6762,15 @@ class TimeProvider with ChangeNotifier {
     await refreshSchedulesFromRemoteInBackground();
     if (_isDisposed || _initializationFailed) return;
     await pullCategoriesFromGitee();
+    // 切后台时被取消的飞书推送、以及上一轮失败待重试的日期，回前台补一次。
+    // 放在日程拉取之后：这样补推用的是刚合并过的本地数据。
+    if (!_isDisposed && !_feishuAuthLost) {
+      _feishuRetryTimer?.cancel();
+      _feishuRetryTimer = null;
+      _pendingFeishuDateKeys.addAll(_retryFeishuDateKeys);
+      _retryFeishuDateKeys.clear();
+      if (_pendingFeishuDateKeys.isNotEmpty) _scheduleFeishuFlush();
+    }
   }
 
   /// 统一同步：始终同步到 Gitee，若开启 Google 日历同步则同时同步 Google。
