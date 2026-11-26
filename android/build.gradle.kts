@@ -1,5 +1,8 @@
 allprojects {
     repositories {
+        // 国内镜像优先，官方源作为兜底
+        maven("https://maven.aliyun.com/repository/google")
+        maven("https://maven.aliyun.com/repository/public")
         google()
         mavenCentral()
     }
