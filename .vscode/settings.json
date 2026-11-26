@@ -1,3 +1,9 @@
 {
-	"cmake.ignoreCMakeListsMissing": true
+	"cmake.ignoreCMakeListsMissing": true,
+	// 两台机器共用 pubspec.lock：GUI 启动的 VS Code 不读 ~/.zshrc，
+	// 这里给 Dart/Flutter 插件 spawn 的进程补上镜像变量，避免 pub get 把锁改回 pub.dev。
+	"dart.env": {
+		"PUB_HOSTED_URL": "https://pub.flutter-io.cn",
+		"FLUTTER_STORAGE_BASE_URL": "https://storage.flutter-io.cn"
+	}
 }
